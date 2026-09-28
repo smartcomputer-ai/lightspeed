@@ -80,18 +80,7 @@ export type ToolParallelismView = "exclusive" | "parallelSafe";
  * via the `definition` "AgentApiErrorKind".
  */
 export type AgentApiErrorKind =
-  | (
-      | "invalid_request"
-      | "not_found"
-      | "conflict"
-      | "unsupported_audio_mime"
-      | "audio_blob_too_large"
-      | "audio_duration_too_long"
-      | "transcoder_unavailable"
-      | "transcode_failure"
-      | "transcription_failure"
-      | "internal"
-    )
+  | ("invalid_request" | "not_found" | "conflict" | "audio_blob_too_large" | "internal")
   | "rejected"
   | "unauthenticated"
   | "forbidden"
@@ -849,6 +838,11 @@ export type InputItem =
        * This metadata is not an authorization identity or model input text.
        */
       origin?: string | null;
+      /**
+       * Optional source blob in this universe, retained with the session.
+       * Provenance is metadata, not model input or an authorization identity.
+       */
+      provenanceRef?: string | null;
       text: string;
       type: "text";
     }
@@ -861,6 +855,11 @@ export type InputItem =
        * This metadata is not an authorization identity or model input text.
        */
       origin?: string | null;
+      /**
+       * Optional source blob in this universe, retained with the session.
+       * Provenance is metadata, not model input or an authorization identity.
+       */
+      provenanceRef?: string | null;
       type: "textRef";
     }
   | {
@@ -1287,16 +1286,7 @@ export type ChannelPairedVia = "open" | "code";
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "InputAdmissionFailureKind".
  */
-export type InputAdmissionFailureKind =
-  | "unsupportedMedia"
-  | "unsupportedAudioMime"
-  | "blobMissing"
-  | "blobTooLarge"
-  | "audioDurationTooLong"
-  | "transcoderUnavailable"
-  | "transcodeFailure"
-  | "transcriptionFailure"
-  | "admissionRejected";
+export type InputAdmissionFailureKind = "unsupportedMedia" | "blobMissing" | "admissionRejected";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextAppendStatus".
@@ -1319,6 +1309,7 @@ export type MethodGroup =
   | (
       | "vfs"
       | "profiles"
+      | "transcriptions"
       | "models"
       | "mcp"
       | "bots"
@@ -1620,6 +1611,18 @@ export type SkillCatalogSource =
       environmentId: string;
       type: "environment";
     };
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionFailureKind".
+ */
+export type TranscriptionFailureKind =
+  "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionStatus".
+ */
+export type TranscriptionStatus =
+  "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AuthProviderConfigInput".
@@ -3575,6 +3578,10 @@ export interface BotEventMedia {
   kind: BotEventMediaKind;
   mime: string;
   name?: string | null;
+  /**
+   * Optional prepared UTF-8 text; the source attachment remains in blobRef.
+   */
+  textRef?: string | null;
 }
 /**
  * The routed session an event was admitted to.
@@ -6188,6 +6195,59 @@ export interface SkillLocationView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfTranscriptionResponse".
+ */
+export interface AgentApiOutcomeOfTranscriptionResponse {
+  notifications?: AgentNotification[];
+  result: TranscriptionResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionResponse".
+ */
+export interface TranscriptionResponse {
+  transcription: TranscriptionView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionView".
+ */
+export interface TranscriptionView {
+  audio: TranscriptionAudio;
+  createdAtMs: number;
+  createdBy: Attribution;
+  failure?: TranscriptionFailure | null;
+  model: ModelConfig;
+  status: TranscriptionStatus;
+  text?: string | null;
+  /**
+   * Plain UTF-8 transcript blob, usable as ordinary textRef input.
+   * Unsubmitted content can be swept after the ordinary CAS grace period.
+   */
+  transcriptRef?: string | null;
+  transcriptionId: string;
+}
+/**
+ * Immutable audio input in this universe's content store.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionAudio".
+ */
+export interface TranscriptionAudio {
+  blobRef: string;
+  mime: string;
+  name: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionFailure".
+ */
+export interface TranscriptionFailure {
+  kind: TranscriptionFailureKind;
+  message: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfVfsSnapshotCommitResponse".
  */
 export interface AgentApiOutcomeOfVfsSnapshotCommitResponse {
@@ -8016,6 +8076,36 @@ export interface SessionStartParams {
  */
 export interface SkillListParams {
   sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionCancelParams".
+ */
+export interface TranscriptionCancelParams {
+  transcriptionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionReadParams".
+ */
+export interface TranscriptionReadParams {
+  transcriptionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "TranscriptionStartParams".
+ */
+export interface TranscriptionStartParams {
+  audio: TranscriptionAudio;
+  /**
+   * Scoped to the requester. Matching retries rejoin the original job,
+   * including after defaults change; changed requests conflict. Identity is
+   * retained for the Temporal namespace's workflow-history retention period.
+   */
+  idempotencyKey: string;
+  language?: string | null;
+  model?: ModelConfig | null;
+  prompt?: string | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

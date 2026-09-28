@@ -699,6 +699,9 @@ pub enum BotEventMediaKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BotEventMedia {
+    /// Optional prepared UTF-8 text; the source attachment remains in blobRef.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_ref: Option<String>,
     pub blob_ref: String,
     pub kind: BotEventMediaKind,
     pub mime: String,

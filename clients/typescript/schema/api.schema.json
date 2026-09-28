@@ -107,12 +107,7 @@
             "invalid_request",
             "not_found",
             "conflict",
-            "unsupported_audio_mime",
             "audio_blob_too_large",
-            "audio_duration_too_long",
-            "transcoder_unavailable",
-            "transcode_failure",
-            "transcription_failure",
             "internal"
           ],
           "type": "string"
@@ -2204,6 +2199,23 @@
         },
         "result": {
           "$ref": "#/definitions/SkillListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfTranscriptionResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/TranscriptionResponse"
         }
       },
       "required": [
@@ -4571,6 +4583,13 @@
           "type": "string"
         },
         "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "textRef": {
+          "description": "Optional prepared UTF-8 text; the source attachment remains in blobRef.",
           "type": [
             "string",
             "null"
@@ -10625,13 +10644,7 @@
     "InputAdmissionFailureKind": {
       "enum": [
         "unsupportedMedia",
-        "unsupportedAudioMime",
         "blobMissing",
-        "blobTooLarge",
-        "audioDurationTooLong",
-        "transcoderUnavailable",
-        "transcodeFailure",
-        "transcriptionFailure",
         "admissionRejected"
       ],
       "type": "string"
@@ -10662,6 +10675,13 @@
                 "null"
               ]
             },
+            "provenanceRef": {
+              "description": "Optional source blob in this universe, retained with the session.\nProvenance is metadata, not model input or an authorization identity.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "text": {
               "type": "string"
             },
@@ -10683,6 +10703,13 @@
             },
             "origin": {
               "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provenanceRef": {
+              "description": "Optional source blob in this universe, retained with the session.\nProvenance is metadata, not model input or an authorization identity.",
               "type": [
                 "string",
                 "null"
@@ -11734,6 +11761,7 @@
           "enum": [
             "vfs",
             "profiles",
+            "transcriptions",
             "models",
             "mcp",
             "bots",
@@ -17099,6 +17127,193 @@
       "required": [
         "toolId",
         "kind"
+      ],
+      "type": "object"
+    },
+    "TranscriptionAudio": {
+      "additionalProperties": false,
+      "description": "Immutable audio input in this universe's content store.",
+      "properties": {
+        "blobRef": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blobRef",
+        "mime",
+        "name"
+      ],
+      "type": "object"
+    },
+    "TranscriptionCancelParams": {
+      "additionalProperties": false,
+      "properties": {
+        "transcriptionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "transcriptionId"
+      ],
+      "type": "object"
+    },
+    "TranscriptionFailure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/TranscriptionFailureKind"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "type": "object"
+    },
+    "TranscriptionFailureKind": {
+      "enum": [
+        "invalidAudio",
+        "configuration",
+        "provider",
+        "timeout",
+        "internal"
+      ],
+      "type": "string"
+    },
+    "TranscriptionReadParams": {
+      "additionalProperties": false,
+      "properties": {
+        "transcriptionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "transcriptionId"
+      ],
+      "type": "object"
+    },
+    "TranscriptionResponse": {
+      "properties": {
+        "transcription": {
+          "$ref": "#/definitions/TranscriptionView"
+        }
+      },
+      "required": [
+        "transcription"
+      ],
+      "type": "object"
+    },
+    "TranscriptionStartParams": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "$ref": "#/definitions/TranscriptionAudio"
+        },
+        "idempotencyKey": {
+          "description": "Scoped to the requester. Matching retries rejoin the original job,\nincluding after defaults change; changed requests conflict. Identity is\nretained for the Temporal namespace's workflow-history retention period.",
+          "type": "string"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "audio"
+      ],
+      "type": "object"
+    },
+    "TranscriptionStatus": {
+      "enum": [
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "TranscriptionView": {
+      "properties": {
+        "audio": {
+          "$ref": "#/definitions/TranscriptionAudio"
+        },
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdBy": {
+          "$ref": "#/definitions/Attribution"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TranscriptionFailure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelConfig"
+        },
+        "status": {
+          "$ref": "#/definitions/TranscriptionStatus"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transcriptRef": {
+          "description": "Plain UTF-8 transcript blob, usable as ordinary textRef input.\nUnsubmitted content can be swept after the ordinary CAS grace period.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transcriptionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "transcriptionId",
+        "createdBy",
+        "audio",
+        "model",
+        "status",
+        "createdAtMs"
       ],
       "type": "object"
     },

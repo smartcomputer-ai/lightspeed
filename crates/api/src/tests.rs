@@ -59,6 +59,7 @@ fn notification_serializes_as_json_rpc_lite_shape() {
             completed_at_ms: Some(20),
             source: RunViewSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "hello".to_owned(),
                 }],

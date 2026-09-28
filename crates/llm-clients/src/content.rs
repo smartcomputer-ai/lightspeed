@@ -35,32 +35,6 @@ pub const OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND: &str = "openai.completions.m
 pub const OPENAI_COMPLETIONS_REASONING_PROVIDER_KIND: &str = "openai.completions.reasoning_state";
 pub const OPENAI_RESPONSES_REASONING_PROVIDER_KIND: &str = "openai.responses.reasoning";
 pub const ANTHROPIC_THINKING_PROVIDER_KIND: &str = "anthropic.messages.thinking";
-pub const AUDIO_TRANSCRIPT_PROVIDER_KIND: &str = "lightspeed.audio.transcript";
-
-/// Transcript content between audio preprocessing and model message lowering.
-/// The source audio is recorded separately as the context entry's provenance.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AudioTranscript {
-    pub filename: String,
-    pub text: String,
-}
-
-impl AudioTranscript {
-    pub fn header(&self) -> String {
-        format!("[audio transcript: {}]", self.filename)
-    }
-
-    pub fn model_text(&self) -> String {
-        format!("{}\n{}", self.header(), self.text)
-    }
-}
-
-pub fn audio_transcript(raw: &Value) -> Option<String> {
-    serde_json::from_value::<AudioTranscript>(raw.clone())
-        .ok()
-        .map(|transcript| transcript.text)
-}
-
 /// Only provider-exposed text participates in display. Signatures and encrypted
 /// continuation state remain in the payload for replay.
 pub fn anthropic_thinking(raw: &Value) -> Option<String> {
@@ -193,23 +167,5 @@ mod tests {
             .as_deref(),
             Some("visible")
         );
-    }
-
-    #[test]
-    fn transcript_labels_are_rendered_without_parsing_body_text() {
-        let transcript = AudioTranscript {
-            filename: "voice.ogg".into(),
-            text: "[audio transcript: quoted]\nkeep this header as speech".into(),
-        };
-        let raw = serde_json::to_value(&transcript).unwrap();
-        assert_eq!(
-            audio_transcript(&raw).as_deref(),
-            Some(transcript.text.as_str())
-        );
-        assert_eq!(
-            transcript.model_text(),
-            "[audio transcript: voice.ogg]\n[audio transcript: quoted]\nkeep this header as speech"
-        );
-        assert!(audio_transcript(&json!({"text":"missing filename"})).is_none());
     }
 }

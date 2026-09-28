@@ -7,7 +7,9 @@ use crate::error::{
     ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, TransportError,
 };
 use crate::transport::http::{join_url, normalize_base_url};
-use crate::transport::{ApiResponse, HeaderSnapshot, HttpClient, HttpClientConfig};
+use crate::transport::{
+    ApiResponse, EndpointOverride, HeaderSnapshot, HttpClient, HttpClientConfig,
+};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use reqwest::{Method, StatusCode, Url};
 use serde::de::DeserializeOwned;
@@ -141,7 +143,20 @@ impl Client {
         request: CreateTranscriptionRequest,
         auth: Option<crate::RequestAuth<'_>>,
     ) -> Result<ApiResponse<Transcription>, LlmApiError> {
-        let auth = self.auth_header(auth)?;
+        self.create_transcription_with_transport(request, auth, None)
+            .await
+    }
+
+    pub async fn create_transcription_with_transport(
+        &self,
+        request: CreateTranscriptionRequest,
+        auth: Option<crate::RequestAuth<'_>>,
+        endpoint: Option<&EndpointOverride>,
+    ) -> Result<ApiResponse<Transcription>, LlmApiError> {
+        let auth = match auth {
+            Some(crate::RequestAuth::None) if endpoint.is_some() => None,
+            other => Some(self.auth_header(other)?),
+        };
         let file_part = reqwest::multipart::Part::bytes(request.file.bytes)
             .file_name(request.file.filename)
             .mime_str(&request.file.mime)
@@ -159,10 +174,16 @@ impl Client {
             form = form.text("prompt", prompt);
         }
 
-        let response = self
-            .http
-            .request(Method::POST, self.transcriptions_url.clone())
-            .header(AUTHORIZATION, auth)
+        let mut request_builder = self.http.request_with_endpoint(
+            Method::POST,
+            self.transcriptions_url.clone(),
+            "audio/transcriptions",
+            endpoint,
+        )?;
+        if let Some(auth) = auth {
+            request_builder = request_builder.header(AUTHORIZATION, auth);
+        }
+        let mut response = request_builder
             .multipart(form)
             .send()
             .await
@@ -170,10 +191,21 @@ impl Client {
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response
-            .text()
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|err| map_reqwest_error(err, self.http.config().request_timeout))?;
+            .map_err(|err| map_reqwest_error(err, self.http.config().request_timeout))?
+        {
+            if bytes.len().saturating_add(chunk.len()) > 2 * 1024 * 1024 {
+                return Err(
+                    DecodeError::new("transcription response exceeds the 2 MiB limit").into(),
+                );
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let body = String::from_utf8(bytes)
+            .map_err(|_| DecodeError::new("transcription response is not UTF-8"))?;
         parse_json_response(status, headers, body, "OpenAI audio transcription")
     }
 }
@@ -333,5 +365,74 @@ mod tests {
             .expect_err("missing auth must fail");
 
         assert!(matches!(error, LlmApiError::Configuration(_)));
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn custom_transport_isolated_from_deployment_headers_and_key() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for auth in [
+            crate::RequestAuth::None,
+            crate::RequestAuth::Bearer("route-key"),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = EndpointOverride::from_parts(
+                &format!("http://{}/custom/v1", listener.local_addr().unwrap()),
+                &BTreeMap::from([("x-route".into(), "speech".into())]),
+            )
+            .unwrap();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                loop {
+                    let mut buffer = [0; 4096];
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                        let size: usize = headers
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length: "))
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        if bytes.len() >= end + 4 + size {
+                            break;
+                        }
+                    }
+                }
+                let body = r#"{"text":"hello"}"#;
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                String::from_utf8(bytes).unwrap()
+            });
+            let mut config = Config::new("deployment-key");
+            config.organization = Some("deployment-org".into());
+            config.project = Some("deployment-project".into());
+            let client = Client::new(config).unwrap();
+            let mut request = CreateTranscriptionRequest::new(AudioFile {
+                bytes: b"voice".to_vec(),
+                filename: "voice.ogg".into(),
+                mime: "audio/ogg".into(),
+            });
+            request.model = "custom-speech-model".into();
+            request.language = Some("de".into());
+            request.prompt = Some("Names".into());
+            let result = client
+                .create_transcription_with_transport(request, Some(auth), Some(&endpoint))
+                .await
+                .unwrap();
+            assert_eq!(result.parsed.text, "hello");
+            let request = server.await.unwrap();
+            assert!(request.starts_with("POST /custom/v1/audio/transcriptions "));
+            assert!(request.contains("x-route: speech"));
+            assert!(request.contains("custom-speech-model"));
+            assert!(request.contains("Names"));
+            assert!(!request.contains("deployment-"));
+            match auth {
+                crate::RequestAuth::None => {
+                    assert!(!request.to_ascii_lowercase().contains("authorization:"))
+                }
+                _ => assert!(request.contains("Bearer route-key")),
+            }
+        }
     }
 }

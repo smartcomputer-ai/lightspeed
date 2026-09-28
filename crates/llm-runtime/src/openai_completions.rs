@@ -688,7 +688,7 @@ async fn materialize_message(
                 }
             } else {
                 oai_c::CompletionMessageContent::Text(
-                    crate::blob_io::read_message_text(blobs, &entry.content).await?,
+                    crate::blob_io::read_text(blobs, &entry.content.content_ref).await?,
                 )
             };
             Ok(oai_c::CompletionMessage {

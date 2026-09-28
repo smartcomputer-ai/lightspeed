@@ -248,6 +248,7 @@ impl From<PreparedMediaItem> for BotEventMedia {
         Self {
             blob_ref: item.blob_ref,
             kind: bot_event_media_kind(item.kind),
+            text_ref: None,
             mime: item.mime,
             name: item.name,
         }

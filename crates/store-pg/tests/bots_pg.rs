@@ -1253,6 +1253,10 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
         .put_bytes(b"media attachment".to_vec())
         .await
         .expect("media");
+    let transcript = store
+        .put_bytes(b"prepared transcript".to_vec())
+        .await
+        .expect("transcript");
     let mut record = event(&bot_id, "with-tools", 1, 2, None, None);
     record.receiver = Some(bots::EventReceiver::Workflow {
         workflow_id: "conversation".to_owned(),
@@ -1261,9 +1265,10 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
         tools_ref: Some(tools.to_string()),
     });
     record.media = vec![api::BotEventMedia {
+        text_ref: Some(transcript.to_string()),
         blob_ref: media.to_string(),
-        kind: api::BotEventMediaKind::Image,
-        mime: "image/png".to_owned(),
+        kind: api::BotEventMediaKind::Audio,
+        mime: "audio/ogg".to_owned(),
         name: None,
     }];
     store
@@ -1279,8 +1284,8 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
     .await
     .expect("roots");
     assert_eq!(
-        roots, 4,
-        "document, prompt, media, and receiver tools are retained"
+        roots, 5,
+        "document, prompt, source audio, transcript, and receiver tools are retained"
     );
     sqlx::query("UPDATE cas_blobs SET created_at_ms = 1, touched_at_ms = 1 WHERE universe_id = $1")
         .bind(store.config().universe_id)
@@ -1291,6 +1296,7 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
         &record.document_ref,
         record.prompt_ref.as_ref().unwrap(),
         &media.to_string(),
+        &transcript.to_string(),
         &tools.to_string(),
     ]
     .into_iter()
@@ -1342,7 +1348,7 @@ async fn pg_live_bot_event_roots_cover_receiver_tools_and_roll_back_missing_refs
             .await
             .expect("sweep released roots")
             .len(),
-        4
+        5
     );
     drop_universe(&store).await;
 }

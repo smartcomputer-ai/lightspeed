@@ -38,6 +38,7 @@ mod service;
 mod sessions;
 mod skills;
 mod storage;
+mod transcriptions;
 mod views;
 
 pub use access::*;
@@ -62,6 +63,7 @@ pub use service::*;
 pub use sessions::*;
 pub use skills::*;
 pub use storage::*;
+pub use transcriptions::*;
 pub use views::*;
 
 #[cfg(test)]

@@ -77,6 +77,7 @@ fn serialized_fixtures_validate_against_exported_schemas() {
         session_id: "session_1".to_owned(),
         source: RunStartSource::Input {
             items: vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "hello".to_owned(),
             }],
@@ -96,6 +97,7 @@ fn serialized_fixtures_validate_against_exported_schemas() {
         completed_at_ms: Some(20),
         source: RunViewSource::Input {
             items: vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "hello".to_owned(),
             }],

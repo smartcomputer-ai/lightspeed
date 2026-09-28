@@ -177,3 +177,9 @@ pub const NOTIFY_SESSION_EVENT: &str = "session/event";
 pub const NOTIFY_SESSION_RUNS_STARTED: &str = "session/runs/started";
 pub const NOTIFY_SESSION_RUNS_COMPLETED: &str = "session/runs/completed";
 pub const NOTIFY_ERROR: &str = "error";
+
+// ── Transcriptions ───────────────────────────────────────────────────────────
+
+pub const METHOD_TRANSCRIPTIONS_START: &str = "transcriptions/start";
+pub const METHOD_TRANSCRIPTIONS_READ: &str = "transcriptions/read";
+pub const METHOD_TRANSCRIPTIONS_CANCEL: &str = "transcriptions/cancel";

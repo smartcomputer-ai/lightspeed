@@ -20,9 +20,9 @@ use temporal_workflow::{
 };
 
 pub use activities::{
-    ActivityState, AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest,
-    AudioTranscoder, AudioTranscriber, AudioTranscription, AudioTranscriptionError,
-    AudioTranscriptionRequest, FfmpegAudioTranscoder, LlmActivityDeps, PreprocessActivityDeps,
+    ActivityState, AudioActivityDeps, AudioTranscodeError, AudioTranscodeOutput,
+    AudioTranscodeRequest, AudioTranscoder, AudioTranscriber, AudioTranscription,
+    AudioTranscriptionError, AudioTranscriptionRequest, FfmpegAudioTranscoder, LlmActivityDeps,
     RuntimeProjectionActivityDeps, StorageActivityDeps, ToolActivityDeps, WorkerActivities,
     default_audio_transcoder_from_env, subagent_catalog_snapshot,
 };
@@ -41,21 +41,19 @@ pub use temporal_workflow::{
     ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
     ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL,
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
-    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB,
-    ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
-    ACTIVITY_START_WORKFLOW_TOOL_EXECUTION, ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE,
-    ACTIVITY_SUBAGENT_RESOLVE, ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL,
-    ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS, ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY,
-    AgentSessionWorkflow, AppendEventsRequest, ContextCompactActivityRequest,
-    CreateOrLoadSessionRequest, CreateOrLoadSessionResult, DEFAULT_TASK_QUEUE,
-    DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, EnvironmentJobCancelActivityRequest,
-    EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
-    EnvironmentJobStartActivityRequest, EnvironmentJobStartActivityResult, EnvironmentJobWorkflow,
-    EnvironmentJobWorkflowArgs, FAKE_TOOL_NAME, LlmGenerateActivityRequest,
-    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
-    ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
-    RuntimeProjectionRefreshActivityResult, SubagentExecutionWorkflow,
-    ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest,
+    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_RUNTIME_PROJECTION_REFRESH, ACTIVITY_START_WORKFLOW_TOOL_EXECUTION,
+    ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
+    ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
+    ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, AgentSessionWorkflow, AppendEventsRequest,
+    ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
+    DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET,
+    EnvironmentJobCancelActivityRequest, EnvironmentJobPollActivityRequest,
+    EnvironmentJobPollActivityResult, EnvironmentJobStartActivityRequest,
+    EnvironmentJobStartActivityResult, EnvironmentJobWorkflow, EnvironmentJobWorkflowArgs,
+    FAKE_TOOL_NAME, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
+    SubagentExecutionWorkflow, ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest,
     ToolPreparePromiseControlsActivityRequest, connect_temporal, default_run_config,
     default_session_config,
 };
@@ -99,6 +97,7 @@ pub fn sessions_worker(
 ) -> anyhow::Result<Worker> {
     let worker_options = WorkerOptions::new(task_queue)
         .register_workflow::<AgentSessionWorkflow>()
+        .register_workflow::<temporal_workflow::TranscriptionWorkflow>()
         .register_workflow::<EnvironmentJobWorkflow>()
         .register_workflow::<SubagentExecutionWorkflow>()
         .register_activities(activities)

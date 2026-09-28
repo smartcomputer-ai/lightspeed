@@ -2,6 +2,25 @@ use super::*;
 
 #[async_trait]
 pub trait AgentApiService: Send + Sync {
+    async fn start_transcription(
+        &self,
+        _params: TranscriptionStartParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        Err(AgentApiError::internal("transcription is unavailable"))
+    }
+    async fn read_transcription(
+        &self,
+        _params: TranscriptionReadParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        Err(AgentApiError::internal("transcription is unavailable"))
+    }
+    async fn cancel_transcription(
+        &self,
+        _params: TranscriptionCancelParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        Err(AgentApiError::internal("transcription is unavailable"))
+    }
+
     async fn read_vfs_workspace_file(
         &self,
         _params: VfsWorkspaceFileReadParams,

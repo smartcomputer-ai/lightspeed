@@ -15,6 +15,7 @@ export const METHOD_GROUPS: Record<MethodGroup, { label: string; deployment?: tr
   vfs: { label: "Workspaces" },
   profiles: { label: "Profiles" },
   models: { label: "Models" },
+  transcriptions: { label: "Audio transcription" },
   mcp: { label: "MCP servers" },
   environments: { label: "Environments" },
   bots: { label: "Bots" },

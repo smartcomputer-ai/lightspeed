@@ -16,6 +16,7 @@ pub const ACTIVITY_CHAT_TOOL_DECLARATIONS: &str = "ChannelActivities::chat_tool_
 pub const ACTIVITY_CHAT_READ_JSON_BLOB: &str = "ChannelActivities::read_json_blob";
 pub const ACTIVITY_CHAT_PUT_JSON_BLOB: &str = "ChannelActivities::put_json_blob";
 pub const ACTIVITY_CHAT_RECONCILE_DELIVERY: &str = "ChannelActivities::reconcile_delivery";
+pub const ACTIVITY_CHAT_TRANSCRIBE_MEDIA: &str = "ChannelActivities::transcribe_media";
 pub const ACTIVITY_CHAT_EMIT_EVENT: &str = "ChannelActivities::emit_chat_event";
 pub const ACTIVITY_CHAT_STORE_SENT: &str = "ChannelActivities::store_chat_sent";
 pub const ACTIVITY_CHAT_RESOLVE_HANDLE: &str = "ChannelActivities::resolve_chat_handle";
@@ -30,6 +31,14 @@ pub struct ChannelActivities;
 
 #[activities]
 impl ChannelActivities {
+    #[activity(name = ACTIVITY_CHAT_TRANSCRIBE_MEDIA)]
+    pub async fn transcribe_media(
+        _ctx: ActivityContext,
+        _request: ChatTranscribeMediaRequest,
+    ) -> Result<api::TranscriptionView, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
     /// Store the `message_*` declarations bound to this conversation as
     /// receiver; content-addressed, so stable per receiver.
     #[activity(name = ACTIVITY_CHAT_TOOL_DECLARATIONS)]

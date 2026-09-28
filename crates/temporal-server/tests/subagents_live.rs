@@ -665,6 +665,7 @@ async fn start_subagent_parent_with_features(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: script.to_owned(),
                 }],
@@ -1278,6 +1279,7 @@ async fn run_agent_run_inherit_environment_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: format!("AGENT_RUN {child_profile_id}"),
                 }],

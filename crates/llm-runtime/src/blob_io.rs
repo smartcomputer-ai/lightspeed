@@ -71,26 +71,6 @@ pub fn document_entry(media_type: Option<&str>, preview: Option<&str>) -> Option
     })
 }
 
-/// Render a preprocessed transcript at the provider boundary. Ordinary authored
-/// text stays byte-for-byte text, even when it resembles JSON or a transcript.
-pub async fn read_message_text(
-    blobs: &dyn BlobStore,
-    content: &engine::ContentRef,
-) -> LlmAdapterResult<String> {
-    if content.provider_kind.as_deref()
-        == Some(llm_clients::content::AUDIO_TRANSCRIPT_PROVIDER_KIND)
-    {
-        let raw = read_json(blobs, &content.content_ref).await?;
-        let transcript: llm_clients::content::AudioTranscript = serde_json::from_value(raw)
-            .map_err(|error| LlmAdapterError::InvalidJson {
-                blob_ref: content.content_ref.clone(),
-                message: error.to_string(),
-            })?;
-        return Ok(transcript.model_text());
-    }
-    read_text(blobs, &content.content_ref).await
-}
-
 pub async fn read_base64(blobs: &dyn BlobStore, blob_ref: &BlobRef) -> LlmAdapterResult<String> {
     use base64::Engine as _;
     let bytes = blobs.read_bytes(blob_ref).await?;

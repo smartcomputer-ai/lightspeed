@@ -611,6 +611,7 @@ impl<'a> CoreAgentProjector<'a> {
                     // the blob as UTF-8 text would fail.
                     if is_text_message_media_type(entry.content.media_type.as_deref()) {
                         InputItem::Text {
+                            provenance_ref: entry.provenance_ref.as_ref().map(ToString::to_string),
                             origin: entry.origin.clone(),
                             text: project_content_text(self.blobs, &entry.content)
                                 .await?
@@ -628,6 +629,7 @@ impl<'a> CoreAgentProjector<'a> {
                     }
                 }
                 _ => InputItem::TextRef {
+                    provenance_ref: entry.provenance_ref.as_ref().map(ToString::to_string),
                     origin: entry.origin.clone(),
                     blob_ref: entry.content.content_ref.as_str().to_owned(),
                 },
@@ -4562,14 +4564,17 @@ mod tests {
     fn input_text_joins_non_empty_text_items() {
         let text = input_text(&[
             InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: " first ".to_owned(),
             },
             InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "".to_owned(),
             },
             InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "second".to_owned(),
             },
@@ -4582,6 +4587,7 @@ mod tests {
     #[test]
     fn input_text_rejects_unresolved_text_refs() {
         let error = input_text(&[InputItem::TextRef {
+            provenance_ref: None,
             origin: None,
             blob_ref: BlobRef::from_bytes(b"hello").as_str().to_owned(),
         }])

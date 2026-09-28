@@ -72,9 +72,8 @@ impl ResolvedEndpoint {
         })
     }
 
-    fn supports(&self, api_kind: &ProviderApiKind) -> bool {
-        self.api_kinds
-            .contains_key(provider_api_kind_name(api_kind))
+    pub fn supports(&self, api_kind: &str) -> bool {
+        self.api_kinds.contains_key(api_kind)
     }
 }
 
@@ -133,42 +132,57 @@ pub(crate) async fn resolve_model_provider(
     resolver: &dyn ModelProviderResolver,
     model: &ModelSelection,
 ) -> Result<Option<ResolvedModelProvider>, LlmAdapterError> {
-    let resolved = resolver
-        .resolve_model_provider(&model.provider_id)
-        .await
-        .map_err(|error| LlmAdapterError::ProviderKeyResolution {
-            message: error.to_string(),
-        })?;
-    if resolved.is_none() && !is_builtin_provider(&model.provider_id) {
-        return Err(LlmAdapterError::ProviderKeyResolution {
+    resolve_provider_route(
+        resolver,
+        &model.provider_id,
+        provider_api_kind_name(&model.api_kind),
+    )
+    .await
+    .map_err(|error| LlmAdapterError::ProviderKeyResolution {
+        message: error.to_string(),
+    })
+}
+
+/// Resolve a protocol route without extending the engine's generation model enum.
+/// Only built-in providers may use deployment transport defaults.
+pub async fn resolve_provider_route(
+    resolver: &dyn ModelProviderResolver,
+    provider_id: &str,
+    api_kind: &str,
+) -> Result<Option<ResolvedModelProvider>, ProviderKeyError> {
+    let resolved = resolver.resolve_model_provider(provider_id).await?;
+    if resolved.is_none() && !is_builtin_provider(provider_id) {
+        return Err(ProviderKeyError::NotUsable {
+            provider_id: provider_id.into(),
             message: format!(
                 "custom model provider {} has no universe model-provider record",
-                model.provider_id
+                provider_id
             ),
         });
     }
-    if !is_builtin_provider(&model.provider_id)
+    if !is_builtin_provider(provider_id)
         && resolved
             .as_ref()
             .is_some_and(|provider| provider.endpoint.is_none())
     {
-        return Err(LlmAdapterError::ProviderKeyResolution {
+        return Err(ProviderKeyError::NotUsable {
+            provider_id: provider_id.into(),
             message: format!(
                 "custom model provider {} has no endpoint configuration",
-                model.provider_id
+                provider_id
             ),
         });
     }
     if let Some(endpoint) = resolved
         .as_ref()
         .and_then(|provider| provider.endpoint.as_ref())
-        && !endpoint.supports(&model.api_kind)
+        && !endpoint.supports(api_kind)
     {
-        return Err(LlmAdapterError::ProviderKeyResolution {
+        return Err(ProviderKeyError::NotUsable {
+            provider_id: provider_id.into(),
             message: format!(
                 "model provider {} endpoint does not admit API kind {}",
-                model.provider_id,
-                provider_api_kind_name(&model.api_kind)
+                provider_id, api_kind
             ),
         });
     }
@@ -377,6 +391,64 @@ mod tests {
         assert!(matches!(
             rejected,
             Err(LlmAdapterError::ProviderKeyResolution { .. })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn transcription_routes_require_matching_explicit_custom_endpoints() {
+        assert!(
+            resolve_provider_route(
+                &NoStoredModelProviders,
+                "openai",
+                "openai:audio-transcriptions"
+            )
+            .await
+            .unwrap()
+            .is_none()
+        );
+        assert!(matches!(
+            resolve_provider_route(
+                &NoStoredModelProviders,
+                "custom",
+                "openai:audio-transcriptions"
+            )
+            .await,
+            Err(ProviderKeyError::NotUsable { .. })
+        ));
+        let route = ResolvedModelProvider {
+            auth: None,
+            endpoint: Some(
+                ResolvedEndpoint::new(
+                    "http://localhost:9999/v1",
+                    &BTreeMap::new(),
+                    ["openai:audio-transcriptions".into()],
+                )
+                .unwrap(),
+            ),
+        };
+        struct Resolver(ResolvedModelProvider);
+        #[async_trait]
+        impl ModelProviderResolver for Resolver {
+            async fn resolve_model_provider(
+                &self,
+                _: &str,
+            ) -> Result<Option<ResolvedModelProvider>, ProviderKeyError> {
+                Ok(Some(self.0.clone()))
+            }
+        }
+        let resolver = Resolver(route);
+        let resolved = resolve_provider_route(&resolver, "custom", "openai:audio-transcriptions")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(resolved.auth.is_none());
+        assert!(matches!(
+            resolve_provider_route(&resolver, "custom", "openai:responses").await,
+            Err(ProviderKeyError::NotUsable { .. })
         ));
     }
 }

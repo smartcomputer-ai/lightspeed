@@ -198,7 +198,7 @@ Returns chronological events. Forward (default) follows after and supports long-
 
 **Append keyed session context**
 
-Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.
+Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
 
 - Access: `{"kind":"universe","action":"control_session"}`
 - Group: `session`
@@ -648,6 +648,45 @@ Stops the key from admitting new daemon identities; already registered daemons k
 - Target: `none`
 - Params: `EnvironmentRegistrationKeyRevokeParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>`
+
+### `transcriptions/start`
+
+**Start transcription**
+
+Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
+
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `transcriptions`
+- Role: `contributor`
+- Target: `none`
+- Params: `TranscriptionStartParams`
+- Result: `AgentApiOutcome<TranscriptionResponse>`
+
+### `transcriptions/read`
+
+**Read transcription**
+
+Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.
+
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `transcriptions`
+- Role: `viewer`
+- Target: `none`
+- Params: `TranscriptionReadParams`
+- Result: `AgentApiOutcome<TranscriptionResponse>`
+
+### `transcriptions/cancel`
+
+**Cancel transcription**
+
+Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
+
+- Access: `{"kind":"universe","action":"use_resource"}`
+- Group: `transcriptions`
+- Role: `contributor`
+- Target: `none`
+- Params: `TranscriptionCancelParams`
+- Result: `AgentApiOutcome<TranscriptionResponse>`
 
 ### `models/defaults/read`
 

@@ -278,7 +278,7 @@ export interface SecretProvider {
 export interface ModelEndpointConfig {
   baseUrl: string;
   headers?: Record<string, string>;
-  apiKinds: Array<"openai:responses" | "openai:completions">;
+  apiKinds: Array<"openai:responses" | "openai:completions" | "openai:audio-transcriptions">;
 }
 
 export interface SecretsInventory {

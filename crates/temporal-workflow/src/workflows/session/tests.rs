@@ -57,54 +57,6 @@ fn admission_failure_status_does_not_poison_later_admission() {
 }
 
 #[test]
-fn request_run_with_audio_input_needs_preprocessing() {
-    let command = CoreAgentCommand::RequestRun(engine::RunRequestCommand {
-        requested_by: None,
-        notify_on_terminal: Vec::new(),
-        submission_id: Some(SubmissionId::new("submit_audio")),
-        source: engine::RunRequestSource::Input {
-            input: vec![ContextEntryInput {
-                kind: ContextEntryKind::Message {
-                    role: ContextMessageRole::User,
-                },
-                content: engine::ContentRef {
-                    content_ref: engine::BlobRef::from_bytes(b"audio"),
-                    media_type: Some("audio/ogg".to_owned()),
-                    provider_kind: None,
-                },
-                preview: Some("[audio]".to_owned()),
-                origin: None,
-                provenance_ref: None,
-                token_estimate: None,
-            }],
-        },
-        run_config: crate::default_run_config(),
-    });
-
-    assert!(admissions::command_needs_input_preprocessing(&command));
-}
-
-#[test]
-fn preprocess_failures_preserve_submission_id_for_admission_failure() {
-    let failure = admissions::preprocess_failure_to_admission_failure(
-        Some(SubmissionId::new("submit_audio")),
-        PreprocessRunInputFailure {
-            kind: PreprocessRunInputFailureKind::TranscriptionFailure,
-            message: "missing OpenAI key".to_owned(),
-        },
-    );
-
-    assert_eq!(
-        failure.submission_id.as_ref(),
-        Some(&SubmissionId::new("submit_audio"))
-    );
-    assert_eq!(
-        failure.kind,
-        AgentAdmissionFailureKind::TranscriptionFailure
-    );
-}
-
-#[test]
 fn source_resolution_emission_queues_pending_resolution_with_producer() {
     let mut workflow = AgentSessionWorkflow::default();
     let payload_ref = engine::BlobRef::from_bytes(b"job output");

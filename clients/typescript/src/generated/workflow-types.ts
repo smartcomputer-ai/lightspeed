@@ -4,6 +4,30 @@
  */
 
 /**
+ * Who created a resource or authored bytes. An actor is whatever a key
+ * allowed to assert one said; core compares it and never resolves it.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "Attribution".
+ */
+export type Attribution =
+  | {
+      id: string;
+      kind: "actor";
+    }
+  | {
+      kind: "key";
+      prefix: string;
+    }
+  | {
+      kind: "local";
+    }
+  | {
+      cause: string;
+      component: string;
+      kind: "internal";
+    };
+/**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "BotId".
  */
@@ -197,6 +221,31 @@ export type EmissionProducer =
       universe_id: string;
       workflow_id: string;
     };
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionActivityResult".
+ */
+export type TranscriptionActivityResult =
+  | {
+      kind: "succeeded";
+      transcript_ref: string;
+    }
+  | {
+      failure: TranscriptionFailure;
+      kind: "failed";
+    };
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionFailureKind".
+ */
+export type TranscriptionFailureKind =
+  "invalidAudio" | "configuration" | "provider" | "timeout" | "internal";
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionStatus".
+ */
+export type TranscriptionStatus =
+  "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
 
 /**
  * Envelope and start-on-call types of the fixed deliver_emission transport between sessions and receiver workflows.
@@ -414,6 +463,15 @@ export interface MaintainChannelTypingInput {
   route: ChannelRoute;
 }
 /**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "ModelConfig".
+ */
+export interface ModelConfig {
+  apiKind: string;
+  model: string;
+  providerId: string;
+}
+/**
  * `prepare_channel_media`: the connector downloads the provider file and
  * stores it in the universe's CAS.
  *
@@ -443,6 +501,80 @@ export interface PreparedMediaItem {
   kind: ChannelMediaKind;
   mime: string;
   name?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionFailure".
+ */
+export interface TranscriptionFailure {
+  kind: TranscriptionFailureKind;
+  message: string;
+}
+/**
+ * Immutable audio input in this universe's content store.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionAudio".
+ */
+export interface TranscriptionAudio {
+  blobRef: string;
+  mime: string;
+  name: string;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionSnapshot".
+ */
+export interface TranscriptionSnapshot {
+  request: TranscriptionStartParams;
+  view: TranscriptionView;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionStartParams".
+ */
+export interface TranscriptionStartParams {
+  audio: TranscriptionAudio;
+  /**
+   * Scoped to the requester. Matching retries rejoin the original job,
+   * including after defaults change; changed requests conflict. Identity is
+   * retained for the Temporal namespace's workflow-history retention period.
+   */
+  idempotencyKey: string;
+  language?: string | null;
+  model?: ModelConfig | null;
+  prompt?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionView".
+ */
+export interface TranscriptionView {
+  audio: TranscriptionAudio;
+  createdAtMs: number;
+  createdBy: Attribution;
+  failure?: TranscriptionFailure | null;
+  model: ModelConfig;
+  status: TranscriptionStatus;
+  text?: string | null;
+  /**
+   * Plain UTF-8 transcript blob, usable as ordinary textRef input.
+   * Unsubmitted content can be swept after the ordinary CAS grace period.
+   */
+  transcriptRef?: string | null;
+  transcriptionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "TranscriptionWorkflowArgs".
+ */
+export interface TranscriptionWorkflowArgs {
+  createdAtMs: number;
+  createdBy: Attribution;
+  model: ModelConfig;
+  request: TranscriptionStartParams;
+  transcriptionId: string;
+  universeId: string;
 }
 /**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema

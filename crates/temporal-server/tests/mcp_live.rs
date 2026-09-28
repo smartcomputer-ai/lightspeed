@@ -517,6 +517,7 @@ async fn run_matrix_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "Exercise the native MCP matrix".to_owned(),
                 }],
@@ -1406,6 +1407,7 @@ async fn run_approval_live_client(
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text {
+                        provenance_ref: None,
                         origin: None,
                         text: format!("approval test {index}"),
                     }],
@@ -1578,6 +1580,7 @@ async fn run_native_mcp_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "List the configured models through the Configurator MCP".to_owned(),
                 }],
@@ -2247,6 +2250,7 @@ async fn run_mixed_batch_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "Schedule a timer, then await it while listing models".to_owned(),
                 }],

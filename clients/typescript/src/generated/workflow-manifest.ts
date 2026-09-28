@@ -70,7 +70,10 @@ export const WORKFLOW_CONTRACT_MANIFEST =
     "ChannelDeliveryCommand",
     "ChannelDeliveryResult",
     "PrepareChannelMediaInput",
-    "PrepareChannelMediaResult"
+    "PrepareChannelMediaResult",
+    "TranscriptionWorkflowArgs",
+    "TranscriptionSnapshot",
+    "TranscriptionActivityResult"
   ],
   "signals": {
     "deliverEmission": "deliver_emission"

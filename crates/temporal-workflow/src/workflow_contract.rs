@@ -42,7 +42,7 @@ pub const WORKFLOW_CONTRACT_VERSION: u32 = 2;
 pub const DELIVER_EMISSION_SIGNAL: &str = "deliver_emission";
 
 /// Root types of the schema bundle; everything else is reachable from them.
-pub const WORKFLOW_CONTRACT_ROOTS: [&str; 9] = [
+pub const WORKFLOW_CONTRACT_ROOTS: [&str; 12] = [
     "EmissionEnvelope",
     "WorkflowToolStartArgs",
     "WorkflowToolRecoveryResult",
@@ -52,6 +52,9 @@ pub const WORKFLOW_CONTRACT_ROOTS: [&str; 9] = [
     "ChannelDeliveryResult",
     "PrepareChannelMediaInput",
     "PrepareChannelMediaResult",
+    "TranscriptionWorkflowArgs",
+    "TranscriptionSnapshot",
+    "TranscriptionActivityResult",
 ];
 
 pub struct ExportedWorkflowContract {
@@ -75,6 +78,9 @@ pub fn export() -> ExportedWorkflowContract {
     let _ = generator.subschema_for::<channels::media::PrepareChannelMediaInput>();
     let _ = generator.subschema_for::<channels::media::PrepareChannelMediaResult>();
     let _ = generator.subschema_for::<channels::media::MaintainChannelTypingInput>();
+    let _ = generator.subschema_for::<crate::TranscriptionWorkflowArgs>();
+    let _ = generator.subschema_for::<crate::TranscriptionSnapshot>();
+    let _ = generator.subschema_for::<crate::TranscriptionActivityResult>();
     let definitions: BTreeMap<String, Value> =
         generator.take_definitions(true).into_iter().collect();
     for root in WORKFLOW_CONTRACT_ROOTS {

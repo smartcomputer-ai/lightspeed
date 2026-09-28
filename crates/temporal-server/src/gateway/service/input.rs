@@ -2,19 +2,6 @@ use super::*;
 
 /// Images and documents, bounded per run.
 const ALLOWED_IMAGE_MIMES: &[&str] = &["image/jpeg", "image/png", "image/webp", "image/gif"];
-/// Bounded audio blobs are accepted at admission, then rewritten by
-/// workflow preprocessing before core planning.
-const ALLOWED_AUDIO_MIMES: &[&str] = &[
-    "audio/mpeg",
-    "audio/mp4",
-    "audio/wav",
-    "audio/webm",
-    "audio/ogg",
-    "audio/aac",
-    "audio/amr",
-    "audio/3gpp",
-    "audio/3gpp2",
-];
 /// PDF is the only document type both providers accept natively; the text
 /// MIMEs are inlined as text by the llm-runtime adapters.
 const PDF_MIME: &str = "application/pdf";
@@ -25,7 +12,6 @@ const TEXT_DOCUMENT_MIMES: &[&str] = &[
     "application/json",
 ];
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
-const MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 10 * 1024 * 1024;
 /// Text documents land in model context verbatim; keep them small.
 const MAX_TEXT_DOCUMENT_BYTES: u64 = 1024 * 1024;
@@ -39,6 +25,7 @@ pub(super) async fn run_input_from_api(
     let mut media_items = 0usize;
     for item in input {
         let origin = input_origin_from_api(item)?;
+        let provenance_ref = input_provenance_from_api(store, item).await?;
         let first = entries.len();
         match item {
             InputItem::Text { text, .. } => {
@@ -87,6 +74,7 @@ pub(super) async fn run_input_from_api(
         }
         for entry in &mut entries[first..] {
             entry.origin = origin.clone();
+            entry.provenance_ref = provenance_ref.clone();
         }
     }
 
@@ -103,17 +91,12 @@ async fn media_message_input(
     kind: MediaKind,
     name: Option<&str>,
 ) -> Result<ContextEntryInput, AgentApiError> {
-    let raw_mime = mime.trim().to_ascii_lowercase();
-    let mime = if matches!(kind, MediaKind::Audio) {
-        normalize_audio_mime(&raw_mime)
-    } else {
-        raw_mime
-            .split(';')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_owned()
-    };
+    let mime = mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
     let (label, max_bytes) = match kind {
         MediaKind::Image => {
             if !ALLOWED_IMAGE_MIMES.contains(&mime.as_str()) {
@@ -125,13 +108,9 @@ async fn media_message_input(
             ("image", MAX_IMAGE_BYTES)
         }
         MediaKind::Audio => {
-            if !ALLOWED_AUDIO_MIMES.contains(&mime.as_str()) {
-                return Err(AgentApiError::unsupported_audio_mime(format!(
-                    "unsupported audio mime type {mime}; allowed: {}",
-                    ALLOWED_AUDIO_MIMES.join(", ")
-                )));
-            }
-            ("audio", MAX_AUDIO_BYTES)
+            return Err(AgentApiError::invalid_request(
+                "audio must be transcribed with transcriptions/start before session admission; submit text or a text reference",
+            ));
         }
         MediaKind::Document if mime == PDF_MIME => ("document", MAX_PDF_BYTES),
         MediaKind::Document if TEXT_DOCUMENT_MIMES.contains(&mime.as_str()) => {
@@ -150,17 +129,10 @@ async fn media_message_input(
         .await
         .map_err(map_input_blob_store_error)?;
     if info.byte_len > max_bytes {
-        return if matches!(kind, MediaKind::Audio) {
-            Err(AgentApiError::audio_blob_too_large(format!(
-                "{label} blob is {} bytes; the limit is {max_bytes} bytes",
-                info.byte_len
-            )))
-        } else {
-            Err(AgentApiError::invalid_request(format!(
-                "{label} blob is {} bytes; the limit is {max_bytes} bytes",
-                info.byte_len
-            )))
-        };
+        return Err(AgentApiError::invalid_request(format!(
+            "{label} blob is {} bytes; the limit is {max_bytes} bytes",
+            info.byte_len
+        )));
     }
     if matches!(kind, MediaKind::Document) && mime != PDF_MIME {
         // Text documents reach the model as text; reject undecodable bytes
@@ -244,6 +216,7 @@ pub(super) async fn context_entry_input_from_api(
         }
     }?;
     entry.origin = origin;
+    entry.provenance_ref = input_provenance_from_api(store, item).await?;
     Ok(entry)
 }
 
@@ -288,26 +261,6 @@ pub(super) fn empty_run_input_error() -> AgentApiError {
     )
 }
 
-fn normalize_audio_mime(mime: &str) -> String {
-    let mime = mime
-        .split(';')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    match mime.as_str() {
-        "audio/mp3" => "audio/mpeg",
-        "audio/x-m4a" | "audio/m4a" => "audio/mp4",
-        "audio/x-wav" | "audio/wave" | "audio/vnd.wave" => "audio/wav",
-        "audio/oga" | "audio/opus" => "audio/ogg",
-        "audio/x-aac" => "audio/aac",
-        "audio/3gp" => "audio/3gpp",
-        "audio/3gpp2" | "audio/3g2" => "audio/3gpp2",
-        other => other,
-    }
-    .to_owned()
-}
-
 fn input_origin_from_api(item: &InputItem) -> Result<Option<String>, AgentApiError> {
     let origin = match item {
         InputItem::Text { origin, .. }
@@ -323,4 +276,25 @@ fn input_origin_from_api(item: &InputItem) -> Result<Option<String>, AgentApiErr
         ));
     }
     Ok(origin.clone())
+}
+
+async fn input_provenance_from_api(
+    store: &dyn BlobStore,
+    item: &InputItem,
+) -> Result<Option<BlobRef>, AgentApiError> {
+    let reference = match item {
+        InputItem::Text { provenance_ref, .. } | InputItem::TextRef { provenance_ref, .. } => {
+            provenance_ref
+        }
+        _ => return Ok(None),
+    };
+    let Some(reference) = reference else {
+        return Ok(None);
+    };
+    let reference = parse_blob_ref(reference)?;
+    store
+        .stat_blob(&reference)
+        .await
+        .map_err(map_input_blob_store_error)?;
+    Ok(Some(reference))
 }

@@ -1,6 +1,79 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "Attribution": {
+      "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
+      "oneOf": [
+        {
+          "description": "The actor a key asserted for its request.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "actor",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A key acting for itself, named by its display prefix.",
+          "properties": {
+            "kind": {
+              "const": "key",
+              "type": "string"
+            },
+            "prefix": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "prefix"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An unauthenticated local development request, or an in-process call.",
+          "properties": {
+            "kind": {
+              "const": "local",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The runtime's own work: a bot, a delegated session, a registration,\nor host administration through the server CLI.",
+          "properties": {
+            "cause": {
+              "type": "string"
+            },
+            "component": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "component",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "BotId": {
       "type": "string"
     },
@@ -614,6 +687,25 @@
       ],
       "type": "object"
     },
+    "ModelConfig": {
+      "properties": {
+        "apiKind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "providerId",
+        "apiKind",
+        "model"
+      ],
+      "type": "object"
+    },
     "PrepareChannelMediaInput": {
       "description": "`prepare_channel_media`: the connector downloads the provider file and\nstores it in the universe's CAS.",
       "properties": {
@@ -760,6 +852,243 @@
     },
     "ToolCallId": {
       "type": "string"
+    },
+    "TranscriptionActivityResult": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "succeeded",
+              "type": "string"
+            },
+            "transcript_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "transcript_ref"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "failure": {
+              "$ref": "#/definitions/TranscriptionFailure"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "failure"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TranscriptionAudio": {
+      "additionalProperties": false,
+      "description": "Immutable audio input in this universe's content store.",
+      "properties": {
+        "blobRef": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "blobRef",
+        "mime",
+        "name"
+      ],
+      "type": "object"
+    },
+    "TranscriptionFailure": {
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/TranscriptionFailureKind"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "type": "object"
+    },
+    "TranscriptionFailureKind": {
+      "enum": [
+        "invalidAudio",
+        "configuration",
+        "provider",
+        "timeout",
+        "internal"
+      ],
+      "type": "string"
+    },
+    "TranscriptionSnapshot": {
+      "properties": {
+        "request": {
+          "$ref": "#/definitions/TranscriptionStartParams"
+        },
+        "view": {
+          "$ref": "#/definitions/TranscriptionView"
+        }
+      },
+      "required": [
+        "request",
+        "view"
+      ],
+      "type": "object"
+    },
+    "TranscriptionStartParams": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "$ref": "#/definitions/TranscriptionAudio"
+        },
+        "idempotencyKey": {
+          "description": "Scoped to the requester. Matching retries rejoin the original job,\nincluding after defaults change; changed requests conflict. Identity is\nretained for the Temporal namespace's workflow-history retention period.",
+          "type": "string"
+        },
+        "language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "idempotencyKey",
+        "audio"
+      ],
+      "type": "object"
+    },
+    "TranscriptionStatus": {
+      "enum": [
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "TranscriptionView": {
+      "properties": {
+        "audio": {
+          "$ref": "#/definitions/TranscriptionAudio"
+        },
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdBy": {
+          "$ref": "#/definitions/Attribution"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TranscriptionFailure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "$ref": "#/definitions/ModelConfig"
+        },
+        "status": {
+          "$ref": "#/definitions/TranscriptionStatus"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transcriptRef": {
+          "description": "Plain UTF-8 transcript blob, usable as ordinary textRef input.\nUnsubmitted content can be swept after the ordinary CAS grace period.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "transcriptionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "transcriptionId",
+        "createdBy",
+        "audio",
+        "model",
+        "status",
+        "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "TranscriptionWorkflowArgs": {
+      "properties": {
+        "createdAtMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "createdBy": {
+          "$ref": "#/definitions/Attribution"
+        },
+        "model": {
+          "$ref": "#/definitions/ModelConfig"
+        },
+        "request": {
+          "$ref": "#/definitions/TranscriptionStartParams"
+        },
+        "transcriptionId": {
+          "type": "string"
+        },
+        "universeId": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "transcriptionId",
+        "createdBy",
+        "request",
+        "model",
+        "createdAtMs"
+      ],
+      "type": "object"
     },
     "WorkflowToolId": {
       "type": "string"

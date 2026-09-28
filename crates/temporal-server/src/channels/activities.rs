@@ -664,9 +664,34 @@ pub async fn emit_chat_event(
         &request.conversation.key(),
         &request.message.message_id,
     );
-    let mut input = StoreBotEventInput::new(event_id.clone(), chat_message_document(&request));
+    let original_summary = chat_message_document(&request).summary;
+    let original_text = request.message.text.clone();
+    let mut prepared_media = Vec::with_capacity(request.media.len());
+    for item in &request.media {
+        let mut prepared = BotEventMedia::from(item.clone());
+        if let Some(reference) = request.transcript_refs.get(&item.blob_ref) {
+            let text = store
+                .read_text(&parse_blob_ref(reference)?)
+                .await
+                .map_err(|e| blob_error("read transcript", e))?;
+            if !request.message.text.is_empty() {
+                request.message.text.push_str("\n\n");
+            }
+            request.message.text.push_str(&text);
+            prepared.text_ref = Some(reference.clone());
+        }
+        prepared_media.push(prepared);
+    }
+    let mut document = chat_message_document(&request);
+    document.summary = original_summary;
+    if !request.transcript_refs.is_empty() {
+        if let Some(data) = document.data.as_mut() {
+            data["message"]["originalText"] = serde_json::Value::String(original_text);
+        }
+    }
+    let mut input = StoreBotEventInput::new(event_id.clone(), document);
     input.prompt_data = Some(chat_prompt_data(&request.media));
-    input.media = request.media.into_iter().map(BotEventMedia::from).collect();
+    input.media = prepared_media;
     input.receiver = Some(EventReceiver::Workflow {
         workflow_id: request.notify.workflow_id,
         workflow_kind: request.notify.workflow_kind,
@@ -913,6 +938,7 @@ mod tests {
 
     fn emit_request(text: &str, media: Vec<PreparedMediaItem>) -> ChatEmitEventRequest {
         ChatEmitEventRequest {
+            transcript_refs: Default::default(),
             universe_id: Uuid::nil(),
             bot_id: BotId::new("triage"),
             trigger_id: BotTriggerId::new("tg"),

@@ -514,7 +514,7 @@ async fn materialize_input_item(
                     extra: Default::default(),
                 }));
             }
-            let text = crate::blob_io::read_message_text(blobs, &item.content).await?;
+            let text = crate::blob_io::read_text(blobs, &item.content.content_ref).await?;
             Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                 role,
                 content: oai::InputMessageContent::Text(text),

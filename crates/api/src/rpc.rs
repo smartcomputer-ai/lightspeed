@@ -15,12 +15,7 @@ pub enum AgentApiErrorKind {
     Forbidden,
     /// No model was supplied and this universe has no default for the requested use.
     ModelDefaultUnset,
-    UnsupportedAudioMime,
     AudioBlobTooLarge,
-    AudioDurationTooLong,
-    TranscoderUnavailable,
-    TranscodeFailure,
-    TranscriptionFailure,
     /// The session's agent workflow exists but failed during bootstrap
     /// (rehydration) and cannot serve runs. Distinct from `NotFound` (no
     /// workflow) so clients/bridges treat it as a session recovery problem
@@ -96,28 +91,8 @@ impl AgentApiError {
         Self::new(AgentApiErrorKind::Forbidden, "request is not authorized")
     }
 
-    pub fn unsupported_audio_mime(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::UnsupportedAudioMime, message)
-    }
-
     pub fn audio_blob_too_large(message: impl Into<String>) -> Self {
         Self::new(AgentApiErrorKind::AudioBlobTooLarge, message)
-    }
-
-    pub fn audio_duration_too_long(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::AudioDurationTooLong, message)
-    }
-
-    pub fn transcoder_unavailable(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::TranscoderUnavailable, message)
-    }
-
-    pub fn transcode_failure(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::TranscodeFailure, message)
-    }
-
-    pub fn transcription_failure(message: impl Into<String>) -> Self {
-        Self::new(AgentApiErrorKind::TranscriptionFailure, message)
     }
 
     pub fn session_bootstrap_failed(message: impl Into<String>) -> Self {
@@ -138,18 +113,12 @@ impl AgentApiError {
 
     pub fn json_rpc_code(&self) -> i64 {
         match self.kind {
-            AgentApiErrorKind::InvalidRequest
-            | AgentApiErrorKind::UnsupportedAudioMime
-            | AgentApiErrorKind::AudioBlobTooLarge
-            | AgentApiErrorKind::AudioDurationTooLong
-            | AgentApiErrorKind::TranscoderUnavailable => -32602,
+            AgentApiErrorKind::InvalidRequest | AgentApiErrorKind::AudioBlobTooLarge => -32602,
             AgentApiErrorKind::Unauthenticated => -32001,
             AgentApiErrorKind::Forbidden => -32003,
             AgentApiErrorKind::NotFound => -32004,
             AgentApiErrorKind::Conflict => -32009,
-            AgentApiErrorKind::Rejected
-            | AgentApiErrorKind::TranscodeFailure
-            | AgentApiErrorKind::TranscriptionFailure => -32010,
+            AgentApiErrorKind::Rejected => -32010,
             AgentApiErrorKind::SessionBootstrapFailed => -32011,
             AgentApiErrorKind::EnvironmentNotReady => -32012,
             AgentApiErrorKind::ResponseTooLarge => -32013,
@@ -392,7 +361,7 @@ api_methods! {
     METHOD_SESSION_EVENTS_READ => read_session_events(SessionEventsReadParams) -> SessionEventsReadResponse =>
         ["Read the session event stream", "Returns chronological events. Forward (default) follows after and supports long-polling. Backward reads the latest window below before (or the head); pass nextCursor as before until complete. Follow live events after the initial backward headCursor. Windows may split runs/tool batches; keep historical reconstruction separate from live controls."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_CONTEXT_APPEND => append_context(ContextAppendParams) -> ContextAppendResponse =>
-        ["Append keyed session context", "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Append keyed session context", "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_REMOVE => remove_context(ContextRemoveParams) -> ContextRemoveResponse =>
         ["Remove keyed session context", "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse =>
@@ -461,6 +430,12 @@ api_methods! {
         ["List environment registration keys", "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE => revoke_environment_registration_key(EnvironmentRegistrationKeyRevokeParams) -> EnvironmentRegistrationKeyRevokeResponse =>
         ["Revoke an environment registration key", "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_TRANSCRIPTIONS_START => start_transcription(TranscriptionStartParams) -> TranscriptionResponse =>
+        ["Start transcription", "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created."], access: MethodAccess::Universe(UniverseAction::UseResource),
+    METHOD_TRANSCRIPTIONS_READ => read_transcription(TranscriptionReadParams) -> TranscriptionResponse =>
+        ["Read transcription", "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_TRANSCRIPTIONS_CANCEL => cancel_transcription(TranscriptionCancelParams) -> TranscriptionResponse =>
+        ["Cancel transcription", "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority."], access: MethodAccess::Universe(UniverseAction::UseResource),
     METHOD_MODELS_DEFAULTS_READ => read_model_defaults(ModelDefaultsReadParams) -> ModelDefaultsResponse =>
         ["Read universe model defaults", "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_MODELS_DEFAULTS_PUT => put_model_defaults(ModelDefaultsPutParams) -> ModelDefaultsResponse =>

@@ -862,13 +862,7 @@ pub struct InputAdmissionFailureView {
 #[serde(rename_all = "camelCase")]
 pub enum InputAdmissionFailureKind {
     UnsupportedMedia,
-    UnsupportedAudioMime,
     BlobMissing,
-    BlobTooLarge,
-    AudioDurationTooLong,
-    TranscoderUnavailable,
-    TranscodeFailure,
-    TranscriptionFailure,
     AdmissionRejected,
 }
 

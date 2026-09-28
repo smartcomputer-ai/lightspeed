@@ -581,7 +581,11 @@ impl ChatSessionDriver {
                 notify_on_terminal: None,
                 session_id,
                 source: RunStartSource::Input {
-                    items: vec![InputItem::Text { origin: None, text }],
+                    items: vec![InputItem::Text {
+                        provenance_ref: None,
+                        origin: None,
+                        text,
+                    }],
                 },
                 submission_id: Some(new_submission_id()),
                 config: Some(config),
@@ -648,7 +652,11 @@ impl ChatSessionDriver {
             .steer_run(api::RunSteerParams {
                 session_id: self.session_id.clone(),
                 run_id,
-                items: vec![InputItem::Text { origin: None, text }],
+                items: vec![InputItem::Text {
+                    provenance_ref: None,
+                    origin: None,
+                    text,
+                }],
             })
             .await
             .map_err(api_error)?

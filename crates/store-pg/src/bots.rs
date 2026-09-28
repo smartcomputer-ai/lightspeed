@@ -983,6 +983,12 @@ impl BotEventStore for PgStore {
             refs.extend(record.media.iter().map(|media| media.blob_ref.clone()));
             refs.extend(
                 record
+                    .media
+                    .iter()
+                    .filter_map(|media| media.text_ref.clone()),
+            );
+            refs.extend(
+                record
                     .receiver
                     .as_ref()
                     .and_then(|receiver| receiver.tools_ref())

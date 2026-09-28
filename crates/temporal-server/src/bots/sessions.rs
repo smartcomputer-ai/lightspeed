@@ -672,6 +672,7 @@ pub async fn append_context(
         .map(|event| ContextAppendEntry {
             key: appended_event_context_key(&event.id),
             item: InputItem::TextRef {
+                provenance_ref: None,
                 origin: Some("event".to_owned()),
                 blob_ref: event
                     .prompt_ref

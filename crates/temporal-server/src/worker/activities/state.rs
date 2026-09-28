@@ -31,7 +31,7 @@ use crate::{
     worker::{BrokerSecretResolver, SessionTools, StoredProviderKeyResolver},
 };
 
-use super::preprocess::{
+use super::audio::{
     AudioTranscoder, AudioTranscriber, OpenAiAudioTranscriber, UnavailableAudioTranscriber,
     default_audio_transcoder_from_env, default_openai_audio_transcriber,
 };
@@ -77,8 +77,9 @@ pub struct RuntimeProjectionActivityDeps {
     pub(super) profiles: Option<Arc<dyn ::profiles::ProfileStore>>,
 }
 
+/// Audio I/O dependencies for standalone transcription.
 #[derive(Clone)]
-pub struct PreprocessActivityDeps {
+pub struct AudioActivityDeps {
     pub(super) blobs: Arc<dyn BlobStore>,
     pub(super) transcriber: Arc<dyn AudioTranscriber>,
     pub(super) transcoder: Option<Arc<dyn AudioTranscoder>>,
@@ -119,7 +120,7 @@ pub struct ActivityState {
     tools: ToolActivityDeps,
     runtime_projection: Option<RuntimeProjectionActivityDeps>,
     pub(super) preparation_store: Option<Arc<PgStore>>,
-    preprocess: PreprocessActivityDeps,
+    audio: AudioActivityDeps,
     environment_jobs: Option<EnvironmentJobActivityDeps>,
     workflow_tool_executions: Option<WorkflowToolExecutionDeps>,
     subagents: Option<SubagentActivityDeps>,
@@ -151,7 +152,7 @@ impl ActivityState {
             },
             runtime_projection: None,
             preparation_store: None,
-            preprocess: PreprocessActivityDeps {
+            audio: AudioActivityDeps {
                 blobs: blobs.clone(),
                 transcriber: Arc::new(UnavailableAudioTranscriber),
                 transcoder: None,
@@ -185,7 +186,7 @@ impl ActivityState {
     }
 
     pub fn with_audio_transcriber(mut self, transcriber: Arc<dyn AudioTranscriber>) -> Self {
-        self.preprocess.transcriber = transcriber;
+        self.audio.transcriber = transcriber;
         self
     }
 
@@ -207,7 +208,7 @@ impl ActivityState {
     }
 
     pub fn with_audio_transcoder(mut self, transcoder: Arc<dyn AudioTranscoder>) -> Self {
-        self.preprocess.transcoder = Some(transcoder);
+        self.audio.transcoder = Some(transcoder);
         self
     }
 
@@ -443,8 +444,8 @@ impl ActivityState {
         self.runtime_projection.as_ref()
     }
 
-    pub(super) fn preprocess(&self) -> &PreprocessActivityDeps {
-        &self.preprocess
+    pub(super) fn audio(&self) -> &AudioActivityDeps {
+        &self.audio
     }
 
     pub(super) fn environment_jobs(&self) -> Option<&EnvironmentJobActivityDeps> {

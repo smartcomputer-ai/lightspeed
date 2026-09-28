@@ -38,7 +38,7 @@ pub(super) async fn admit_admissions(
             }
         };
         let correlation_token = admission.correlation_token.clone();
-        let mut command = admission.command;
+        let command = admission.command;
         if let CoreAgentCommand::ReplaceSessionConfig {
             config,
             expected_revision,
@@ -60,19 +60,6 @@ pub(super) async fn admit_admissions(
                 );
             }
             continue;
-        }
-        if observed_tools.is_none() && command_needs_input_preprocessing(&command) {
-            let session_id = drive.session_id().clone();
-            match preprocess_input_entries(ctx, session_id, command).await? {
-                RunInputPreprocessResult::Succeeded { command: rewritten } => command = *rewritten,
-                RunInputPreprocessResult::Failed { failure } => {
-                    record_admission_failure(
-                        ctx,
-                        failure.with_correlation_token(correlation_token),
-                    );
-                    continue;
-                }
-            }
         }
         let mut deferred_tools = None;
         if drive.state().lifecycle.status == CoreAgentStatus::Open
@@ -256,172 +243,6 @@ pub(super) fn admissible_during_turn(command: &CoreAgentCommand) -> bool {
     )
 }
 
-enum RunInputPreprocessResult {
-    Succeeded { command: Box<CoreAgentCommand> },
-    Failed { failure: AgentAdmissionFailure },
-}
-
-pub(super) fn command_needs_input_preprocessing(command: &CoreAgentCommand) -> bool {
-    match command {
-        CoreAgentCommand::RequestRun(request) => request.source.input().iter().any(is_audio_input),
-        CoreAgentCommand::UpsertContext { entry, .. } => is_audio_input(entry),
-        _ => false,
-    }
-}
-
-fn is_audio_input(input: &ContextEntryInput) -> bool {
-    input
-        .content
-        .media_type
-        .as_deref()
-        .map(|mime| mime.trim().to_ascii_lowercase().starts_with("audio/"))
-        .unwrap_or(false)
-}
-
-async fn preprocess_input_entries(
-    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    session_id: SessionId,
-    command: CoreAgentCommand,
-) -> anyhow::Result<RunInputPreprocessResult> {
-    let (submission_id, input, rebuild) = match command {
-        CoreAgentCommand::RequestRun(request) => {
-            let engine::RunRequestSource::Input { input } = request.source;
-            (
-                request.submission_id.clone(),
-                input,
-                InputPreprocessRebuild::RequestRun {
-                    submission_id: request.submission_id,
-                    run_config: request.run_config,
-                    notify_on_terminal: request.notify_on_terminal,
-                    requested_by: request.requested_by,
-                },
-            )
-        }
-        CoreAgentCommand::UpsertContext {
-            expected_revision,
-            key,
-            entry,
-        } => (
-            None,
-            vec![entry],
-            InputPreprocessRebuild::UpsertContext {
-                expected_revision,
-                key,
-            },
-        ),
-        command => {
-            return Ok(RunInputPreprocessResult::Succeeded {
-                command: Box::new(command),
-            });
-        }
-    };
-
-    let result = ctx
-        .start_activity(
-            WorkflowActivities::preprocess_run_input,
-            PreprocessRunInputActivityRequest { session_id, input },
-            activity_options(),
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-
-    match result.outcome {
-        PreprocessRunInputOutcome::Succeeded { input } => Ok(RunInputPreprocessResult::Succeeded {
-            command: Box::new(rebuild.rebuild(input)?),
-        }),
-        PreprocessRunInputOutcome::Failed { failure } => Ok(RunInputPreprocessResult::Failed {
-            failure: preprocess_failure_to_admission_failure(submission_id, failure),
-        }),
-    }
-}
-
-// Held only while one admission is preprocessed.
-#[allow(clippy::large_enum_variant)]
-enum InputPreprocessRebuild {
-    RequestRun {
-        submission_id: Option<SubmissionId>,
-        run_config: RunConfig,
-        notify_on_terminal: Vec<engine::RunTerminalNotifyIntent>,
-        requested_by: Option<engine::Attribution>,
-    },
-    UpsertContext {
-        expected_revision: Option<u64>,
-        key: ContextEntryKey,
-    },
-}
-
-impl InputPreprocessRebuild {
-    fn rebuild(self, input: Vec<ContextEntryInput>) -> anyhow::Result<CoreAgentCommand> {
-        match self {
-            Self::RequestRun {
-                submission_id,
-                run_config,
-                notify_on_terminal,
-                requested_by,
-            } => Ok(CoreAgentCommand::RequestRun(engine::RunRequestCommand {
-                notify_on_terminal,
-                requested_by,
-                submission_id,
-                source: engine::RunRequestSource::Input { input },
-                run_config,
-            })),
-            Self::UpsertContext {
-                expected_revision,
-                key,
-            } => {
-                let mut input = input;
-                let Some(entry) = input.pop() else {
-                    anyhow::bail!("preprocessed context append returned no entry");
-                };
-                if !input.is_empty() {
-                    anyhow::bail!("preprocessed context append returned multiple entries");
-                }
-                Ok(CoreAgentCommand::UpsertContext {
-                    expected_revision,
-                    key,
-                    entry,
-                })
-            }
-        }
-    }
-}
-
-pub(super) fn preprocess_failure_to_admission_failure(
-    submission_id: Option<SubmissionId>,
-    failure: PreprocessRunInputFailure,
-) -> AgentAdmissionFailure {
-    AgentAdmissionFailure {
-        preparation_error: None,
-        submission_id,
-        correlation_token: None,
-        kind: match failure.kind {
-            PreprocessRunInputFailureKind::UnsupportedAudioMime => {
-                AgentAdmissionFailureKind::UnsupportedAudioMime
-            }
-            PreprocessRunInputFailureKind::AudioBlobMissing => {
-                AgentAdmissionFailureKind::AudioBlobMissing
-            }
-            PreprocessRunInputFailureKind::AudioBlobTooLarge => {
-                AgentAdmissionFailureKind::AudioBlobTooLarge
-            }
-            PreprocessRunInputFailureKind::AudioDurationTooLong => {
-                AgentAdmissionFailureKind::AudioDurationTooLong
-            }
-            PreprocessRunInputFailureKind::TranscoderUnavailable => {
-                AgentAdmissionFailureKind::TranscoderUnavailable
-            }
-            PreprocessRunInputFailureKind::TranscodeFailure => {
-                AgentAdmissionFailureKind::TranscodeFailure
-            }
-            PreprocessRunInputFailureKind::TranscriptionFailure => {
-                AgentAdmissionFailureKind::TranscriptionFailure
-            }
-        },
-        message: failure.message,
-        rejection: None,
-    }
-}
-
 pub(super) fn should_refresh_runtime_projection_before_admitting(
     state: &CoreAgentState,
     command: &CoreAgentCommand,
@@ -531,42 +352,4 @@ pub(super) fn active_instruction_inputs(
             )
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn upsert_preprocess_rebuild_preserves_expected_context_revision() {
-        let key = ContextEntryKey::new("client.audio");
-        let entry = ContextEntryInput {
-            kind: engine::ContextEntryKind::ProviderOpaque,
-            content: engine::ContentRef {
-                content_ref: BlobRef::from_bytes(b"transcribed"),
-                media_type: Some("application/json".to_owned()),
-                provider_kind: None,
-            },
-            preview: None,
-            origin: None,
-            provenance_ref: None,
-            token_estimate: None,
-        };
-
-        let command = InputPreprocessRebuild::UpsertContext {
-            expected_revision: Some(7),
-            key: key.clone(),
-        }
-        .rebuild(vec![entry.clone()])
-        .expect("rebuild upsert");
-
-        assert_eq!(
-            command,
-            CoreAgentCommand::UpsertContext {
-                expected_revision: Some(7),
-                key,
-                entry,
-            }
-        );
-    }
 }

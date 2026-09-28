@@ -364,6 +364,10 @@ pub enum InputItem {
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
         origin: Option<String>,
+        /// Optional source blob in this universe, retained with the session.
+        /// Provenance is metadata, not model input or an authorization identity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance_ref: Option<String>,
         text: String,
     },
     TextRef {
@@ -373,6 +377,10 @@ pub enum InputItem {
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
         origin: Option<String>,
+        /// Optional source blob in this universe, retained with the session.
+        /// Provenance is metadata, not model input or an authorization identity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance_ref: Option<String>,
         blob_ref: String,
     },
     Media {

@@ -1,8 +1,7 @@
 # P184 — Universe model defaults and standalone transcription
 
-**Status:** First slice implemented, 2026-09-28: universe defaults, session
-resolution, CLI configuration, and development seeding. Platform settings,
-route readiness, and standalone transcription remain to be implemented.
+**Status:** Universe defaults, Platform model settings, standalone transcription,
+and channel voice preparation implemented, 2026-09-28. Web dictation remains.
 Builds on [CLI session model routing](cli-session-model-routing.md) and
 [the runtime CLI](p183-first-class-runtime-cli.md). Supersedes the placement
 of transcription inside session admission in
@@ -183,60 +182,56 @@ and cancellation races must converge on one recorded outcome.
 
 ### 5. Explicit request identity and result lifetime
 
-Persist the admitted request identity, attribution, immutable resolved model,
-and input/result references in a small transcription record. Temporal owns the
-execution lifecycle. This record supports recovery, API lookup, and CAS
-retention; it is not a generic job framework or a transcript cache.
+Temporal owns the admitted request, attribution, pinned model, status, and
+result reference. There is no transcription table, schema migration, lease, or
+separate retention service.
 
-Within the caller's universe and ownership scope, an idempotency key identifies
-one request. A matching retry rejoins that job; conflicting input or options
-produce a conflict. Look up the original admission before resolving current
-defaults. Fingerprint the submitted request, including whether its model was
-omitted, rather than recomputing its identity from today's default.
+Within a universe and requester scope, an explicit idempotency key identifies
+one request. Matching retries query the original workflow before consulting
+current defaults. Changed input or options conflict. The workflow start uses
+reject-duplicate identity; concurrent admissions recover the winning request.
+The original submitted request preserves whether its model was omitted.
+Temporal's namespace history retention bounds this identity guarantee.
 
-Persist the resolved route once. Credentials and endpoint configuration are
-resolved through the provider record at execution time, following the same
-policy as generation. Changes to defaults cannot select another model during
-retry. A recoverable workflow-start boundary must handle crashes between
-record creation and Temporal start.
+Credentials and endpoint configuration are resolved through the provider record
+at execution time. Default changes cannot select another model during retry.
+An ambiguous upstream response can still result in another billed attempt;
+this does not promise exactly-once provider execution.
 
-Do not use an audio-content hash as the public job identity. Explicitly
-repeating a transcription can be intentional, and identical audio may belong
-to different callers. Reuse an already persisted result on retry; do not claim
-exactly-once upstream billing after an ambiguous provider response.
+Audio and transcript content live in ordinary CAS. Workflow history carries
+bounded metadata and references: source audio, resolved model, and transcription
+options. The result blob contains only plain UTF-8 text. Input admission refreshes ordinary
+CAS grace; it does not create a temporary retention root. Unsubmitted content
+may be swept after that grace (seven days by default), and a missing completed
+result is reported as expired. A delayed caller can upload again with a new key.
 
-Audio and transcript content live in CAS; workflow payloads carry bounded
-metadata and references. A transcript artifact records text, source audio,
-resolved model, and relevant options. Retain provider-native response material
-separately if needed, without embedding credentials or transport headers.
+Session admission sets the existing `provenance_ref` to the source audio.
+Existing session roots retain both transcript and original recording. Bot-event
+roots also retain prepared transcript references alongside their audio while
+awaiting delivery. These extend existing reference enumeration, not storage
+infrastructure.
 
-Active jobs root their required blobs. Completed jobs retain results and their
-idempotency records for an explicit bounded interval, exposed through expiry
-metadata. Define and test that interval before delivery. Expired results must
-be distinguishable from provider failure. Once a transcript is admitted to a
-session, session retention roots its content and source-audio provenance
-independently of job expiry. Extend CAS reference traversal accordingly.
-
-Add a dedicated `transcriptions` method group. Platform Contributors can start
-jobs; reads and cancellation respect requester ownership and administrator
-access, including audio/result download paths. Dictation drafts are not exposed
-as a universe-wide job listing. Preserve the existing distinction between
-Platform person-level access and direct universe-key authority; a CAS hash is
-not a substitute for an access check.
+The `transcriptions` method group permits Contributors to start jobs through
+person-level gateways. Asserted actors can only read or cancel their own drafts;
+direct universe keys retain their method-group authority. There is no draft
+listing. CAS download continues to use the existing universe-scoped blob access
+policy. A separate person-level administrator draft browser is outside this slice.
 
 ### 6. Prepared input is the session boundary
 
-The target session APIs accept ordinary text or an explicit transcript
-reference for transcribed speech. Add `InputItem::Transcript { transcriptRef }`
-to materialize the existing transcript context representation and source-audio
-provenance. Validate and retain the artifact at admission. The engine receives
-prepared content and references and performs no transcription orchestration.
+Session APIs accept ordinary `Text` or `TextRef` input. Both support an optional
+`provenanceRef` pointing to a source blob in the same universe. Admission checks
+that the source exists and copies the reference into the existing context
+`provenance_ref`. Projections preserve it. This generic metadata supports audio,
+documents, or other sources without exposing transformation-specific formats to
+sessions. The engine receives prepared text and performs no transcription
+orchestration. There is no dedicated transcript input or JSON artifact.
 
 After callers migrate, raw audio `Media` is rejected consistently by run
 start, context append, and steering, with an actionable typed error directing
 callers to transcription. Context append retains its per-entry failure
-semantics. Existing transcript history remains readable. Native audio model
-input, if added later, will be a separate explicit capability.
+semantics. Native audio model input, if added later, will be a separate explicit
+capability.
 
 Do not build a general ingress coordinator merely to preserve the old
 single-call audio convenience. Audit existing clients before cutover. If a
@@ -274,8 +269,8 @@ exit paths; failures preserve the user's existing text and support retry.
 
 The ordinary send controls determine whether reviewed text starts a run,
 queues it, or steers it. It is sent as text, without representing the edited
-words as the original audio transcript. Keep temporary job retention separate
-from the session's history.
+words as the original audio transcript. Unsubmitted recordings and artifacts
+use ordinary CAS grace rather than session retention.
 
 Show transcription availability and an actionable reason when unavailable.
 Readiness follows the selected transcription route, including providers that
@@ -294,12 +289,10 @@ admission. Migrate first-party channel and web consumers to prepared input,
 then cut over the raw-audio API contract. CLI and direct-client migration
 guidance must describe the upload, transcription, and submission steps.
 
-Treat removal of the old workflow activity calls as a Temporal compatibility
-change. Inventory existing histories and pending admissions, then use a
-supported workflow-versioning or drain/transition strategy with replay
-coverage. Keep historical decoding and any required legacy activity handlers
-until that transition is complete. Deleting PostgreSQL data is not a rollout
-strategy and does not resolve Temporal histories.
+This is a greenfield cutover. Remove session audio preprocessing, its activity
+registration, request/result types, admission errors, and compatibility branches.
+Channels always prepare audio through standalone transcription before session
+admission. No legacy activity or replay adapter is retained.
 
 Existing sessions keep their persisted models. Upgrade tooling imports model
 defaults only for explicitly selected universes. Fresh universes remain
@@ -321,17 +314,17 @@ this roadmap does not authorize unrelated documentation or root README edits.
       the CLI and seed untouched development universes through the API.
 - [x] Add Platform Models settings, per-selection configuration diagnostics,
       and effective-route readiness.
-- [ ] Extend provider configuration/resolution and the audio client for
+- [x] Extend provider configuration/resolution and the audio client for
       compatible transcription endpoints, including credentialless transport.
-- [ ] Add the transcription record, workflow, start/read/cancel APIs, request
-      deduplication, access rules, and CAS lifetime handling.
-- [ ] Add transcript artifacts and prepared transcript input with provenance.
+- [x] Add the workflow-owned transcription state, start/read/cancel APIs,
+      request deduplication, and requester access rules.
+- [x] Return plain transcript text and add generic source provenance to text inputs.
 - [ ] Add web dictation with draft preview, cancellation, and demo coverage.
-- [ ] Move channel voice-message preparation before bot-event delivery and
+- [x] Move channel voice-message preparation before bot-event delivery and
       validate ordering, failure handling, and retries.
-- [ ] Audit raw-audio clients, implement the workflow-history transition, and
-      remove session preprocessing from new execution paths.
-- [ ] Regenerate affected contracts, complete scoped checks, and record
+- [x] Audit raw-audio clients, implement the workflow-history transition, and
+      remove session preprocessing and obsolete compatibility code.
+- [x] Regenerate affected contracts, complete scoped checks, and record
       migration and validation results here.
 
 ### First slice
@@ -434,8 +427,8 @@ bot setup editors label omitted selections as the universe default.
 Readiness checks the selected provider and API, distinguishes missing or
 disabled credentials from unknown availability, and accepts credentialless
 providers and models absent from discovery. This reports configuration status,
-not proof that a future model call will succeed. The speech-to-text slot stays
-out of this UI until standalone transcription consumes it.
+not proof that a future model call will succeed. The speech-to-text slot is configurable through the runtime API and CLI; its
+settings row will accompany web dictation.
 
 The demo uses the same defaults editor, revision checks, and creation policy,
 including bot sessions. Clearing a default leaves existing session models
@@ -444,6 +437,68 @@ during discovery failure, conflicts, provider setup, effective-model previews,
 unset defaults, and demo isolation and preservation. The full web, Platform
 server, and TypeScript client suites, workspace typechecks, and production and
 demo builds pass. The Models page was also visually checked in the browser.
+
+### Standalone transcription and channel preparation
+
+`TranscriptionWorkflow` lives under `temporal-workflow/src/workflows` and runs
+on the sessions role's queue independently of session orchestration. The
+start/read/cancel API carries requester identity, stable explicit request keys,
+and a pinned model. Activity attempts are bounded to three, with a fifteen-minute
+schedule budget and a sixteen-minute workflow deadline. Cancellation waits for
+activity acknowledgment before recording the terminal state. Missing results
+report expiry after an authoritative CAS metadata check, even when bytes remain
+in a process cache.
+
+Provider resolution now accepts the audio-transcriptions protocol, including
+custom authenticated and anonymous endpoints. Native requests use the selected
+model, language, prompt, URL, and configured headers. Endpoint overrides exclude
+deployment credentials and organization/project headers. Provider responses and
+transcripts are bounded. Audio limits and the optional transcoder belong to
+standalone transcription; the session workflow performs no audio processing.
+
+Channels authorize and prepare attachments before starting/joining standalone
+transcription through a short activity bridge. The conversation awaits the
+result before emitting a bot event; stable conversation/message/attachment keys
+reuse the same job. Filters see the transcript in message text; the original
+text is retained separately. Spoken commands are never reclassified as channel
+commands. Bot attachment `textRef` becomes ordinary text-reference input with
+its source attachment as provenance. Existing bot-event and session roots retain
+both text and original audio.
+
+New run, context, and steering input rejects raw audio with guidance to use
+`transcriptions/start`, poll `transcriptions/read`, then submit
+`{type: "textRef", blobRef: ..., provenanceRef: ...}` or reviewed plain text. The in-tree
+raw-audio producer was Channels; CLI chat sends text. Direct API callers must
+migrate. The greenfield cleanup removes the legacy preprocessing activity,
+session input rewriting, audio-specific admission failures, source-to-transcript
+retry matching, and channel version branch. Audio helpers and their tests live
+under the standalone transcription implementation.
+
+The subsequent simplification removes `Transcript`, `transcript_input`, the
+JSON artifact, and transcript-specific provider rendering. The workflow returns
+a plain text blob and source-audio metadata. Reviewed dictation can omit source
+provenance; channel delivery supplies it through generic text input.
+
+The plain-text path passed API/projection/bot/model-adapter/workflow tests,
+356 server unit tests, affected Rust target checks, TypeScript checks, and client
+tests. Live transcription, channel redelivery, and PostgreSQL retention tests
+passed together. The expiry fixture uses unique text because identical results
+share a CAS blob that another session may legitimately retain.
+
+Cleanup validation passed: API and workflow tests, generated contract checks,
+356 server unit tests, all server targets, and TypeScript checks. The three
+standalone transcription live tests and the channel voice/redelivery live test
+passed again against an isolated database, which was removed afterward.
+
+Validation passed: API/auth/model-runtime/bot/workflow suites and generated
+contract checks; server unit tests; TypeScript checks, Platform/web/client tests,
+and the web production build. Live tests used an isolated PostgreSQL database
+and unique Temporal queues. They cover default pinning across changes,
+idempotency conflicts, requester isolation, transcoding, session provenance,
+transient retry, acknowledged cancellation, ordinary CAS expiry, bot-event
+retention, and channel redelivery with spoken command text. A real OpenAI audio
+transcription also passed. Web recording and dictation tests belong to the next
+slice.
 
 ## Acceptance and validation
 
@@ -463,11 +518,11 @@ workflow boundaries require it; live/credentialed suites remain explicit.
   providers never fall back to OpenAI. Discovery absence does not prohibit
   valid manual selection.
 - Matching job retries survive default changes and gateway/workflow restarts;
-  conflicting payloads fail. Exercise the record/start crash boundary,
+  conflicting payloads fail. Exercise concurrent workflow admission,
   transient versus terminal failures, deadlines, and cancellation races.
-- Active and retained jobs keep blobs alive. Job expiry releases temporary
-  roots while session-admitted transcripts retain their source audio. Verify
-  access isolation for job reads and content downloads.
+- Unsubmitted content uses ordinary CAS grace. Missing results report expiry;
+  session-admitted transcripts and bot events retain their original audio and
+  transcript through existing roots. Verify requester isolation for job reads.
 - Channel redelivery and delivery failure after successful transcription do
   not repeat admitted work. Voice/text ordering and mixed-media failures are
   explicit. Authorization precedes model work, and transcripts are available
@@ -476,8 +531,8 @@ workflow boundaries require it; live/credentialed suites remain explicit.
   preserved edits, cancellation, late completion after send/navigation,
   microphone cleanup, permission/format failures, and unavailable defaults.
 - Run start, context append, and steering consistently enforce prepared input.
-  Old transcript history remains readable and recorded workflow histories
-  remain replayable across the selected rollout strategy.
+  Text provenance survives projection and session retention without special
+  transcript rendering, artifacts, or legacy transcription activity calls.
 
 ## Scope boundary
 

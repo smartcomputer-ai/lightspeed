@@ -16,29 +16,29 @@ use crate::worker::{
     ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
     ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL,
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
-    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB,
-    ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
-    ACTIVITY_START_WORKFLOW_TOOL_EXECUTION, ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE,
-    ACTIVITY_SUBAGENT_RESOLVE, ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL,
-    ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS, ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY,
-    AppendEventsRequest, AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
+    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_RUNTIME_PROJECTION_REFRESH, ACTIVITY_START_WORKFLOW_TOOL_EXECUTION,
+    ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
+    ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
+    ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, AppendEventsRequest,
+    AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
     ContextCompactActivityRequest, CreateOrLoadSessionRequest, CreateOrLoadSessionResult,
     EnvironmentJobCancelActivityRequest, EnvironmentJobPollActivityRequest,
     EnvironmentJobPollActivityResult, EnvironmentJobStartActivityRequest,
-    EnvironmentJobStartActivityResult, LlmGenerateActivityRequest,
-    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
-    ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
+    EnvironmentJobStartActivityResult, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
+    ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
     RuntimeProjectionRefreshActivityResult, ToolInvokeBatchActivityRequest,
     ToolInvokeCallActivityRequest, ToolInvokeCallActivityResult,
     ToolPreparePromiseControlsActivityRequest,
 };
 
+mod audio;
 mod common;
 mod compaction;
 mod context_refresh;
 mod environment_jobs;
 mod llm;
-mod preprocess;
+mod transcriptions;
 pub use context_refresh::subagent_catalog_snapshot;
 mod state;
 mod storage;
@@ -46,13 +46,13 @@ mod subagents;
 mod tools;
 mod workflow_tools;
 
-pub use preprocess::{
+pub use audio::{
     AudioTranscodeError, AudioTranscodeOutput, AudioTranscodeRequest, AudioTranscoder,
     AudioTranscriber, AudioTranscription, AudioTranscriptionError, AudioTranscriptionRequest,
     FfmpegAudioTranscoder, default_audio_transcoder_from_env,
 };
 pub use state::{
-    ActivityState, LlmActivityDeps, PreprocessActivityDeps, RuntimeProjectionActivityDeps,
+    ActivityState, AudioActivityDeps, LlmActivityDeps, RuntimeProjectionActivityDeps,
     StorageActivityDeps, ToolActivityDeps,
 };
 
@@ -226,8 +226,8 @@ mod tests {
             temporal_workflow::WorkflowActivities::llm_generate.name()
         );
         assert_eq!(
-            WorkerActivities::preprocess_run_input.name(),
-            temporal_workflow::WorkflowActivities::preprocess_run_input.name()
+            WorkerActivities::execute_transcription.name(),
+            temporal_workflow::WorkflowActivities::execute_transcription.name()
         );
         assert_eq!(
             WorkerActivities::context_compact.name(),
@@ -463,6 +463,26 @@ mod tests {
 
 #[activities]
 impl WorkerActivities {
+    #[activity(name = "WorkflowActivities::execute_transcription")]
+    pub async fn execute_transcription(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        args: temporal_workflow::TranscriptionWorkflowArgs,
+    ) -> Result<temporal_workflow::TranscriptionActivityResult, ActivityError> {
+        if ctx
+            .info()
+            .workflow_execution
+            .as_ref()
+            .map(|w| w.workflow_id.as_str())
+            != Some(temporal_workflow::transcription_workflow_id(&args).as_str())
+        {
+            return Err(common::activity_error(anyhow::anyhow!(
+                "transcription workflow identity mismatch"
+            )));
+        }
+        let state = self.state_for(&ctx).await?;
+        common::cancellable(&ctx, transcriptions::execute(&state, args)).await
+    }
     #[activity(name = ACTIVITY_CREATE_OR_LOAD_SESSION)]
     pub async fn create_or_load_session(
         self: Arc<Self>,
@@ -532,16 +552,6 @@ impl WorkerActivities {
         let state = self.state_for(&ctx).await?;
         let attempt = ctx.info().attempt;
         common::cancellable(&ctx, llm::generate(state.llm(), attempt, request)).await
-    }
-
-    #[activity(name = ACTIVITY_PREPROCESS_RUN_INPUT)]
-    pub async fn preprocess_run_input(
-        self: Arc<Self>,
-        ctx: ActivityContext,
-        request: PreprocessRunInputActivityRequest,
-    ) -> Result<PreprocessRunInputActivityResult, ActivityError> {
-        let state = self.state_for(&ctx).await?;
-        preprocess::preprocess_run_input(state.preprocess(), request).await
     }
 
     #[activity(name = ACTIVITY_CONTEXT_COMPACT)]

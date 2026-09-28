@@ -16,12 +16,11 @@ pub use activities::{
     ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
     ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL,
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
-    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PREPROCESS_RUN_INPUT, ACTIVITY_PUT_BLOB,
-    ACTIVITY_READ_BLOB, ACTIVITY_RUNTIME_PROJECTION_REFRESH,
-    ACTIVITY_START_WORKFLOW_TOOL_EXECUTION, ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE,
-    ACTIVITY_SUBAGENT_RESOLVE, ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL,
-    ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS, ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY,
-    WorkflowActivities,
+    ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
+    ACTIVITY_RUNTIME_PROJECTION_REFRESH, ACTIVITY_START_WORKFLOW_TOOL_EXECUTION,
+    ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
+    ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
+    ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, WorkflowActivities,
 };
 pub use config::{
     ACTIVITY_CANCELLATION_HEARTBEAT_INTERVAL, ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT,
@@ -57,9 +56,7 @@ pub use types::{
     LLM_PROVIDER_TRANSIENT_ERROR_TYPE, LLM_TRANSIENT_FAILURE_DETAILS_VERSION,
     LlmGenerateActivityRequest, LlmTransientFailureDetails, MaterializedAwaitPromiseResult,
     MaterializedAwaitResult, PendingEmission, PendingPromiseCancellation, PendingSourceResolution,
-    PendingToolBatchResume, PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult,
-    PreprocessRunInputFailure, PreprocessRunInputFailureKind, PreprocessRunInputOutcome,
-    PromiseSourcePoll, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    PendingToolBatchResume, PromiseSourcePoll, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
     RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
     SessionBootstrapPayloadTooLarge, SubagentChildRef, SubagentCloseActivityRequest,
     SubagentExecutionPhase, SubagentExecutionSnapshot, SubagentPrepareActivityRequest,
@@ -78,4 +75,6 @@ pub use workflows::channels;
 pub use workflows::{
     AgentSessionWorkflow, BotControllerWorkflow, BotTriggerFireWorkflow,
     ChannelConversationWorkflow, EnvironmentJobWorkflow, SubagentExecutionWorkflow,
+    TranscriptionActivityResult, TranscriptionSnapshot, TranscriptionWorkflow,
+    TranscriptionWorkflowArgs, transcription_id, transcription_workflow_id,
 };

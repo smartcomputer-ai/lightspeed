@@ -1,27 +1,20 @@
 use engine::{
-    BlobRef, ContentRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
+    ContentRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmRequest, ModelSelection, ProviderApiKind,
     storage::{BlobStore, InMemoryBlobStore},
 };
-use llm_clients::content::{AUDIO_TRANSCRIPT_PROVIDER_KIND, AudioTranscript};
 use serde_json::{Value, json};
 
 #[tokio::test(flavor = "current_thread")]
-async fn structured_transcripts_and_authored_json_lower_across_all_provider_apis() {
+async fn text_with_provenance_is_unchanged_across_all_provider_apis() {
     let blobs = InMemoryBlobStore::new();
-    let transcript = AudioTranscript {
-        filename: "voice.ogg".into(),
-        text: "[audio transcript: quoted]\nKeep these spoken words.".into(),
-    };
-    let bytes = serde_json::to_vec(&transcript).unwrap();
-    let reference = blobs.put_bytes(bytes.clone()).await.unwrap();
     let source = blobs.put_bytes(b"source audio".to_vec()).await.unwrap();
-    for structured in [true, false] {
-        let expected = if structured {
-            transcript.model_text()
-        } else {
-            String::from_utf8(bytes.clone()).unwrap()
-        };
+    for expected in [
+        "[audio transcript: quoted]\nKeep these spoken words.",
+        r#"{"filename":"voice.ogg","text":"ordinary authored JSON"}"#,
+    ] {
+        let bytes = expected.as_bytes().to_vec();
+        let reference = blobs.put_bytes(bytes.clone()).await.unwrap();
         for api_kind in [
             ProviderApiKind::OpenAiResponses,
             ProviderApiKind::OpenAiCompletions,
@@ -36,10 +29,10 @@ async fn structured_transcripts_and_authored_json_lower_across_all_provider_apis
                 source: ContextEntrySource::ContextEdit,
                 content: ContentRef {
                     content_ref: reference.clone(),
-                    media_type: Some("application/json".into()),
-                    provider_kind: structured.then(|| AUDIO_TRANSCRIPT_PROVIDER_KIND.to_owned()),
+                    media_type: Some("text/plain".into()),
+                    provider_kind: None,
                 },
-                preview: structured.then(|| transcript.header()),
+                preview: None,
                 origin: None,
                 provenance_ref: Some(source.clone()),
                 token_estimate: None,
@@ -103,5 +96,4 @@ async fn structured_transcripts_and_authored_json_lower_across_all_provider_apis
             assert_eq!(blobs.read_bytes(&reference).await.unwrap(), bytes);
         }
     }
-    assert_eq!(reference, BlobRef::from_bytes(&bytes));
 }

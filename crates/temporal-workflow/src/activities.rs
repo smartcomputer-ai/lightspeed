@@ -12,8 +12,7 @@ use crate::{
     EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
     EnvironmentJobPrepareWorkflowToolRequest, EnvironmentJobStartActivityRequest,
     EnvironmentJobStartActivityResult, JoinedContextPreparationRequest, LlmGenerateActivityRequest,
-    PreprocessRunInputActivityRequest, PreprocessRunInputActivityResult, PutBlobRequest,
-    ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
+    PutBlobRequest, ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
     RuntimeProjectionRefreshActivityResult, SubagentCloseActivityRequest,
     SubagentPrepareActivityRequest, SubagentPrepareActivityResult, SubagentResolveActivityRequest,
     ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest, ToolInvokeCallActivityResult,
@@ -30,7 +29,6 @@ pub const ACTIVITY_MATERIALIZE_AWAIT_RESULT: &str = "WorkflowActivities::materia
 pub const ACTIVITY_PREPARE_JOINED_CONTEXT: &str = "WorkflowActivities::prepare_joined_context";
 pub const ACTIVITY_APPEND_EVENTS: &str = "WorkflowActivities::append_events";
 pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
-pub const ACTIVITY_PREPROCESS_RUN_INPUT: &str = "WorkflowActivities::preprocess_run_input";
 pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
 pub const ACTIVITY_TOOL_INVOKE_CALL: &str = "WorkflowActivities::tool_invoke_call";
@@ -60,6 +58,14 @@ pub struct WorkflowActivities;
 
 #[activities]
 impl WorkflowActivities {
+    #[activity(name = "WorkflowActivities::execute_transcription")]
+    pub async fn execute_transcription(
+        _ctx: ActivityContext,
+        _args: crate::TranscriptionWorkflowArgs,
+    ) -> Result<crate::TranscriptionActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
     #[activity(name = ACTIVITY_CREATE_OR_LOAD_SESSION)]
     pub async fn create_or_load_session(
         _ctx: ActivityContext,
@@ -118,14 +124,6 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: LlmGenerateActivityRequest,
     ) -> Result<LlmGenerationResult, ActivityError> {
-        unimplemented!("workflow activity definition only")
-    }
-
-    #[activity(name = ACTIVITY_PREPROCESS_RUN_INPUT)]
-    pub async fn preprocess_run_input(
-        _ctx: ActivityContext,
-        _request: PreprocessRunInputActivityRequest,
-    ) -> Result<PreprocessRunInputActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

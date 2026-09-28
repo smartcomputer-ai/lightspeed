@@ -216,7 +216,10 @@ fn validate_model_endpoint(endpoint: &ModelEndpointConfig) -> Result<(), AuthReg
     }
     let mut kinds = BTreeSet::new();
     for kind in &endpoint.api_kinds {
-        if !matches!(kind.as_str(), "openai:responses" | "openai:completions") {
+        if !matches!(
+            kind.as_str(),
+            "openai:responses" | "openai:completions" | "openai:audio-transcriptions"
+        ) {
             return Err(AuthRegistryError::InvalidInput {
                 message: format!("model endpoint API kind {kind:?} is not supported"),
             });
@@ -611,6 +614,13 @@ mod tests {
             .headers
             .insert("Authorization".to_owned(), "secret".to_owned());
         assert!(validate_model_endpoint(&reserved).is_err());
+    }
+
+    #[test]
+    fn speech_endpoints_declare_the_audio_protocol() {
+        let mut speech = endpoint("http://localhost:9000/v1");
+        speech.api_kinds = vec!["openai:audio-transcriptions".into()];
+        validate_model_endpoint(&speech).expect("speech endpoint");
     }
 
     #[test]

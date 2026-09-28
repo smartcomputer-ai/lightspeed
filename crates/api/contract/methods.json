@@ -354,7 +354,7 @@
         "action": "control_session",
         "kind": "universe"
       },
-      "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
+      "description": "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.",
       "group": "session",
       "method": "session/context/append",
       "params": {
@@ -1222,6 +1222,81 @@
       "role": "operator",
       "scope": "universe",
       "summary": "Revoke an environment registration key",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "description": "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.",
+      "group": "transcriptions",
+      "method": "transcriptions/start",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/TranscriptionStartParams"
+        },
+        "type": "TranscriptionStartParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfTranscriptionResponse"
+        },
+        "type": "AgentApiOutcome<TranscriptionResponse>"
+      },
+      "role": "contributor",
+      "scope": "universe",
+      "summary": "Start transcription",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "description": "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
+      "group": "transcriptions",
+      "method": "transcriptions/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/TranscriptionReadParams"
+        },
+        "type": "TranscriptionReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfTranscriptionResponse"
+        },
+        "type": "AgentApiOutcome<TranscriptionResponse>"
+      },
+      "role": "viewer",
+      "scope": "universe",
+      "summary": "Read transcription",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "use_resource",
+        "kind": "universe"
+      },
+      "description": "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
+      "group": "transcriptions",
+      "method": "transcriptions/cancel",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/TranscriptionCancelParams"
+        },
+        "type": "TranscriptionCancelParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfTranscriptionResponse"
+        },
+        "type": "AgentApiOutcome<TranscriptionResponse>"
+      },
+      "role": "contributor",
+      "scope": "universe",
+      "summary": "Cancel transcription",
       "target": null
     },
     {

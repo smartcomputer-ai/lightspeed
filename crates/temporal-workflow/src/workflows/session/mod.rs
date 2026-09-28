@@ -29,7 +29,7 @@ use engine::{
     BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextMessageRole, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
     CoreAgentEntry, CoreAgentEvent, CoreAgentState, CoreAgentStatus, EmissionEnvelope,
-    LlmGenerationRequest, RunConfig, RunEvent, RunStatus, SessionId, SessionPosition, SubmissionId,
+    LlmGenerationRequest, RunEvent, RunStatus, SessionId, SessionPosition, SubmissionId,
     ToolInvocationBatchRequest,
 };
 use futures::{FutureExt, pin_mut, select};
@@ -45,10 +45,8 @@ use crate::{
     AwaitMaterializationRequest, AwaitOutcome, AwaitPromiseResult, CancellingWatchdog,
     CreateOrLoadSessionRequest, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
     JoinedContextPreparationRequest, LlmGenerateActivityRequest, PendingEmission,
-    PendingPromiseCancellation, PendingSourceResolution, PendingToolBatchResume,
-    PreprocessRunInputActivityRequest, PreprocessRunInputFailure, PreprocessRunInputFailureKind,
-    PreprocessRunInputOutcome, PromiseSourcePoll, PutBlobRequest,
-    RuntimeProjectionRefreshActivityRequest, ToolInvokeBatchActivityRequest,
+    PendingPromiseCancellation, PendingSourceResolution, PendingToolBatchResume, PromiseSourcePoll,
+    PutBlobRequest, RuntimeProjectionRefreshActivityRequest, ToolInvokeBatchActivityRequest,
     ToolPreparePromiseControlsActivityRequest, WorkflowActivities, activity_options,
     compose_workflow_id, default_instructions, split_workflow_id,
 };

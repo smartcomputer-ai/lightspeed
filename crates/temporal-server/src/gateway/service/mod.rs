@@ -24,6 +24,7 @@ mod models_api;
 mod oauth_api;
 mod parse;
 mod profiles;
+mod transcriptions;
 pub(crate) use crate::environments::provider_controllers;
 mod session_jobs;
 mod session_lifecycle;
@@ -394,9 +395,7 @@ async fn context_append_result(
     let entry = project_context_entry_inputs(std::slice::from_ref(input))
         .into_iter()
         .next();
-    let activation_text = if is_audio_transcript_entry(input) {
-        api_projection::project_content_text(store, &input.content).await?
-    } else if context_append_entry_has_activation_text(input) {
+    let activation_text = if context_append_entry_has_activation_text(input) {
         // The submitted text is reused when it produced this exact entry so
         // plain-text appends do not pay a blob read per response entry.
         match submitted_text {
@@ -483,35 +482,11 @@ fn active_entry_input(entry: &ContextEntry) -> ContextEntryInput {
 }
 
 fn active_context_entry_matches_input(active: &ContextEntry, input: &ContextEntryInput) -> bool {
-    let active_input = active_entry_input(active);
-    active_input == *input || audio_input_matches_transcript(input, &active_input)
-}
-
-fn audio_input_matches_transcript(input: &ContextEntryInput, active: &ContextEntryInput) -> bool {
-    input
-        .content
-        .media_type
-        .as_deref()
-        .is_some_and(|mime| mime.trim().to_ascii_lowercase().starts_with("audio/"))
-        && is_audio_transcript_entry(active)
-        && active.provenance_ref.as_ref() == Some(&input.content.content_ref)
-}
-
-fn is_audio_transcript_entry(input: &ContextEntryInput) -> bool {
-    input.content.provider_kind.as_deref()
-        == Some(llm_clients::content::AUDIO_TRANSCRIPT_PROVIDER_KIND)
+    active_entry_input(active) == *input
 }
 
 fn input_admission_failure_from_api_error(error: AgentApiError) -> InputAdmissionFailureView {
     let kind = match error.kind {
-        AgentApiErrorKind::UnsupportedAudioMime => InputAdmissionFailureKind::UnsupportedAudioMime,
-        AgentApiErrorKind::AudioBlobTooLarge => InputAdmissionFailureKind::BlobTooLarge,
-        AgentApiErrorKind::AudioDurationTooLong => InputAdmissionFailureKind::AudioDurationTooLong,
-        AgentApiErrorKind::TranscoderUnavailable => {
-            InputAdmissionFailureKind::TranscoderUnavailable
-        }
-        AgentApiErrorKind::TranscodeFailure => InputAdmissionFailureKind::TranscodeFailure,
-        AgentApiErrorKind::TranscriptionFailure => InputAdmissionFailureKind::TranscriptionFailure,
         AgentApiErrorKind::NotFound => InputAdmissionFailureKind::BlobMissing,
         _ => InputAdmissionFailureKind::UnsupportedMedia,
     };
@@ -525,21 +500,6 @@ fn input_admission_failure_from_workflow(
     failure: &AgentAdmissionFailure,
 ) -> InputAdmissionFailureView {
     let kind = match failure.kind {
-        AgentAdmissionFailureKind::UnsupportedAudioMime => {
-            InputAdmissionFailureKind::UnsupportedAudioMime
-        }
-        AgentAdmissionFailureKind::AudioBlobMissing => InputAdmissionFailureKind::BlobMissing,
-        AgentAdmissionFailureKind::AudioBlobTooLarge => InputAdmissionFailureKind::BlobTooLarge,
-        AgentAdmissionFailureKind::AudioDurationTooLong => {
-            InputAdmissionFailureKind::AudioDurationTooLong
-        }
-        AgentAdmissionFailureKind::TranscoderUnavailable => {
-            InputAdmissionFailureKind::TranscoderUnavailable
-        }
-        AgentAdmissionFailureKind::TranscodeFailure => InputAdmissionFailureKind::TranscodeFailure,
-        AgentAdmissionFailureKind::TranscriptionFailure => {
-            InputAdmissionFailureKind::TranscriptionFailure
-        }
         AgentAdmissionFailureKind::RejectedCommand => InputAdmissionFailureKind::AdmissionRejected,
     };
     InputAdmissionFailureView {
@@ -2012,6 +1972,25 @@ impl AgentApiService for GatewayAgentApi {
         self.read_channel_conversation_snapshot(params)
             .await
             .map(AgentApiOutcome::new)
+    }
+
+    async fn start_transcription(
+        &self,
+        params: TranscriptionStartParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        self.start_transcription_impl(params).await
+    }
+    async fn read_transcription(
+        &self,
+        params: TranscriptionReadParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        self.read_transcription_impl(params).await
+    }
+    async fn cancel_transcription(
+        &self,
+        params: TranscriptionCancelParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        self.cancel_transcription_impl(params).await
     }
 
     async fn read_model_defaults(

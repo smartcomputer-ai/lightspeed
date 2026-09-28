@@ -798,7 +798,7 @@ async fn materialize_block(
                 };
                 return Ok((role, blocks));
             }
-            let text = crate::blob_io::read_message_text(blobs, &entry.content).await?;
+            let text = crate::blob_io::read_text(blobs, &entry.content.content_ref).await?;
             Ok((role, vec![am::ContentBlockParam::text(text)]))
         }
         ContextEntryKind::ToolResult { call_id, is_error } => {

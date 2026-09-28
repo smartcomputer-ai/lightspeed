@@ -31,6 +31,51 @@ impl ChannelWorkerActivities {
 
 #[activities]
 impl ChannelWorkerActivities {
+    #[activity(name = ACTIVITY_CHAT_TRANSCRIBE_MEDIA)]
+    pub async fn transcribe_media(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        request: ChatTranscribeMediaRequest,
+    ) -> Result<api::TranscriptionView, ActivityError> {
+        let api = self.universes.api_for(request.active.universe_id).await?;
+        let active =
+            crate::channels::activities::assert_trigger_active(&api, request.active.clone())
+                .await?;
+        if let ChatTriggerActiveResult::Inactive { reason } = active {
+            return Err(ActivityError::application(
+                temporalio_common::error::ApplicationFailure::non_retryable(anyhow::anyhow!(
+                    reason
+                )),
+            ));
+        }
+        let owner = api::Attribution::Internal {
+            component: "channel".into(),
+            cause: request.active.trigger_id.to_string(),
+        };
+        api.admit_transcription(
+            api::TranscriptionStartParams {
+                idempotency_key: request.idempotency_key,
+                audio: request.audio,
+                model: None,
+                language: None,
+                prompt: None,
+            },
+            owner,
+        )
+        .await
+        .map_err(|error| {
+            if matches!(error.kind, api::AgentApiErrorKind::Internal) {
+                ActivityError::from(anyhow::anyhow!(error.to_string()))
+            } else {
+                ActivityError::application(
+                    temporalio_common::error::ApplicationFailure::non_retryable(anyhow::anyhow!(
+                        error.to_string()
+                    )),
+                )
+            }
+        })
+    }
+
     #[activity(name = ACTIVITY_CHAT_TOOL_DECLARATIONS)]
     pub async fn chat_tool_declarations(
         self: Arc<Self>,

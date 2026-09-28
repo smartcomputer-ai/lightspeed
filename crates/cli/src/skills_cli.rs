@@ -128,7 +128,11 @@ async fn use_skill(args: SkillsUseArgs) -> Result<()> {
         .map_err(api_error)?
         .result
         .session;
-    let items = vec![api::InputItem::Text { origin: None, text }];
+    let items = vec![api::InputItem::Text {
+        provenance_ref: None,
+        origin: None,
+        text,
+    }];
     if let Some(run) = session.active_run {
         let response = api
             .steer_run(api::RunSteerParams {

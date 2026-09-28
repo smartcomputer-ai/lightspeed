@@ -545,31 +545,113 @@ async fn handle_inbound(ctx: &Ctx, inbound: AdmittedInbound) {
             tracing::debug!(message_id = %message(&inbound).message_id, ?reason, "inbound dropped");
         }
         InboundPlan::Emit { text } => {
-            let media = match prepare_media(ctx, &inbound).await {
-                Ok(media) => media,
-                Err(error) => {
-                    let message_id = message(&inbound).message_id.clone();
-                    ctx.state_mut(|wf| {
-                        wf.state.messages.insert(
-                            inbound_key,
-                            ReceivedMessage {
-                                message_id: message_id.clone(),
-                                status: MessageStatus::Failed,
-                                seq: None,
-                                session_id: None,
-                                error: Some(error.clone()),
-                            },
-                        );
-                        wf.state
-                            .protocol_errors
-                            .push(format!("media {message_id}: {error}"));
-                    });
-                    return;
-                }
-            };
-            emit_message(ctx, inbound_key, &inbound, text, media).await;
+            let (media, transcript_refs) =
+                match prepare_message_media(ctx, &inbound, &inbound_key).await {
+                    Ok(media) => media,
+                    Err(error) => {
+                        let message_id = message(&inbound).message_id.clone();
+                        ctx.state_mut(|wf| {
+                            wf.state.messages.insert(
+                                inbound_key,
+                                ReceivedMessage {
+                                    message_id: message_id.clone(),
+                                    status: MessageStatus::Failed,
+                                    seq: None,
+                                    session_id: None,
+                                    error: Some(error.clone()),
+                                },
+                            );
+                            wf.state
+                                .protocol_errors
+                                .push(format!("media {message_id}: {error}"));
+                        });
+                        return;
+                    }
+                };
+            emit_message(ctx, inbound_key, &inbound, text, media, transcript_refs).await;
         }
     }
+}
+
+async fn prepare_message_media(
+    ctx: &Ctx,
+    inbound: &AdmittedInbound,
+    key: &str,
+) -> Result<
+    (
+        Vec<PreparedMediaItem>,
+        std::collections::BTreeMap<String, String>,
+    ),
+    String,
+> {
+    let media = prepare_media(ctx, inbound).await?;
+    let mut transcripts = std::collections::BTreeMap::new();
+    for (index, item) in media.iter().enumerate() {
+        if item.kind != api::ChannelMediaKind::Audio {
+            continue;
+        }
+        let request = ctx.state(|wf| super::ChatTranscribeMediaRequest {
+            active: ChatAssertTriggerActiveRequest {
+                universe_id: wf.start.universe_id,
+                bot_id: wf.start.bot_id.clone(),
+                trigger_id: wf.start.trigger_id.clone(),
+                account_id: wf.start.account_id.clone(),
+                chat_id: wf.start.conversation.chat_id.clone(),
+                scope: wf.start.scope,
+            },
+            idempotency_key: crate::transcription_id(
+                &api::Attribution::Local,
+                &format!("{}:{key}:{index}", wf.start.conversation.key()),
+            ),
+            audio: api::TranscriptionAudio {
+                blob_ref: item.blob_ref.clone(),
+                mime: item.mime.clone(),
+                name: item.name.clone().unwrap_or_else(|| "audio".into()),
+            },
+        });
+        loop {
+            let view = activity(
+                ctx,
+                ChannelActivities::transcribe_media,
+                request.clone(),
+                channel_activity_options(),
+            )
+            .await?;
+            match view.status {
+                api::TranscriptionStatus::Pending | api::TranscriptionStatus::Running => {
+                    let cancelled = {
+                        let timer = ctx.timer(std::time::Duration::from_secs(2));
+                        let cancelled = ctx.cancelled();
+                        pin_mut!(timer, cancelled);
+                        select! { _ = timer => false, _ = cancelled => true }
+                    };
+                    if cancelled {
+                        let _ = ctx
+                            .external_workflow(
+                                format!("{}/{}", request.active.universe_id, view.transcription_id),
+                                None,
+                            )
+                            .signal(crate::TranscriptionWorkflow::cancel, ())
+                            .await;
+                        return Err("Audio preparation cancelled.".into());
+                    }
+                }
+                api::TranscriptionStatus::Succeeded => {
+                    transcripts.insert(
+                        item.blob_ref.clone(),
+                        view.transcript_ref.ok_or("missing transcript reference")?,
+                    );
+                    break;
+                }
+                _ => {
+                    return Err(view.failure.map(|f| f.message).unwrap_or_else(|| {
+                        "Transcription unavailable; resend the recording.".into()
+                    }));
+                }
+            }
+        }
+    }
+    Ok((media, transcripts))
 }
 
 /// Download every attachment through the connector and put it in the CAS;
@@ -621,6 +703,7 @@ async fn emit_message(
     inbound: &AdmittedInbound,
     text: String,
     media: Vec<PreparedMediaItem>,
+    transcript_refs: std::collections::BTreeMap<String, String>,
 ) {
     let chat = message(inbound);
     let request = ctx.state_mut(|wf| {
@@ -648,6 +731,7 @@ async fn emit_message(
                 is_reply_to_bot: chat.is_reply_to_bot,
             },
             media,
+            transcript_refs,
             tools_ref: wf
                 .state
                 .tools_ref

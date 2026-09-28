@@ -23,6 +23,7 @@
     "better-auth": "1.7.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "extendable-media-recorder": "^9.2.40",
     "hono": "^4.7.0",
     "lucide-react": "^1.23.0",
     "react": "^19.1.0",

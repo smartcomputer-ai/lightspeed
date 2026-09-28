@@ -357,6 +357,7 @@ async fn run_case(
             session_id: session.to_string(),
             source: api::RunStartSource::Input {
                 items: vec![api::InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "run transfer checks".into(),
                 }],

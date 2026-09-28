@@ -54,6 +54,9 @@ export const METHODS = [
   "environments/registration-keys/read",
   "environments/registration-keys/list",
   "environments/registration-keys/revoke",
+  "transcriptions/start",
+  "transcriptions/read",
+  "transcriptions/cancel",
   "models/defaults/read",
   "models/defaults/put",
   "models/list",
@@ -229,7 +232,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"control_session","kind":"universe"},
     summary: "Append keyed session context",
-    description: "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.",
+    description: "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.",
   },
   "session/context/remove": {
     scope: "universe",
@@ -434,6 +437,24 @@ export const METHOD_INFO = {
     access: {"action":"configure_resource","kind":"universe"},
     summary: "Revoke an environment registration key",
     description: "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
+  },
+  "transcriptions/start": {
+    scope: "universe",
+    access: {"action":"use_resource","kind":"universe"},
+    summary: "Start transcription",
+    description: "Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.",
+  },
+  "transcriptions/read": {
+    scope: "universe",
+    access: {"action":"read","kind":"universe"},
+    summary: "Read transcription",
+    description: "Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.",
+  },
+  "transcriptions/cancel": {
+    scope: "universe",
+    access: {"action":"use_resource","kind":"universe"},
+    summary: "Cancel transcription",
+    description: "Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.",
   },
   "models/defaults/read": {
     scope: "universe",
@@ -1083,7 +1104,7 @@ export interface MethodMap {
   /**
    * Append keyed session context
    *
-   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.
+   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
    */
   "session/context/append": {
     params: Api.ContextAppendParams;
@@ -1394,6 +1415,33 @@ export interface MethodMap {
   "environments/registration-keys/revoke": {
     params: Api.EnvironmentRegistrationKeyRevokeParams;
     result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse;
+  };
+  /**
+   * Start transcription
+   *
+   * Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
+   */
+  "transcriptions/start": {
+    params: Api.TranscriptionStartParams;
+    result: Api.AgentApiOutcomeOfTranscriptionResponse;
+  };
+  /**
+   * Read transcription
+   *
+   * Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.
+   */
+  "transcriptions/read": {
+    params: Api.TranscriptionReadParams;
+    result: Api.AgentApiOutcomeOfTranscriptionResponse;
+  };
+  /**
+   * Cancel transcription
+   *
+   * Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
+   */
+  "transcriptions/cancel": {
+    params: Api.TranscriptionCancelParams;
+    result: Api.AgentApiOutcomeOfTranscriptionResponse;
   };
   /**
    * Read universe model defaults
@@ -2276,7 +2324,7 @@ export const rpc = {
   /**
    * Append keyed session context
    *
-   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; media preprocessing can fail one entry without discarding successful entries.
+   * Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries.
    */
   sessionContextAppend(client: RpcCaller, params: Api.ContextAppendParams): Promise<Api.AgentApiOutcomeOfContextAppendResponse> {
     return client.call("session/context/append", params);
@@ -2552,6 +2600,30 @@ export const rpc = {
    */
   environmentsRegistrationKeysRevoke(client: RpcCaller, params: Api.EnvironmentRegistrationKeyRevokeParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse> {
     return client.call("environments/registration-keys/revoke", params);
+  },
+  /**
+   * Start transcription
+   *
+   * Admit or rejoin a requester-scoped audio transcription. The resolved model is immutable. No session or run is created.
+   */
+  transcriptionsStart(client: RpcCaller, params: Api.TranscriptionStartParams): Promise<Api.AgentApiOutcomeOfTranscriptionResponse> {
+    return client.call("transcriptions/start", params);
+  },
+  /**
+   * Read transcription
+   *
+   * Read status and transcript text. An asserted actor may only read their own drafts; direct universe keys retain method-group authority. Unsubmitted CAS results may expire.
+   */
+  transcriptionsRead(client: RpcCaller, params: Api.TranscriptionReadParams): Promise<Api.AgentApiOutcomeOfTranscriptionResponse> {
+    return client.call("transcriptions/read", params);
+  },
+  /**
+   * Cancel transcription
+   *
+   * Cancel unfinished transcription. Repeated cancellation is safe; completed results remain unchanged. An asserted actor may only cancel their own drafts; direct universe keys retain method-group authority.
+   */
+  transcriptionsCancel(client: RpcCaller, params: Api.TranscriptionCancelParams): Promise<Api.AgentApiOutcomeOfTranscriptionResponse> {
+    return client.call("transcriptions/cancel", params);
   },
   /**
    * Read universe model defaults

@@ -55,6 +55,8 @@ pub enum MethodGroup {
     Vfs,
     #[serde(rename = "profiles")]
     Profiles,
+    #[serde(rename = "transcriptions")]
+    Transcriptions,
     #[serde(rename = "models")]
     Models,
     #[serde(rename = "mcp")]
@@ -89,12 +91,13 @@ pub enum MethodGroup {
 }
 
 impl MethodGroup {
-    pub const ALL: [MethodGroup; 16] = [
+    pub const ALL: [MethodGroup; 17] = [
         Self::Session,
         Self::BlobsPut,
         Self::Vfs,
         Self::Profiles,
         Self::Models,
+        Self::Transcriptions,
         Self::Mcp,
         Self::Environments,
         Self::Bots,
@@ -116,6 +119,7 @@ impl MethodGroup {
             Self::Vfs => "vfs",
             Self::Profiles => "profiles",
             Self::Models => "models",
+            Self::Transcriptions => "transcriptions",
             Self::Mcp => "mcp",
             Self::Environments => "environments",
             Self::Bots => "bots",
@@ -164,6 +168,8 @@ impl MethodGroup {
             Self::BlobsPut
         } else if group("session/") || group("blobs/") {
             Self::Session
+        } else if group("transcriptions/") {
+            Self::Transcriptions
         } else if group("vfs/") {
             Self::Vfs
         } else if group("profiles/") {

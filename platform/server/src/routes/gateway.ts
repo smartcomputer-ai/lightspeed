@@ -209,7 +209,7 @@ const modelEndpointSchema = z.object({
   baseUrl: z.string().trim().url(),
   headers: z.record(z.string(), z.string()).optional(),
   apiKinds: z
-    .array(z.enum(["openai:responses", "openai:completions"]))
+    .array(z.enum(["openai:responses", "openai:completions", "openai:audio-transcriptions"]))
     .min(1)
     .refine((kinds) => new Set(kinds).size === kinds.length, "API kinds must be unique"),
 });

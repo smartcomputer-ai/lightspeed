@@ -48,9 +48,6 @@ pub async fn project_content_text(
         Some(llm_clients::content::ANTHROPIC_THINKING_PROVIDER_KIND) => {
             llm_clients::content::anthropic_thinking
         }
-        Some(llm_clients::content::AUDIO_TRANSCRIPT_PROVIDER_KIND) => {
-            llm_clients::content::audio_transcript
-        }
         Some(_) => {
             return Err(AgentApiError::invalid_request(
                 "unsupported native content text projection",
@@ -92,7 +89,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn audio_run_summary_previews_project_text_before_applying_the_limit() {
+    async fn run_summary_previews_preserve_unicode_at_the_limit() {
         let blobs = InMemoryBlobStore::new();
         let projector = crate::CoreAgentProjector::new(&blobs);
         let boundary = format!("{}é", "🦀".repeat(127));
@@ -108,11 +105,7 @@ mod tests {
                 true,
             ),
         ] {
-            let bytes = serde_json::to_vec(&AudioTranscript {
-                filename: "voice.ogg".to_owned(),
-                text,
-            })
-            .unwrap();
+            let bytes = text.into_bytes();
             let reference = blobs.put_bytes(bytes.clone()).await.unwrap();
             let source = engine::RunSource::Input {
                 input: vec![engine::ContextEntryInput {
@@ -121,10 +114,10 @@ mod tests {
                     },
                     content: ContentRef {
                         content_ref: reference.clone(),
-                        media_type: Some("application/json".into()),
-                        provider_kind: Some(AUDIO_TRANSCRIPT_PROVIDER_KIND.into()),
+                        media_type: Some("text/plain".into()),
+                        provider_kind: None,
                     },
-                    preview: Some("short preprocessing preview".into()),
+                    preview: None,
                     origin: None,
                     provenance_ref: None,
                     token_estimate: None,
@@ -158,8 +151,6 @@ mod tests {
                 serde_json::to_vec(&json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":full,"annotations":[]}]})).unwrap()),
             (Some(OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"role":"assistant","content":full,"annotations":[]})).unwrap()),
-            (Some(AUDIO_TRANSCRIPT_PROVIDER_KIND),
-                serde_json::to_vec(&json!({"filename":"note.ogg","text":full})).unwrap()),
         ] {
             let content = ContentRef {
                 content_ref: blobs.put_bytes(bytes.clone()).await.unwrap(),
@@ -180,7 +171,7 @@ mod tests {
             assert_eq!(view.text.as_deref(), Some(full.as_str()));
             assert!(!view.text_truncated);
             assert_eq!(projector.project_input_entries(&[input]).await.unwrap(),
-                vec![api::InputItem::Text { origin: None,  text: full.clone() }]);
+                vec![api::InputItem::Text { provenance_ref: None, origin: None,  text: full.clone() }]);
 
             // The retained terminal output still resolves after its context is gone.
             let source = engine::RunSource::Input { input: Vec::new() };

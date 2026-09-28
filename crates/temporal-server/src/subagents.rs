@@ -403,6 +403,7 @@ impl SubagentService {
             .start_run(
                 &child_session_id,
                 vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: args.input,
                 }],
@@ -1122,6 +1123,7 @@ mod tests {
         assert_eq!(
             runs[0].1,
             vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "review the change".to_owned()
             }]

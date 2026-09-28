@@ -456,6 +456,7 @@ async fn run_steering_live_client(
             session_id: session_id.as_str().to_owned(),
             run_id: run.id.clone(),
             items: vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "also mention the moon".to_owned(),
             }],
@@ -489,6 +490,7 @@ async fn run_steering_live_client(
             session_id: session_id.as_str().to_owned(),
             run_id: run.id.clone(),
             items: vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "too late".to_owned(),
             }],
@@ -521,6 +523,7 @@ async fn run_steering_final_turn_live_client(
             session_id: session_id.as_str().to_owned(),
             run_id: run.id.clone(),
             items: vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "one more thing".to_owned(),
             }],
@@ -622,6 +625,7 @@ async fn run_queue_live_client(
             session_id: session_id.as_str().to_owned(),
             run_id: second.id.clone(),
             items: vec![InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "nope".to_owned(),
             }],
@@ -757,6 +761,7 @@ async fn run_parallel_tool_batch_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "run a parallel tool batch".to_owned(),
                 }],
@@ -877,6 +882,7 @@ async fn run_transient_llm_retry_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "retry through transient provider failures".to_owned(),
                 }],
@@ -958,6 +964,7 @@ async fn run_llm_retry_exhaustion_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "exhaust the provider retry budget".to_owned(),
                 }],
@@ -1007,6 +1014,7 @@ async fn run_llm_retry_exhaustion_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "recover after the provider outage".to_owned(),
                 }],
@@ -1084,6 +1092,7 @@ async fn run_unbounded_hosted_run_live_client(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: "complete thirty verification tool rounds".to_owned(),
                 }],

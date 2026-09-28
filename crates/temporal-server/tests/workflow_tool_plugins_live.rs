@@ -935,6 +935,7 @@ async fn start_managed_session_and_run(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: format!("CALL {call_tool}"),
                 }],
@@ -1157,6 +1158,7 @@ async fn workflow_tool_controller_self_receiver_resolves_before_run_terminal() -
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text {
+                        provenance_ref: None,
                         origin: None,
                         text: format!("CALL {MESSAGE_SEND_TOOL}"),
                     }],
@@ -1432,6 +1434,7 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text {
+                        provenance_ref: None,
                         origin: None,
                         text: format!("CALL {MESSAGE_SEND_TOOL}"),
                     }],
@@ -1552,6 +1555,7 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text {
+                        provenance_ref: None,
                         origin: None,
                         text: format!("CALL {REQUEST_APPROVAL_TOOL}"),
                     }],
@@ -2005,6 +2009,7 @@ async fn workflow_tool_dead_receiver_fails_promise_terminally() -> anyhow::Resul
                     session_id: session_id.as_str().to_owned(),
                     source: RunStartSource::Input {
                         items: vec![InputItem::Text {
+                            provenance_ref: None,
                             origin: None,
                             text: format!("CALL {REQUEST_APPROVAL_TOOL}"),
                         }],
@@ -2183,6 +2188,7 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                         session_id: session_id.as_str().to_owned(),
                         source: RunStartSource::Input {
                             items: vec![InputItem::Text {
+                                provenance_ref: None,
                                 origin: None,
                                 text: format!("CALL {REQUEST_APPROVAL_TOOL}"),
                             }],
@@ -2511,6 +2517,7 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text {
+                        provenance_ref: None,
                         origin: None,
                         text: format!("CALL_NOWAIT {REQUEST_APPROVAL_TOOL}"),
                     }],
@@ -2606,7 +2613,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
                 submission_id: None,
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
-                    items: vec![InputItem::Text { origin: None,
+                    items: vec![InputItem::Text { provenance_ref: None, origin: None,
                         text: format!("CALL_SHORTWAIT {LAUNCH_JOB_TOOL}"),
                     }],
                 },

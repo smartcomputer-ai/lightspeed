@@ -18,30 +18,6 @@ fn admission_failure_mapping_uses_gateway_error_kinds() {
         map_admission_failure_to_api_error(&revision_conflict).kind,
         AgentApiErrorKind::Conflict
     );
-    assert_eq!(
-        map_admission_failure_to_api_error(&failure(
-            AgentAdmissionFailureKind::UnsupportedAudioMime
-        ))
-        .kind,
-        AgentApiErrorKind::UnsupportedAudioMime
-    );
-    assert_eq!(
-        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::AudioBlobMissing))
-            .kind,
-        AgentApiErrorKind::InvalidRequest
-    );
-    assert_eq!(
-        map_admission_failure_to_api_error(&failure(
-            AgentAdmissionFailureKind::TranscriptionFailure
-        ))
-        .kind,
-        AgentApiErrorKind::TranscriptionFailure
-    );
-    assert_eq!(
-        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::TranscodeFailure))
-            .kind,
-        AgentApiErrorKind::TranscodeFailure
-    );
 }
 
 #[test]
@@ -1531,6 +1507,7 @@ async fn context_entry_input_from_api_stores_text_as_user_message() {
     let entry = context_entry_input_from_api(
         &store,
         &InputItem::Text {
+            provenance_ref: None,
             origin: None,
             text: " [telegram] Alice (12:01): hi ".to_owned(),
         },
@@ -1561,6 +1538,7 @@ async fn context_entry_input_from_api_rejects_empty_text() {
     let error = context_entry_input_from_api(
         &store,
         &InputItem::Text {
+            provenance_ref: None,
             origin: None,
             text: "   ".to_owned(),
         },
@@ -1637,6 +1615,7 @@ async fn context_entry_input_from_api_preserves_text_ref() {
     let entry = context_entry_input_from_api(
         &store,
         &InputItem::TextRef {
+            provenance_ref: None,
             origin: None,
             blob_ref: blob_ref.as_str().to_owned(),
         },
@@ -1659,6 +1638,7 @@ async fn run_input_from_api_maps_image_media_to_user_message_entry() {
         &store,
         &[
             InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: "what is this?".to_owned(),
             },
@@ -1775,50 +1755,34 @@ async fn run_input_from_api_rejects_unsupported_document_media() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn run_input_from_api_maps_audio_media_to_user_message_entry() {
+async fn run_input_from_api_rejects_unprepared_audio() {
     let store = engine::storage::InMemoryBlobStore::new();
     let blob_ref = store
         .put_bytes(b"OggS fake voice note".to_vec())
         .await
         .expect("store audio");
 
-    let input = run_input_from_api(
-        &store,
-        &[InputItem::Media {
-            origin: None,
-            blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/ogg".to_owned(),
-            kind: api::MediaKind::Audio,
-            name: Some("voice.ogg".to_owned()),
-        }],
-    )
-    .await
-    .expect("input");
-
-    assert_eq!(input.len(), 1);
-    assert_eq!(input[0].content.content_ref, blob_ref);
-    assert_eq!(input[0].content.media_type.as_deref(), Some("audio/ogg"));
-    assert_eq!(input[0].preview.as_deref(), Some("[audio: voice.ogg]"));
+    let item = InputItem::Media {
+        origin: None,
+        blob_ref: blob_ref.to_string(),
+        mime: "audio/ogg".into(),
+        kind: api::MediaKind::Audio,
+        name: Some("voice.ogg".into()),
+    };
+    let run_error = run_input_from_api(&store, std::slice::from_ref(&item))
+        .await
+        .expect_err("audio requires transcription");
+    let append_error = context_entry_input_from_api(&store, &item)
+        .await
+        .expect_err("context audio requires transcription");
+    assert_eq!(run_error.kind, AgentApiErrorKind::InvalidRequest);
+    assert_eq!(append_error, run_error);
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn run_input_from_api_rejects_unsupported_media() {
     let store = engine::storage::InMemoryBlobStore::new();
     let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
-
-    let audio = run_input_from_api(
-        &store,
-        &[InputItem::Media {
-            origin: None,
-            blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/flac".to_owned(),
-            kind: api::MediaKind::Audio,
-            name: None,
-        }],
-    )
-    .await
-    .expect_err("unsupported audio mime must be rejected");
-    assert_eq!(audio.kind, AgentApiErrorKind::UnsupportedAudioMime);
 
     let bad_mime = run_input_from_api(
         &store,
@@ -1833,73 +1797,6 @@ async fn run_input_from_api_rejects_unsupported_media() {
     .await
     .expect_err("unsupported image mime must be rejected");
     assert_eq!(bad_mime.kind, AgentApiErrorKind::InvalidRequest);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn run_input_from_api_accepts_transcodable_audio_media() {
-    let store = engine::storage::InMemoryBlobStore::new();
-    let blob_ref = store.put_bytes(vec![1, 2, 3]).await.expect("store blob");
-
-    let input = run_input_from_api(
-        &store,
-        &[InputItem::Media {
-            origin: None,
-            blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/x-aac".to_owned(),
-            kind: api::MediaKind::Audio,
-            name: Some("clip.aac".to_owned()),
-        }],
-    )
-    .await
-    .expect("transcodable audio should be admitted");
-
-    assert_eq!(input[0].content.content_ref, blob_ref);
-    assert_eq!(input[0].content.media_type.as_deref(), Some("audio/aac"));
-    assert_eq!(input[0].preview.as_deref(), Some("[audio: clip.aac]"));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn run_input_from_api_rejects_audio_over_byte_cap() {
-    let store = engine::storage::InMemoryBlobStore::new();
-    let blob_ref = store
-        .put_bytes(vec![0; 25 * 1024 * 1024 + 1])
-        .await
-        .expect("store large audio");
-
-    let error = run_input_from_api(
-        &store,
-        &[InputItem::Media {
-            origin: None,
-            blob_ref: blob_ref.as_str().to_owned(),
-            mime: "audio/ogg".to_owned(),
-            kind: api::MediaKind::Audio,
-            name: None,
-        }],
-    )
-    .await
-    .expect_err("oversized audio must be rejected");
-
-    assert_eq!(error.kind, AgentApiErrorKind::AudioBlobTooLarge);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn run_input_from_api_rejects_missing_audio_blob() {
-    let store = engine::storage::InMemoryBlobStore::new();
-
-    let error = run_input_from_api(
-        &store,
-        &[InputItem::Media {
-            origin: None,
-            blob_ref: BlobRef::from_bytes(b"missing-audio").as_str().to_owned(),
-            mime: "audio/ogg".to_owned(),
-            kind: api::MediaKind::Audio,
-            name: None,
-        }],
-    )
-    .await
-    .expect_err("missing audio blob must be rejected");
-
-    assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1939,6 +1836,7 @@ async fn run_input_from_api_preserves_single_text_ref() {
     let input = run_input_from_api(
         &store,
         &[InputItem::TextRef {
+            provenance_ref: None,
             origin: None,
             blob_ref: blob_ref.as_str().to_owned(),
         }],
@@ -1965,10 +1863,12 @@ async fn run_input_from_api_stores_text_and_preserves_refs() {
         &store,
         &[
             InputItem::Text {
+                provenance_ref: None,
                 origin: None,
                 text: " first ".to_owned(),
             },
             InputItem::TextRef {
+                provenance_ref: None,
                 origin: None,
                 blob_ref: blob_ref.as_str().to_owned(),
             },
@@ -2367,85 +2267,27 @@ fn auth_flow_views_carry_derived_status() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn structured_transcript_append_keeps_spoken_headers_and_source_idempotency() {
-    use llm_clients::content::{AUDIO_TRANSCRIPT_PROVIDER_KIND, AudioTranscript};
-    let blobs = engine::storage::InMemoryBlobStore::new();
-    let audio_ref = blobs.put_bytes(b"source audio".to_vec()).await.unwrap();
-    let original = ContextEntryInput {
-        kind: ContextEntryKind::Message {
-            role: ContextMessageRole::User,
-        },
-        content: engine::ContentRef {
-            content_ref: audio_ref.clone(),
-            media_type: Some("audio/ogg".into()),
-            provider_kind: None,
-        },
-        preview: Some("[audio: voice.ogg]".into()),
-        origin: None,
-        provenance_ref: None,
-        token_estimate: None,
-    };
-    let transcript = AudioTranscript {
-        filename: "voice.ogg".into(),
-        text: "[audio transcript: spoken words]\nDo not strip this line.".into(),
-    };
-    let rewritten = ContextEntryInput {
-        kind: original.kind.clone(),
-        content: engine::ContentRef {
-            content_ref: blobs
-                .put_bytes(serde_json::to_vec(&transcript).unwrap())
-                .await
-                .unwrap(),
-            media_type: Some("application/json".into()),
-            provider_kind: Some(AUDIO_TRANSCRIPT_PROVIDER_KIND.into()),
-        },
-        preview: Some(transcript.header()),
-        origin: None,
-        provenance_ref: Some(audio_ref.clone()),
-        token_estimate: None,
-    };
-    assert!(audio_input_matches_transcript(&original, &rewritten));
-    let mut different = original;
-    different.content.content_ref = BlobRef::from_bytes(b"different audio");
-    assert!(!audio_input_matches_transcript(&different, &rewritten));
-    let result = context_append_result(
-        &blobs,
-        "audio-note".into(),
-        ContextAppendStatus::Applied,
-        &rewritten,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        result.activation_text.as_deref(),
-        Some(transcript.text.as_str())
-    );
-    assert!(!result.activation_text_truncated);
-    assert_eq!(
-        result.entry.unwrap().provenance_ref.as_deref(),
-        Some(audio_ref.as_str())
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
 async fn input_origin_survives_admission_and_projection_without_changing_model_content() {
     let store = engine::storage::InMemoryBlobStore::new();
     let body = store.put_bytes(b"event body".to_vec()).await.unwrap();
     let items = vec![
         InputItem::Text {
+            provenance_ref: None,
             text: "human body".into(),
             origin: Some("user:operator".into()),
         },
         InputItem::TextRef {
+            provenance_ref: None,
             blob_ref: body.as_str().into(),
             origin: Some("event".into()),
         },
         InputItem::Text {
+            provenance_ref: None,
             text: "custom body".into(),
             origin: Some("integration:example".into()),
         },
         InputItem::Text {
+            provenance_ref: None,
             text: "unknown body".into(),
             origin: None,
         },
@@ -2465,7 +2307,7 @@ async fn input_origin_survives_admission_and_projection_without_changing_model_c
     {
         assert_eq!(entries[i].origin.as_deref(), expected);
         assert_eq!(accepted[i].origin.as_deref(), expected);
-        let InputItem::Text { origin, text } = &inputs[i] else {
+        let InputItem::Text { origin, text, .. } = &inputs[i] else {
             panic!("expected text input");
         };
         assert_eq!(origin.as_deref(), expected);
@@ -2516,6 +2358,7 @@ async fn input_origin_rejects_blank_and_oversized_values() {
     let store = engine::storage::InMemoryBlobStore::new();
     for origin in ["".to_owned(), "   ".to_owned(), "x".repeat(201)] {
         let item = InputItem::Text {
+            provenance_ref: None,
             text: "hello".into(),
             origin: Some(origin),
         };
@@ -2782,4 +2625,105 @@ fn a_missing_resource_names_only_its_kind_and_id() {
         super::authorization::not_found(&ResourceRef::Environment("prod-1".into())).message,
         "environment not found: prod-1"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn text_inputs_preserve_generic_provenance_at_all_input_boundaries() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let source = store
+        .put_bytes(b"source document or recording".to_vec())
+        .await
+        .unwrap();
+    let text = "[audio transcript: quoted]\nReviewed text";
+    let reference = store.put_bytes(text.as_bytes().to_vec()).await.unwrap();
+    for item in [
+        InputItem::Text {
+            origin: Some("user:test".into()),
+            text: text.into(),
+            provenance_ref: Some(source.to_string()),
+        },
+        InputItem::TextRef {
+            origin: Some("user:test".into()),
+            blob_ref: reference.to_string(),
+            provenance_ref: Some(source.to_string()),
+        },
+    ] {
+        let run = run_input_from_api(&store, std::slice::from_ref(&item))
+            .await
+            .unwrap();
+        let append = context_entry_input_from_api(&store, &item).await.unwrap();
+        assert_eq!(run, vec![append.clone()]);
+        assert_eq!(append.content, engine::ContentRef::text(reference.clone()));
+        assert_eq!(append.provenance_ref.as_ref(), Some(&source));
+        assert_eq!(append.origin.as_deref(), Some("user:test"));
+        let projected = api_projection::CoreAgentProjector::new(&store)
+            .project_input_entries(&run)
+            .await
+            .unwrap();
+        assert_eq!(
+            projected,
+            vec![InputItem::Text {
+                origin: Some("user:test".into()),
+                text: text.into(),
+                provenance_ref: Some(source.to_string())
+            }]
+        );
+        let result = context_append_result(
+            &store,
+            "note".into(),
+            ContextAppendStatus::Applied,
+            &append,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.activation_text.as_deref(), Some(text));
+        assert_eq!(
+            result.entry.unwrap().provenance_ref,
+            Some(source.to_string())
+        );
+    }
+    let plain = context_entry_input_from_api(
+        &store,
+        &InputItem::Text {
+            origin: None,
+            text: "edited dictation".into(),
+            provenance_ref: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(plain.provenance_ref.is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn text_input_provenance_requires_an_existing_source_blob() {
+    let store = engine::storage::InMemoryBlobStore::new();
+    let text_ref = store.put_bytes(b"text".to_vec()).await.unwrap();
+    for reference in [
+        "not-a-blob".into(),
+        BlobRef::from_bytes(b"missing source").to_string(),
+    ] {
+        for item in [
+            InputItem::Text {
+                origin: None,
+                text: "text".into(),
+                provenance_ref: Some(reference.clone()),
+            },
+            InputItem::TextRef {
+                origin: None,
+                blob_ref: text_ref.to_string(),
+                provenance_ref: Some(reference.clone()),
+            },
+        ] {
+            let run_error = run_input_from_api(&store, std::slice::from_ref(&item))
+                .await
+                .unwrap_err();
+            let append_error = context_entry_input_from_api(&store, &item)
+                .await
+                .unwrap_err();
+            assert_eq!(run_error.kind, AgentApiErrorKind::InvalidRequest);
+            assert_eq!(append_error.kind, run_error.kind);
+        }
+    }
 }

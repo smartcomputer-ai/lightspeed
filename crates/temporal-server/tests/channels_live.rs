@@ -68,6 +68,8 @@ const WAIT: Duration = Duration::from_secs(90);
 pub struct FakeConnector {
     deliveries: Arc<Mutex<Vec<ChannelDeliveryCommand>>>,
     typing_started: Arc<Mutex<u32>>,
+    blobs: Option<Arc<dyn BlobStore>>,
+    transcription_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[activities]
@@ -94,13 +96,23 @@ impl FakeConnector {
     pub async fn prepare_channel_media(
         self: Arc<Self>,
         _ctx: ActivityContext,
-        _input: PrepareChannelMediaInput,
+        input: PrepareChannelMediaInput,
     ) -> Result<PrepareChannelMediaResult, ActivityError> {
-        Err(ActivityError::application(
-            temporalio_common::error::ApplicationFailure::non_retryable(anyhow::anyhow!(
-                "the fake connector serves no media"
-            )),
-        ))
+        let blob_ref = self
+            .blobs
+            .as_ref()
+            .expect("fake CAS")
+            .put_bytes(b"OggS fake voice".to_vec())
+            .await
+            .map_err(|e| ActivityError::from(anyhow::anyhow!(e)))?;
+        Ok(PrepareChannelMediaResult {
+            item: channels::media::PreparedMediaItem {
+                blob_ref: blob_ref.to_string(),
+                kind: input.media.kind,
+                mime: input.media.mime,
+                name: input.media.name,
+            },
+        })
     }
 
     #[activity(name = ACTIVITY_CONNECTOR_MAINTAIN_TYPING)]
@@ -154,6 +166,10 @@ where
             .with_channel_task_queue(queues.channels.clone())
             .build(),
     );
+    let connector = FakeConnector {
+        blobs: Some(store.clone()),
+        ..Default::default()
+    };
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(FakeLlm::new(blobs.clone()).with_tool_rounds(0)) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
@@ -163,7 +179,9 @@ where
         queues.sessions.clone(),
         WorkerActivities::for_universe(
             universe,
-            ActivityState::from_pg_store(store.clone(), llm, tools),
+            ActivityState::from_pg_store(store.clone(), llm, tools).with_audio_transcriber(
+                Arc::new(FakeVoiceTranscriber(connector.transcription_calls.clone())),
+            ),
         ),
     )?;
     let mut bots = bots_worker(
@@ -201,7 +219,6 @@ where
         }),
     )
     .await?;
-    let connector = FakeConnector::default();
     let connector_queue =
         connector_task_queue(universe, &ChannelProvider::new("telegram"), &account_id);
     let mut connector_worker = Worker::new(
@@ -591,6 +608,7 @@ async fn temporal_live_chat_rebuilds_collected_declarations_and_retains_assets()
         let deleted = store.delete_dead_blobs(std::slice::from_ref(&tools_ref), 2, &[]).await?;
         assert_eq!(deleted.len(), 1, "a workflow's cached ref alone does not retain its declaration");
         let result = emit_chat_event(&live.api, ChatEmitEventRequest {
+            transcript_refs: Default::default(),
             universe_id: store.config().universe_id,
             bot_id: bot_id.clone(), trigger_id, account_id: live.account_id.clone(),
             provider: ChannelProvider::new("telegram"),
@@ -631,4 +649,106 @@ async fn temporal_live_chat_rebuilds_collected_declarations_and_retains_assets()
         }).await?;
         Ok(())
     }).await
+}
+
+struct FakeVoiceTranscriber(Arc<std::sync::atomic::AtomicUsize>);
+#[async_trait::async_trait]
+impl temporal_server::worker::AudioTranscriber for FakeVoiceTranscriber {
+    async fn transcribe(
+        &self,
+        request: temporal_server::worker::AudioTranscriptionRequest,
+    ) -> Result<
+        temporal_server::worker::AudioTranscription,
+        temporal_server::worker::AudioTranscriptionError,
+    > {
+        assert_eq!(request.model.model, "channel-speech");
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(temporal_server::worker::AudioTranscription {
+            text: "/reset spoken words".into(),
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal and PostgreSQL"]
+async fn channels_live_voice_preparation_preserves_provenance_and_redelivery_identity()
+-> anyhow::Result<()> {
+    run_channels_live(|live| async move {
+        let (bot_id, _, _) =
+            create_bot_with_chat(&live.api, &live.account_id, ChatPairing::Open).await?;
+        let current = live
+            .api
+            .read_model_defaults(api::ModelDefaultsReadParams {})
+            .await?
+            .result
+            .defaults;
+        live.api
+            .put_model_defaults(api::ModelDefaultsPutParams {
+                slot: api::ModelDefaultSlot::SpeechToText,
+                model: Some(api::ModelConfig {
+                    provider_id: "fake".into(),
+                    api_kind: "openai:audio-transcriptions".into(),
+                    model: "channel-speech".into(),
+                }),
+                expected_revision: current.revision,
+            })
+            .await?;
+        let mut message = inbound("voice-chat", "voice-1", "");
+        message.media.push(api::ChannelInboundMedia {
+            file_id: "voice-file".into(),
+            kind: api::ChannelMediaKind::Audio,
+            mime: "audio/ogg".into(),
+            name: Some("voice.ogg".into()),
+            byte_size: None,
+        });
+        assert_eq!(
+            admit(&live.api, &live.account_id, message.clone()).await?,
+            ChannelInboundDecision::Bound
+        );
+        wait_for_deliveries(&live.connector, 1).await?;
+        admit(&live.api, &live.account_id, message).await?;
+        // Wait behind the redelivery so its ordered processing has completed.
+        admit(
+            &live.api,
+            &live.account_id,
+            inbound("voice-chat", "text-2", "next message"),
+        )
+        .await?;
+        wait_for_deliveries(&live.connector, 2).await?;
+        assert_eq!(
+            live.connector
+                .transcription_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let events = live
+            .api
+            .list_bot_events(BotEventListParams {
+                bot_id,
+                limit: Some(10),
+                cursor: None,
+            })
+            .await?
+            .result
+            .events;
+        let voice = events
+            .iter()
+            .find(|event| !event.media.is_empty())
+            .expect("voice event");
+        assert!(voice.media[0].text_ref.is_some());
+        let store = pg_store_from_env().await?;
+        let doc: serde_json::Value = serde_json::from_slice(
+            &store
+                .read_bytes(&engine::BlobRef::parse(&voice.document_ref)?)
+                .await?,
+        )?;
+        assert_eq!(doc["data"]["message"]["text"], "/reset spoken words");
+        assert_eq!(
+            events.iter().filter(|e| e.kind == "chat.message").count(),
+            2,
+            "spoken command remains ordinary message content"
+        );
+        Ok(())
+    })
+    .await
 }

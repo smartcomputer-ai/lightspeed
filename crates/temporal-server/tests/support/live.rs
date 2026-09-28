@@ -336,10 +336,10 @@ pub async fn fake_worker_activities_with_stall_switch(
 pub async fn fake_worker_activities_with_audio_transcriber(
     transcriber: Arc<dyn AudioTranscriber>,
 ) -> anyhow::Result<WorkerActivities> {
-    fake_worker_activities_with_audio_preprocessors(transcriber, None).await
+    fake_worker_activities_with_audio_processing(transcriber, None).await
 }
 
-pub async fn fake_worker_activities_with_audio_preprocessors(
+pub async fn fake_worker_activities_with_audio_processing(
     transcriber: Arc<dyn AudioTranscriber>,
     transcoder: Option<Arc<dyn AudioTranscoder>>,
 ) -> anyhow::Result<WorkerActivities> {
@@ -433,6 +433,7 @@ pub async fn start_text_run(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: text.to_owned(),
                 }],

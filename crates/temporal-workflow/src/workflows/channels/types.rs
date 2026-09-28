@@ -110,6 +110,8 @@ pub struct ChatEmitEventRequest {
     pub message: ChatMessage,
     #[serde(default)]
     pub media: Vec<PreparedMediaItem>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub transcript_refs: std::collections::BTreeMap<String, String>,
     /// CAS ref of the conversation's `message_*` declarations.
     pub tools_ref: String,
     /// This workflow, for `started` / `finished` receipts.
@@ -210,4 +212,12 @@ pub struct ChatAssertTriggerActiveRequest {
 pub enum ChatTriggerActiveResult {
     Active,
     Inactive { reason: String },
+}
+
+/// Starts or reads independent transcription on the sessions worker queue.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChatTranscribeMediaRequest {
+    pub active: ChatAssertTriggerActiveRequest,
+    pub idempotency_key: String,
+    pub audio: api::TranscriptionAudio,
 }

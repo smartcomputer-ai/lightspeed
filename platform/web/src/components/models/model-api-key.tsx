@@ -366,6 +366,7 @@ export function OpenAiCompatibleForm({
   const [responses, setResponses] = useState(
     initialEndpoint?.apiKinds.includes("openai:responses") ?? false,
   );
+  const [transcriptions, setTranscriptions] = useState(initialEndpoint?.apiKinds.includes("openai:audio-transcriptions") ?? false);
   const [completions, setCompletions] = useState(
     initialEndpoint?.apiKinds.includes("openai:completions") ?? true,
   );
@@ -386,12 +387,14 @@ export function OpenAiCompatibleForm({
     setBaseUrl(preset.baseUrl);
     setResponses(false);
     setCompletions(true);
+    setTranscriptions(false);
   };
   const save = useMutation<SecretProvider, Error, void>({
     mutationFn: () => {
       const apiKinds = [
         ...(responses ? (["openai:responses"] as const) : []),
         ...(completions ? (["openai:completions"] as const) : []),
+        ...(transcriptions ? (["openai:audio-transcriptions"] as const) : []),
       ];
       if (!apiKinds.length) throw new Error("select at least one API kind");
       return api<SecretProvider>(
@@ -524,6 +527,10 @@ export function OpenAiCompatibleForm({
             onChange={(event) => setResponses(event.target.checked)}
           />{" "}
           Responses
+        </label>
+        <label className="flex gap-2 text-sm">
+          <input type="checkbox" checked={transcriptions} onChange={(event) => setTranscriptions(event.target.checked)} />
+          Audio Transcriptions
         </label>
       </Field>
       <Field>

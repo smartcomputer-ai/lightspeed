@@ -36,7 +36,7 @@ pub use params::{
 pub use provider_keys::{
     ModelProviderResolver, NoStoredModelProviders, NoStoredProviderKeys, ProviderAuthScheme,
     ProviderKeyError, ResolvedEndpoint, ResolvedModelProvider, ResolvedProviderAuth,
-    StaticModelProviders, StaticProviderKeys,
+    StaticModelProviders, StaticProviderKeys, resolve_provider_route,
 };
 pub use result::{LlmDebugDumps, LlmGenerationExecution, failed_generation_result};
 pub use secrets::{

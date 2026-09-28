@@ -177,6 +177,7 @@ async fn start_text_run(
             session_id: session_id.as_str().to_owned(),
             source: RunStartSource::Input {
                 items: vec![InputItem::Text {
+                    provenance_ref: None,
                     origin: None,
                     text: text.to_owned(),
                 }],
