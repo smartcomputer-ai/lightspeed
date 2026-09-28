@@ -267,7 +267,7 @@ impl BottomPaneState {
                 );
                 if self.run_control_active {
                     self.sticky_error = None;
-                    self.status = format!("run {} running", run.run_seq);
+                    self.status = "working".into();
                 }
             }
             ChatEvent::ApprovalsPending { approvals, .. } => {
@@ -466,7 +466,23 @@ impl BottomPaneState {
 }
 
 fn status_allows_run_control(status: &str) -> bool {
-    matches!(status, "running" | "cancelling" | "paused")
+    matches!(
+        status,
+        "active"
+            | "working"
+            | "running"
+            | "thinking"
+            | "planning"
+            | "queued"
+            | "running tools"
+            | "tools complete"
+            | "tool result received"
+            | "waiting for approval"
+            | "approval resolved"
+            | "steering accepted"
+            | "cancelling"
+            | "paused"
+    )
 }
 
 fn compact_error_status(message: &str) -> String {
@@ -680,7 +696,7 @@ mod tests {
         }));
 
         let rendered = pane.status_line().to_string();
-        assert!(rendered.contains("run 7 running"));
+        assert!(rendered.contains("working"));
         assert!(rendered.contains("Ctrl-C interrupt"));
     }
 

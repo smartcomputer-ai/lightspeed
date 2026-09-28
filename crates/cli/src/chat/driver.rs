@@ -34,7 +34,7 @@ pub(crate) struct ChatArgs {
     #[arg(short = 's', long, conflicts_with_all = ["new", "resume", "list"])]
     session: Option<String>,
     /// List the 10 most recently updated unmanaged root sessions, then exit.
-    #[arg(long, conflicts_with_all = ["new", "resume", "message", "workspace_source", "workspace_path", "workspace_access", "profile", "profile_json", "provider", "api_kind", "model", "no_web_search", "no_web_fetch", "bare", "show_tool_details"])]
+    #[arg(long, conflicts_with_all = ["new", "resume", "message", "workspace_source", "workspace_path", "workspace_access", "profile", "profile_json", "provider", "api_kind", "model", "no_web_search", "no_web_fetch", "bare", "show_tool_details", "show_stats"])]
     list: bool,
     /// Continue the most recently updated unmanaged root session that is not closed.
     #[arg(long, visible_alias = "continue", conflicts_with_all = ["new", "profile", "profile_json", "bare", "no_web_search", "no_web_fetch"])]
@@ -97,6 +97,9 @@ pub(crate) struct ChatArgs {
     /// Show full completed tool call arguments and results in the TUI.
     #[arg(long)]
     show_tool_details: bool,
+    /// Show run statistics: timing, token usage and context details (toggle with /stats).
+    #[arg(long)]
+    show_stats: bool,
     /// Emit the response as JSON.
     #[arg(long)]
     json: bool,
@@ -162,13 +165,13 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
 
     if let Some(message) = message {
         for event in &initial_events {
-            print_event(event)?;
+            print_event(event, args.show_stats)?;
         }
         for event in driver
             .handle_command(ChatCommand::SubmitUserMessage { text: message })
             .await?
         {
-            print_event(&event)?;
+            print_event(&event, args.show_stats)?;
         }
         let mut follow_events = Vec::new();
         driver
@@ -177,13 +180,19 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
             })
             .await?;
         for event in &follow_events {
-            print_event(event)?;
+            print_event(event, args.show_stats)?;
         }
         driver.ensure_transcript_loaded()?;
         return Ok(());
     }
 
-    crate::chat::tui::run_shell(driver, initial_events, args.show_tool_details).await
+    crate::chat::tui::run_shell(
+        driver,
+        initial_events,
+        args.show_tool_details,
+        args.show_stats,
+    )
+    .await
 }
 
 fn profile_source_from_args(
@@ -231,6 +240,7 @@ pub(crate) struct ChatSessionDriver {
     event_cursor: Option<EventCursor>,
     turns: Vec<ChatTurn>,
     active_tool_chains: Vec<ChatToolChainView>,
+    observed_tool_chains: BTreeMap<String, Vec<ChatToolChainView>>,
     /// Run lifecycle facts keyed by run sequence, fed by the event tail and
     /// reconciled against `session/read`; `/steer`, `/interrupt`, and the
     /// model lock derive the active run from this, not the transcript.
@@ -258,6 +268,11 @@ struct TrackedRun {
 struct GenerationStats {
     calls: u32,
     last_input_tokens: Option<u32>,
+}
+
+pub(crate) struct FollowProgress {
+    pub quiescent: bool,
+    pub activity: bool,
 }
 
 type PendingRunHandle =
@@ -316,6 +331,7 @@ impl ChatSessionDriver {
             event_cursor: None,
             turns: Vec::new(),
             active_tool_chains: Vec::new(),
+            observed_tool_chains: BTreeMap::new(),
             run_states: BTreeMap::new(),
             finished_turns: BTreeMap::new(),
             session_model: None,
@@ -477,36 +493,13 @@ impl ChatSessionDriver {
         let mut inactivity_deadline = InactivityDeadline::new(Instant::now(), timeout);
         let mut wait_ms = None;
         loop {
-            let events = self.drain_event_log_with_wait(wait_ms).await?;
-            // The first drain is immediate to flush backlog; subsequent
-            // drains long-poll server-side instead of sleeping client-side.
+            let progress = self.follow_once(wait_ms, &mut emit).await?;
+            // First flush backlog immediately, then long-poll for new events.
             wait_ms = Some(FOLLOW_EVENT_WAIT_MS);
-            let mut saw_activity = !events.is_empty();
-            for event in events {
-                emit(event);
-            }
-
-            let finished_events = self.collect_finished_run().await?;
-            saw_activity |= !finished_events.is_empty();
-            for event in finished_events {
-                emit(event);
-            }
-            if saw_activity {
+            if progress.activity {
                 inactivity_deadline.record_activity(Instant::now());
             }
-
-            if self.is_quiescent() {
-                let events = self.drain_event_log().await?;
-                for event in events {
-                    emit(event);
-                }
-                for event in self.refresh_snapshot().await? {
-                    emit(event);
-                }
-                emit(ChatEvent::ToolChainsChanged {
-                    session_id: self.session_id.clone(),
-                    chains: Vec::new(),
-                });
+            if progress.quiescent {
                 return Ok(());
             }
             let now = Instant::now();
@@ -521,12 +514,38 @@ impl ChatSessionDriver {
                     timeout
                 ));
             }
-            if saw_activity {
+            if progress.activity {
                 tokio::task::yield_now().await;
             }
             // No client-side sleep: the next drain's long-poll parks
             // server-side until events arrive or the wait elapses.
         }
+    }
+
+    /// A bounded follow step lets the TUI handle commands between event reads.
+    pub(crate) async fn follow_once(
+        &mut self,
+        wait_ms: Option<u64>,
+        emit: &mut impl FnMut(ChatEvent),
+    ) -> Result<FollowProgress> {
+        let mut activity = self.stream_event_log(wait_ms, emit).await?;
+        activity |= self.collect_finished_run_into(emit).await?;
+        if self.is_quiescent() {
+            activity |= self.stream_event_log(None, emit).await?;
+            for event in self.refresh_snapshot().await? {
+                emit(event);
+            }
+            if self.is_quiescent() {
+                emit(ChatEvent::ToolChainsChanged {
+                    session_id: self.session_id.clone(),
+                    chains: Vec::new(),
+                });
+            }
+        }
+        Ok(FollowProgress {
+            quiescent: self.is_quiescent(),
+            activity,
+        })
     }
 
     /// Submit a user message as a new run. While another run is active the
@@ -753,31 +772,42 @@ impl ChatSessionDriver {
     }
 
     async fn collect_finished_run(&mut self) -> Result<Vec<ChatEvent>> {
+        let mut events = Vec::new();
+        self.collect_finished_run_into(&mut |event| events.push(event))
+            .await?;
+        Ok(events)
+    }
+
+    async fn collect_finished_run_into(
+        &mut self,
+        emit: &mut impl FnMut(ChatEvent),
+    ) -> Result<bool> {
         let Some(handle) = self.pending_run.as_ref() else {
-            return Ok(Vec::new());
+            return Ok(false);
         };
         if !handle.is_finished() {
-            return Ok(Vec::new());
+            return Ok(false);
         }
-
         let Some(handle) = self.pending_run.take() else {
-            return Ok(Vec::new());
+            return Ok(false);
         };
         match handle.await {
             Ok(Ok(_outcome)) => {
-                let mut events = self.drain_event_log().await?;
-                events.extend(self.refresh_snapshot().await?);
-                Ok(events)
+                self.stream_event_log(None, emit).await?;
+                for event in self.refresh_snapshot().await? {
+                    emit(event);
+                }
             }
-            Ok(Err(error)) => Ok(vec![ChatEvent::Error(ChatErrorView {
+            Ok(Err(error)) => emit(ChatEvent::Error(ChatErrorView {
                 message: error.to_string(),
                 action: None,
-            })]),
-            Err(error) => Ok(vec![ChatEvent::Error(ChatErrorView {
+            })),
+            Err(error) => emit(ChatEvent::Error(ChatErrorView {
                 message: format!("run task failed: {error}"),
                 action: None,
-            })]),
+            })),
         }
+        Ok(true)
     }
 
     async fn refresh(&mut self) -> Result<Vec<ChatEvent>> {
@@ -884,6 +914,11 @@ impl ChatSessionDriver {
                 continue;
             }
             let mut turn = turn_from_summary(summary, &self.settings);
+            turn.tool_chains = self
+                .observed_tool_chains
+                .get(&summary.id)
+                .cloned()
+                .unwrap_or_default();
             if let (Some(run), Some(generations)) =
                 (turn.run.as_mut(), self.generation_stats.get(&summary.id))
             {
@@ -902,6 +937,7 @@ impl ChatSessionDriver {
                     Ok(read) => {
                         apply_run_detail(&mut turn, &read.result.run);
                         self.finished_turns.insert(summary.id.clone(), turn.clone());
+                        self.observed_tool_chains.remove(&summary.id);
                         self.transcript_errors.remove(&summary.id);
                     }
                     Err(error) => {
@@ -938,6 +974,17 @@ impl ChatSessionDriver {
         wait_first_ms: Option<u64>,
     ) -> Result<Vec<ChatEvent>> {
         let mut events = Vec::new();
+        self.stream_event_log(wait_first_ms, &mut |event| events.push(event))
+            .await?;
+        Ok(events)
+    }
+
+    async fn stream_event_log(
+        &mut self,
+        wait_first_ms: Option<u64>,
+        emit: &mut impl FnMut(ChatEvent),
+    ) -> Result<bool> {
+        let mut saw_activity = false;
         let mut needs_snapshot = false;
         let mut wait_ms = wait_first_ms;
         loop {
@@ -955,7 +1002,7 @@ impl ChatSessionDriver {
                 .map_err(api_error)?;
 
             if let Some(gap) = page.result.gap.as_ref() {
-                events.push(ChatEvent::GapObserved {
+                emit(ChatEvent::GapObserved {
                     requested_from: gap
                         .requested_after
                         .map(|cursor| cursor.seq.saturating_add(1))
@@ -966,11 +1013,15 @@ impl ChatSessionDriver {
                         .unwrap_or_default(),
                 });
                 needs_snapshot = true;
+                saw_activity = true;
             }
 
             for event in &page.result.events {
                 needs_snapshot |= event_needs_snapshot(&event.kind);
-                events.extend(self.chat_events_from_session_event(event));
+                saw_activity = true;
+                for update in self.chat_events_from_session_event(event) {
+                    emit(update);
+                }
             }
 
             self.event_cursor = page.result.next_cursor.or(page.result.head_cursor);
@@ -980,9 +1031,11 @@ impl ChatSessionDriver {
         }
 
         if needs_snapshot {
-            events.extend(self.refresh_snapshot().await?);
+            for update in self.refresh_snapshot().await? {
+                emit(update);
+            }
         }
-        Ok(events)
+        Ok(saw_activity)
     }
 
     fn chat_events_from_session_event(&mut self, event: &SessionEventView) -> Vec<ChatEvent> {
@@ -1057,6 +1110,9 @@ impl ChatSessionDriver {
                 ..
             } => {
                 let chain = self.tool_chain_from_started_event(run_id, batch_id, calls);
+                let observed = self.observed_tool_chains.entry(run_id.clone()).or_default();
+                observed.retain(|previous| previous.id != chain.id);
+                observed.push(chain.clone());
                 self.active_tool_chains = vec![chain.clone()];
                 events.push(ChatEvent::ToolChainsChanged {
                     session_id: event.session_id.clone(),
@@ -1067,10 +1123,33 @@ impl ChatSessionDriver {
             SessionEventKindView::ToolBatchCompleted { .. } => {
                 events.push(self.status_event("tools complete"));
             }
-            SessionEventKindView::ToolCallStarted { .. } => {
+            SessionEventKindView::ToolCallStarted {
+                run_id,
+                batch_id,
+                call_id,
+                ..
+            } => {
+                events.extend(self.update_live_tool(
+                    run_id,
+                    batch_id,
+                    call_id,
+                    ChatProgressStatus::Running,
+                ));
                 events.push(self.status_event("running tools"));
             }
-            SessionEventKindView::ToolCallCompleted { .. } => {
+            SessionEventKindView::ToolCallCompleted {
+                run_id,
+                batch_id,
+                call_id,
+                status,
+                ..
+            } => {
+                events.extend(self.update_live_tool(
+                    run_id,
+                    batch_id,
+                    call_id,
+                    tool_status(*status),
+                ));
                 events.push(self.status_event("tool result received"));
             }
             SessionEventKindView::RunSteeringAccepted { .. } => {
@@ -1113,6 +1192,59 @@ impl ChatSessionDriver {
             | SessionEventKindView::ActiveEnvironmentChanged { .. } => {}
         }
         events
+    }
+
+    fn update_live_tool(
+        &mut self,
+        run_id: &str,
+        batch_id: &str,
+        call_id: &str,
+        status: ChatProgressStatus,
+    ) -> Vec<ChatEvent> {
+        let Some(chain) = self
+            .observed_tool_chains
+            .get_mut(run_id)
+            .and_then(|chains| {
+                chains
+                    .iter_mut()
+                    .find(|chain| chain.id == format!("{run_id}:{batch_id}"))
+            })
+        else {
+            return Vec::new();
+        };
+        let Some(call) = chain.calls.iter_mut().find(|call| call.id == call_id) else {
+            return Vec::new();
+        };
+        call.status = status;
+        chain.status = if chain.calls.iter().any(|call| {
+            matches!(
+                call.status,
+                ChatProgressStatus::Queued
+                    | ChatProgressStatus::Running
+                    | ChatProgressStatus::Waiting
+            )
+        }) {
+            ChatProgressStatus::Running
+        } else if chain
+            .calls
+            .iter()
+            .any(|call| call.status == ChatProgressStatus::Failed)
+        {
+            ChatProgressStatus::Failed
+        } else if chain
+            .calls
+            .iter()
+            .any(|call| call.status == ChatProgressStatus::Cancelled)
+        {
+            ChatProgressStatus::Cancelled
+        } else {
+            ChatProgressStatus::Succeeded
+        };
+        self.active_tool_chains = vec![chain.clone()];
+        vec![ChatEvent::ToolChainsChanged {
+            session_id: self.session_id.clone(),
+            chains: self.active_tool_chains.clone(),
+        }]
     }
 
     fn run_view_from_status(
@@ -1205,6 +1337,7 @@ impl ChatSessionDriver {
         self.transcript_errors.clear();
         self.generation_stats.clear();
         self.active_tool_chains.clear();
+        self.observed_tool_chains.clear();
         self.run_states.clear();
         self.api
             .start_session(SessionStartParams {
@@ -1258,6 +1391,7 @@ impl ChatSessionDriver {
         self.transcript_errors.clear();
         self.generation_stats.clear();
         self.active_tool_chains.clear();
+        self.observed_tool_chains.clear();
         self.run_states.clear();
         let mut events = vec![ChatEvent::HistoryReset { session_id }];
         events.extend(self.refresh().await?);
@@ -1455,11 +1589,11 @@ impl ChatSessionDriver {
         })
     }
 
-    fn is_quiescent(&self) -> bool {
+    pub(crate) fn is_quiescent(&self) -> bool {
         self.pending_run.is_none() && !self.run_active()
     }
 
-    fn pending_run_in_flight(&self) -> bool {
+    pub(crate) fn pending_run_in_flight(&self) -> bool {
         self.pending_run
             .as_ref()
             .is_some_and(|handle| !handle.is_finished())
@@ -1967,7 +2101,7 @@ fn api_reasoning_effort(settings: &ChatDraftSettings) -> Option<String> {
     )
 }
 
-fn print_event(event: &ChatEvent) -> Result<()> {
+fn print_event(event: &ChatEvent, show_stats: bool) -> Result<()> {
     match event {
         ChatEvent::Connected(info) => {
             println!(
@@ -1997,10 +2131,11 @@ fn print_event(event: &ChatEvent) -> Result<()> {
                 && let Some(message) = &turn.assistant
             {
                 println!("\nassistant: {}\n", message.content);
-                if let Some(summary) = turn
-                    .run
-                    .as_ref()
-                    .and_then(|run| run_stats_summary(&run.stats))
+                if show_stats
+                    && let Some(summary) = turn
+                        .run
+                        .as_ref()
+                        .and_then(|run| run_stats_summary(&run.stats))
                 {
                     println!("{summary}\n");
                 }
@@ -2111,6 +2246,7 @@ mod tests {
             event_cursor: None,
             turns: Vec::new(),
             active_tool_chains: Vec::new(),
+            observed_tool_chains: BTreeMap::new(),
             run_states: BTreeMap::new(),
             finished_turns: BTreeMap::new(),
             session_model: None,
@@ -2128,6 +2264,13 @@ mod tests {
     /// Expected JSON-RPC exchanges, with a finite accept deadline so a missing
     /// request fails the test instead of hanging it.
     async fn mock_api(exchanges: Vec<(&'static str, Value)>) -> (String, JoinHandle<Vec<Value>>) {
+        mock_api_with_hook(exchanges, |_| {}).await
+    }
+
+    async fn mock_api_with_hook(
+        exchanges: Vec<(&'static str, Value)>,
+        hook: impl Fn(&Value) + Send + 'static,
+    ) -> (String, JoinHandle<Vec<Value>>) {
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -2156,6 +2299,7 @@ mod tests {
                 stream.read_exact(&mut body).await.unwrap();
                 let request: Value = serde_json::from_slice(&body).unwrap();
                 assert_eq!(request["method"], method);
+                hook(&request);
                 let mut response = response;
                 response["jsonrpc"] = "2.0".into();
                 response["id"] = request["id"].clone();
@@ -2880,9 +3024,217 @@ mod tests {
             workspace_access: crate::vfs_cli::WorkspaceAccessArg::Edit,
             api_url: "http://127.0.0.1:18080/rpc".into(),
             show_tool_details: false,
+            show_stats: false,
             json: false,
             message: Vec::new(),
         }
+    }
+
+    #[test]
+    fn live_tool_calls_update_individually_and_keep_failed_and_cancelled_results() {
+        let mut driver = driver_fixture("http://unused", "openai", "openai:responses", "gpt-sol");
+        let started = tool_event(SessionEventKindView::ToolBatchStarted {
+            run_id: "run_1".into(),
+            turn_id: "turn_1".into(),
+            batch_id: "batch_1".into(),
+            calls: vec![live_call("a"), live_call("b")],
+        });
+        driver.chat_events_from_session_event(&started);
+        for (id, status, expected) in [
+            ("a", ToolItemStatus::Succeeded, ChatProgressStatus::Running),
+            ("b", ToolItemStatus::Failed, ChatProgressStatus::Failed),
+        ] {
+            let events = driver.chat_events_from_session_event(&tool_event(
+                SessionEventKindView::ToolCallCompleted {
+                    run_id: "run_1".into(),
+                    turn_id: "turn_1".into(),
+                    batch_id: "batch_1".into(),
+                    call_id: id.into(),
+                    status,
+                    effects: vec![],
+                    output_bytes: None,
+                    truncated: false,
+                },
+            ));
+            assert!(matches!(
+                events.first(),
+                Some(ChatEvent::ToolChainsChanged { .. })
+            ));
+            assert_eq!(driver.active_tool_chains[0].status, expected);
+            assert_eq!(
+                driver.active_tool_chains[0]
+                    .calls
+                    .iter()
+                    .find(|call| call.id == id)
+                    .unwrap()
+                    .status,
+                tool_status(status)
+            );
+        }
+        let cancelled =
+            driver.update_live_tool("run_1", "batch_1", "b", ChatProgressStatus::Cancelled);
+        assert!(!cancelled.is_empty());
+        assert_eq!(
+            driver.active_tool_chains[0].status,
+            ChatProgressStatus::Cancelled
+        );
+        assert_eq!(
+            driver.observed_tool_chains["run_1"],
+            driver.active_tool_chains
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tui_follows_an_existing_run_and_handles_interrupt_between_event_pages() {
+        use crate::chat::tui::{
+            app::spawn_driver_task, app_event::UiEvent, app_event_sender::AppEventSender,
+        };
+        use serde_json::json;
+        let (commands, command_rx) = tokio::sync::mpsc::unbounded_channel();
+        let send_command = commands.clone();
+        let sent_interrupt = std::sync::atomic::AtomicBool::new(false);
+        let (event_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let first_event = tool_event(SessionEventKindView::ToolBatchStarted {
+            run_id: "run_1".into(),
+            turn_id: "turn_1".into(),
+            batch_id: "batch_1".into(),
+            calls: vec![live_call("a")],
+        });
+        let (endpoint, server) = mock_api_with_hook(
+            vec![
+                (
+                    "session/events/read",
+                    json!({"result":{"result":{"events":[first_event],"complete":true}}}),
+                ),
+                (
+                    "session/runs/cancel",
+                    json!({"error":{"code":-32603,"message":"fixture cancellation response"}}),
+                ),
+                (
+                    "session/events/read",
+                    json!({"error":{"code":-32603,"message":"end fixture"}}),
+                ),
+            ],
+            move |request| {
+                if request["method"] == "session/events/read"
+                    && !sent_interrupt.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    let _ = send_command.send(ChatCommand::InterruptRun { reason: None });
+                }
+            },
+        )
+        .await;
+        let mut driver = driver_fixture(&endpoint, "openai", "openai:responses", "gpt-sol");
+        driver.run_view_from_status("run_1", api::RunStatus::Running, 1);
+        spawn_driver_task(driver, command_rx, AppEventSender::new(event_tx));
+        let mut saw_tools = false;
+        let mut saw_interrupt_response = false;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.recv().await {
+                match event {
+                    UiEvent::Chat(ChatEvent::ToolChainsChanged { chains, .. }) => {
+                        saw_tools |= !chains.is_empty()
+                    }
+                    UiEvent::Chat(ChatEvent::Error(error))
+                        if error.message.contains("fixture cancellation response") =>
+                    {
+                        saw_interrupt_response = true;
+                    }
+                    UiEvent::Chat(ChatEvent::Error(error))
+                        if error.message.contains("end fixture") =>
+                    {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("live tool updates and interrupt response before run completion");
+        assert!(saw_tools);
+        assert!(saw_interrupt_response);
+        let requests = server.await.unwrap();
+        assert_eq!(requests[1]["params"]["runId"], "run_1");
+        drop(commands);
+    }
+
+    fn live_call(id: &str) -> ToolCallEventView {
+        ToolCallEventView {
+            tool_id: None,
+            call_id: id.into(),
+            tool_name: "read_file".into(),
+            arguments_ref: "sha256:fixture".into(),
+            arguments: Some(r#"{"path":"src/lib.rs"}"#.into()),
+            display: None,
+        }
+    }
+
+    fn tool_event(kind: SessionEventKindView) -> SessionEventView {
+        SessionEventView {
+            cursor: EventCursor { seq: 1 },
+            session_id: "session_original".into(),
+            observed_at_ms: 1,
+            joins: Default::default(),
+            kind,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tool_events_are_emitted_before_snapshot_reads_and_survive_active_run_projection() {
+        use serde_json::json;
+        let started = tool_event(SessionEventKindView::ToolBatchStarted {
+            run_id: "run_1".into(),
+            turn_id: "turn_1".into(),
+            batch_id: "batch_1".into(),
+            calls: vec![live_call("a")],
+        });
+        let completed = tool_event(SessionEventKindView::ToolCallCompleted {
+            run_id: "run_1".into(),
+            turn_id: "turn_1".into(),
+            batch_id: "batch_1".into(),
+            call_id: "a".into(),
+            status: ToolItemStatus::Succeeded,
+            effects: vec![],
+            output_bytes: Some(5),
+            truncated: false,
+        });
+        let batch_done = tool_event(SessionEventKindView::ToolBatchCompleted {
+            run_id: "run_1".into(),
+            turn_id: "turn_1".into(),
+            batch_id: "batch_1".into(),
+        });
+        let (endpoint, server) = mock_api(vec![
+            ("session/events/read", json!({"result":{"result":{"events":[started, completed, batch_done],"complete":true}}})),
+            ("session/read", json!({"error":{"code":-32603,"message":"snapshot unavailable"}})),
+        ]).await;
+        let mut driver = driver_fixture(&endpoint, "openai", "openai:responses", "gpt-sol");
+        let mut emitted = Vec::new();
+        assert!(
+            driver
+                .stream_event_log(None, &mut |event| emitted.push(event))
+                .await
+                .is_err()
+        );
+        let states: Vec<_> = emitted
+            .iter()
+            .filter_map(|event| match event {
+                ChatEvent::ToolChainsChanged { chains, .. } => Some(chains[0].calls[0].status),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![ChatProgressStatus::Running, ChatProgressStatus::Succeeded]
+        );
+        let mut session = session_fixture("openai", "openai:responses", "gpt-sol");
+        session.active_run = Some(serde_json::from_value(json!({"id":"run_1","status":"running","acceptedAtMs":1,"source":{"type":"input","preview":"read files"}})).unwrap());
+        let (turns, errors) = driver.project_turns(&session).await;
+        assert!(errors.is_empty());
+        assert_eq!(
+            turns[0].tool_chains[0].calls[0].status,
+            ChatProgressStatus::Succeeded
+        );
+        assert_eq!(server.await.unwrap().len(), 2);
     }
 
     #[test]

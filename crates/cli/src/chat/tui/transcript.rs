@@ -7,12 +7,13 @@ use crate::chat::protocol::{ChatDelta, ChatEvent, ChatProgressStatus, run_stats_
 use crate::chat::protocol::{ChatToolChainView, ChatTurn};
 use crate::chat::tui::cell::{
     CellRenderState, ChatCell, ChatCellKind, ErrorCell, MessageCell, NoticeCell, ReasoningCell,
-    RunCell, ToolChainCell,
+    RunCell, StartupHeaderCell, ToolChainCell,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct TranscriptOptions {
     pub(crate) show_tool_details: bool,
+    pub(crate) show_stats: bool,
 }
 
 #[derive(Debug)]
@@ -22,9 +23,12 @@ pub(crate) struct TranscriptState {
     pending_history_cell_indices: Vec<usize>,
     emitted_history_cells: Vec<(String, String)>,
     active_cell: Option<Box<dyn ChatCell>>,
+    activity: Option<RunCell>,
     active_cell_revision: u64,
     active_tool_chains: Option<Vec<ChatToolChainView>>,
     pending_user_messages: Vec<PendingUserMessage>,
+    startup_header: Option<StartupHeaderCell>,
+    startup_header_emitted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +38,11 @@ struct PendingUserMessage {
 }
 
 impl TranscriptState {
+    pub(crate) fn set_startup_header(&mut self, fields: Vec<(String, String)>) {
+        self.startup_header = Some(StartupHeaderCell::new(fields));
+        self.startup_header_emitted = false;
+    }
+
     pub(crate) fn new(options: TranscriptOptions) -> Self {
         Self {
             options,
@@ -41,29 +50,25 @@ impl TranscriptState {
             pending_history_cell_indices: Vec::new(),
             emitted_history_cells: Vec::new(),
             active_cell: None,
+            activity: None,
             active_cell_revision: 0,
             active_tool_chains: None,
             pending_user_messages: Vec::new(),
+            startup_header: None,
+            startup_header_emitted: false,
         }
     }
 
     pub(crate) fn apply_chat_event(&mut self, event: ChatEvent) {
         match event {
-            ChatEvent::Connected(info) => {
-                self.replace_or_push_committed(Box::new(NoticeCell::new(
-                    "connected",
-                    format!(
-                        "connected world {} session {}",
-                        short(&info.world_id),
-                        short(&info.session_id)
-                    ),
-                )));
-            }
+            ChatEvent::Connected(_) => {}
             ChatEvent::SessionsListed { .. }
             | ChatEvent::SkillsListed { .. }
             | ChatEvent::ModelsListed { .. }
             | ChatEvent::SessionSelected(_) => {}
             ChatEvent::HistoryReset { session_id } => {
+                self.startup_header = None;
+                self.activity = None;
                 self.cells.clear();
                 self.pending_history_cell_indices.clear();
                 self.emitted_history_cells.clear();
@@ -77,18 +82,21 @@ impl TranscriptState {
                 )));
             }
             ChatEvent::TranscriptDelta(delta) => self.apply_delta(delta),
-            ChatEvent::RunChanged(run) => {
-                self.active_cell = match run.status {
-                    ChatProgressStatus::Queued | ChatProgressStatus::Running => {
-                        Some(Box::new(RunCell::new(
-                            format!("active-run:{}", run.id),
-                            format!("run {} {:?} {}", run.run_seq, run.lifecycle, run.model),
-                        )))
+            ChatEvent::RunChanged(run) => match run.status {
+                ChatProgressStatus::Queued | ChatProgressStatus::Running => {
+                    if self.activity.is_none() {
+                        self.activity = Some(RunCell::new(
+                            "activity",
+                            if run.status == ChatProgressStatus::Queued {
+                                "queued"
+                            } else {
+                                "thinking"
+                            },
+                        ));
                     }
-                    _ => None,
-                };
-                self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
-            }
+                }
+                _ => self.activity = None,
+            },
             ChatEvent::ApprovalsPending {
                 run_id, approvals, ..
             } => {
@@ -111,11 +119,10 @@ impl TranscriptState {
                         ),
                     )));
                 }
-                self.active_cell = Some(Box::new(RunCell::new(
+                self.activity = Some(RunCell::new(
                     format!("active-run:{run_id}"),
-                    "waiting for approval".to_owned(),
-                )));
-                self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+                    "waiting for approval",
+                ));
             }
             ChatEvent::ToolChainsChanged { chains, .. } => {
                 if chains.is_empty() {
@@ -152,7 +159,32 @@ impl TranscriptState {
                     )));
                 }
             }
-            ChatEvent::StatusChanged(_) => {}
+            ChatEvent::StatusChanged(status) => {
+                let label = match status.status.as_str() {
+                    "thinking" | "planning" => Some("thinking"),
+                    "working" | "running tools" | "finishing" => Some("working"),
+                    "tool result received" | "tools complete" => Some(
+                        if self
+                            .active_tool_chains
+                            .as_ref()
+                            .is_some_and(|chains| !tool_chains_terminal(chains))
+                        {
+                            "working"
+                        } else {
+                            "thinking"
+                        },
+                    ),
+                    "active" | "running" if self.activity.is_some() => return,
+                    "active" | "running" => Some("thinking"),
+                    "queued" => Some("queued"),
+                    "waiting for approval" => Some("waiting for approval"),
+                    "paused" => Some("paused"),
+                    "cancelling" => Some("stopping"),
+                    "idle" | "closed" | "cancelled" | "error" | "not loaded" => None,
+                    _ => return,
+                };
+                self.activity = label.map(|label| RunCell::new("activity", label));
+            }
             ChatEvent::GapObserved {
                 requested_from,
                 retained_from,
@@ -171,6 +203,7 @@ impl TranscriptState {
                 )));
             }
             ChatEvent::Error(error) => {
+                self.activity = None;
                 let message = match error.action {
                     Some(action) => format!("{}\n{action}", error.message),
                     None => error.message,
@@ -183,14 +216,37 @@ impl TranscriptState {
         }
     }
 
+    pub(crate) fn is_animating(&self) -> bool {
+        self.activity.as_ref().is_some_and(RunCell::is_animating)
+    }
+
+    pub(crate) fn tick_animation(&mut self) {
+        if let Some(activity) = self.activity.as_mut() {
+            activity.tick();
+        }
+    }
+
+    pub(crate) fn set_show_stats(&mut self, enabled: bool) {
+        self.options.show_stats = enabled;
+    }
+
     pub(crate) fn drain_pending_history_lines(&mut self, width: u16) -> Vec<Line<'static>> {
         let render_state = CellRenderState;
         let mut lines = Vec::new();
+        if !self.startup_header_emitted
+            && let Some(header) = &self.startup_header
+        {
+            lines.extend(header.display_lines(width, &render_state));
+            self.startup_header_emitted = true;
+        }
         let pending_indices = std::mem::take(&mut self.pending_history_cell_indices);
         for index in pending_indices {
             let Some(cell) = self.cells.get(index) else {
                 continue;
             };
+            if cell.kind() == ChatCellKind::RunStats && !self.options.show_stats {
+                continue;
+            }
             let fingerprint = (cell.id().to_string(), cell_fingerprint(cell.as_ref()));
             if self.is_emitted_history_cell(&fingerprint) {
                 continue;
@@ -208,9 +264,16 @@ impl TranscriptState {
     pub(crate) fn reflow_history_lines(&mut self, width: u16) -> Vec<Line<'static>> {
         let render_state = CellRenderState;
         let mut lines = Vec::new();
+        if let Some(header) = &self.startup_header {
+            lines.extend(header.display_lines(width, &render_state));
+            self.startup_header_emitted = true;
+        }
         self.pending_history_cell_indices.clear();
         self.emitted_history_cells.clear();
         for cell in &self.cells {
+            if cell.kind() == ChatCellKind::RunStats && !self.options.show_stats {
+                continue;
+            }
             let cell_lines = cell.display_lines(width, &render_state);
             if cell_lines.is_empty() {
                 continue;
@@ -230,6 +293,9 @@ impl TranscriptState {
             lines.extend(cell.display_lines(area.width, &render_state));
             lines.push(Line::default());
         }
+        if let Some(activity) = &self.activity {
+            lines.extend(activity.display_lines(area.width, &render_state));
+        }
         if let Some(active_cell) = self.active_cell.as_ref() {
             let _ = (
                 active_cell.kind(),
@@ -246,7 +312,7 @@ impl TranscriptState {
 
     pub(crate) fn desired_height(&self, width: u16) -> u16 {
         let render_state = CellRenderState;
-        let mut height = 0u16;
+        let mut height = u16::from(self.activity.is_some());
         for pending in &self.pending_user_messages {
             let cell = MessageCell::new(&pending.id, "user_pending", &pending.content);
             height = height.saturating_add(cell.desired_height(width, &render_state));
@@ -276,7 +342,7 @@ impl TranscriptState {
                             )));
                         }
                         ReconstructedItem::Usage { id, text } => {
-                            self.push_committed_cell_if_changed(Box::new(NoticeCell::new(
+                            self.push_committed_cell_if_changed(Box::new(NoticeCell::run_stats(
                                 id.clone(),
                                 text.clone(),
                             )));
@@ -646,6 +712,118 @@ mod tests {
     }
 
     #[test]
+    fn tool_progress_survives_run_refresh_and_activity_animates_without_events() {
+        let mut state = TranscriptState::default();
+        let run: crate::chat::protocol::ChatRunView = serde_json::from_value(serde_json::json!({
+            "id":"run_7","run_seq":7,"lifecycle":"running","status":"running","provider":"fixture","model":"model-that-must-not-appear","input_refs":[],"started_at_ns":0,"updated_at_ns":0,"stats":{}
+        })).unwrap();
+        state.apply_chat_event(ChatEvent::RunChanged(run.clone()));
+        assert!(state.is_animating());
+        let before = state
+            .activity
+            .as_ref()
+            .unwrap()
+            .display_lines(80, &CellRenderState);
+        state.tick_animation();
+        let after = state
+            .activity
+            .as_ref()
+            .unwrap()
+            .display_lines(80, &CellRenderState);
+        assert_ne!(before, after);
+        assert!(after[0].to_string().contains("thinking"));
+        assert!(!after[0].to_string().contains("run"));
+        assert!(!after[0].to_string().contains("model"));
+
+        for status in [ChatProgressStatus::Running, ChatProgressStatus::Succeeded] {
+            state.apply_chat_event(ChatEvent::ToolChainsChanged {
+                session_id: "s1".into(),
+                chains: vec![test_tool_chain("run_7:batch_1", status)],
+            });
+            // Periodic snapshots repeat RunChanged while the model keeps working.
+            state.apply_chat_event(ChatEvent::RunChanged(run.clone()));
+            let cell = state.active_cell.as_ref().unwrap();
+            assert_eq!(cell.kind(), ChatCellKind::ToolChain);
+            let lines = cell
+                .display_lines(80, &CellRenderState)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(lines.contains("list_dir"));
+            assert!(
+                lines.contains(if status == ChatProgressStatus::Running {
+                    "running"
+                } else {
+                    "done"
+                }),
+                "{lines}"
+            );
+        }
+        let mut terminal = run;
+        terminal.status = ChatProgressStatus::Succeeded;
+        terminal.lifecycle = api::RunStatus::Completed;
+        state.apply_chat_event(ChatEvent::RunChanged(terminal));
+        assert!(!state.is_animating());
+        assert!(state.activity.is_none());
+    }
+
+    #[test]
+    fn startup_header_survives_history_projection_and_reflows_without_repeating() {
+        let mut state = TranscriptState::default();
+        state.set_startup_header(vec![
+            ("Session".into(), "session_1790603263314_1".into()),
+            ("Universe".into(), "development · deployment key".into()),
+            (
+                "Runtime".into(),
+                "local development · http://localhost:18080/rpc".into(),
+            ),
+        ]);
+        state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "session_1790603263314_1".into(),
+            turns: vec![],
+        }));
+        let lines = state.drain_pending_history_lines(100);
+        assert_eq!(lines[0].to_string(), "");
+        assert_eq!(lines[1].to_string(), ">> Lightspeed");
+        let text = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for expected in [
+            ">> Lightspeed",
+            "session_1790603263314_1",
+            "local development",
+            "development · deployment key",
+            "/help",
+            "/status",
+        ] {
+            assert!(text.contains(expected), "{text}");
+        }
+        assert!(!text.contains("world gateway"));
+        assert!(!text.contains("Model"));
+        assert!(!text.contains("Lightspeed v"));
+        assert!(text.find("Session").unwrap() < text.find("Universe").unwrap());
+        assert!(text.find("Universe").unwrap() < text.find("Runtime").unwrap());
+        assert!(state.drain_pending_history_lines(100).is_empty());
+        let narrow = state.reflow_history_lines(32);
+        assert!(narrow.iter().all(|line| line.width() <= 32));
+        assert_eq!(narrow[0].to_string(), "");
+        assert_eq!(narrow[1].to_string(), ">> Lightspeed");
+        assert!(state.drain_pending_history_lines(32).is_empty());
+        state.apply_chat_event(ChatEvent::HistoryReset {
+            session_id: "another-session".into(),
+        });
+        assert!(
+            !state
+                .reflow_history_lines(100)
+                .iter()
+                .any(|line| line.to_string().contains("session_1790603263314_1"))
+        );
+    }
+
+    #[test]
     fn session_selected_does_not_emit_transcript_notice() {
         let mut state = TranscriptState::default();
         state.apply_chat_event(ChatEvent::SessionSelected(ChatSessionSummary {
@@ -796,7 +974,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(history.contains("tools 1 calls  ok"));
+        assert!(history.contains("tools 1 calls  done"));
         assert!(!history.contains("result"));
         assert!(!history.contains("args"));
         assert!(!history.contains("running"));
@@ -834,7 +1012,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(active_text.contains("tools 1 calls  ok"));
+        assert!(active_text.contains("tools 1 calls  done"));
         assert!(!active_text.contains("running"));
 
         state.apply_chat_event(ChatEvent::ToolChainsChanged {
@@ -847,7 +1025,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(history.contains("tools 1 calls  ok"));
+        assert!(history.contains("tools 1 calls  done"));
         assert!(!history.contains("running"));
     }
 
@@ -868,7 +1046,7 @@ mod tests {
                 assistant: Some(ChatMessageView {
                     id: "assistant-1".into(),
                     role: "assistant".into(),
-                    content: "done".into(),
+                    content: "All files reviewed.".into(),
                     ref_: None,
                 }),
                 run: None,
@@ -883,11 +1061,11 @@ mod tests {
             .collect::<Vec<_>>();
         let tool = history
             .iter()
-            .position(|line| line.contains("tools 1 calls  ok"))
+            .position(|line| line.contains("tools 1 calls  done"))
             .expect("tool history");
         let assistant = history
             .iter()
-            .position(|line| line.contains("done"))
+            .position(|line| line.contains("All files reviewed."))
             .expect("assistant history");
         assert!(tool < assistant);
         assert!(state.active_cell.is_none());
@@ -897,6 +1075,7 @@ mod tests {
     fn show_tool_details_keeps_completed_tool_args_and_results() {
         let mut state = TranscriptState::new(TranscriptOptions {
             show_tool_details: true,
+            ..Default::default()
         });
         state.apply_chat_event(ChatEvent::ToolChainsChanged {
             session_id: "s-1".into(),
@@ -955,7 +1134,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(history.contains("tools 1 calls  ok"));
+        assert!(history.contains("tools 1 calls  done"));
         assert!(history.contains(r#"args {"path":"spec"}"#));
         assert!(history.contains(r#"result {"ok":true}"#));
     }
@@ -964,6 +1143,7 @@ mod tests {
     fn show_tool_details_expands_reconstructed_history_tool_cells() {
         let mut state = TranscriptState::new(TranscriptOptions {
             show_tool_details: true,
+            ..Default::default()
         });
         state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
             session_id: "s-1".into(),
@@ -1007,7 +1187,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(history.contains("read_file README.md  ok"));
+        assert!(history.contains("read_file README.md  done"));
         assert!(history.contains(r#"args {"path":"README.md"}"#));
         assert!(history.contains(r#"result {"ok":true}"#));
         assert!(history.contains("done"));
@@ -1311,7 +1491,10 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let mut state = TranscriptState::default();
+        let mut state = TranscriptState::new(TranscriptOptions {
+            show_stats: true,
+            ..Default::default()
+        });
         state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
             session_id: "s-1".into(),
             turns: vec![turn(api::RunStatus::Running)],
@@ -1330,6 +1513,39 @@ mod tests {
         assert_eq!(
             finished,
             vec!["4.2s · in 2.0k (cache 75%: 1.5k read) · out 100".to_owned()]
+        );
+        state.set_show_stats(false);
+        let hidden = state.reflow_history_lines(80);
+        assert!(hidden.iter().any(|line| line.to_string().contains("done")));
+        assert!(
+            !hidden
+                .iter()
+                .any(|line| line.to_string().contains("in 2.0k"))
+        );
+        state.set_show_stats(true);
+        let visible = state.reflow_history_lines(80);
+        assert!(
+            visible
+                .iter()
+                .any(|line| line.to_string().contains("in 2.0k"))
+        );
+
+        let mut default_state = TranscriptState::default();
+        default_state.apply_chat_event(ChatEvent::TranscriptDelta(ChatDelta::ReplaceTurns {
+            session_id: "s-1".into(),
+            turns: vec![turn(api::RunStatus::Completed)],
+        }));
+        assert!(
+            !lines(&mut default_state)
+                .iter()
+                .any(|line| line.contains("in 2.0k"))
+        );
+        default_state.set_show_stats(true);
+        assert!(
+            default_state
+                .reflow_history_lines(80)
+                .iter()
+                .any(|line| line.to_string().contains("in 2.0k"))
         );
     }
 }

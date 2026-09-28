@@ -578,3 +578,23 @@ the latest non-closed session in the effective universe using runtime filters;
 it reads the existing session without a create fallback. Parser and process
 tests cover filtering, bounded listing, aliases, empty results and concurrent
 closure/deletion.
+
+Live chat progress now projects tool-call lifecycle events immediately, before
+snapshot reconciliation, and retains observed tool batches in active-run
+transcript projections. Generic run refreshes no longer replace the tool rows.
+A separate animated thinking/working indicator replaces the run-number/model
+label. The TUI follows existing active sessions and processes commands between
+bounded event reads so interruption and approval decisions remain available.
+Regression tests cover streaming ahead of snapshots, individual tool outcomes,
+snapshot preservation, animation and command handling while following a run.
+
+The interactive startup header presents session, universe and authority,
+then runtime and command hints beneath a small ASCII mark. Model and effort
+remain in the footer; version is available via `--version`. It wraps at terminal width,
+survives transcript reconstruction and replaces the internal gateway notice.
+
+Run statistics and context details are now opt-in with `chat --show-stats`.
+The local `/stats [on|off]` command toggles both existing and future statistics
+without changing retained run data. One-shot text output follows the same flag;
+JSON output remains complete. Tests cover default visibility, transcript reflow,
+local toggling and command parsing.

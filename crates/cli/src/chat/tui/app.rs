@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -28,13 +28,17 @@ pub(crate) async fn run_shell(
     driver: ChatSessionDriver,
     initial_events: Vec<ChatEvent>,
     show_tool_details: bool,
+    show_stats: bool,
 ) -> Result<()> {
     let view_options = ChatTuiViewOptions {
         world_id: GATEWAY_WORLD_ID.into(),
         session_id: driver.session_id().to_string(),
         show_tool_details,
+        show_stats,
     };
     let connection_display = super::connection_display::ConnectionDisplay::load().await?;
+    let mut header = vec![("Session".into(), driver.session_id().to_owned())];
+    header.extend(connection_display.header_context);
     let mut tui = Tui::init().context("initialize chat TUI")?;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let app_event_tx = AppEventSender::new(event_tx);
@@ -44,10 +48,13 @@ pub(crate) async fn run_shell(
     app.bottom_pane
         .set_connection_label(connection_display.footer);
     app.connection_details = connection_display.details;
+    app.transcript.set_startup_header(header);
     let mut terminal_events = EventStream::new();
     let mut draw_rx = tui.draw_receiver();
     let frame_requester = tui.frame_requester();
     let mut ctrl_c = Box::pin(tokio::signal::ctrl_c());
+    let mut animation = tokio::time::interval(Duration::from_millis(100));
+    animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     for event in initial_events {
         app_event_tx.chat(event);
@@ -56,6 +63,10 @@ pub(crate) async fn run_shell(
 
     loop {
         tokio::select! {
+            _ = animation.tick(), if app.transcript.is_animating() => {
+                app.transcript.tick_animation();
+                frame_requester.schedule_frame();
+            }
             Some(event) = event_rx.recv() => {
                 if app.handle_ui_event(event, &frame_requester) {
                     break;
@@ -95,36 +106,66 @@ pub(crate) async fn run_shell(
     Ok(())
 }
 
-fn spawn_driver_task(
+pub(crate) fn spawn_driver_task(
     mut driver: ChatSessionDriver,
     mut command_rx: mpsc::UnboundedReceiver<ChatCommand>,
     app_event_tx: AppEventSender,
 ) {
     tokio::spawn(async move {
-        while let Some(command) = command_rx.recv().await {
-            let should_follow = should_follow_after(&command);
-            if matches!(command, ChatCommand::SubmitUserMessage { .. }) {
-                app_event_tx.chat(driver.status_event("working"));
+        let mut following = !driver.is_quiescent();
+        let mut last_activity = Instant::now();
+        loop {
+            let command = if following {
+                match command_rx.try_recv() {
+                    Ok(command) => Some(command),
+                    Err(mpsc::error::TryRecvError::Empty) => None,
+                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            } else {
+                let Some(command) = command_rx.recv().await else {
+                    break;
+                };
+                Some(command)
+            };
+            if let Some(command) = command {
+                let should_follow = should_follow_after(&command);
+                if matches!(command, ChatCommand::SubmitUserMessage { .. }) {
+                    app_event_tx.chat(driver.status_event("working"));
+                }
+                match driver.handle_command(command).await {
+                    Ok(events) => {
+                        for event in events {
+                            app_event_tx.chat(event);
+                        }
+                        following |= should_follow || !driver.is_quiescent();
+                    }
+                    Err(error) => app_event_tx.chat(driver_error(error)),
+                }
+                last_activity = Instant::now();
             }
-            match driver.handle_command(command).await {
-                Ok(events) => {
-                    for event in events {
-                        app_event_tx.chat(event);
+            if following {
+                match driver
+                    .follow_once(Some(500), &mut |event| app_event_tx.chat(event))
+                    .await
+                {
+                    Ok(progress) => {
+                        following = !progress.quiescent;
+                        if progress.activity {
+                            last_activity = Instant::now();
+                        } else if !driver.pending_run_in_flight()
+                            && last_activity.elapsed() >= Duration::from_secs(300)
+                        {
+                            following = false;
+                            app_event_tx.chat(driver_error(anyhow::anyhow!(
+                                "timed out waiting for session activity; use /refresh to retry"
+                            )));
+                        }
+                    }
+                    Err(error) => {
+                        following = false;
+                        app_event_tx.chat(driver_error(error));
                     }
                 }
-                Err(error) => {
-                    app_event_tx.chat(driver_error(error));
-                    continue;
-                }
-            }
-            if should_follow
-                && let Err(error) = driver
-                    .follow_until_quiescent(Duration::from_secs(300), |event| {
-                        app_event_tx.chat(event);
-                    })
-                    .await
-            {
-                app_event_tx.chat(driver_error(error));
             }
         }
     });
@@ -154,6 +195,7 @@ pub(crate) struct ChatTuiViewOptions {
     pub(crate) world_id: String,
     pub(crate) session_id: String,
     pub(crate) show_tool_details: bool,
+    pub(crate) show_stats: bool,
 }
 
 pub(crate) struct ChatTuiApp {
@@ -178,6 +220,7 @@ impl ChatTuiApp {
     ) -> Self {
         let transcript = TranscriptState::new(TranscriptOptions {
             show_tool_details: options.show_tool_details,
+            show_stats: options.show_stats,
         });
         Self {
             options,
@@ -377,6 +420,17 @@ impl ChatTuiApp {
     fn apply_slash_command(&mut self, command: SlashCommand) {
         match command {
             SlashCommand::Refresh => self.send_chat_command(ChatCommand::Refresh),
+            SlashCommand::Stats(value) => {
+                let enabled = value.unwrap_or(!self.options.show_stats);
+                self.options.show_stats = enabled;
+                self.transcript.set_show_stats(enabled);
+                self.resize_reflow_requested = true;
+                self.local_notice(if enabled {
+                    "Run statistics on."
+                } else {
+                    "Run statistics off."
+                });
+            }
             SlashCommand::Help => self.local_notice(command_help()),
             SlashCommand::Status => self.local_notice(format!(
                 "{}\n\nSession: {}",
@@ -556,7 +610,7 @@ impl ChatTuiApp {
 }
 
 fn command_help() -> &'static str {
-    "commands: /new, /sessions, /skills, /skill, /model, /provider, /effort, /max-tokens, /interrupt, /steer, /approve, /reject, /status, /refresh, /help, /quit"
+    "commands: /new, /sessions, /skills, /skill, /model, /provider, /effort, /max-tokens, /interrupt, /steer, /approve, /reject, /status, /stats [on|off], /refresh, /help, /quit"
 }
 
 fn is_ctrl_c(key: KeyEvent) -> bool {
@@ -564,7 +618,23 @@ fn is_ctrl_c(key: KeyEvent) -> bool {
 }
 
 fn status_allows_run_control(status: &str) -> bool {
-    matches!(status, "running" | "cancelling" | "paused")
+    matches!(
+        status,
+        "active"
+            | "working"
+            | "running"
+            | "thinking"
+            | "planning"
+            | "queued"
+            | "running tools"
+            | "tools complete"
+            | "tool result received"
+            | "waiting for approval"
+            | "approval resolved"
+            | "steering accepted"
+            | "cancelling"
+            | "paused"
+    )
 }
 
 #[cfg(test)]
@@ -582,6 +652,34 @@ mod tests {
     };
 
     #[test]
+    fn stats_toggle_is_local_and_requests_transcript_reflow() {
+        let (tx, _events) = mpsc::unbounded_channel();
+        let (command_tx, mut commands) = mpsc::unbounded_channel();
+        let mut app = ChatTuiApp::new(
+            ChatTuiViewOptions {
+                world_id: GATEWAY_WORLD_ID.into(),
+                session_id: "s-1".into(),
+                show_tool_details: false,
+                show_stats: false,
+            },
+            AppEventSender::new(tx),
+            command_tx,
+        );
+        for (command, enabled) in [
+            ("/stats", true),
+            ("/stats", false),
+            ("/stats on", true),
+            ("/stats on", true),
+            ("/stats off", false),
+        ] {
+            app.submit_local_text(command.into());
+            assert_eq!(app.options.show_stats, enabled);
+            assert!(app.take_resize_reflow_requested(80));
+            assert!(commands.try_recv().is_err());
+        }
+    }
+
+    #[test]
     fn status_shows_current_session_locally_without_submitting_agent_input() {
         let (tx, mut events) = mpsc::unbounded_channel();
         let (command_tx, mut commands) = mpsc::unbounded_channel();
@@ -590,6 +688,7 @@ mod tests {
                 world_id: GATEWAY_WORLD_ID.into(),
                 session_id: "old-session".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             AppEventSender::new(tx),
             command_tx,
@@ -630,6 +729,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -682,6 +782,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -715,6 +816,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -740,6 +842,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -777,6 +880,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -850,6 +954,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -902,6 +1007,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -934,6 +1040,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -966,6 +1073,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -993,6 +1101,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -1029,6 +1138,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,
@@ -1089,6 +1199,7 @@ mod tests {
                 world_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6a".into(),
                 session_id: "018f2a66-31cc-7b25-a4f7-37e3310fdc6b".into(),
                 show_tool_details: false,
+                show_stats: false,
             },
             app_event_tx,
             command_tx,

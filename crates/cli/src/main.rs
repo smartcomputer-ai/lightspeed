@@ -290,6 +290,13 @@ mod tests {
     }
 
     #[test]
+    fn chat_stats_flag_parses_and_conflicts_with_listing() {
+        assert!(Cli::try_parse_from(["lightspeed", "chat", "--show-stats"]).is_ok());
+        assert!(Cli::try_parse_from(["lightspeed", "chat", "--show-stats", "hello"]).is_ok());
+        assert!(Cli::try_parse_from(["lightspeed", "chat", "--list", "--show-stats"]).is_err());
+    }
+
+    #[test]
     fn chat_recent_session_flags_parse_and_reject_ambiguous_actions() {
         for flag in ["--list", "--resume", "--continue"] {
             assert!(Cli::try_parse_from(["lightspeed", "chat", flag]).is_ok());

@@ -6,6 +6,7 @@ use crate::chat::protocol::{ReasoningEffort, parse_reasoning_effort};
 pub(crate) enum SlashCommand {
     Help,
     Status,
+    Stats(Option<bool>),
     Refresh,
     NewSession,
     Sessions(Option<String>),
@@ -34,6 +35,7 @@ pub(crate) enum SlashCommand {
 pub(crate) enum SlashCommandKind {
     Help,
     Status,
+    Stats,
     Refresh,
     NewSession,
     Sessions,
@@ -117,6 +119,7 @@ impl SlashCommandKind {
             SlashCommandKind::Reject,
             SlashCommandKind::Help,
             SlashCommandKind::Status,
+            SlashCommandKind::Stats,
             SlashCommandKind::Refresh,
             SlashCommandKind::Quit,
         ]
@@ -126,6 +129,7 @@ impl SlashCommandKind {
         match self {
             SlashCommandKind::Help => "help",
             SlashCommandKind::Status => "status",
+            SlashCommandKind::Stats => "stats",
             SlashCommandKind::Refresh => "refresh",
             SlashCommandKind::NewSession => "new",
             SlashCommandKind::Sessions => "sessions",
@@ -147,6 +151,7 @@ impl SlashCommandKind {
         match self {
             SlashCommandKind::Help => "show available chat commands",
             SlashCommandKind::Status => "show connection, universe and session details",
+            SlashCommandKind::Stats => "toggle run statistics and context details (on|off)",
             SlashCommandKind::Refresh => "reload the session and retry transcript reads",
             SlashCommandKind::NewSession => "start a fresh session",
             SlashCommandKind::Sessions => "choose a known session",
@@ -168,6 +173,7 @@ impl SlashCommandKind {
         match self {
             SlashCommandKind::Help => SlashCommand::Help,
             SlashCommandKind::Status => SlashCommand::Status,
+            SlashCommandKind::Stats => SlashCommand::Stats(None),
             SlashCommandKind::Refresh => SlashCommand::Refresh,
             SlashCommandKind::NewSession => SlashCommand::NewSession,
             SlashCommandKind::Sessions => SlashCommand::Sessions(None),
@@ -194,6 +200,12 @@ impl SlashCommandKind {
         Ok(match self {
             SlashCommandKind::Help => SlashCommand::Help,
             SlashCommandKind::Status => SlashCommand::Status,
+            SlashCommandKind::Stats => SlashCommand::Stats(match args {
+                "" => None,
+                "on" => Some(true),
+                "off" => Some(false),
+                _ => anyhow::bail!("usage: /stats [on|off]"),
+            }),
             SlashCommandKind::Refresh => SlashCommand::Refresh,
             SlashCommandKind::NewSession => SlashCommand::NewSession,
             SlashCommandKind::Sessions => SlashCommand::Sessions(optional_value(args)),
@@ -243,6 +255,7 @@ impl SlashCommandKind {
         Some(match name {
             "help" | "?" => SlashCommandKind::Help,
             "status" => SlashCommandKind::Status,
+            "stats" => SlashCommandKind::Stats,
             "refresh" => SlashCommandKind::Refresh,
             "new" => SlashCommandKind::NewSession,
             "sessions" | "session" => SlashCommandKind::Sessions,
@@ -307,6 +320,22 @@ fn required_single_value(args: &str, command: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stats_accepts_toggle_and_explicit_visibility() {
+        for (input, expected) in [
+            ("/stats", None),
+            ("/stats on", Some(true)),
+            ("/stats off", Some(false)),
+        ] {
+            assert_eq!(
+                super::parse_slash_command(input).unwrap(),
+                Some(super::SlashCommand::Stats(expected))
+            );
+        }
+        assert!(super::parse_slash_command("/stats yes").is_err());
+        assert!(super::parse_slash_command("/stats on off").is_err());
+    }
+
     use super::*;
 
     #[test]
@@ -317,7 +346,7 @@ mod tests {
         );
         assert_eq!(
             matching_slash_commands("sta"),
-            vec![SlashCommandKind::Status]
+            vec![SlashCommandKind::Status, SlashCommandKind::Stats]
         );
         assert_eq!(
             SlashCommandKind::Status.command_without_args(),

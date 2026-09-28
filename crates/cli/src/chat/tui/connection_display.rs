@@ -5,6 +5,7 @@ use crate::connection::{ResolvedConnection, UniverseStatus};
 pub(super) struct ConnectionDisplay {
     pub footer: Option<String>,
     pub details: String,
+    pub header_context: Vec<(String, String)>,
 }
 
 impl ConnectionDisplay {
@@ -13,6 +14,7 @@ impl ConnectionDisplay {
             return Ok(Self {
                 footer: None,
                 details: "Connection details unavailable.".into(),
+                header_context: Vec::new(),
             });
         };
         let universe = crate::connection::universe_status(connection).await?;
@@ -62,6 +64,30 @@ impl ConnectionDisplay {
                 .unwrap_or_else(|| "unselected".into())
         });
         let footer = (!(generated_dev && loopback)).then(|| format!("{name} / {universe_label}"));
+        let runtime = if generated_dev && loopback {
+            format!("local development · {}", connection.endpoint)
+        } else if connection.name.is_some() && !generated_dev {
+            format!("{name} · {}", connection.endpoint)
+        } else {
+            connection.endpoint.clone()
+        };
+        let mut header_universe = universe
+            .slug
+            .as_deref()
+            .or(universe.universe_id.as_deref())
+            .unwrap_or("none selected")
+            .to_owned();
+        if let Some(caller) = &connection.caller {
+            header_universe.push_str(match (caller.single, caller.scope) {
+                (true, _) => " · single mode",
+                (false, api::AccessScope::Deployment) => " · deployment key",
+                (false, api::AccessScope::Universe { .. }) => " · universe key",
+            });
+        }
+        let header_context = vec![
+            ("Universe".into(), header_universe),
+            ("Runtime".into(), runtime),
+        ];
 
         let mut details = format!(
             "Connection: {}\n  Endpoint: {}\n",
@@ -97,7 +123,11 @@ impl ConnectionDisplay {
         if let Some(reason) = &universe.slug_unavailable_reason {
             details.push_str(&format!("\n  Slug lookup: {reason}"));
         }
-        Self { footer, details }
+        Self {
+            footer,
+            details,
+            header_context,
+        }
     }
 }
 
@@ -143,6 +173,17 @@ mod tests {
             assert!(display.footer.is_none());
             assert!(display.details.contains(&name));
             assert!(!display.details.contains("lsk_do_not_display"));
+            assert!(
+                display.header_context[1]
+                    .1
+                    .starts_with("local development · ")
+            );
+            assert!(
+                display.header_context[0]
+                    .1
+                    .contains("customer-a · deployment key")
+            );
+            assert!(!display.header_context.iter().any(|(_, value)| value.contains("lsk_do_not_display") || value.contains(&name)));
         }
         let remote = ConnectionDisplay::new(
             &connection(Some(&name), "https://runtime.example/rpc"),
