@@ -161,8 +161,7 @@ fn cli_env(
             .write_all(secret.as_bytes())
             .unwrap();
     }
-    let output = child.wait_with_output().unwrap();
-    output
+    child.wait_with_output().unwrap()
 }
 
 #[test]

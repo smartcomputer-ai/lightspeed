@@ -442,9 +442,6 @@ async fn read(args: EnvironmentResourceArgs) -> Result<()> {
     crate::output::show(args.json, &response.environment)
 }
 
-/// One-word origin of an environment for table output: the provider id, the
-/// registration key it was admitted by, or `external`.
-
 async fn close(args: EnvironmentResourceArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.api_url)
         .close_environment(api::EnvironmentCloseParams {
