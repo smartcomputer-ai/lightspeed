@@ -60,6 +60,8 @@ pub const METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND: &str = "environments/credentia
 
 // ── Universe: direct provider model discovery ───────────────────────────────
 
+pub const METHOD_MODELS_DEFAULTS_READ: &str = "models/defaults/read";
+pub const METHOD_MODELS_DEFAULTS_PUT: &str = "models/defaults/put";
 pub const METHOD_MODELS_LIST: &str = "models/list";
 
 pub const METHOD_PROFILES_CREATE: &str = "profiles/create";

@@ -54,6 +54,8 @@ export const METHODS = [
   "environments/registration-keys/read",
   "environments/registration-keys/list",
   "environments/registration-keys/revoke",
+  "models/defaults/read",
+  "models/defaults/put",
   "models/list",
   "profiles/create",
   "profiles/read",
@@ -179,7 +181,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"control_session","kind":"universe"},
     summary: "Replace session configuration",
-    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+    description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
   },
   "session/rename": {
     scope: "universe",
@@ -432,6 +434,18 @@ export const METHOD_INFO = {
     access: {"action":"configure_resource","kind":"universe"},
     summary: "Revoke an environment registration key",
     description: "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent.",
+  },
+  "models/defaults/read": {
+    scope: "universe",
+    access: {"action":"read","kind":"universe"},
+    summary: "Read universe model defaults",
+    description: "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.",
+  },
+  "models/defaults/put": {
+    scope: "universe",
+    access: {"action":"configure_resource","kind":"universe"},
+    summary: "Set a universe model default",
+    description: "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
   },
   "models/list": {
     scope: "universe",
@@ -997,7 +1011,7 @@ export interface MethodMap {
   /**
    * Replace session configuration
    *
-   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
    */
   "session/config/put": {
     params: Api.SessionConfigPutParams;
@@ -1380,6 +1394,24 @@ export interface MethodMap {
   "environments/registration-keys/revoke": {
     params: Api.EnvironmentRegistrationKeyRevokeParams;
     result: Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse;
+  };
+  /**
+   * Read universe model defaults
+   *
+   * Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.
+   */
+  "models/defaults/read": {
+    params: Api.ModelDefaultsReadParams;
+    result: Api.AgentApiOutcomeOfModelDefaultsResponse;
+  };
+  /**
+   * Set a universe model default
+   *
+   * Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+   */
+  "models/defaults/put": {
+    params: Api.ModelDefaultsPutParams;
+    result: Api.AgentApiOutcomeOfModelDefaultsResponse;
   };
   /**
    * Discover available models
@@ -2180,7 +2212,7 @@ export const rpc = {
   /**
    * Replace session configuration
    *
-   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.
+   * Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
    */
   sessionConfigPut(client: RpcCaller, params: Api.SessionConfigPutParams): Promise<Api.AgentApiOutcomeOfSessionConfigPutResponse> {
     return client.call("session/config/put", params);
@@ -2520,6 +2552,22 @@ export const rpc = {
    */
   environmentsRegistrationKeysRevoke(client: RpcCaller, params: Api.EnvironmentRegistrationKeyRevokeParams): Promise<Api.AgentApiOutcomeOfEnvironmentRegistrationKeyRevokeResponse> {
     return client.call("environments/registration-keys/revoke", params);
+  },
+  /**
+   * Read universe model defaults
+   *
+   * Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.
+   */
+  modelsDefaultsRead(client: RpcCaller, params: Api.ModelDefaultsReadParams): Promise<Api.AgentApiOutcomeOfModelDefaultsResponse> {
+    return client.call("models/defaults/read", params);
+  },
+  /**
+   * Set a universe model default
+   *
+   * Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+   */
+  modelsDefaultsPut(client: RpcCaller, params: Api.ModelDefaultsPutParams): Promise<Api.AgentApiOutcomeOfModelDefaultsResponse> {
+    return client.call("models/defaults/put", params);
   },
   /**
    * Discover available models

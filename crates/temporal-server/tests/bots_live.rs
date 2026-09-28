@@ -30,8 +30,7 @@ use api::{
 use bots::ids::{bot_controller_workflow_id, bot_main_session_id, bot_schedule_id};
 use engine::{CoreAgentLlm, CoreAgentTools, storage::BlobStore};
 use support::live::{
-    LIVE_TEST_LOCK, live_universe_id, openai_live_model, require_openai_live_env,
-    require_storage_live_env,
+    LIVE_TEST_LOCK, live_universe_id, require_openai_live_env, require_storage_live_env,
 };
 use temporal_server::{
     config::TaskQueues,
@@ -66,6 +65,7 @@ where
     let _guard = LIVE_TEST_LOCK.lock().await;
     let universe = live_universe_id()?;
     let store = pg_store_from_env().await?;
+    support::live::seed_agent_default(&store, &support::live::openai_live_model()).await?;
     let queues = TaskQueues::derived_from(format!(
         "lightspeed-bots-live-{}",
         uuid::Uuid::new_v4().simple()
@@ -77,7 +77,7 @@ where
     let runtime = core_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
 
-    let mut builder = GatewayAgentApi::builder(client.clone(), store.clone())
+    let builder = GatewayAgentApi::builder(client.clone(), store.clone())
         .with_task_queue(queues.sessions.clone())
         .with_bot_task_queue(queues.bots.clone())
         .with_channel_task_queue(queues.channels.clone());
@@ -89,10 +89,7 @@ where
             let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
             ActivityState::from_pg_store(store.clone(), llm, tools)
         }
-        Llm::Real => {
-            builder = builder.with_default_model(openai_live_model());
-            ActivityState::from_pg_store_with_default_runtime(store.clone())?
-        }
+        Llm::Real => ActivityState::from_pg_store_with_default_runtime(store.clone())?,
     };
     let api = Arc::new(builder.build());
 

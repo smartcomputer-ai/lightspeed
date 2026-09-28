@@ -154,7 +154,7 @@
         "action": "control_session",
         "kind": "universe"
       },
-      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
       "group": "session",
       "method": "session/config/put",
       "params": {
@@ -1222,6 +1222,56 @@
       "role": "operator",
       "scope": "universe",
       "summary": "Revoke an environment registration key",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "description": "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.",
+      "group": "models",
+      "method": "models/defaults/read",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ModelDefaultsReadParams"
+        },
+        "type": "ModelDefaultsReadParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfModelDefaultsResponse"
+        },
+        "type": "AgentApiOutcome<ModelDefaultsResponse>"
+      },
+      "role": "viewer",
+      "scope": "universe",
+      "summary": "Read universe model defaults",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+      "group": "models",
+      "method": "models/defaults/put",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ModelDefaultsPutParams"
+        },
+        "type": "ModelDefaultsPutParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfModelDefaultsResponse"
+        },
+        "type": "AgentApiOutcome<ModelDefaultsResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Set a universe model default",
       "target": null
     },
     {

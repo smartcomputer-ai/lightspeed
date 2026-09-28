@@ -1,4 +1,5 @@
 import type { FeatureStates, UniverseRole } from "@lightspeed/platform-shared";
+export type { ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
 import type {
   Attribution,
   ResourceAccessSummary,

@@ -16,6 +16,7 @@ mod environment;
 mod environment_registration;
 mod mcp;
 mod migrations;
+mod model_defaults;
 mod oauth;
 mod object;
 mod profile;
@@ -36,6 +37,7 @@ use uuid::Uuid;
 
 pub use access::AccessFilter;
 pub use access::{AccessStoreError, PgAccessStore, ResourceAccess};
+pub use model_defaults::ModelDefaultsStoreError;
 
 /// A session page with the access summary each view carries.
 #[derive(Clone, Debug)]

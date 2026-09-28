@@ -17,7 +17,6 @@ use support::live::{
     require_storage_live_env, run_with_live_worker, wait_for_terminal_run,
 };
 use temporal_server::{
-    default_model_from_env,
     gateway::GatewayAgentApi,
     pg_store_from_env,
     worker::{
@@ -85,10 +84,10 @@ async fn run_audio_preprocess_live_client(
     transcriber: Arc<RecordingAudioTranscriber>,
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
-    let model = default_model_from_env();
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
     let api = GatewayAgentApi::builder(client.clone(), store)
         .with_task_queue(task_queue)
-        .with_default_model(model.clone())
         .build();
 
     api.start_session(SessionStartParams {
@@ -201,10 +200,10 @@ async fn run_transcodable_audio_preprocess_live_client(
     transcoded_bytes: Vec<u8>,
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
-    let model = default_model_from_env();
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
     let api = GatewayAgentApi::builder(client.clone(), store)
         .with_task_queue(task_queue)
-        .with_default_model(model.clone())
         .build();
 
     api.start_session(SessionStartParams {

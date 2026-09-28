@@ -5,6 +5,7 @@ mod chat;
 mod connection;
 mod env_cli;
 mod mcp_cli;
+mod model_defaults_cli;
 mod output;
 mod profile_cli;
 mod session_cli;

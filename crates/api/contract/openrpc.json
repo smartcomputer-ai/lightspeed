@@ -81,6 +81,17 @@
           },
           "message": {
             "type": "string"
+          },
+          "modelDefaultSlot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelDefaultSlot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present for model_default_unset; clients need not parse the message."
           }
         },
         "required": [
@@ -119,6 +130,11 @@
           {
             "const": "forbidden",
             "description": "The authenticated caller lacks permission for this operation or target.",
+            "type": "string"
+          },
+          {
+            "const": "model_default_unset",
+            "description": "No model was supplied and this universe has no default for the requested use.",
             "type": "string"
           },
           {
@@ -1712,6 +1728,23 @@
           },
           "result": {
             "$ref": "#/components/schemas/McpServerToolsDiscoverResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
+      "AgentApiOutcomeOfModelDefaultsResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ModelDefaultsResponse"
           }
         },
         "required": [
@@ -11823,6 +11856,95 @@
         ],
         "type": "object"
       },
+      "ModelDefaultSlot": {
+        "description": "A universe's model selection for a particular use. Protocol and purpose\nare separate: several purposes may use the same provider API.",
+        "enum": [
+          "agentRun",
+          "speechToText"
+        ],
+        "type": "string"
+      },
+      "ModelDefaults": {
+        "additionalProperties": false,
+        "description": "Persisted universe defaults. Revision zero means no update has been made.\nClearing a slot still advances the revision, so setup cannot undo a clear.",
+        "properties": {
+          "agentRun": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "speechToText": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
+      "ModelDefaultsPutParams": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "description": "Revision returned by read/put; zero for a universe with no updates.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Complete selection, or explicit null to clear this slot. Required."
+          },
+          "slot": {
+            "$ref": "#/components/schemas/ModelDefaultSlot"
+          }
+        },
+        "required": [
+          "slot",
+          "model",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "ModelDefaultsReadParams": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "ModelDefaultsResponse": {
+        "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/ModelDefaults"
+          }
+        },
+        "required": [
+          "defaults"
+        ],
+        "type": "object"
+      },
       "ModelEndpointConfig": {
         "properties": {
           "apiKinds": {
@@ -13452,7 +13574,7 @@
                 "type": "null"
               }
             ],
-            "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+            "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
           }
         },
         "type": "object"
@@ -18074,7 +18196,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+      "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
       "name": "session/config/put",
       "paramStructure": "by-name",
       "params": [
@@ -19274,6 +19396,62 @@
         "kind": "universe"
       },
       "x-lightspeed-group": "environments",
+      "x-lightspeed-role": "operator",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.",
+      "name": "models/defaults/read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ModelDefaultsReadParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfModelDefaultsResponse"
+        }
+      },
+      "summary": "Read universe model defaults",
+      "x-lightspeed-access": {
+        "action": "read",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "models",
+      "x-lightspeed-role": "viewer",
+      "x-lightspeed-target": null
+    },
+    {
+      "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+      "name": "models/defaults/put",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ModelDefaultsPutParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfModelDefaultsResponse"
+        }
+      },
+      "summary": "Set a universe model default",
+      "x-lightspeed-access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "models",
       "x-lightspeed-role": "operator",
       "x-lightspeed-target": null
     },

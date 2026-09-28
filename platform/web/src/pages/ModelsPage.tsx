@@ -13,7 +13,9 @@ import {
   type ConnectedModelProvider,
 } from "@/components/models/use-model-providers";
 import { MODEL_PROVIDER_CATALOG, type ModelProviderKind } from "@/components/models/catalog";
-import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
+import { DefaultModelDialog, ModelDefaultsSection } from "@/components/models/model-defaults";
+import { useModelDefaults } from "@/lib/model-defaults";
+import type { ModelDefaults } from "@/api";
 import { useActiveUniverse } from "@/lib/universes";
 
 export function ModelsPage({ admin: _admin }: { admin: boolean }) {
@@ -21,10 +23,12 @@ export function ModelsPage({ admin: _admin }: { admin: boolean }) {
   const permissions = useActionPermissions(universe?.id);
   if (isLoading) return <LoadingNote />;
   if (!universe || !permissions.can("read")) return <UniverseNotFound slug={slug} />;
-  return <Models universeId={universe.id} slug={universe.slug} />;
+  return <Models key={universe.id} universeId={universe.id} />;
 }
 
-function Models({ universeId, slug }: { universeId: string; slug: string }) {
+function Models({ universeId }: { universeId: string }) {
+  const defaults = useModelDefaults(universeId);
+  const [editingDefaults, setEditingDefaults] = useState<ModelDefaults | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const writable = useActionPermissions(universeId).can("configure_resource");
   const requestedKind = parseModelProviderKind(searchParams.get("add"));
@@ -53,7 +57,7 @@ function Models({ universeId, slug }: { universeId: string; slug: string }) {
     <>
       <PageHeader
         title="Models"
-        description="Model providers that sessions in this universe can use. Operators add them; keys and logins are never shown again."
+        description="Default models and provider connections for this universe. Operators manage them; keys and logins are never shown again."
         actions={writable && (
           <Button onClick={() => setAddOpen(true)}>
             <Plus data-icon="inline-start" />
@@ -61,11 +65,7 @@ function Models({ universeId, slug }: { universeId: string; slug: string }) {
           </Button>
         )}
       />
-      <ProviderReadinessBanner
-        universeId={universeId}
-        slug={slug}
-        className="mb-4 rounded-lg border"
-      />
+      <h2 className="mb-3 text-sm font-semibold">Providers</h2>
       {legacy && (
         <p className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           A legacy credential below has an incorrect internal ID and is not used for model calls.
@@ -75,6 +75,7 @@ function Models({ universeId, slug }: { universeId: string; slug: string }) {
       {isLoading && <LoadingNote />}
       {error && <p className="text-sm text-destructive">{error.message}</p>}
       {!isLoading && <ModelProviderList providers={connected} onSelect={setSelected} />}
+      <ModelDefaultsSection universeId={universeId} writable={writable} onEdit={setEditingDefaults} />
       {writable && (
         <AddModelProviderDialog
           universeId={universeId}
@@ -86,8 +87,10 @@ function Models({ universeId, slug }: { universeId: string; slug: string }) {
             if (!open) setInitialKind(null);
           }}
           onAdded={() => void invalidate()}
+          onChooseDefault={defaults.data && !defaults.error ? () => setEditingDefaults(defaults.data!) : undefined}
         />
       )}
+      {writable && editingDefaults && <DefaultModelDialog universeId={universeId} initial={editingDefaults} onClose={() => setEditingDefaults(null)} />}
       <ModelProviderDetailsDialog
         universeId={universeId}
         provider={current}

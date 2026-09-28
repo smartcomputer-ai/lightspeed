@@ -113,6 +113,7 @@ import {
   setupResourceFeatureError,
 } from "@/lib/sessions/resource-features";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
+import { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults } from "@/lib/model-defaults";
 import { useActionPermissions } from "@/lib/permissions";
 import { useActiveUniverse, useFeature } from "@/lib/universes";
 import { cn } from "@/lib/utils";
@@ -158,7 +159,7 @@ export function SessionsPage({ admin }: { admin: boolean }) {
         <SessionList key={universe.id} universeId={universe.id} slug={slug!} activeId={sessionId} />
       </ListPane>
       <section className={cn("min-w-0 flex-1 flex-col", sessionId ? "flex" : "hidden md:flex")}>
-        <ProviderReadinessBanner universeId={universe.id} slug={slug!} />
+        {!sessionId && <ProviderReadinessBanner universeId={universe.id} slug={slug!} />}
         {sessionId ? (
           <SessionDetail
             key={sessionDraftKey(universe.id, sessionId)}
@@ -940,11 +941,27 @@ function NewSessionDialog({
     enabled: open && Boolean(profileId),
   });
   const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup");
+  const defaults = useModelDefaults(universeId, open);
+  const creationProfile = profileForCreate(profileId, inlineProfile, selectedProfile.data);
+  const effectiveModel = resolveCreationModel(
+    creationProfile.kind === "inline" ? modelFromConfig(creationProfile.profile.config) : null,
+    creationProfile.kind === "named" ? modelFromConfig(selectedProfile.data?.config) : null,
+    defaults.data,
+  );
+  const modelPending = Boolean(profileId && !inlineProfile && selectedProfile.isLoading)
+    || (!effectiveModel.model && defaults.isLoading);
+  const modelMissing = !modelPending && Boolean(defaults.data) && !effectiveModel.model;
+  const modelSummary = (
+    <div className="grid gap-2">
+      <p className="text-sm"><span className="text-muted-foreground">{effectiveModel.source}: </span>{modelPending ? "Loading…" : effectiveModel.model ? modelLabel(effectiveModel.model) : defaults.error ? "Could not load default" : "Not selected"}</p>
+      <ProviderReadinessBanner universeId={universeId} slug={slug} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
+    </div>
+  );
   const create = useMutation({
     mutationFn: () =>
       api<SessionView>("POST", `/api/v1/universes/${universeId}/sessions`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
-        profile: profileForCreate(profileId, inlineProfile, selectedProfile.data),
+        profile: creationProfile,
       }),
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
@@ -969,6 +986,7 @@ function NewSessionDialog({
     const resourceError = setupResourceFeatureError(
       inlineProfile ?? selectedProfile.data ?? {},
     );
+    if (modelPending || modelMissing || (creationProfile.kind === "named" && selectedProfile.error)) return;
     if (configError || retentionError || resourceError) {
       setError(configError ? `Config: ${configError}` : retentionError ? `Retention: ${retentionError}` : resourceError);
       return;
@@ -1049,12 +1067,12 @@ function NewSessionDialog({
                       {(value: string) =>
                         value
                           ? (profiles.data?.find((p) => p.profileId === value)?.displayName ?? value)
-                          : "No profile (engine defaults)"
+                          : "No profile (universe default)"
                       }
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">No profile (engine defaults)</SelectItem>
+                    <SelectItem value="">No profile (universe default)</SelectItem>
                     {(profiles.data ?? []).map((profile) => (
                       <SelectItem key={profile.profileId} value={profile.profileId}>
                         {profile.displayName ?? profile.profileId}
@@ -1066,6 +1084,7 @@ function NewSessionDialog({
                   The profile is resolved at creation; later profile edits do not change this session.
                 </FieldDescription>
               </Field>
+              {modelSummary}
               <Button
                 type="button"
                 variant="outline"
@@ -1085,7 +1104,7 @@ function NewSessionDialog({
                 <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={create.isPending}>
+                <Button type="submit" disabled={create.isPending || modelPending || modelMissing || (creationProfile.kind === "named" && Boolean(selectedProfile.error))}>
                   {create.isPending ? "Creating…" : "Create"}
                 </Button>
               </DialogFooter>
@@ -1101,7 +1120,8 @@ function NewSessionDialog({
                   : "Inline setup for this session."}
               </DialogDescription>
             </DialogHeader>
-            <div className="min-h-0 overflow-y-auto p-6">
+            <div className="min-h-0 space-y-5 overflow-y-auto p-6">
+              {modelSummary}
               <InlineSetupEditor
                 value={inlineProfile ?? {}}
                 options={editorOptions}
@@ -1130,7 +1150,7 @@ function NewSessionDialog({
                 )}
                 <Button
                   type="button"
-                  disabled={create.isPending || Boolean(configError || retentionError || resourceFeatureError)}
+                  disabled={create.isPending || modelPending || modelMissing || Boolean(configError || retentionError || resourceFeatureError)}
                   onClick={() => create.mutate()}
                 >
                   {create.isPending ? "Creating…" : "Create session"}
@@ -1184,7 +1204,7 @@ function InlineSetupEditor({
       </SetupEditorSection>
       <SetupEditorSection
         title="Model configuration"
-        description="Choose the model and its default reasoning behavior. Unset values inherit deployment or provider defaults."
+        description="Choose a model or inherit the universe default. Unset reasoning uses the provider default."
       >
         <SessionConfigEditor
           value={value.config}
@@ -1192,6 +1212,7 @@ function InlineSetupEditor({
           workspaces={options.workspaces}
           workspacesLoading={options.workspacesLoading}
           models={options.models}
+          defaultModelLabel={options.defaultModelLabel}
           profiles={options.profiles}
           environments={options.environments}
           mcpToolDiscovery={options.mcpToolDiscovery}
@@ -1809,6 +1830,7 @@ export function SessionDetail({
 
   return (
     <>
+      <ProviderReadinessBanner universeId={universeId} slug={slug} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
       {!embedded && (
         <>
         <header className="flex h-12 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b px-4">

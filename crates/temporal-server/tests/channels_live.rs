@@ -136,6 +136,7 @@ where
     let _guard = LIVE_TEST_LOCK.lock().await;
     let universe = live_universe_id()?;
     let store = pg_store_from_env().await?;
+    support::live::seed_agent_default(&store, &support::live::openai_live_model()).await?;
     let queues = TaskQueues::derived_from(format!(
         "lightspeed-channels-live-{}",
         uuid::Uuid::new_v4().simple()

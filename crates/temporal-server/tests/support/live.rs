@@ -610,7 +610,6 @@ pub fn openai_live_model() -> ModelSelection {
         model: env::var("LIGHTSPEED_OPENAI_MODEL")
             .or_else(|_| env::var("OPENAI_RESPONSES_MODEL"))
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
-            .or_else(|_| env::var("LIGHTSPEED_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5.5".to_owned()),
     }
 }
@@ -622,7 +621,6 @@ pub fn openai_completions_live_model() -> ModelSelection {
         model: env::var("LIGHTSPEED_OPENAI_MODEL")
             .or_else(|_| env::var("OPENAI_COMPLETIONS_MODEL"))
             .or_else(|_| env::var("OPENAI_LIVE_MODEL"))
-            .or_else(|_| env::var("LIGHTSPEED_CHAT_MODEL"))
             .unwrap_or_else(|_| "gpt-5.5".to_owned()),
     }
 }
@@ -642,4 +640,30 @@ mod tests {
         .expect_err("a pending API request must not bypass the deadline");
         assert!(error.to_string().contains("stuck request"));
     }
+}
+
+/// Tests that exercise omitted models configure the same durable policy as clients.
+pub async fn seed_agent_default(
+    store: &store_pg::PgStore,
+    model: &ModelSelection,
+) -> anyhow::Result<()> {
+    store.ensure_universe().await?;
+    let current = store.read_model_defaults().await?;
+    store
+        .put_model_defaults(api::ModelDefaultsPutParams {
+            slot: api::ModelDefaultSlot::AgentRun,
+            model: Some(api::ModelConfig {
+                provider_id: model.provider_id.clone(),
+                api_kind: match model.api_kind {
+                    ProviderApiKind::OpenAiResponses => "openai:responses",
+                    ProviderApiKind::OpenAiCompletions => "openai:completions",
+                    ProviderApiKind::AnthropicMessages => "anthropic:messages",
+                }
+                .into(),
+                model: model.model.clone(),
+            }),
+            expected_revision: current.revision,
+        })
+        .await?;
+    Ok(())
 }

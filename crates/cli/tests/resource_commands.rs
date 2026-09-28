@@ -617,3 +617,101 @@ fn config_replacement_checks_the_requested_revision_and_outputs_one_document() {
     ]);
     assert_eq!(output["session"]["configRevision"], 43);
 }
+
+#[test]
+fn model_defaults_commands_round_trip_routes_clear_explicitly_and_guard_revisions() {
+    let mut defaults = json!({"revision":0, "agentRun":null, "speechToText":null});
+    let runtime = Runtime::start(move |method, params| {
+        match method {
+            "models/defaults/read" => {}
+            "models/defaults/put" => {
+                assert_eq!(params["expectedRevision"], defaults["revision"]);
+                let slot = params["slot"].as_str().unwrap();
+                assert!(
+                    params.get("model").is_some(),
+                    "clearing must send explicit null"
+                );
+                defaults[slot] = params["model"].clone();
+                defaults["revision"] = json!(defaults["revision"].as_u64().unwrap() + 1);
+            }
+            other => panic!("unexpected method {other}"),
+        }
+        json!({"defaults":defaults})
+    });
+    let agent = runtime.json(&[
+        "model",
+        "defaults",
+        "set",
+        "agent-run",
+        "--provider",
+        "anthropic",
+        "--api-kind",
+        "anthropic:messages",
+        "--model",
+        "chosen",
+        "--json",
+    ]);
+    assert_eq!(agent["agentRun"]["apiKind"], "anthropic:messages");
+    assert_eq!(agent["revision"], 1);
+    let speech = runtime.json(&[
+        "model",
+        "defaults",
+        "set",
+        "speech-to-text",
+        "--provider",
+        "custom-speech",
+        "--api-kind",
+        "openai:audio-transcriptions",
+        "--model",
+        "transcriber",
+        "--expected-revision",
+        "1",
+        "--json",
+    ]);
+    assert_eq!(speech["agentRun"], agent["agentRun"]);
+    let cleared = runtime.json(&["model", "defaults", "clear", "agent-run", "--json"]);
+    assert_eq!(cleared["agentRun"], Value::Null);
+    assert_eq!(cleared["speechToText"], speech["speechToText"]);
+    assert_eq!(
+        runtime.json(&["model", "defaults", "read", "--json"]),
+        cleared
+    );
+    let requests = runtime.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r["method"] == "models/defaults/read")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn model_defaults_conflict_is_not_retried_with_a_new_revision() {
+    let runtime = Runtime::start_api(|method, _params| {
+        assert_eq!(method, "models/defaults/put");
+        Err(
+            json!({"code":-32009, "message":"defaults changed", "data":{"kind":"conflict","message":"defaults changed"}}),
+        )
+    });
+    let output = runtime.run(&[
+        "model",
+        "defaults",
+        "clear",
+        "agent-run",
+        "--expected-revision",
+        "4",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("defaults changed"));
+    assert_eq!(
+        runtime
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r["method"] == "models/defaults/put")
+            .count(),
+        1
+    );
+}

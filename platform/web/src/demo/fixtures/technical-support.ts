@@ -973,6 +973,7 @@ function seedIntegrations(universe: UniverseState): void {
   };
 
   const fetchedAtMs = ago(6 * MINUTE_MS);
+  universe.modelDefaults = { revision: 1, agentRun: { ...OPUS }, speechToText: null };
   universe.models = {
     models: [
       modelOption(SONNET, "Claude Sonnet 5", { maxInputTokens: 200_000, maxOutputTokens: 64_000, parallelToolUse: true, reasoningEfforts: ["none", "low", "medium", "high"] }, fetchedAtMs),

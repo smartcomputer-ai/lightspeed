@@ -1115,7 +1115,7 @@ mod tests {
         ActiveRun, ModelSelection, ProviderApiKind, RunId, RunSource, RunStatus,
         storage::{BlobGraphStore as _, BlobStore as _},
     };
-    use temporal_workflow::{DEFAULT_MODEL, default_run_config, default_session_config};
+    use temporal_workflow::{default_run_config, default_session_config};
 
     use super::*;
 
@@ -1200,7 +1200,7 @@ mod tests {
         ModelSelection {
             api_kind: ProviderApiKind::OpenAiResponses,
             provider_id: "openai".to_owned(),
-            model: DEFAULT_MODEL.to_owned(),
+            model: "test-model".to_owned(),
         }
     }
 

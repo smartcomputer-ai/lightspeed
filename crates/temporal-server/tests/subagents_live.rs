@@ -23,7 +23,6 @@ use support::live::{
     terminate_live_session, wait_for_terminal_run, wait_until,
 };
 use temporal_server::{
-    default_model_from_env,
     gateway::GatewayAgentApi,
     pg_store_from_env,
     subagents::AgentApiSubagentRuntime,
@@ -495,11 +494,11 @@ where
     let runtime = core_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let store = pg_store_from_env().await?;
-    let model = default_model_from_env();
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
     let api = Arc::new(
         GatewayAgentApi::builder(client.clone(), store.clone())
             .with_task_queue(task_queue.clone())
-            .with_default_model(model.clone())
             .build(),
     );
 

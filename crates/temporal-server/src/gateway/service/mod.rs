@@ -19,6 +19,7 @@ mod github_api;
 mod input;
 mod mcp_api;
 pub(crate) mod mcp_discovery;
+mod model_defaults;
 mod models_api;
 mod oauth_api;
 mod parse;
@@ -137,7 +138,7 @@ use vfs::{
 use super::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentSessionArgs,
     AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
-    DEFAULT_TEMPORAL_TARGET, connect_temporal, default_model_from_env, pg_store_from_env,
+    DEFAULT_TEMPORAL_TARGET, connect_temporal, pg_store_from_env,
 };
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -553,7 +554,6 @@ pub struct GatewayAgentApiBuilder {
     task_queue: String,
     bot_task_queue: String,
     channel_task_queue: String,
-    default_model: ModelSelection,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
@@ -632,11 +632,6 @@ impl GatewayAgentApiBuilder {
         connector: Arc<dyn ProviderControllerConnector>,
     ) -> Self {
         self.provider_controller_connector = connector;
-        self
-    }
-
-    pub fn with_default_model(mut self, model: ModelSelection) -> Self {
-        self.default_model = model;
         self
     }
 
@@ -754,7 +749,6 @@ impl GatewayAgentApiBuilder {
             task_queue: self.task_queue,
             bot_task_queue: self.bot_task_queue,
             channel_task_queue: self.channel_task_queue,
-            default_model: self.default_model,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
             operation_timeout: self.operation_timeout,
@@ -781,7 +775,6 @@ pub struct GatewayAgentApi {
     task_queue: String,
     pub(crate) bot_task_queue: String,
     pub(crate) channel_task_queue: String,
-    default_model: ModelSelection,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
@@ -818,7 +811,6 @@ impl GatewayAgentApi {
             task_queue: DEFAULT_TASK_QUEUE.to_owned(),
             bot_task_queue: temporal_workflow::bots::DEFAULT_BOTS_TASK_QUEUE.to_owned(),
             channel_task_queue: crate::config::DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
-            default_model: default_model_from_env(),
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
@@ -2022,6 +2014,38 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn read_model_defaults(
+        &self,
+        _params: api::ModelDefaultsReadParams,
+    ) -> Result<AgentApiOutcome<api::ModelDefaultsResponse>, AgentApiError> {
+        self.authorize_method(api::METHOD_MODELS_DEFAULTS_READ, None)
+            .await?;
+        let defaults = self
+            .store
+            .read_model_defaults()
+            .await
+            .map_err(model_defaults::map_store_error)?;
+        Ok(AgentApiOutcome::new(api::ModelDefaultsResponse {
+            defaults,
+        }))
+    }
+
+    async fn put_model_defaults(
+        &self,
+        params: api::ModelDefaultsPutParams,
+    ) -> Result<AgentApiOutcome<api::ModelDefaultsResponse>, AgentApiError> {
+        self.authorize_method(api::METHOD_MODELS_DEFAULTS_PUT, None)
+            .await?;
+        let defaults = self
+            .store
+            .put_model_defaults(params)
+            .await
+            .map_err(model_defaults::map_store_error)?;
+        Ok(AgentApiOutcome::new(api::ModelDefaultsResponse {
+            defaults,
+        }))
+    }
+
     async fn list_models(
         &self,
         params: ModelListParams,
@@ -2227,7 +2251,10 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        let config = engine_session_config_from_api(params.config, self.default_model.clone())?;
+        let config = engine_session_config_from_api(
+            params.config,
+            model_defaults::current_session_model(&loaded.state)?,
+        )?;
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;

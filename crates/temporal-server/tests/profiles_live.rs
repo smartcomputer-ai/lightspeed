@@ -16,7 +16,7 @@ use support::live::{
     read_session_view, require_storage_live_env, run_with_live_worker, wait_for_environment_status,
     wait_for_terminal_run,
 };
-use temporal_server::{default_model_from_env, gateway::GatewayAgentApi, pg_store_from_env};
+use temporal_server::{gateway::GatewayAgentApi, pg_store_from_env};
 use temporalio_client::{Client, WorkflowTerminateOptions};
 
 #[tokio::test(flavor = "current_thread")]
@@ -58,10 +58,10 @@ async fn run_profile_environment_selection_live_client(
     };
 
     let store = pg_store_from_env().await?;
-    let model = default_model_from_env();
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
     let api = GatewayAgentApi::builder(client.clone(), store.clone())
         .with_task_queue(task_queue)
-        .with_default_model(model.clone())
         .build();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let provider_id = format!("fake-profile-{suffix}");
@@ -242,10 +242,10 @@ async fn run_profiles_live_client(
     session_id: SessionId,
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
-    let model = default_model_from_env();
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
     let api = GatewayAgentApi::builder(client.clone(), store)
         .with_task_queue(task_queue)
-        .with_default_model(model.clone())
         .build();
     let profile_id = ProfileId::new(format!("live_profile_{}", uuid::Uuid::new_v4().simple()));
     let server_id = format!("profile_crm_{}", uuid::Uuid::new_v4().simple());

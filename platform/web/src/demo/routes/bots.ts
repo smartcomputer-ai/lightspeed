@@ -27,13 +27,13 @@ import type {
 } from "@lightspeed-ai/agent-client";
 import type { ProfileDocument } from "@/api";
 import {
-  DEFAULT_MODEL,
   EVENT_ORIGIN,
   activeRun,
   applyEntries,
   closeSession,
   contextMessage,
   newSession,
+  modelOf,
   startRun,
   steerRun,
   demoAccess,
@@ -65,6 +65,7 @@ class BotConfigError extends Error {
   constructor(
     message: string,
     readonly status: 400 | 404 | 409 | 410,
+    readonly modelDefaultSlot?: "agentRun",
   ) {
     super(message);
     this.name = "BotConfigError";
@@ -72,7 +73,7 @@ class BotConfigError extends Error {
 }
 
 function configErrorResponse(c: Context, error: unknown): Response {
-  if (error instanceof BotConfigError) return c.json({ error: error.message }, error.status);
+  if (error instanceof BotConfigError) return c.json({ error: error.message, ...(error.modelDefaultSlot ? { kind: "model_default_unset", modelDefaultSlot: error.modelDefaultSlot } : {}) }, error.status);
   throw error;
 }
 
@@ -169,9 +170,15 @@ function profileInstructions(profile: ProfileDocument | undefined): string | nul
 
 /// A session the bot's controller owns: managed, lifecycle-bound to the
 /// controller, configured from the bot's profile.
-function botSession(store: DemoStore, universe: UniverseState, bot: BotView, label: string): SessionRecord {
+function botSessionConfig(universe: UniverseState, bot: BotView): Record<string, unknown> {
+  const config = asRecord(universe.profiles.get(bot.profileId)?.config) ?? {};
+  const model = modelOf(config) ?? universe.modelDefaults.agentRun;
+  if (!model) throw new BotConfigError("No default agent model is selected. Choose a model in Models.", 400, "agentRun");
+  return { ...structuredClone(config), model: { ...model } };
+}
+
+function botSession(store: DemoStore, universe: UniverseState, bot: BotView, label: string, config = botSessionConfig(universe, bot)): SessionRecord {
   const profile = universe.profiles.get(bot.profileId);
-  const config = asRecord(profile?.config);
   return newSession(store, universe, {
     displayName: `${bot.botId} · ${label}`,
     managed: true,
@@ -180,7 +187,7 @@ function botSession(store: DemoStore, universe: UniverseState, bot: BotView, lab
       lifecycleController: { workflowId: `bot:v1:${bot.botId}`, workflowKind: "bot_controller_v1" },
       tools: [],
     },
-    config: { model: { ...DEFAULT_MODEL }, ...config },
+    config,
     instructions: profileInstructions(profile),
   });
 }
@@ -724,6 +731,7 @@ function rotateSession(
   universe: UniverseState,
   record: BotRecord,
   managed: BotSessionSnapshot,
+  config: Record<string, unknown>,
 ): void {
   const state = record.state;
   const old = universe.sessions.get(managed.sessionId);
@@ -731,7 +739,7 @@ function rotateSession(
     abandonDeliveries(record, old.view.id, "session rotated");
     closeSession(old, true);
   }
-  const fresh = botSession(store, universe, record.bot, managed.label);
+  const fresh = botSession(store, universe, record.bot, managed.label, config);
   const entry: BotSessionSnapshot = {
     sessionId: fresh.view.id,
     label: managed.label,
@@ -1038,6 +1046,7 @@ function createBot(
 
 export function botRoutes(store: DemoStore): Hono {
   const app = new Hono();
+  app.onError((error, c) => configErrorResponse(c, error));
 
   app.get("/:id/bots", (c) => {
     const universe = universeFor(store, c);
@@ -1141,7 +1150,8 @@ export function botRoutes(store: DemoStore): Hono {
     const managed = sessionsOf(record.state).find((entry) => entry.sessionId === sessionId);
     if (!managed) return c.json({ error: "session is not managed by this bot" }, 404);
     if (record.bot.closedAtMs != null) return conflict(c, "bot is closed");
-    setTimeout(() => rotateSession(store, universe, record, managed), ROTATE_DELAY_MS);
+    const config = botSessionConfig(universe, record.bot);
+    setTimeout(() => rotateSession(store, universe, record, managed, config), ROTATE_DELAY_MS);
     return c.json({ accepted: true });
   });
 
@@ -1411,6 +1421,7 @@ function universeByAnyId(store: DemoStore, id: string): UniverseState | null {
 /// indistinguishable from an unknown endpoint, like the core's route.
 export function hookRoutes(store: DemoStore): Hono {
   const app = new Hono();
+  app.onError((error, c) => configErrorResponse(c, error));
 
   app.post("/bots/:universeId/:botId/:triggerId/:token", async (c) => {
     const universe = universeByAnyId(store, c.req.param("universeId") ?? "");

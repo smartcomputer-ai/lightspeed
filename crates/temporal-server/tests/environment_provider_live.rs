@@ -25,7 +25,7 @@ use support::live::{
     run_with_live_worker, wait_for_environment_status,
 };
 use temporal_server::{
-    DeploymentStores, UniverseRuntime, default_model_from_env,
+    DeploymentStores, UniverseRuntime,
     gateway::{GatewayAgentApi, GatewayDeploymentApi},
     pg_store_from_env,
 };
@@ -361,10 +361,10 @@ async fn run_environment_power_live_client(
     };
 
     let store = pg_store_from_env().await?;
-    let model = default_model_from_env();
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
     let api = GatewayAgentApi::builder(client.clone(), store.clone())
         .with_task_queue(task_queue)
-        .with_default_model(model.clone())
         .build();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let provider_id = format!("fake-power-{suffix}");

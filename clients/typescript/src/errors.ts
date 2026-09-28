@@ -11,6 +11,7 @@ export type LightspeedRpcErrorKind =
   | "conflict"
   | "rejected"
   | "environment_not_ready"
+  | "model_default_unset"
   | "internal"
   | "unknown";
 
@@ -34,6 +35,8 @@ export function lightspeedRpcErrorKind(code: number): LightspeedRpcErrorKind {
       return "environment_not_ready";
     case -32603:
       return "internal";
+    case -32014:
+      return "model_default_unset";
     default:
       return "unknown";
   }

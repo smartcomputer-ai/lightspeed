@@ -264,7 +264,9 @@ fn default_feature_version() -> u32 {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionConfig {
-    /// Absent on input means the deployment default model. Documents read
+    /// At creation, omission uses the profile model or universe agentRun
+    /// default. On configuration replacement or profile application to an
+    /// existing session, omission preserves its current model. Documents read
     /// back from a session always carry the model. Provider identity and API
     /// kind are fixed for the session lifetime; the model name may change.
     #[serde(default, skip_serializing_if = "Option::is_none")]

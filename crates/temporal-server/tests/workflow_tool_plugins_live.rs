@@ -835,9 +835,9 @@ where
     let store = pg_store_from_env().await?;
     let blobs: Arc<dyn BlobStore> = store.clone();
 
+    support::live::seed_agent_default(&store, &support::live::openai_live_model()).await?;
     let mut api_builder = GatewayAgentApi::builder(client.clone(), store.clone())
-        .with_task_queue(session_queue.clone())
-        .with_default_model(temporal_server::default_model_from_env());
+        .with_task_queue(session_queue.clone());
     if let Some(threshold) = continue_as_new_history_threshold {
         api_builder = api_builder.with_continue_as_new_history_threshold(threshold);
     }

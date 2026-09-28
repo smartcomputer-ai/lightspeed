@@ -15,6 +15,20 @@ pub trait AgentApiService: Send + Sync {
         params: InitializeParams,
     ) -> Result<AgentApiOutcome<InitializeResponse>, AgentApiError>;
 
+    async fn read_model_defaults(
+        &self,
+        _params: ModelDefaultsReadParams,
+    ) -> Result<AgentApiOutcome<ModelDefaultsResponse>, AgentApiError> {
+        Err(AgentApiError::internal("model defaults are unavailable"))
+    }
+
+    async fn put_model_defaults(
+        &self,
+        _params: ModelDefaultsPutParams,
+    ) -> Result<AgentApiOutcome<ModelDefaultsResponse>, AgentApiError> {
+        Err(AgentApiError::internal("model defaults are unavailable"))
+    }
+
     async fn list_models(
         &self,
         params: ModelListParams,

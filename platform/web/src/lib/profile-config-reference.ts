@@ -131,7 +131,7 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
     "maxToolRounds": 0,
     "maxTurns": 0,
   },
-  // Absent on input means the deployment default model. Documents read back from a session always carry the model. Provider identity and API kind are fixed for the session lifetime; the model name may change.
+  // At creation, omission uses the profile model or universe agentRun default. On configuration replacement or profile application to an existing session, omission preserves its current model. Documents read back from a session always carry the model. Provider identity and API kind are fixed for the session lifetime; the model name may change.
   "model": {
     // (required when this object is present)
     "apiKind": "string",

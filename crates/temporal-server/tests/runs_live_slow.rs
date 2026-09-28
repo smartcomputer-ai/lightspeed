@@ -27,10 +27,7 @@ use support::live::{
     live_workflow_handle, require_storage_live_env, run_with_live_worker_timeout,
     wait_for_terminal_run,
 };
-use temporal_server::{
-    default_model_from_env, gateway::GatewayAgentApi, pg_store_from_env,
-    worker::FakeRuntimeCounters,
-};
+use temporal_server::{gateway::GatewayAgentApi, pg_store_from_env, worker::FakeRuntimeCounters};
 use temporal_workflow::{LLM_SCHEDULE_TO_CLOSE, LLM_START_TO_CLOSE};
 use temporalio_client::{Client, WorkflowDescribeOptions, WorkflowTerminateOptions};
 
@@ -67,9 +64,9 @@ async fn run_llm_timeout_live_client(
     counters: FakeRuntimeCounters,
 ) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
+    support::live::seed_agent_default(&store, &support::live::openai_live_model()).await?;
     let api = GatewayAgentApi::builder(client.clone(), store)
         .with_task_queue(task_queue)
-        .with_default_model(default_model_from_env())
         .build();
 
     api.start_session(SessionStartParams {

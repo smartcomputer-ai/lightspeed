@@ -4,10 +4,9 @@ import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAtta
 /// and status codes follow the platform server's gateway so the UI cannot
 /// tell the difference.
 import { Hono, type Context } from "hono";
-import type { Environment, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
+import type { Environment, ModelConfig, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
 import type { ProfileInstructions } from "@lightspeed-ai/agent-client";
 import {
-  DEFAULT_MODEL,
   PROFILE_INSTRUCTIONS_KEY,
   cancelRun,
   closeSession,
@@ -110,7 +109,8 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (!body.profile) return badRequest(c, "profile is required");
     const profile = resolveProfile(universe, body.profile);
     if (!profile) return notFound(c, "not found in engine");
-    const config = sessionConfig(profile.config);
+    const config = sessionConfig(profile.config, universe.modelDefaults.agentRun);
+    if (!config) return c.json({ error: "No default agent model is selected. Choose a model in Models.", kind: "model_default_unset", modelDefaultSlot: "agentRun" }, 400);
     const sessionId = store.nextId("session");
     const resolved = resolveEnvironment(universe, profile);
     if ("error" in resolved) return conflict(c, `engine conflict: ${resolved.error}`);
@@ -283,7 +283,8 @@ export function sessionRoutes(store: DemoStore): Hono {
         `engine conflict: expected config revision ${body.expectedConfigRevision}, got ${session.view.configRevision}`,
       );
     }
-    const config = sessionConfig(body.config);
+    const config = sessionConfig(body.config, modelOf(session.view.config));
+    if (!config) return badRequest(c, "Session has no model.");
     session.view.config = config;
     if (session.view.activeEnvironmentId && !isEnvironmentAttached(config, session.view.activeEnvironmentId)) session.view.activeEnvironmentId = null;
     session.view.configRevision += 1;
@@ -488,9 +489,10 @@ function resolveProfile(universe: UniverseState, source: ProfileSource): Resolve
 
 /// The session's own copy of a profile config, with the model the demo
 /// answers as when the profile leaves it open.
-function sessionConfig(config: Record<string, unknown>): Record<string, unknown> {
+function sessionConfig(config: Record<string, unknown>, fallback?: ModelConfig | null): Record<string, unknown> | null {
   const copy = structuredClone(config);
-  return { ...copy, model: modelOf(copy) ?? { ...DEFAULT_MODEL } };
+  const model = modelOf(copy) ?? fallback;
+  return model ? { ...copy, model: { ...model } } : null;
 }
 
 function instructionText(store: DemoStore, instructions: ProfileInstructions | null): string | null {

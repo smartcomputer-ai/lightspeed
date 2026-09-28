@@ -15,6 +15,7 @@ import type {
   McpServer,
   Member,
   ModelListResponse,
+  ModelDefaults,
   ProfileDocument,
   SecretsInventory,
   SessionSummary,
@@ -148,6 +149,7 @@ export interface UniverseState {
   secrets: SecretsInventory;
   githubApps: GitHubApp[];
   models: ModelListResponse;
+  modelDefaults: ModelDefaults;
   setups: UniverseSetup[];
   bots: Map<string, BotRecord>;
   /// Universe channel accounts (core wire shape), keyed by `accountId`.
@@ -260,6 +262,7 @@ export class DemoStore {
       secrets: { providers: [], grants: [] },
       githubApps: [],
       models: { models: [], providers: [] },
+      modelDefaults: { revision: 0, agentRun: null, speechToText: null },
       setups: [],
       bots: new Map(),
       channelAccounts: new Map(),

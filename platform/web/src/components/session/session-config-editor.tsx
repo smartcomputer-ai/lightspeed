@@ -95,6 +95,7 @@ type Props = {
   workspaces?: WorkspaceOption[];
   workspacesLoading?: boolean;
   models?: ModelOption[];
+  defaultModelLabel?: string;
   profiles?: ProfileOption[];
   environments?: EnvironmentOption[];
   allowInherit?: boolean;
@@ -526,6 +527,7 @@ export function SessionConfigEditor({
   workspaces = [],
   workspacesLoading = false,
   models = [],
+  defaultModelLabel = "Universe default",
   profiles = [],
   environments = [],
   allowInherit = false,
@@ -586,6 +588,7 @@ export function SessionConfigEditor({
         <ModelFields
           config={config}
           models={models}
+          defaultModelLabel={defaultModelLabel}
           manualModel={manualModel}
           onManualModelChange={setManualModel}
           pinnedApiKind={pinnedApiKind}
@@ -774,9 +777,10 @@ function EnvironmentFeatureEditor({
   );
 }
 
-function ModelFields({ config, models, manualModel, onManualModelChange, pinnedApiKind, pinnedProviderId, change }: {
+function ModelFields({ config, models, defaultModelLabel, manualModel, onManualModelChange, pinnedApiKind, pinnedProviderId, change }: {
   config: RecordValue;
   models: ModelOption[];
+  defaultModelLabel: string;
   manualModel: boolean;
   onManualModelChange: (enabled: boolean) => void;
   pinnedApiKind?: string;
@@ -799,8 +803,8 @@ function ModelFields({ config, models, manualModel, onManualModelChange, pinnedA
   const choices: ModelChoice[] = [
     ...(!pinnedApiKind ? [{
       key: "default",
-      label: "Deployment default",
-      search: "deployment default",
+      label: defaultModelLabel,
+      search: `universe default ${defaultModelLabel}`,
     }] : []),
     ...modelPickerOptions(models, currentModel, pinnedApiKind, pinnedProviderId)
       .map((option) => ({

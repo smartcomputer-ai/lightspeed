@@ -1,46 +1,44 @@
 import { describe, expect, it } from "vitest";
+import type { ModelConfig, ModelProviderDiscovery } from "@/api";
 import { addModelProviderHref, summarizeProviderReadiness } from "./provider-readiness";
+import { resolveCreationModel } from "./model-defaults";
 
-const provider = (providerId: string, credential: "configured" | "missing" | "invalid") => ({
-  providerId,
-  apiKinds: [],
-  credential,
-  credentialSource: "none" as const,
+const route: ModelConfig = { providerId: "openai", apiKind: "openai:responses", model: "private-model" };
+const provider = (providerId: string, credential: ModelProviderDiscovery["credential"], apiKinds = ["openai:responses"]): ModelProviderDiscovery => ({
+  providerId, apiKinds, credential, credentialSource: "none",
 });
 
-describe("provider readiness", () => {
-  it("is ready when any provider has a usable credential", () => {
-    const summary = summarizeProviderReadiness([
-      provider("openai", "missing"),
-      provider("anthropic", "configured"),
-    ]);
-    expect(summary.ready).toBe(true);
-    expect(summary.missing.map((p) => p.providerId)).toEqual(["openai"]);
+describe("selected model readiness", () => {
+  it("does not use another provider's credential", () => {
+    expect(summarizeProviderReadiness(route, [provider("openai", "missing"), provider("anthropic", "configured")]))
+      .toMatchObject({ state: "missing", blocked: true });
   });
-
-  it("is not ready when every provider is missing or invalid", () => {
-    const summary = summarizeProviderReadiness([
-      provider("openai", "missing"),
-      provider("anthropic", "invalid"),
-    ]);
-    expect(summary.ready).toBe(false);
-    expect(summary.invalid.map((p) => p.providerId)).toEqual(["anthropic"]);
+  it("accepts credentialless and unlisted manual models", () => {
+    expect(summarizeProviderReadiness(route, [provider("openai", "notRequired")]))
+      .toMatchObject({ state: "configured", blocked: false });
   });
-
-  it("does not nag while unknown", () => {
-    expect(summarizeProviderReadiness(undefined).ready).toBe(true);
+  it("checks the protocol as well as the provider", () => {
+    expect(summarizeProviderReadiness(route, [provider("openai", "configured", ["openai:completions"])]).state).toBe("unsupported");
+    expect(summarizeProviderReadiness(route, [provider("openai", "invalid")]).state).toBe("invalid");
+    expect(summarizeProviderReadiness(route, []).state).toBe("missing");
   });
-
-  it("encodes reserved characters in add-provider kinds", () => {
-    const href = addModelProviderHref("acme", "custom provider/alpha?x=1&y=2#fragment");
-    expect(href).toBe(
-      "/u/acme/models?add=custom%20provider%2Falpha%3Fx%3D1%26y%3D2%23fragment",
-    );
+  it("distinguishes absent configuration from unknown provider health", () => {
+    expect(summarizeProviderReadiness(null, undefined)).toMatchObject({ state: "unset", blocked: true });
+    expect(summarizeProviderReadiness(undefined, undefined)).toMatchObject({ state: "unknown", blocked: false });
+    expect(summarizeProviderReadiness(route, undefined)).toMatchObject({ state: "unknown", blocked: false });
+    expect(summarizeProviderReadiness(route, [{ ...provider("openai", "configured"), error: "discovery timed out" }]))
+      .toMatchObject({ state: "unknown", blocked: false });
   });
-
-  it("builds the add-provider deep link", () => {
-    expect(addModelProviderHref("acme", "openAiApiKey")).toBe(
-      "/u/acme/models?add=openAiApiKey",
-    );
+  it("resolves explicit, profile, and universe choices without requiring a default", () => {
+    const profile = { ...route, providerId: "profile" };
+    const defaults = { revision: 1, agentRun: { ...route, providerId: "default" }, speechToText: null };
+    expect(resolveCreationModel(route, profile, defaults)).toEqual({ model: route, source: "Session model" });
+    expect(resolveCreationModel(null, profile, undefined)).toEqual({ model: profile, source: "Profile model" });
+    expect(resolveCreationModel(null, null, defaults)).toEqual({ model: defaults.agentRun, source: "Universe default" });
+    expect(resolveCreationModel(null, null, { ...defaults, agentRun: null }).model).toBeNull();
+  });
+  it("encodes add-provider deep links", () => {
+    expect(addModelProviderHref("acme", "custom provider/alpha?x=1&y=2#fragment"))
+      .toBe("/u/acme/models?add=custom%20provider%2Falpha%3Fx%3D1%26y%3D2%23fragment");
   });
 });

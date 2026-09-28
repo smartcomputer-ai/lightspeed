@@ -572,7 +572,7 @@ function ConfigSection({
   return (
     <Section
       title="Model configuration"
-      description="Choose the model and its default reasoning behavior. Unset values inherit deployment or provider defaults."
+      description="Choose a model or inherit the universe default when a session is created. Unset reasoning uses the provider default."
     >
       <SessionConfigEditor
         value={draft.config}
@@ -581,6 +581,7 @@ function ConfigSection({
         workspaces={options.workspaces}
         workspacesLoading={options.workspacesLoading}
         models={options.models}
+        defaultModelLabel={options.defaultModelLabel}
         profiles={options.profiles}
         environments={options.environments}
         mcpToolDiscovery={options.mcpToolDiscovery}

@@ -32,6 +32,7 @@ export function AddModelProviderDialog({
   initialKind = null,
   onOpenChange,
   onAdded,
+  onChooseDefault,
 }: {
   universeId: string;
   open: boolean;
@@ -40,6 +41,7 @@ export function AddModelProviderDialog({
   initialKind?: ModelProviderKind | null;
   onOpenChange: (open: boolean) => void;
   onAdded: () => void;
+  onChooseDefault?: () => void;
 }) {
   const [selected, setSelected] = useState<ModelProviderKind | null>(initialKind);
   useEffect(() => {
@@ -167,6 +169,7 @@ export function AddModelProviderDialog({
               </>
             )}
             <DialogFooter>
+              {done.type === "modelKey" && onChooseDefault && <Button variant="outline" onClick={() => { close(); onChooseDefault(); }}>Choose default model</Button>}
               <Button onClick={close}>Done</Button>
             </DialogFooter>
           </div>

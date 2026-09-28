@@ -20,6 +20,12 @@ function decodeBody(init: RequestInit | undefined): Record<string, unknown> {
 }
 
 describe("LightspeedClient", () => {
+  it("classifies missing model defaults and retains the affected slot", () => {
+    const error = new LightspeedRpcError({ code: -32014, message: "Choose a model", data: { kind: "model_default_unset", message: "Choose a model", modelDefaultSlot: "agentRun" } });
+    expect(error.kind).toBe("model_default_unset");
+    expect(error.data?.modelDefaultSlot).toBe("agentRun");
+  });
+
   it("omits universe selection on connection and deployment calls", async () => {
     const captured: Headers[] = [];
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -40,7 +46,7 @@ describe("LightspeedClient", () => {
       access: { kind: "universe", action: "control_session" },
       summary: "Replace session configuration",
       description:
-        "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+        "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
     });
     expect(METHOD_INFO["deployment/api-keys/create"]).toMatchObject({
       scope: "deployment",

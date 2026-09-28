@@ -1,41 +1,47 @@
-import { useQuery } from "@tanstack/react-query";
-import { api, type ModelListResponse, type ModelProviderDiscovery } from "@/api";
+import { AGENT_MODEL_API_KINDS } from "@lightspeed/platform-shared";
+import type { ModelConfig, ModelProviderDiscovery } from "@/api";
+import { useModelDefaults, useModelDiscovery } from "./model-defaults";
 
-/// Whether this universe can run sessions at all: at least one model provider
-/// with a usable credential (universe key or deployment fallback). Shares the
-/// `["models", universeId]` query with the session editor so it is fetched
-/// once and invalidated when keys change.
-export interface ProviderReadiness {
-  isLoading: boolean;
-  /// True while unknown (loading/error) so callers never nag prematurely.
-  ready: boolean;
-  missing: ModelProviderDiscovery[];
-  invalid: ModelProviderDiscovery[];
+export type ModelReadiness = {
+  state: "unset" | "configured" | "missing" | "invalid" | "unsupported" | "unknown";
+  blocked: boolean;
+  message: string;
+};
+
+/// Configuration follows the exact provider/API route. Discovery is advisory:
+/// an unlisted model or a network failure does not invalidate a manual choice.
+export function summarizeProviderReadiness(
+  model: ModelConfig | null | undefined,
+  providers: ModelProviderDiscovery[] | undefined,
+): ModelReadiness {
+  if (model === undefined) return { state: "unknown", blocked: false, message: "Model settings could not be checked." };
+  if (model === null) return { state: "unset", blocked: true, message: "No model selected. Choose a model or set the universe default." };
+  if (!model.providerId || !model.model || !(AGENT_MODEL_API_KINDS as readonly string[]).includes(model.apiKind)) {
+    return { state: "unsupported", blocked: true, message: "This model selection cannot be used for agent runs." };
+  }
+  if (!providers) return { state: "unknown", blocked: false, message: "Provider status could not be checked." };
+  const provider = providers.find((entry) => entry.providerId === model.providerId);
+  if (!provider) return { state: "missing", blocked: true, message: `Provider ${model.providerId} is not configured.` };
+  if (provider.credential === "invalid") return { state: "invalid", blocked: true, message: `Provider ${model.providerId} is disabled or its credential is unusable.` };
+  if (provider.credential === "missing") return { state: "missing", blocked: true, message: `Provider ${model.providerId} needs a credential.` };
+  if (!provider.apiKinds.includes(model.apiKind)) {
+    return { state: "unsupported", blocked: true, message: `Provider ${model.providerId} does not support ${model.apiKind}.` };
+  }
+  if (provider.error) return { state: "unknown", blocked: false, message: "Provider configured; availability could not be checked." };
+  return { state: "configured", blocked: false, message: provider.credential === "notRequired" ? "Provider configured · no credential required" : "Provider configured" };
 }
 
-export function summarizeProviderReadiness(
-  providers: ModelProviderDiscovery[] | undefined,
-): Pick<ProviderReadiness, "ready" | "missing" | "invalid"> {
-  if (!providers) return { ready: true, missing: [], invalid: [] };
+export function useProviderReadiness(universeId: string, model?: ModelConfig | null, enabled = true) {
+  const defaults = useModelDefaults(universeId, enabled && model === undefined);
+  const discovery = useModelDiscovery(universeId, enabled);
+  const selection = model === undefined ? defaults.data?.agentRun : model;
+  const readiness = summarizeProviderReadiness(selection, discovery.error ? undefined : discovery.data?.providers);
   return {
-    ready: providers.some((provider) => provider.credential === "configured"),
-    missing: providers.filter((provider) => provider.credential === "missing"),
-    invalid: providers.filter((provider) => provider.credential === "invalid"),
+    ...readiness,
+    isLoading: enabled && (discovery.isLoading || (model === undefined && defaults.isLoading)),
   };
 }
 
-export function useProviderReadiness(universeId: string, enabled = true): ProviderReadiness {
-  const models = useQuery({
-    queryKey: ["models", universeId],
-    queryFn: () => api<ModelListResponse>("GET", `/api/v1/universes/${universeId}/models`),
-    staleTime: 60_000,
-    enabled,
-  });
-  const summary = summarizeProviderReadiness(models.error ? undefined : models.data?.providers);
-  return { isLoading: models.isLoading, ...summary };
-}
-
-/// Deep link that opens the Add-model-provider dialog on the given catalog entry.
 export function addModelProviderHref(slug: string, kind: string): string {
   return `/u/${slug}/models?add=${encodeURIComponent(kind)}`;
 }

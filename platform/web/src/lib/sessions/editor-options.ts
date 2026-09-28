@@ -1,10 +1,10 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useQuery } from "@tanstack/react-query";
+import { modelLabel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
 import {
   api,
   type Environment,
-  type ModelListResponse,
   type ProfileSummary,
 } from "@/api";
 import type {
@@ -28,12 +28,8 @@ export function useSessionConfigEditorOptions(
       api<WorkspaceOption[]>("GET", `/api/v1/universes/${universeId}/workspaces`),
     enabled,
   });
-  const models = useQuery({
-    queryKey: ["models", universeId],
-    queryFn: () => api<ModelListResponse>("GET", `/api/v1/universes/${universeId}/models`),
-    staleTime: 60_000,
-    enabled,
-  });
+  const models = useModelDiscovery(universeId, enabled);
+  const defaults = useModelDefaults(universeId, enabled);
   const profiles = useQuery({
     queryKey: ["profiles", universeId],
     queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
@@ -51,6 +47,7 @@ export function useSessionConfigEditorOptions(
     workspaces: workspaces.data,
     workspacesLoading: workspaces.isLoading,
     models: models.data?.models,
+    defaultModelLabel: defaults.data?.agentRun ? `Universe default · ${modelLabel(defaults.data.agentRun)}` : "Universe default",
     profiles: profiles.data,
     environments: environments.data,
     mcpToolDiscovery: permissions.can("configure_resource") ? mcpToolDiscovery : undefined,

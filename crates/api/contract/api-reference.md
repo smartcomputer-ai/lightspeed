@@ -94,7 +94,7 @@ Returns a cursor-paginated summary list ordered by most recent update, optionall
 
 **Replace session configuration**
 
-Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.
+Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
 
 - Access: `{"kind":"universe","action":"control_session"}`
 - Group: `session`
@@ -648,6 +648,32 @@ Stops the key from admitting new daemon identities; already registered daemons k
 - Target: `none`
 - Params: `EnvironmentRegistrationKeyRevokeParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>`
+
+### `models/defaults/read`
+
+**Read universe model defaults**
+
+Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.
+
+- Access: `{"kind":"universe","action":"read"}`
+- Group: `models`
+- Role: `viewer`
+- Target: `none`
+- Params: `ModelDefaultsReadParams`
+- Result: `AgentApiOutcome<ModelDefaultsResponse>`
+
+### `models/defaults/put`
+
+**Set a universe model default**
+
+Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.
+
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `models`
+- Role: `operator`
+- Target: `none`
+- Params: `ModelDefaultsPutParams`
+- Result: `AgentApiOutcome<ModelDefaultsResponse>`
 
 ### `models/list`
 

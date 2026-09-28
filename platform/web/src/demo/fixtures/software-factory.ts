@@ -1511,6 +1511,7 @@ function seedIntegrations(universe: UniverseState): void {
 
   const fetchedAtMs = ago(12 * MINUTE_MS);
   const efforts = ["none", "low", "medium", "high", "xhigh"];
+  universe.modelDefaults = { revision: 1, agentRun: { ...OPUS }, speechToText: null };
   universe.models = {
     models: [
       modelOption(OPUS, "Claude Opus 5", { maxInputTokens: 1_000_000, maxOutputTokens: 128_000, parallelToolUse: true, reasoningEfforts: [...efforts, "max"] }, fetchedAtMs),

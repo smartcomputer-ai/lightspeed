@@ -77,3 +77,44 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
   }
   return { handoff: cli ? handoff : null, platformSecret };
 }
+
+// This is development fixture policy, never a server-side model fallback.
+// Revision zero distinguishes untouched universes from deliberately cleared
+// defaults. Seed only after runtime (and, for Test, Platform) readiness.
+export async function seedDevelopmentModelDefaults({ env, handoff, full, fetch: request = globalThis.fetch }) {
+  const single = env.LIGHTSPEED_AUTH_MODE === "single";
+  const connection = handoff ? JSON.parse(readPrivate(handoff)) : null;
+  const secret = single ? null : connection?.credentialFile
+    ? readPrivate(connection.credentialFile) : env.LIGHTSPEED_PLATFORM_API_KEY;
+  if (!single && !secret) return false;
+  const universes = [env.LIGHTSPEED_PG_UNIVERSE_ID];
+  if (full && env.LIGHTSPEED_PLATFORM_DEV_SEED === "true") universes.push("6c696768-7473-4065-8064-000000000010");
+  for (const universe of new Set(universes)) {
+    const headers = { "content-type": "application/json" };
+    if (!single) {
+      headers.authorization = `Bearer ${secret}`;
+      headers["x-lightspeed-universe"] = universe;
+    }
+    async function call(method, params) {
+      const response = await request(env.LIGHTSPEED_API_URL, {
+        method: "POST", headers, redirect: "error", signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "development-model-defaults", method, params }),
+      });
+      if (!response.ok) throw new DevError(`Development model setup failed (HTTP ${response.status}).`);
+      const rpc = await response.json();
+      if (rpc.error) {
+        // Another setup or user won the revision race. Their choice wins.
+        if (method === "models/defaults/put" && rpc.error.data?.kind === "conflict") return;
+        throw new DevError(`Development model setup failed for ${method}.`, { hint: "Check that the development key has models access, then configure defaults with the CLI." });
+      }
+      return rpc.result.result;
+    }
+    const { defaults } = await call("models/defaults/read", {});
+    if (defaults.revision !== 0) continue;
+    await call("models/defaults/put", {
+      slot: "agentRun", expectedRevision: 0,
+      model: { providerId: "openai", apiKind: "openai:responses", model: "gpt-6-sol" },
+    });
+  }
+  return true;
+}

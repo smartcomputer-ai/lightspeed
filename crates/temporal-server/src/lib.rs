@@ -17,7 +17,7 @@ pub mod universe;
 pub mod worker;
 
 pub use config::{
-    DeploymentStores, GatewayAuthMode, default_model_from_env, gateway_auth_mode_from_env,
-    pg_store_from_env, task_queue_from_env, universe_id_from_env,
+    DeploymentStores, GatewayAuthMode, gateway_auth_mode_from_env, pg_store_from_env,
+    task_queue_from_env, universe_id_from_env,
 };
 pub use universe::{UniverseError, UniverseRuntime, UniverseState};

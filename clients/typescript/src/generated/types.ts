@@ -95,9 +95,18 @@ export type AgentApiErrorKind =
   | "rejected"
   | "unauthenticated"
   | "forbidden"
+  | "model_default_unset"
   | "session_bootstrap_failed"
   | "environment_not_ready"
   | "response_too_large";
+/**
+ * A universe's model selection for a particular use. Protocol and purpose
+ * are separate: several purposes may use the same provider API.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelDefaultSlot".
+ */
+export type ModelDefaultSlot = "agentRun" | "speechToText";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentNotification".
@@ -1865,6 +1874,10 @@ export interface ToolView {
 export interface AgentApiError {
   kind: AgentApiErrorKind;
   message: string;
+  /**
+   * Present for model_default_unset; clients need not parse the message.
+   */
+  modelDefaultSlot?: ModelDefaultSlot | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -2154,7 +2167,9 @@ export interface SessionConfig {
   generation?: GenerationConfig | null;
   limits?: LimitsConfig | null;
   /**
-   * Absent on input means the deployment default model. Documents read
+   * At creation, omission uses the profile model or universe agentRun
+   * default. On configuration replacement or profile application to an
+   * existing session, omission preserves its current model. Documents read
    * back from a session always carry the model. Provider identity and API
    * kind are fixed for the session lifetime; the model name may change.
    */
@@ -5498,6 +5513,33 @@ export interface McpToolAnnotationsView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfModelDefaultsResponse".
+ */
+export interface AgentApiOutcomeOfModelDefaultsResponse {
+  notifications?: AgentNotification[];
+  result: ModelDefaultsResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelDefaultsResponse".
+ */
+export interface ModelDefaultsResponse {
+  defaults: ModelDefaults;
+}
+/**
+ * Persisted universe defaults. Revision zero means no update has been made.
+ * Clearing a slot still advances the revision, so setup cannot undo a clear.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelDefaults".
+ */
+export interface ModelDefaults {
+  agentRun?: ModelConfig | null;
+  revision: number;
+  speechToText?: ModelConfig | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfModelListResponse".
  */
 export interface AgentApiOutcomeOfModelListResponse {
@@ -7556,6 +7598,26 @@ export interface McpServerReadParams {
 export interface McpServerToolsDiscoverParams {
   serverId: string;
 }
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelDefaultsPutParams".
+ */
+export interface ModelDefaultsPutParams {
+  /**
+   * Revision returned by read/put; zero for a universe with no updates.
+   */
+  expectedRevision: number;
+  /**
+   * Complete selection, or explicit null to clear this slot. Required.
+   */
+  model: ModelConfig | null;
+  slot: ModelDefaultSlot;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ModelDefaultsReadParams".
+ */
+export interface ModelDefaultsReadParams {}
 /**
  * Direct provider model discovery. Results may be served from a brief
  * process-local cache; clients refresh by calling this method.

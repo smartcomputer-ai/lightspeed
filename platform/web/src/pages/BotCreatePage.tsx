@@ -32,6 +32,7 @@ import {
   type TriggerKind,
 } from "@/components/bot/triggers";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
+import { modelFromConfig } from "@/lib/model-defaults";
 import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
@@ -222,6 +223,11 @@ function Wizard({
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),
   });
   const options = useSessionConfigEditorOptions(universeId, step === "profile" || step === "wakeups");
+  const sharedProfile = useQuery({
+    queryKey: ["profile", universeId, sharedProfileId],
+    queryFn: () => api<ProfileDocument>("GET", `/api/v1/universes/${universeId}/profiles/${sharedProfileId}`),
+    enabled: step === "profile" && setupMode === "shared" && Boolean(sharedProfileId),
+  });
   const defaultEnvironmentId = defaultEnvironmentAttachment(config)?.environmentId;
 
   const env: BotEnvStatus =
@@ -628,7 +634,9 @@ function Wizard({
                     profile.
                   </p>
                 </header>
-                <ProviderReadinessBanner universeId={universeId} slug={slug} />
+                <ProviderReadinessBanner universeId={universeId} slug={slug}
+                  model={modelFromConfig(setupMode === "own" ? config : sharedProfile.data?.config) ?? undefined}
+                  enabled={setupMode === "own" || Boolean(sharedProfile.data)} />
                 <div className="grid gap-2 sm:grid-cols-2">
                   <SetupModeChoice
                     active={setupMode === "own"}
@@ -680,6 +688,7 @@ function Wizard({
                       workspaces={options.workspaces}
                       workspacesLoading={options.workspacesLoading}
                       models={options.models}
+                      defaultModelLabel={options.defaultModelLabel}
                       profiles={options.profiles}
                       environments={options.environments}
                       mcpToolDiscovery={options.mcpToolDiscovery}

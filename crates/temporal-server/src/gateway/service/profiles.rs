@@ -91,13 +91,25 @@ impl GatewayAgentApi {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
         let resolved = self.resolve_profile_source(params.profile).await?;
-        let profile = self.profile_intent(&resolved, true)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let revision = loaded.state.lifecycle.config_revision;
+        if let Some(expected) = params.expected_config_revision
+            && expected != revision
+        {
+            return Err(AgentApiError::conflict(format!(
+                "expected config revision {expected}, got {revision}"
+            )));
+        }
+        let profile = Self::profile_intent(
+            &resolved,
+            Some(model_defaults::current_session_model(&loaded.state)?),
+        )?;
         let applied = self
             .prepare_session_operation(
                 &session_id,
                 temporal_workflow::SessionOperation::ApplyProfile {
                     profile,
-                    expected_config_revision: params.expected_config_revision,
+                    expected_config_revision: Some(revision),
                     expected_tools_revision: params.expected_tools_revision,
                 },
             )
@@ -125,7 +137,6 @@ impl GatewayAgentApi {
     }
 
     pub(super) fn merge_profile_start_config(
-        &self,
         profile_config: Option<api::SessionConfig>,
         explicit_config: Option<api::SessionConfig>,
     ) -> Option<api::SessionConfig> {
@@ -144,20 +155,18 @@ impl GatewayAgentApi {
         })
     }
 
-    /// With `apply_config`, the profile's own configuration is applied and
-    /// its default attachment is the environment fill candidate. Without it
-    /// (session start), the caller has merged the effective configuration
-    /// and sets the candidate itself.
+    /// With a current model, apply the profile configuration and preserve an
+    /// omitted model. On creation the caller has already merged configuration
+    /// and sets the environment candidate itself.
     pub(super) fn profile_intent(
-        &self,
         profile: &ProfileDocument,
-        apply_config: bool,
+        current_model: Option<ModelSelection>,
     ) -> Result<temporal_workflow::SessionProfileIntent, AgentApiError> {
-        let config = if apply_config {
+        let config = if let Some(current_model) = current_model {
             profile
                 .config
                 .clone()
-                .map(|config| engine_session_config_from_api(config, self.default_model.clone()))
+                .map(|config| engine_session_config_from_api(config, current_model))
                 .transpose()?
         } else {
             None

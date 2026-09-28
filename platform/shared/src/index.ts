@@ -136,3 +136,4 @@ export function mergeFeatureOverrides(stored: unknown, changes: FeatureOverrides
   }
   return merged;
 }
+export { AGENT_MODEL_API_KINDS, modelDefaultsPutSchema } from "./model-defaults.js";

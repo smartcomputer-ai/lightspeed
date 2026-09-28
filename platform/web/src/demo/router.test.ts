@@ -11,6 +11,7 @@ import type {
   SessionEventsPage,
   SessionListPage,
   SessionView,
+  ModelDefaults,
 } from "@/api";
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
@@ -50,6 +51,7 @@ const universeReads = [
   "secrets",
   "auth-grants",
   "models",
+  "models/defaults",
   "setups",
   "api-keys",
   "members",
@@ -61,6 +63,67 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("keeps model defaults universe-scoped and revision-safe while preserving existing session models", async () => {
+    const { store, call } = await boot();
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const other = [...store.universes.values()].find((state) => state.universe.id !== SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const otherDefaults = structuredClone(other.modelDefaults);
+    const original = (await call("GET", `${base}/models/defaults`)).json as ModelDefaults;
+    const model = { providerId: "private", apiKind: "openai:responses", model: "manual-model" };
+    const updated = await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model, expectedRevision: original.revision });
+    expect(updated.status).toBe(200);
+    const revision = original.revision + 1;
+    expect(updated.json).toEqual({ ...original, agentRun: model, revision });
+    expect((await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: original.revision })).status).toBe(409);
+    expect((await call("PUT", `${base}/models/defaults`, { slot: "agentRun", expectedRevision: revision })).status).toBe(400);
+    const created = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } });
+    expect(created.status).toBe(200);
+    const session = created.json as SessionView;
+    expect(session.config).toMatchObject({ model });
+    const cleared = await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: revision });
+    expect(cleared.json).toMatchObject({ revision: revision + 1, agentRun: null });
+    const missing = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } });
+    expect(missing.status).toBe(400);
+    expect(missing.json).toMatchObject({ kind: "model_default_unset", modelDefaultSlot: "agentRun" });
+    const existing = await call("PUT", `${base}/sessions/${session.id}/config`, { config: {}, expectedConfigRevision: session.configRevision });
+    expect(existing.status).toBe(200);
+    expect(store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.sessions.get(session.id)!.view.config).toMatchObject({ model });
+    const explicit = await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: { config: { model } } } });
+    expect(explicit.status).toBe(200);
+    expect(other.modelDefaults).toEqual(otherDefaults);
+  });
+
+  it("lets demo members read defaults while reserving changes for operators", async () => {
+    const { store, call } = await boot();
+    store.currentUser.role = "user";
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    universe.universe.role = "viewer";
+    const path = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/models/defaults`;
+    expect((await call("GET", path)).status).toBe(200);
+    expect((await call("PUT", path, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision })).status).toBe(403);
+    expect(universe.modelDefaults.agentRun).not.toBeNull();
+  });
+
+  it("uses universe defaults for demo bot sessions and refuses rotation when that choice is cleared", async () => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    await call("PUT", `${base}/profiles/inherit`, { profileId: "inherit", config: {} });
+    const created = await call("POST", `${base}/bots`, { bot: { botId: "inherit-model", profileId: "inherit" } });
+    expect(created.status).toBe(201);
+    const record = universe.bots.get("inherit-model")!;
+    const sessionId = record.state.mainSessionId!;
+    const model = universe.modelDefaults.agentRun;
+    expect(universe.sessions.get(sessionId)!.view.config).toMatchObject({ model });
+    await call("PUT", `${base}/models/defaults`, { slot: "agentRun", model: null, expectedRevision: universe.modelDefaults.revision });
+    const refused = await call("POST", `${base}/bots/inherit-model/sessions/${sessionId}/rotate`);
+    expect(refused.status).toBe(400);
+    expect(refused.json).toMatchObject({ kind: "model_default_unset" });
+    expect(universe.sessions.get(sessionId)!.view.status).not.toBe("closed");
+    expect((await call("POST", `${base}/bots`, { bot: { botId: "no-model", profileId: "inherit" } })).status).toBe(400);
+    expect(universe.bots.has("no-model")).toBe(false);
+  });
+
   it("carries runtime slugs through creation and adoption without local suffixes", async () => {
     const { store, call } = await boot();
     const created = await call("POST", "/api/v1/universes", { name: "Display", slug: "chosen" });

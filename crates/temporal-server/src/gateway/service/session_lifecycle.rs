@@ -333,7 +333,7 @@ impl GatewayAgentApi {
             delete_after_close_ms,
         );
         validate_delete_after_close_ms(effective_delete_after_close_ms)?;
-        let start_config = self.merge_profile_start_config(
+        let start_config = Self::merge_profile_start_config(
             resolved_profile
                 .as_ref()
                 .and_then(|profile| profile.config.clone()),
@@ -358,7 +358,7 @@ impl GatewayAgentApi {
         );
         args.setup = match resolved_profile.as_ref() {
             Some(profile) => {
-                let mut intent = self.profile_intent(profile, false)?;
+                let mut intent = Self::profile_intent(profile, None)?;
                 intent.environment = setup_environment;
                 Some(intent)
             }

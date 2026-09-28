@@ -1,21 +1,29 @@
 use std::{env, sync::Arc, time::Duration};
 
-use engine::{ModelSelection, ProviderApiKind};
 use object_store::ObjectStore;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use store_pg::{
     BlobCache, PgStore, PgStoreConfig, PgStoreError, S3ObjectStoreConfig, SchemaStatus,
     SecretsMasterKey, build_s3_object_store,
 };
-use temporal_workflow::{DEFAULT_MODEL, DEFAULT_TASK_QUEUE, bots::DEFAULT_BOTS_TASK_QUEUE};
+use temporal_workflow::{DEFAULT_TASK_QUEUE, bots::DEFAULT_BOTS_TASK_QUEUE};
 use uuid::Uuid;
 
-pub fn default_model_from_env() -> ModelSelection {
-    ModelSelection {
-        api_kind: ProviderApiKind::OpenAiResponses,
-        provider_id: env::var("LIGHTSPEED_CHAT_PROVIDER").unwrap_or_else(|_| "openai".to_owned()),
-        model: env::var("LIGHTSPEED_CHAT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_owned()),
+/// Retired deployment model policy must be migrated to universe defaults.
+/// Credentials and provider transport still use their existing configuration.
+pub fn validate_model_environment() -> anyhow::Result<()> {
+    validate_model_environment_with(|name| env::var_os(name).is_some())
+}
+
+fn validate_model_environment_with(is_set: impl Fn(&str) -> bool) -> anyhow::Result<()> {
+    for name in ["LIGHTSPEED_CHAT_PROVIDER", "LIGHTSPEED_CHAT_MODEL"] {
+        if is_set(name) {
+            anyhow::bail!(
+                "{name} is retired; remove it and configure each universe with `lightspeed model defaults set agent-run --provider <id> --api-kind <kind> --model <model>`"
+            );
+        }
     }
+    Ok(())
 }
 
 pub fn universe_id_from_env() -> anyhow::Result<Uuid> {
@@ -412,6 +420,16 @@ fn optional_env(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_model_environment_is_rejected_with_a_configuration_action() {
+        validate_model_environment_with(|_| false).unwrap();
+        for name in ["LIGHTSPEED_CHAT_MODEL", "LIGHTSPEED_CHAT_PROVIDER"] {
+            let error = validate_model_environment_with(|candidate| candidate == name).unwrap_err();
+            assert!(error.to_string().contains(name));
+            assert!(error.to_string().contains("model defaults set"));
+        }
+    }
 
     #[test]
     fn unledgered_schema_bypass_is_narrow() {

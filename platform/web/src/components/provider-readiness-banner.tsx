@@ -1,38 +1,26 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { Link } from "react-router-dom";
-import { KeyRound } from "lucide-react";
+import { Info } from "lucide-react";
+import type { ModelConfig } from "@/api";
 import { Button } from "@/components/ui/button";
-import { addModelProviderHref, useProviderReadiness } from "@/lib/provider-readiness";
+import { useProviderReadiness } from "@/lib/provider-readiness";
 
-/// Nudges toward Models when no model provider has a usable credential.
-/// Renders nothing while loading or when at least one provider is ready.
-export function ProviderReadinessBanner({
-  universeId,
-  slug,
-  className,
-}: {
+export function ProviderReadinessBanner({ universeId, slug, model, enabled = true, className }: {
   universeId: string;
   slug: string;
+  /// Omitted means universe policy; an existing session supplies its stored model.
+  model?: ModelConfig | null;
+  enabled?: boolean;
   className?: string;
 }) {
-  const readiness = useProviderReadiness(universeId);
+  const readiness = useProviderReadiness(universeId, model, enabled);
   const permissions = useActionPermissions(universeId);
-  if (readiness.isLoading || readiness.ready) return null;
-  const invalidOnly = readiness.missing.length === 0 && readiness.invalid.length > 0;
+  if (!enabled || readiness.isLoading || readiness.state === "configured") return null;
   return (
-    <div
-      role="status"
-      className={`flex flex-wrap items-center gap-3 border-b bg-amber-500/10 px-4 py-2 text-sm ${className ?? ""}`}
-    >
-      <KeyRound className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-      <span className="flex-1">
-        {invalidOnly
-          ? "The configured model provider key was rejected. Sessions cannot run until a valid model provider API key is set."
-          : "No model provider is configured for this universe. Sessions cannot run until a model provider API key is added."}
-      </span>
-      {permissions.can("configure_resource") && <Button size="sm" nativeButton={false} render={<Link to={addModelProviderHref(slug, "openAiApiKey")} />}>
-        Add API key
-      </Button>}
+    <div role="status" className={`flex flex-wrap items-center gap-3 border-b bg-amber-500/10 px-4 py-2 text-sm ${className ?? ""}`}>
+      <Info className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+      <span className="flex-1">{readiness.message}</span>
+      {permissions.can("configure_resource") && <Button size="sm" nativeButton={false} render={<Link to={`/u/${slug}/models`} />}>Model settings</Button>}
     </div>
   );
 }

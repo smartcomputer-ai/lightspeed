@@ -772,7 +772,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
             }
           },
           "type": "object"
@@ -1232,7 +1232,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/config/put",
     "group": "session",
     "summary": "Replace session configuration",
-    "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op.",
+    "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
     "paramsType": "SessionConfigPutParams",
     "resultType": "AgentApiOutcome<SessionConfigPutResponse>",
     "inputSchema": {
@@ -1756,7 +1756,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
             }
           },
           "type": "object"
@@ -3971,7 +3971,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
             }
           },
           "type": "object"
@@ -5034,6 +5034,94 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_models_defaults_read",
+    "method": "models/defaults/read",
+    "group": "models",
+    "summary": "Read universe model defaults",
+    "description": "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers.",
+    "paramsType": "ModelDefaultsReadParams",
+    "resultType": "AgentApiOutcome<ModelDefaultsResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "lightspeed_models_defaults_put",
+    "method": "models/defaults/put",
+    "group": "models",
+    "summary": "Set a universe model default",
+    "description": "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery.",
+    "paramsType": "ModelDefaultsPutParams",
+    "resultType": "AgentApiOutcome<ModelDefaultsResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": {
+        "not": {}
+      },
+      "properties": {
+        "expectedRevision": {
+          "description": "Revision returned by read/put; zero for a universe with no updates.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Complete selection, or explicit null to clear this slot. Required."
+        },
+        "slot": {
+          "$ref": "#/definitions/ModelDefaultSlot"
+        }
+      },
+      "required": [
+        "slot",
+        "model",
+        "expectedRevision"
+      ],
+      "type": "object",
+      "definitions": {
+        "ModelConfig": {
+          "properties": {
+            "apiKind": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "providerId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "providerId",
+            "apiKind",
+            "model"
+          ],
+          "type": "object"
+        },
+        "ModelDefaultSlot": {
+          "description": "A universe's model selection for a particular use. Protocol and purpose\nare separate: several purposes may use the same provider API.",
+          "enum": [
+            "agentRun",
+            "speechToText"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
     "name": "lightspeed_models_list",
     "method": "models/list",
     "group": "models",
@@ -5685,7 +5773,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
             }
           },
           "type": "object"
@@ -6703,7 +6791,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Absent on input means the deployment default model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
             }
           },
           "type": "object"

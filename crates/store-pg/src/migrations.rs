@@ -44,6 +44,7 @@ const LIGHTSPEED_TABLES: &[&str] = &[
     "session_checkpoints",
     "session_events",
     "sessions",
+    "universe_model_defaults",
     "universes",
     "vfs_snapshots",
     "vfs_workspaces",
@@ -102,9 +103,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "channels",
         sql: include_str!("../migrations/009_channels.sql"),
     },
+    EmbeddedMigration {
+        version: 10,
+        name: "model_defaults",
+        sql: include_str!("../migrations/010_model_defaults.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 9;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 10;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

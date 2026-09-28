@@ -3,6 +3,7 @@
 /// installation. Secret values are accepted and dropped; only the non-secret
 /// views the real gateway returns are kept.
 import { Hono } from "hono";
+import { modelDefaultsPutSchema } from "@lightspeed/platform-shared";
 import type {
   GitHubApp,
   GitHubInstallation,
@@ -272,6 +273,9 @@ function credentialStatus(
   provider: Pick<ModelProviderDiscovery, "providerId" | "credentialSource">,
 ): Pick<ModelProviderDiscovery, "credential" | "credentialSource" | "error"> {
   const secret = findModelProvider(universe, credentialIdFor(provider.providerId));
+  if (secret && (secret.status !== "active" || !secret.usableForModels)) {
+    return { credential: "invalid", credentialSource: "universe", error: "Provider is disabled or unusable." };
+  }
   if (secret?.status === "active" && secret.hasCredential) {
     return { credential: "configured", credentialSource: "universe", error: null };
   }
@@ -736,6 +740,22 @@ export function secretRoutes(store: DemoStore): Hono {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     return c.json(modelDiscovery(universe));
+  });
+
+  app.get("/:id/models/defaults", (c) => {
+    const universe = universeFor(store, c);
+    return universe ? c.json(universe.modelDefaults) : notFound(c);
+  });
+
+  app.put("/:id/models/defaults", async (c) => {
+    const universe = universeFor(store, c);
+    if (!universe) return notFound(c);
+    if (store.currentUser.role !== "admin" && !["operator", "admin"].includes(universe.universe.role ?? "")) return c.json({ error: "operator role required" }, 403);
+    const body = modelDefaultsPutSchema.safeParse(await readBody(c));
+    if (!body.success) return badRequest(c, body.error.issues[0]?.message ?? "Invalid defaults update");
+    if (body.data.expectedRevision !== universe.modelDefaults.revision) return conflict(c, "Model defaults changed elsewhere.");
+    universe.modelDefaults = { ...universe.modelDefaults, [body.data.slot]: body.data.model, revision: universe.modelDefaults.revision + 1 };
+    return c.json(universe.modelDefaults);
   });
 
   /// Operators see the templates; installing stays with Admins.

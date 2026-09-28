@@ -4,7 +4,7 @@
 //
 // Stateful dependencies run in Docker Compose. Rust and TypeScript processes
 // run from the checkout so cargo, tsx, and Vite retain their normal edit loops.
-import { prepareCliConnection } from "./cli-connection.mjs";
+import { prepareCliConnection, seedDevelopmentModelDefaults } from "./cli-connection.mjs";
 import { spawnSync } from "node:child_process";
 import {
   closeSync,
@@ -90,6 +90,7 @@ async function main() {
     phase = "preparing the development CLI connection";
     const prepared = await prepareCliConnection({ root: repoRoot, env: plan.env, full: plan.profile === "full", noBootstrap: cli.noApiKeyBootstrap, run: runChecked });
     if (prepared.platformSecret) {
+      plan.env.LIGHTSPEED_PLATFORM_API_KEY = prepared.platformSecret;
       for (const processPlan of plan.processes) processPlan.env.LIGHTSPEED_PLATFORM_API_KEY = prepared.platformSecret;
     }
     plan.cliHandoff = prepared.handoff;
@@ -99,6 +100,11 @@ async function main() {
   if (stopping) return;
   phase = `waiting for ${plan.profile} services to become ready`;
   await waitForReadiness(plan);
+  if (!stopping && (plan.profile === "full" || plan.profile === "runtime")) {
+    phase = "seeding development model defaults";
+    const seeded = await seedDevelopmentModelDefaults({ env: plan.env, handoff: plan.cliHandoff, full: plan.profile === "full" });
+    if (!seeded) console.log("[models] No development credential available; configure universe defaults with lightspeed model defaults set.");
+  }
   if (!stopping) {
     printRunning(plan);
     if (plan.cliHandoff) console.log("CLI connection ready: lightspeed connect dev");

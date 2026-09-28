@@ -5,10 +5,15 @@ impl GatewayAgentApi {
         &self,
         api_config: Option<api::SessionConfig>,
     ) -> Result<SessionConfig, AgentApiError> {
-        let config = engine_session_config_from_api(
-            api_config.unwrap_or_default(),
-            self.default_model.clone(),
-        )?;
+        let api_config = api_config.unwrap_or_default();
+        let model = model_defaults::creation_model(api_config.model.clone(), async {
+            self.store
+                .read_model_defaults()
+                .await
+                .map_err(model_defaults::map_store_error)
+        })
+        .await?;
+        let config = engine_session_config_from_api(api_config, model)?;
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
@@ -67,14 +72,15 @@ pub(super) fn run_config_for_start(
 }
 
 /// Translate the wire config document into the engine document. An absent
-/// `model` falls back to the deployment default; everything else maps 1:1.
+/// `model` uses the caller's resolved creation model or current session model;
+/// everything else maps 1:1.
 pub(super) fn engine_session_config_from_api(
     api_config: api::SessionConfig,
-    default_model: ModelSelection,
+    resolved_model: ModelSelection,
 ) -> Result<SessionConfig, AgentApiError> {
     let model = match api_config.model {
         Some(model) => model_selection_from_api(model)?,
-        None => default_model,
+        None => resolved_model,
     };
     let generation = generation_from_api(api_config.generation, &model)?;
     Ok(SessionConfig {

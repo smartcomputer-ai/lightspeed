@@ -8,7 +8,7 @@ pub mod registration;
 pub mod request_context;
 pub(crate) mod service;
 
-pub use crate::config::{default_model_from_env, pg_store_from_env};
+pub use crate::config::pg_store_from_env;
 pub use deployment::GatewayDeploymentApi;
 pub use http::{
     ACTOR_HEADER, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayRoutes,
@@ -21,6 +21,6 @@ pub use service::{
 };
 pub use temporal_workflow::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,
-    AgentSessionArgs, AgentSessionStatus, AgentSessionWorkflow, DEFAULT_MODEL, DEFAULT_TASK_QUEUE,
+    AgentSessionArgs, AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE,
     DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal, default_session_config,
 };

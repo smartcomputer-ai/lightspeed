@@ -25,7 +25,7 @@ import {
   type SessionConfig,
 } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
-import { roleAtLeast, slugify, workspaceCreateSchema } from "@lightspeed/platform-shared";
+import { modelDefaultsPutSchema, roleAtLeast, slugify, workspaceCreateSchema } from "@lightspeed/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
 import {
@@ -936,6 +936,26 @@ export function gatewayRoutes(ctx: AppContext) {
       const params: McpServerAuthDiscoverParams = body.data;
       const response = await client.call("mcp/servers/auth/discover", params);
       return c.json(response.result);
+    });
+  });
+
+  app.get("/:id/models/defaults", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("models/defaults/read", {});
+      return c.json(response.result.defaults);
+    });
+  });
+
+  app.put("/:id/models/defaults", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    const body = await parseBody(c, modelDefaultsPutSchema);
+    if (!body.ok) return body.response;
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("models/defaults/put", body.data);
+      return c.json(response.result.defaults);
     });
   });
 
@@ -2103,6 +2123,7 @@ export async function withGateway(
     const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
     if (code === "23505") return c.json({ error: "record already exists" }, 409);
     if (error instanceof LightspeedRpcError) {
+      if (error.kind === "model_default_unset") return c.json({ error: error.message, kind: error.kind, modelDefaultSlot: error.data?.modelDefaultSlot }, 400);
       if (error.kind === "invalid_request") return c.json({ error: error.message }, 400);
       // Core refusing the Platform means its own key or gate is wrong: the
       // member was already admitted here.

@@ -8,7 +8,6 @@ use temporalio_sdk::{ActivityCloseTimeouts, ActivityOptions};
 pub const DEFAULT_TASK_QUEUE: &str = "lightspeed-sessions";
 pub const DEFAULT_TEMPORAL_TARGET: &str = "localhost:7233";
 pub const DEFAULT_TEMPORAL_NAMESPACE: &str = "default";
-pub const DEFAULT_MODEL: &str = "gpt-5.5";
 pub const DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD: u32 = 10_000;
 pub const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT: Duration = Duration::from_secs(360);
 

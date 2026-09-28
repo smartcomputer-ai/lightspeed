@@ -517,6 +517,7 @@ async fn mint(
 /// Temporal worker on its own task queue; the gateway role adds the HTTP
 /// server and the deployment reconcilers.
 async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
+    temporal_server::config::validate_model_environment()?;
     let roles = args.roles()?;
     let task_types = args.task_types()?;
     let task_queues = args.task_queues()?;

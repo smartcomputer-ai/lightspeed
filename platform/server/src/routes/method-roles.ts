@@ -78,6 +78,8 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "mcp/servers/put": "operator",
   "mcp/servers/read": "viewer",
   "mcp/servers/tools/discover": "operator",
+  "models/defaults/put": "operator",
+  "models/defaults/read": "viewer",
   "models/list": "viewer",
   "profiles/create": "operator",
   "profiles/delete": "operator",

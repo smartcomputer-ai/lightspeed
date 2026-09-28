@@ -13,6 +13,8 @@ pub enum AgentApiErrorKind {
     Unauthenticated,
     /// The authenticated caller lacks permission for this operation or target.
     Forbidden,
+    /// No model was supplied and this universe has no default for the requested use.
+    ModelDefaultUnset,
     UnsupportedAudioMime,
     AudioBlobTooLarge,
     AudioDurationTooLong,
@@ -42,6 +44,9 @@ pub enum AgentApiErrorKind {
 pub struct AgentApiError {
     pub kind: AgentApiErrorKind,
     pub message: String,
+    /// Present for model_default_unset; clients need not parse the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_default_slot: Option<ModelDefaultSlot>,
 }
 
 impl AgentApiError {
@@ -49,6 +54,18 @@ impl AgentApiError {
         Self {
             kind,
             message: message.into(),
+            model_default_slot: None,
+        }
+    }
+
+    pub fn model_default_unset(slot: ModelDefaultSlot) -> Self {
+        Self {
+            kind: AgentApiErrorKind::ModelDefaultUnset,
+            message: format!(
+                "no universe model default is configured for {}; choose a model or set it with models/defaults/put",
+                slot.as_str()
+            ),
+            model_default_slot: Some(slot),
         }
     }
 
@@ -136,6 +153,7 @@ impl AgentApiError {
             AgentApiErrorKind::SessionBootstrapFailed => -32011,
             AgentApiErrorKind::EnvironmentNotReady => -32012,
             AgentApiErrorKind::ResponseTooLarge => -32013,
+            AgentApiErrorKind::ModelDefaultUnset => -32014,
             AgentApiErrorKind::Internal => -32603,
         }
     }
@@ -358,7 +376,7 @@ api_methods! {
     METHOD_SESSION_LIST => list_sessions(SessionListParams) -> SessionListResponse =>
         ["List sessions", "Returns a cursor-paginated summary list ordered by most recent update, optionally narrowed by the audience of each session's root: createdBy, visibility, or visibleTo (shared with the universe or created by that actor). Pages may shift while sessions are changing."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_SESSION_CONFIG_PUT => put_session_config(SessionConfigPutParams) -> SessionConfigPutResponse =>
-        ["Replace session configuration", "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked and an identical document is a no-op."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Replace session configuration", "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RENAME => rename_session(SessionRenameParams) -> SessionRenameResponse =>
         ["Rename a session", "Sets the display name, or clears it when displayName is omitted."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_METADATA_PUT => put_session_metadata(SessionMetadataPutParams) -> SessionMetadataPutResponse =>
@@ -443,6 +461,10 @@ api_methods! {
         ["List environment registration keys", "Lists this universe's registration keys with policy, status, and derived counts. Each key is the group of the environments it admitted."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE => revoke_environment_registration_key(EnvironmentRegistrationKeyRevokeParams) -> EnvironmentRegistrationKeyRevokeResponse =>
         ["Revoke an environment registration key", "Stops the key from admitting new daemon identities; already registered daemons keep reconnecting. With closeEnvironments, also closes every non-closed environment the key admitted. Idempotent."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
+    METHOD_MODELS_DEFAULTS_READ => read_model_defaults(ModelDefaultsReadParams) -> ModelDefaultsResponse =>
+        ["Read universe model defaults", "Returns the revision and independent agentRun and speechToText selections. Revision zero means no update has been made. Does not contact model providers."], access: MethodAccess::Universe(UniverseAction::Read),
+    METHOD_MODELS_DEFAULTS_PUT => put_model_defaults(ModelDefaultsPutParams) -> ModelDefaultsResponse =>
+        ["Set a universe model default", "Sets or explicitly clears one purpose slot using its current expected revision. Existing sessions and admitted work keep their model. Validates the purpose and protocol without contacting provider discovery."], access: MethodAccess::Universe(UniverseAction::ConfigureResource),
     METHOD_MODELS_LIST => list_models(ModelListParams) -> ModelListResponse =>
         ["Discover available models", "Queries supported providers directly, with a brief process-local burst cache, and returns best-effort selectable routes. One provider failure does not discard successful results from others."], access: MethodAccess::Universe(UniverseAction::Read),
     METHOD_PROFILES_CREATE => create_profile(ProfileCreateParams) -> ProfileCreateResponse =>
