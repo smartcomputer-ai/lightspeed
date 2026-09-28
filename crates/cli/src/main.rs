@@ -290,6 +290,29 @@ mod tests {
     }
 
     #[test]
+    fn chat_recent_session_flags_parse_and_reject_ambiguous_actions() {
+        for flag in ["--list", "--resume", "--continue"] {
+            assert!(Cli::try_parse_from(["lightspeed", "chat", flag]).is_ok());
+        }
+        assert!(Cli::try_parse_from(["lightspeed", "chat", "--list", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["lightspeed", "chat", "--continue", "hello"]).is_ok());
+        for args in [
+            vec!["--list", "--resume"],
+            vec!["--list", "-s", "s1"],
+            vec!["--list", "--new"],
+            vec!["--list", "hello"],
+            vec!["--list", "--upload", "."],
+            vec!["--list", "--bare"],
+            vec!["--continue", "--new"],
+            vec!["--resume", "-s", "s1"],
+            vec!["--resume", "--profile", "reviewer"],
+            vec!["--new", "-s", "s1"],
+        ] {
+            assert!(Cli::try_parse_from(["lightspeed", "chat"].into_iter().chain(args)).is_err());
+        }
+    }
+
+    #[test]
     fn chat_parse_accepts_workspace_options() {
         let cli = Cli::try_parse_from([
             "lightspeed",

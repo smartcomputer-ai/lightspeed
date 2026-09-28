@@ -34,12 +34,16 @@ pub(crate) async fn run_shell(
         session_id: driver.session_id().to_string(),
         show_tool_details,
     };
+    let connection_display = super::connection_display::ConnectionDisplay::load().await?;
     let mut tui = Tui::init().context("initialize chat TUI")?;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let app_event_tx = AppEventSender::new(event_tx);
     let (command_tx, command_rx) = mpsc::unbounded_channel();
     spawn_driver_task(driver, command_rx, app_event_tx.clone());
     let mut app = ChatTuiApp::new(view_options, app_event_tx.clone(), command_tx);
+    app.bottom_pane
+        .set_connection_label(connection_display.footer);
+    app.connection_details = connection_display.details;
     let mut terminal_events = EventStream::new();
     let mut draw_rx = tui.draw_receiver();
     let frame_requester = tui.frame_requester();
@@ -156,6 +160,7 @@ pub(crate) struct ChatTuiApp {
     options: ChatTuiViewOptions,
     transcript: TranscriptState,
     bottom_pane: BottomPaneState,
+    connection_details: String,
     app_event_tx: AppEventSender,
     command_tx: mpsc::UnboundedSender<ChatCommand>,
     next_local_message: u64,
@@ -178,6 +183,7 @@ impl ChatTuiApp {
             options,
             transcript,
             bottom_pane: BottomPaneState::default(),
+            connection_details: "Connection details unavailable.".into(),
             app_event_tx,
             command_tx,
             next_local_message: 0,
@@ -372,6 +378,10 @@ impl ChatTuiApp {
         match command {
             SlashCommand::Refresh => self.send_chat_command(ChatCommand::Refresh),
             SlashCommand::Help => self.local_notice(command_help()),
+            SlashCommand::Status => self.local_notice(format!(
+                "{}\n\nSession: {}",
+                self.connection_details, self.options.session_id
+            )),
             SlashCommand::NewSession => self.send_chat_command(ChatCommand::NewSession),
             SlashCommand::Sessions(Some(session_id)) => {
                 self.send_chat_command(ChatCommand::SwitchSession { session_id });
@@ -546,7 +556,7 @@ impl ChatTuiApp {
 }
 
 fn command_help() -> &'static str {
-    "commands: /new, /sessions, /skills, /skill, /model, /provider, /effort, /max-tokens, /interrupt, /steer, /approve, /reject, /help, /quit"
+    "commands: /new, /sessions, /skills, /skill, /model, /provider, /effort, /max-tokens, /interrupt, /steer, /approve, /reject, /status, /refresh, /help, /quit"
 }
 
 fn is_ctrl_c(key: KeyEvent) -> bool {
@@ -570,6 +580,45 @@ mod tests {
         ChatConnectionInfo, ChatRunView, ChatSessionSummary, ChatSettingsView, ChatStatus,
         ChatTurn, ReasoningEffort, run_status,
     };
+
+    #[test]
+    fn status_shows_current_session_locally_without_submitting_agent_input() {
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let (command_tx, mut commands) = mpsc::unbounded_channel();
+        let mut app = ChatTuiApp::new(
+            ChatTuiViewOptions {
+                world_id: GATEWAY_WORLD_ID.into(),
+                session_id: "old-session".into(),
+                show_tool_details: false,
+            },
+            AppEventSender::new(tx),
+            command_tx,
+        );
+        app.connection_details = "Connection: production\nUniverse: customer-a".into();
+        app.handle_ui_event(
+            UiEvent::Chat(ChatEvent::HistoryReset {
+                session_id: "current-session".into(),
+            }),
+            &FrameRequester::test_dummy(),
+        );
+        app.submit_local_text("/status".into());
+        assert!(commands.try_recv().is_err());
+        let mut content = None;
+        while let Ok(event) = events.try_recv() {
+            if let UiEvent::Chat(ChatEvent::TranscriptDelta(ChatDelta::AppendMessage {
+                message,
+                ..
+            })) = event
+            {
+                content = Some(message.content);
+            }
+        }
+        let content = content.expect("local status notice");
+        assert!(content.contains("Connection: production"));
+        assert!(content.contains("Universe: customer-a"));
+        assert!(content.contains("Session: current-session"));
+        assert!(!content.contains("old-session"));
+    }
 
     #[test]
     fn shell_renders_fake_cells() {
@@ -617,7 +666,7 @@ mod tests {
             pad(""),
             pad("> "),
             pad(""),
-            pad("P3a shell  gpt-5.5  effort none"),
+            pad("P3a shell · 018f2a66… · gpt-5.5 · effort none"),
         ]);
 
         assert_eq!(rendered, expected);

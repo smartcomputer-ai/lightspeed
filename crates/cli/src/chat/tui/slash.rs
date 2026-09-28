@@ -5,6 +5,7 @@ use crate::chat::protocol::{ReasoningEffort, parse_reasoning_effort};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SlashCommand {
     Help,
+    Status,
     Refresh,
     NewSession,
     Sessions(Option<String>),
@@ -32,6 +33,7 @@ pub(crate) enum SlashCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SlashCommandKind {
     Help,
+    Status,
     Refresh,
     NewSession,
     Sessions,
@@ -114,6 +116,7 @@ impl SlashCommandKind {
             SlashCommandKind::Approve,
             SlashCommandKind::Reject,
             SlashCommandKind::Help,
+            SlashCommandKind::Status,
             SlashCommandKind::Refresh,
             SlashCommandKind::Quit,
         ]
@@ -122,6 +125,7 @@ impl SlashCommandKind {
     pub(crate) fn name(self) -> &'static str {
         match self {
             SlashCommandKind::Help => "help",
+            SlashCommandKind::Status => "status",
             SlashCommandKind::Refresh => "refresh",
             SlashCommandKind::NewSession => "new",
             SlashCommandKind::Sessions => "sessions",
@@ -142,6 +146,7 @@ impl SlashCommandKind {
     pub(crate) fn description(self) -> &'static str {
         match self {
             SlashCommandKind::Help => "show available chat commands",
+            SlashCommandKind::Status => "show connection, universe and session details",
             SlashCommandKind::Refresh => "reload the session and retry transcript reads",
             SlashCommandKind::NewSession => "start a fresh session",
             SlashCommandKind::Sessions => "choose a known session",
@@ -162,6 +167,7 @@ impl SlashCommandKind {
     pub(crate) fn command_without_args(self) -> SlashCommand {
         match self {
             SlashCommandKind::Help => SlashCommand::Help,
+            SlashCommandKind::Status => SlashCommand::Status,
             SlashCommandKind::Refresh => SlashCommand::Refresh,
             SlashCommandKind::NewSession => SlashCommand::NewSession,
             SlashCommandKind::Sessions => SlashCommand::Sessions(None),
@@ -187,6 +193,7 @@ impl SlashCommandKind {
     fn command_with_args(self, args: &str) -> Result<SlashCommand> {
         Ok(match self {
             SlashCommandKind::Help => SlashCommand::Help,
+            SlashCommandKind::Status => SlashCommand::Status,
             SlashCommandKind::Refresh => SlashCommand::Refresh,
             SlashCommandKind::NewSession => SlashCommand::NewSession,
             SlashCommandKind::Sessions => SlashCommand::Sessions(optional_value(args)),
@@ -235,6 +242,7 @@ impl SlashCommandKind {
     fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "help" | "?" => SlashCommandKind::Help,
+            "status" => SlashCommandKind::Status,
             "refresh" => SlashCommandKind::Refresh,
             "new" => SlashCommandKind::NewSession,
             "sessions" | "session" => SlashCommandKind::Sessions,
@@ -300,6 +308,22 @@ fn required_single_value(args: &str, command: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_is_available_directly_and_in_the_picker() {
+        assert_eq!(
+            parse_slash_command("/status").unwrap(),
+            Some(SlashCommand::Status)
+        );
+        assert_eq!(
+            matching_slash_commands("sta"),
+            vec![SlashCommandKind::Status]
+        );
+        assert_eq!(
+            SlashCommandKind::Status.command_without_args(),
+            SlashCommand::Status
+        );
+    }
 
     #[test]
     fn refresh_command_reloads_the_session() {

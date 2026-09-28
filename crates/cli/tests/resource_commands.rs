@@ -144,6 +144,111 @@ fn session(config: Value) -> Value {
     json!({"id":"s1","status":"idle","activity":"idle","retention":{"rootSessionId":"s1"},"managed":false,"configRevision":7,"contextRevision":0,"createdAtMs":1,"updatedAtMs":1,"access":{"visibility":"restricted"},"activeContext":{"revision":0},"config":config})
 }
 
+fn session_summary(id: &str) -> Value {
+    json!({"id":id,"displayName":"Review changes","lifecycleStatus":"open","activity":"idle","retention":{"rootSessionId":id},"managed":false,"access":{"visibility":"restricted"},"createdAtMs":1,"updatedAtMs":1})
+}
+
+#[test]
+fn chat_list_requests_only_ten_unmanaged_roots_and_shows_status_without_starting_chat() {
+    let runtime = Runtime::start(|method, params| {
+        assert_eq!(method, "session/list");
+        assert_eq!(params["limit"], 10);
+        assert_eq!(params["managed"], false);
+        assert_eq!(params["subagent"], false);
+        assert!(params.get("closed").is_none());
+        assert!(params.get("cursor").is_none());
+        let mut sessions: Vec<_> = (0..10)
+            .map(|i| session_summary(&format!("chat-{i}")))
+            .collect();
+        sessions[0]["lifecycleStatus"] = json!("closed");
+        sessions[1]["activity"] = json!("working");
+        sessions[2]["activity"] = json!("waiting");
+        json!({"sessions":sessions,"nextCursor":"more-sessions"})
+    });
+    let text = runtime.success(&["chat", "--list"]);
+    for expected in [
+        "SESSION",
+        "STATUS",
+        "ACTIVITY",
+        "UPDATED",
+        "closed",
+        "working",
+        "waiting",
+        "Review changes",
+        "chat-9",
+    ] {
+        assert!(text.contains(expected), "{text}");
+    }
+    let rows = runtime.json(&["chat", "--list", "--json"]);
+    assert_eq!(rows.as_array().unwrap().len(), 10);
+    assert_eq!(rows[0]["id"], "chat-0");
+    assert_eq!(rows[9]["id"], "chat-9");
+}
+
+#[test]
+fn chat_resume_aliases_select_the_latest_open_unmanaged_root_without_starting_a_session() {
+    let runtime = Runtime::start(|method, params| match method {
+        "session/list" => {
+            assert_eq!(params["limit"], 1);
+            assert_eq!(params["managed"], false);
+            assert_eq!(params["subagent"], false);
+            assert_eq!(params["closed"], false);
+            json!({"sessions":[session_summary("s1")]})
+        }
+        "session/read" => {
+            assert_eq!(params["sessionId"], "s1");
+            json!({"session":session(json!({"model":{"providerId":"fixture","apiKind":"openai:responses","model":"fixture"}})),"hasOlderRuns":false})
+        }
+        "session/events/read" => {
+            assert_eq!(params["sessionId"], "s1");
+            json!({"events":[],"complete":true})
+        }
+        _ => panic!("resume must not create or mutate sessions: {method}"),
+    });
+    for flag in ["--resume", "--continue"] {
+        assert_eq!(runtime.json(&["chat", flag, "--json"]), json!([]));
+    }
+}
+
+#[test]
+fn chat_resume_reports_empty_closed_or_deleted_sessions_without_creating_replacements() {
+    for state in ["empty", "closed", "deleted"] {
+        let runtime = Runtime::start_api(move |method, _| match method {
+            "session/list" => Ok(
+                json!({"sessions":if state == "empty" {vec![]} else {vec![session_summary("s1")]}}),
+            ),
+            "session/read" if state == "closed" => {
+                let mut session = session(json!({}));
+                session["status"] = json!("closed");
+                Ok(json!({"session":session,"hasOlderRuns":false}))
+            }
+            "session/read" if state == "deleted" => Err(
+                json!({"code":-32000,"message":"session deleted","data":{"kind":"not_found","message":"session deleted"}}),
+            ),
+            _ => panic!("resume must not create a replacement: {method}"),
+        });
+        let output = runtime.run(&["chat", "--resume", "--json"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            error.contains(match state {
+                "empty" => "No resumable",
+                "closed" => "closed before",
+                _ => "session deleted",
+            }),
+            "{error}"
+        );
+        if state == "empty" {
+            assert!(
+                runtime
+                    .success(&["chat", "--list"])
+                    .contains("No unmanaged chat sessions")
+            );
+            assert_eq!(runtime.json(&["chat", "--list", "--json"]), json!([]));
+        }
+    }
+}
+
 #[test]
 fn session_read_accepts_a_name_and_renders_human_and_json_output() {
     let runtime = Runtime::start(|method, params| {

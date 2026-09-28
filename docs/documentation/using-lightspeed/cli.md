@@ -184,10 +184,38 @@ lightspeed chat --provider my-provider --api-kind openai:completions --model MOD
 
 Without those flags, a new session uses deployment defaults. Provider identity
 and API kind are fixed for each session; `/model` can choose another model
-within that route. The TUI displays its connection and universe. Each process
+within that route. The TUI footer shows the connection name and universe slug
+for saved or explicit runtime connections; generated local-development
+connections omit this label. The footer also shows the current session ID,
+shortening UUIDs while preserving readable IDs. If the universe slug is
+unavailable, the footer uses a short universe UUID. `/status` shows the full connection name, endpoint,
+authentication scope, universe slug/UUID and current session ID. Connection
+details are captured when chat opens, with no background polling. Each process
 keeps its resolved connection; switching saved defaults elsewhere does not
 retarget a running chat. See [Sessions and runs](sessions-and-runs.md) for
 history, session switching and run controls.
+
+For a quick view of recent conversations:
+
+```bash
+lightspeed chat --list
+lightspeed chat --list --json
+lightspeed chat --resume
+lightspeed chat --continue
+```
+
+`--list` shows up to 10 unmanaged root sessions in the selected universe,
+most recently updated first, with names, lifecycle status, current activity
+and time since the last update. Managed sessions and delegated subagents are
+excluded; closed sessions remain visible in the list. JSON output includes
+the full summaries and timestamps.
+
+`--resume` and its alias `--continue` open the most recently updated unmanaged
+root session that is not closed, preserving its configuration and attachments.
+If none exists, the command explains how to start a new chat. It never creates
+a replacement for a session deleted between listing and opening it. Use
+`chat -s SESSION_ID` to choose a specific session instead. Listing and resuming
+use the effective connection and universe, including command-line overrides.
 
 To give the session files, upload a local directory or attach an existing runtime
 workspace:

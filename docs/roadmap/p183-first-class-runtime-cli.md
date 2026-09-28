@@ -562,3 +562,19 @@ attachment operation, with `--workspace-path` and `--workspace-access` controls;
 plain session resume preserves attachments. The old mount and filesystem-tool
 flags are removed. Every `--session` option also accepts `-s`. Parser and process
 tests cover the shortcuts, access defaults, configuration preservation and resume.
+
+The chat footer omits generated local-development connection identifiers and
+uses readable connection names and universe slugs elsewhere, retaining short
+UUIDs when slug lookup is unavailable. `/status` exposes full connection,
+authority, universe and current-session details locally. Connection metadata is
+loaded once at chat startup; rendering and local status inspection do not poll
+the runtime or submit agent input.
+The current session ID remains visible in the footer and updates on session
+switches; UUIDs are shortened there and shown in full by `/status`.
+
+`chat --list` now exposes the ten most recently updated unmanaged root sessions
+with lifecycle, activity and update age. `chat --resume` (`--continue`) selects
+the latest non-closed session in the effective universe using runtime filters;
+it reads the existing session without a create fallback. Parser and process
+tests cover filtering, bounded listing, aliases, empty results and concurrent
+closure/deletion.

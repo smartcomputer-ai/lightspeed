@@ -31,8 +31,14 @@ use crate::chat::session::{new_session_id, new_submission_id, validate_session_i
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ChatArgs {
     /// Session ID to open or create through the configured Lightspeed API.
-    #[arg(short = 's', long)]
+    #[arg(short = 's', long, conflicts_with_all = ["new", "resume", "list"])]
     session: Option<String>,
+    /// List the 10 most recently updated unmanaged root sessions, then exit.
+    #[arg(long, conflicts_with_all = ["new", "resume", "message", "workspace_source", "workspace_path", "workspace_access", "profile", "profile_json", "provider", "api_kind", "model", "no_web_search", "no_web_fetch", "bare", "show_tool_details"])]
+    list: bool,
+    /// Continue the most recently updated unmanaged root session that is not closed.
+    #[arg(long, visible_alias = "continue", conflicts_with_all = ["new", "profile", "profile_json", "bare", "no_web_search", "no_web_fetch"])]
+    resume: bool,
     /// Start with a fresh session ID.
     #[arg(long)]
     new: bool,
@@ -99,9 +105,14 @@ pub(crate) struct ChatArgs {
 }
 
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
+    if args.list {
+        return super::recent::list(&HttpAgentApi::new(args.api_url), args.json).await;
+    }
     let draft = draft_settings(&args)?;
     let profile = profile_source_from_args(args.profile.as_deref(), args.profile_json.as_deref())?;
-    let session_id = if args.new {
+    let session_id = if args.resume {
+        super::recent::resume_id(&HttpAgentApi::new(args.api_url.clone())).await?
+    } else if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session.as_ref() {
         validate_session_id(session_id)?
@@ -110,13 +121,17 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     };
 
     let message = (!args.message.is_empty()).then(|| args.message.join(" "));
-    let (mut driver, mut initial_events) = ChatSessionDriver::open(ChatSessionDriverOptions {
+    let options = ChatSessionDriverOptions {
         session_id,
         draft_settings: draft,
         api_url: args.api_url,
         profile,
-    })
-    .await?;
+    };
+    let (mut driver, mut initial_events) = if args.resume {
+        ChatSessionDriver::open_with_mode(options, true).await?
+    } else {
+        ChatSessionDriver::open(options).await?
+    };
     if let Some(directory) = args.upload {
         initial_events.extend(
             driver
@@ -252,20 +267,47 @@ type ChatAgentApi = Arc<HttpAgentApi>;
 
 impl ChatSessionDriver {
     pub(crate) async fn open(options: ChatSessionDriverOptions) -> Result<(Self, Vec<ChatEvent>)> {
+        Self::open_with_mode(options, false).await
+    }
+
+    async fn open_with_mode(
+        options: ChatSessionDriverOptions,
+        resume_only: bool,
+    ) -> Result<(Self, Vec<ChatEvent>)> {
         let session_id = validate_session_id(&options.session_id)?;
         let api = build_chat_api(&options).await?;
-        let started = api
-            .open_or_start_session(SessionStartParams {
-                metadata: Default::default(),
-                session_id: Some(session_id.clone()),
-                display_name: None,
-                config: Some(session_start_config(&options.draft_settings)),
-                profile: options.profile.clone(),
-                delete_after_close_ms: None,
-                access: None,
-            })
-            .await
-            .map_err(api_error)?;
+        let summary = if resume_only {
+            // Resume must never recreate a session deleted after listing it.
+            let session = api
+                .read_session(SessionReadParams {
+                    session_id: session_id.clone(),
+                    run_limit: Some(1),
+                })
+                .await
+                .map_err(api_error)?
+                .result
+                .session;
+            if session.status == api::SessionStatus::Closed {
+                anyhow::bail!(
+                    "session {session_id} closed before it could be resumed; use `chat --list` to choose another"
+                );
+            }
+            summary_from_session(&session)
+        } else {
+            let started = api
+                .open_or_start_session(SessionStartParams {
+                    metadata: Default::default(),
+                    session_id: Some(session_id.clone()),
+                    display_name: None,
+                    config: Some(session_start_config(&options.draft_settings)),
+                    profile: options.profile.clone(),
+                    delete_after_close_ms: None,
+                    access: None,
+                })
+                .await
+                .map_err(api_error)?;
+            summary_from_mutation(&started.result.session)
+        };
 
         let mut driver = Self {
             api,
@@ -288,9 +330,7 @@ impl ChatSessionDriver {
             journal_next_from: None,
             settings: driver.settings_view(),
         })];
-        events.push(ChatEvent::SessionSelected(summary_from_mutation(
-            &started.result.session,
-        )));
+        events.push(ChatEvent::SessionSelected(summary));
         events.extend(driver.refresh().await?);
         Ok((driver, events))
     }
@@ -2821,6 +2861,8 @@ mod tests {
     fn chat_args_with_effort(effort: Option<&str>) -> ChatArgs {
         ChatArgs {
             session: None,
+            list: false,
+            resume: false,
             new: true,
             provider: Some("openai".into()),
             api_kind: Some("openai:responses".into()),

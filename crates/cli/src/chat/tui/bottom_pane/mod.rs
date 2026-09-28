@@ -5,7 +5,7 @@ use crossterm::cursor::SetCursorStyle;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
@@ -23,6 +23,7 @@ use crate::chat::tui::theme::composer_band_style;
 pub(crate) struct BottomPaneState {
     composer: ComposerState,
     status: String,
+    connection_label: Option<String>,
     sticky_error: Option<String>,
     run_control_active: bool,
     current_session_id: Option<String>,
@@ -55,6 +56,7 @@ impl Default for BottomPaneState {
         Self {
             composer: ComposerState::default(),
             status: "ready".into(),
+            connection_label: None,
             sticky_error: None,
             run_control_active: false,
             current_session_id: None,
@@ -68,6 +70,10 @@ impl Default for BottomPaneState {
 }
 
 impl BottomPaneState {
+    pub(crate) fn set_connection_label(&mut self, label: Option<String>) {
+        self.connection_label = label;
+    }
+
     pub(crate) fn handle_key(&mut self, key: KeyEvent) -> BottomPaneAction {
         if let Some(view) = self.active_view.as_mut() {
             return match view.handle_key(key) {
@@ -433,60 +439,29 @@ impl BottomPaneState {
     }
 
     fn status_line(&self) -> Line<'static> {
-        let status_style = if self.run_control_active {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        };
-        let mut spans = vec![Span::styled(self.status.clone(), status_style)];
-        if let Some(connection) = crate::connection::ACTIVE.get() {
-            let bound = connection
-                .caller
-                .as_ref()
-                .and_then(|c| c.scope.universe_id())
-                .map(|id| id.to_string());
-            let universe = connection
-                .universe
-                .as_deref()
-                .or(bound.as_deref())
-                .unwrap_or("unselected");
-            let name = connection.name.as_deref().unwrap_or("runtime");
-            let name = if name.chars().count() > 20 {
-                format!("{}…", name.chars().take(20).collect::<String>())
+        let mut spans = vec![Span::raw(self.status.clone())];
+        if let Some(label) = &self.connection_label {
+            spans.push(Span::raw(format!(" · {label}")));
+        }
+        if let Some(id) = &self.current_session_id {
+            let label = if uuid::Uuid::parse_str(id).is_ok() {
+                format!("{}…", &id[..8])
             } else {
-                name.to_owned()
+                id.clone()
             };
-            let universe = if uuid::Uuid::parse_str(universe).is_ok() {
-                &universe[..8]
-            } else {
-                universe
-            };
-            spans.push(Span::raw(format!(" | {} / {}", name, universe)));
+            spans.push(Span::raw(format!(" · {label}")));
         }
         if let Some(settings) = &self.settings {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                settings.model.clone(),
-                Style::default().fg(Color::DarkGray),
-            ));
-            spans.push(Span::raw("  effort "));
-            spans.push(Span::styled(
-                reasoning_effort_label(settings.reasoning_effort),
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::raw(" · "));
+            spans.push(Span::raw(settings.model.clone()));
+            spans.push(Span::raw(" · effort "));
+            spans.push(Span::raw(reasoning_effort_label(settings.reasoning_effort)));
         }
         if self.run_control_active {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                "Ctrl-C interrupt",
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::raw(" · "));
+            spans.push(Span::raw("Ctrl-C interrupt"));
         }
-        Line::from(spans)
+        Line::from(spans).style(Style::default().fg(Color::DarkGray))
     }
 }
 
@@ -651,6 +626,39 @@ mod tests {
                 .to_string()
                 .contains("journal gap; refreshed")
         );
+    }
+
+    #[test]
+    fn footer_session_tracks_switches_and_shortens_only_uuid_ids() {
+        let mut pane = BottomPaneState::default();
+        for (id, expected) in [
+            ("test1", "test1"),
+            ("session_1790600000000_1", "session_1790600000000_1"),
+            ("018f2a66-31cc-7b25-a4f7-37e3310fdc6b", "018f2a66…"),
+        ] {
+            pane.apply_chat_event(&ChatEvent::HistoryReset {
+                session_id: id.into(),
+            });
+            let line = pane.status_line().to_string();
+            assert_eq!(line, format!("ready · {expected}"));
+        }
+        assert!(!pane.status_line().to_string().contains("test1"));
+    }
+
+    #[test]
+    fn connection_label_remains_visible_while_idle_and_running() {
+        let mut pane = BottomPaneState::default();
+        pane.set_connection_label(Some("production / customer-a".into()));
+        for status in ["idle", "running"] {
+            pane.status = status.into();
+            assert!(
+                pane.status_line()
+                    .to_string()
+                    .contains("production / customer-a")
+            );
+        }
+        pane.set_connection_label(None);
+        assert!(!pane.status_line().to_string().contains(" / "));
     }
 
     #[test]

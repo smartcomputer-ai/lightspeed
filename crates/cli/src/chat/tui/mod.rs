@@ -3,6 +3,7 @@ pub(crate) mod app_event;
 pub(crate) mod app_event_sender;
 pub(crate) mod bottom_pane;
 pub(crate) mod cell;
+mod connection_display;
 pub(crate) mod custom_terminal;
 pub(crate) mod frame;
 pub(crate) mod insert_history;
