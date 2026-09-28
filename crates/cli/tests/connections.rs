@@ -72,7 +72,7 @@ impl Runtime {
                         json!({"protocolVersion":"test", "serverInfo":{"name":"fixture","version":"test","gitSha":"test","envd":{"version":"test","gitSha":"test","protocolVersion":1,"targets":[]}}, "capabilities":{"notifications":false,"historyRead":true,"eventLog":true,"localExecution":false}, "caller":{"scope":scope,"single":single,"keyPrefix":if single {Value::Null} else {json!("lsk_fixture")},"groups":["session","models","deployment/universes"]}})
                     }
                     "deployment/universes/list" => {
-                        json!({"universes":[{"universeId":"00000000-0000-0000-0000-000000000001","slug":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}]})
+                        json!({"universes":[{"universeId":"00000000-0000-0000-0000-000000000001","slug":"one","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0},{"universeId":"00000000-0000-0000-0000-000000000002","createdAtMs":0,"sessions":0,"profiles":0,"workspaces":0,"blobBytes":0}]})
                     }
                     "models/list" => json!({"models":[],"providers":[]}),
                     _ => panic!("unexpected method {method}"),
@@ -264,7 +264,9 @@ fn named_connections_universe_selection_and_per_command_override() {
         ],
         None,
     ));
-    success(cli(dir, &["universe", "list"], None));
+    let universes = success(cli(dir, &["universe", "list"], None));
+    assert!(universes.contains("00000000-0000-0000-0000-000000000001  one"));
+    assert!(universes.contains("00000000-0000-0000-0000-000000000002  (no slug)"));
     let status = success(cli(dir, &["connect", "status", "--json"], None));
     assert_eq!(
         serde_json::from_str::<Value>(&status).unwrap()["selectedUniverse"],

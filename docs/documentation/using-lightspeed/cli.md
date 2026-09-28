@@ -15,7 +15,9 @@ From a source checkout, start either the runtime alone or the full product:
 
 Use `./dev.sh --no-envd` to include Platform. Both profiles default to
 `authenticated` mode. After migrations, the launcher creates the initial
-universe and provisions separate CLI and Platform keys as needed. In another
+universe and provisions separate CLI and Platform keys as needed. The initial
+universe receives the slug `development` if it has no slug; an existing slug
+is preserved. Universe listings show `(no slug)` for unnamed universes. In another
 terminal, from the same checkout:
 
 ```bash

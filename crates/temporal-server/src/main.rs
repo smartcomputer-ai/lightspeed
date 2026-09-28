@@ -302,11 +302,14 @@ async fn run_universe_command(command: UniverseCommand) -> anyhow::Result<()> {
         UniverseCommand::Create { universe_id, slug } => {
             let universe_id = universe_id.unwrap_or_else(uuid::Uuid::new_v4);
             stores
-                .store_for_with_slug(universe_id, slug.clone())
+                .store_for_with_slug(universe_id, slug)
                 .ensure_universe()
                 .await?;
             println!("universe_id: {universe_id}");
-            if let Some(slug) = slug {
+            if let Some(universe) =
+                store_pg::read_universe_stats(stores.pool(), universe_id).await?
+                && let Some(slug) = universe.slug
+            {
                 println!("slug: {slug}");
             }
             Ok(())

@@ -47,7 +47,11 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 print_json(&response)?;
             } else {
                 for u in response.universes {
-                    println!("{}  {}", u.universe_id, u.slug.as_deref().unwrap_or(""));
+                    println!(
+                        "{}  {}",
+                        u.universe_id,
+                        u.slug.as_deref().unwrap_or("(no slug)")
+                    );
                 }
             }
         }
@@ -68,7 +72,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 println!(
                     "{}  {}",
                     response.universe.universe_id,
-                    response.universe.slug.as_deref().unwrap_or("")
+                    response.universe.slug.as_deref().unwrap_or("(no slug)")
                 );
             }
         }

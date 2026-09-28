@@ -483,3 +483,10 @@ credentials were used. The headless CLI checks ran as noninteractive
 subprocesses on macOS, not on a separate Linux host. Platform adoption was
 verified at its HTTP route boundary with mocked stores; browser interaction
 was not part of this validation.
+
+
+The development launcher now supplies the `development` slug. Host provisioning
+fills a missing slug without renaming an existing universe, including on older
+development databases. Human-readable CLI universe output marks unnamed rows
+as `(no slug)`. Platform creation still sends only the core UUID; its URL slug
+remains separate from the runtime slug.

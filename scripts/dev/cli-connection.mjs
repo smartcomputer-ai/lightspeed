@@ -25,7 +25,7 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
   const statePath = path.join(directory, "provisioned.json");
   const state = existsSync(statePath) ? JSON.parse(readPrivate(statePath)) : {};
   const universe = env.LIGHTSPEED_PG_UNIVERSE_ID;
-  await run("development universe", "cargo", ["run", "-p", "temporal-server", "--", "universe", "create", "--universe-id", universe], env);
+  await run("development universe", "cargo", ["run", "-p", "temporal-server", "--", "universe", "create", "--universe-id", universe, "--slug", "development"], env);
   if (env.LIGHTSPEED_AUTH_MODE === "single") {
     writePrivate(handoff, JSON.stringify({ endpoint: env.LIGHTSPEED_API_URL, single: true, ownedCredential: false }, null, 2));
     return { handoff };
