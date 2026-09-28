@@ -21,6 +21,25 @@ pub(crate) struct SessionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum SessionCommand {
+    /// Apply a reusable profile to this session.
+    #[command(visible_alias = "profiles")]
+    Profile(crate::profile_cli::SessionProfileArgs),
+    /// Inspect session status, identity and current configuration.
+    Read(crate::session_resources::ReadArgs),
+    /// Read or replace session configuration.
+    Config(crate::session_resources::ConfigArgs),
+    /// Attach, detach and list VFS workspaces or snapshots.
+    #[command(visible_alias = "workspaces")]
+    Workspace(crate::vfs_cli::MountArgs),
+    /// Attach, detach and list registered MCP servers.
+    #[command(visible_alias = "mcps")]
+    Mcp(crate::mcp_cli::SessionMcpArgs),
+    /// Manage environment attachments and the active environment.
+    #[command(visible_aliases = ["environments", "env"])]
+    Environment(crate::session_resources::EnvironmentArgs),
+    /// Discover skills or ask the agent to use one through ordinary input.
+    #[command(visible_alias = "skills")]
+    Skill(crate::skills_cli::SkillsArgs),
     /// Start a session, optionally from a named profile and with metadata.
     Start(StartArgs),
     /// List sessions, newest activity first, optionally filtered by metadata.
@@ -38,7 +57,7 @@ enum SessionCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CommonArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Print the API response as JSON.
     #[arg(long)]
@@ -170,6 +189,13 @@ struct DeleteArgs {
 
 pub(crate) async fn handle(args: SessionArgs) -> Result<()> {
     match args.command {
+        SessionCommand::Profile(args) => crate::profile_cli::session_profile(args).await,
+        SessionCommand::Read(args) => crate::session_resources::read(args).await,
+        SessionCommand::Config(args) => crate::session_resources::config(args).await,
+        SessionCommand::Workspace(args) => crate::vfs_cli::mount(args).await,
+        SessionCommand::Mcp(args) => crate::mcp_cli::session(args).await,
+        SessionCommand::Environment(args) => crate::session_resources::environment(args).await,
+        SessionCommand::Skill(args) => crate::skills_cli::handle(args).await,
         SessionCommand::Start(args) => start(args).await,
         SessionCommand::List(args) => list(args).await,
         SessionCommand::Metadata(args) => match args.command {
@@ -204,7 +230,11 @@ async fn start(args: StartArgs) -> Result<()> {
         .map_err(api_error)?
         .result;
     print_json_or(args.common.json, &response, || {
-        println!("{}", response.session.id);
+        println!("Started session {}.", response.session.id);
+        println!(
+            "Continue with: lightspeed chat --session {}",
+            response.session.id
+        );
     })
 }
 
@@ -221,6 +251,11 @@ async fn list(args: ListArgs) -> Result<()> {
     )
     .await?;
     print_json_or(args.common.json, &sessions, || {
+        if sessions.is_empty() {
+            println!("No sessions found.");
+        } else {
+            println!("ID  STATUS  NAME  METADATA");
+        }
         for session in &sessions {
             println!("{}", session_line(session));
         }

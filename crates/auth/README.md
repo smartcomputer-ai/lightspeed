@@ -43,7 +43,7 @@ execution — never in the engine or the session log.
   documents and the deployment has a public https URL) or dynamic client
   registration (RFC 7591), and lazily upserts the result as an
   `mcp:<server_id>` client record. Existing records are reused without
-  network traffic; manual `lightspeed auth client add --id mcp:<server_id>` always
+  network traffic; manual `lightspeed credential oauth-client add --id mcp:<server_id>` always
   wins.
 - `providers` — the generic `AuthProviderRecord`: one record shape for every
   provider kind, with non-secret config decoded into the typed
@@ -137,7 +137,7 @@ holds only ciphertext.
 Works against any standard authorization server with a manually configured
 client (a GitHub OAuth app is the cheapest real one; set its callback URL to
 `http://127.0.0.1:18080/auth/callback` for local dev). For OAuth-protected
-MCP servers, prefer `lightspeed auth login mcp:<server>` below — it discovers and
+MCP servers, prefer `lightspeed credential login mcp:<server>` below — it discovers and
 registers the client automatically where the AS allows it.
 
 ```bash
@@ -186,7 +186,7 @@ cargo run -q -p cli -- mcp link --session s1 crm
 ```
 
 To force re-discovery (for example after the server changes authorization
-servers), remove the client: `lightspeed auth client remove mcp:crm`. If the AS
+servers), remove the client: `lightspeed credential oauth-client delete mcp:crm`. If the AS
 supports neither CIMD nor dynamic registration, login fails with instructions
 to register manually — see the verified walkthrough below.
 

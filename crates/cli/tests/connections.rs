@@ -411,7 +411,7 @@ fn universe_key_and_explicit_single_mode_send_no_selection_header() {
         if single {
             assert_eq!(status["slug"], "one");
             let listed = success(cli(dir, &["universe", "list"], None));
-            assert!(listed.starts_with("* 00000000-0000-0000-0000-000000000001  one"));
+            assert!(listed.contains("* 00000000-0000-0000-0000-000000000001  one"));
         } else {
             assert!(
                 status["slugUnavailableReason"]

@@ -219,10 +219,10 @@ With the [CLI connection settings](../using-lightspeed/sessions-and-runs.md#cont
 configured, the equivalent controls are:
 
 ```bash
-target/debug/lightspeed env list
-target/debug/lightspeed env read "<environment-id>"
-target/debug/lightspeed env activate --session "<session-id>" "<environment-id>"
-target/debug/lightspeed env deactivate --session "<session-id>"
+target/debug/lightspeed environment list
+target/debug/lightspeed environment read "<environment-id>"
+target/debug/lightspeed session environment activate --session "<session-id>" "<environment-id>"
+target/debug/lightspeed session environment deactivate --session "<session-id>"
 ```
 
 The public methods are `environments/list`, `environments/read`,

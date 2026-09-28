@@ -22,16 +22,12 @@ enum VfsCommand {
     Snapshot(SnapshotArgs),
     /// Materialize a CAS-backed VFS snapshot into a local directory.
     Materialize(MaterializeArgs),
-    /// Manage VFS workspaces.
-    Workspace(WorkspaceArgs),
-    /// Manage session VFS mounts.
-    Mount(MountArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 struct SnapshotArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the snapshot summary as JSON.
     #[arg(long)]
@@ -64,7 +60,7 @@ struct SnapshotArgs {
 #[derive(Args, Debug, Clone)]
 struct MaterializeArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the materialization summary as JSON.
     #[arg(long)]
@@ -76,7 +72,7 @@ struct MaterializeArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct WorkspaceArgs {
+pub(crate) struct WorkspaceArgs {
     #[command(subcommand)]
     command: WorkspaceCommand,
 }
@@ -98,7 +94,7 @@ enum WorkspaceCommand {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceCreateArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
@@ -117,7 +113,7 @@ struct WorkspaceCreateArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the workspace list as JSON.
     #[arg(long)]
@@ -127,7 +123,7 @@ struct WorkspaceListArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
@@ -139,7 +135,7 @@ struct WorkspaceReadArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceUpdateArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the workspace summary as JSON.
     #[arg(long)]
@@ -159,7 +155,7 @@ struct WorkspaceUpdateArgs {
 #[derive(Args, Debug, Clone)]
 struct WorkspaceDeleteArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the deleted workspace summary as JSON.
     #[arg(long)]
@@ -169,7 +165,7 @@ struct WorkspaceDeleteArgs {
 }
 
 #[derive(Args, Debug, Clone)]
-struct MountArgs {
+pub(crate) struct MountArgs {
     #[command(subcommand)]
     command: MountCommand,
 }
@@ -177,8 +173,10 @@ struct MountArgs {
 #[derive(Subcommand, Debug, Clone)]
 enum MountCommand {
     /// Attach a snapshot or workspace to a session VFS path.
+    #[command(name = "attach")]
     Put(MountPutArgs),
     /// Remove a VFS mount from a session path.
+    #[command(name = "detach")]
     Delete(MountDeleteArgs),
     /// List VFS mounts for a session.
     List(MountListArgs),
@@ -187,13 +185,13 @@ enum MountCommand {
 #[derive(Args, Debug, Clone)]
 struct MountPutArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the mount summary as JSON.
     #[arg(long)]
     json: bool,
     /// Session id to mount into.
-    #[arg(long)]
+    #[arg(short = 's', long)]
     session: String,
     /// VFS mount path.
     #[arg(long = "path")]
@@ -207,20 +205,20 @@ struct MountPutArgs {
     /// Access granted on the attachment. Defaults to `edit` for workspaces
     /// and `read` for snapshots; `edit` is invalid for snapshots.
     #[arg(long, value_enum)]
-    access: Option<MountAccess>,
+    access: Option<WorkspaceAccessArg>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-enum MountAccess {
+pub(crate) enum WorkspaceAccessArg {
     Read,
     Edit,
 }
 
-impl From<MountAccess> for api::WorkspaceAccess {
-    fn from(access: MountAccess) -> Self {
+impl From<WorkspaceAccessArg> for api::WorkspaceAccess {
+    fn from(access: WorkspaceAccessArg) -> Self {
         match access {
-            MountAccess::Read => api::WorkspaceAccess::Read,
-            MountAccess::Edit => api::WorkspaceAccess::Edit,
+            WorkspaceAccessArg::Read => api::WorkspaceAccess::Read,
+            WorkspaceAccessArg::Edit => api::WorkspaceAccess::Edit,
         }
     }
 }
@@ -228,13 +226,13 @@ impl From<MountAccess> for api::WorkspaceAccess {
 #[derive(Args, Debug, Clone)]
 struct MountDeleteArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the deleted mount summary as JSON.
     #[arg(long)]
     json: bool,
     /// Session id to remove the mount from.
-    #[arg(long)]
+    #[arg(short = 's', long)]
     session: String,
     /// VFS mount path to remove.
     #[arg(long = "path")]
@@ -244,13 +242,13 @@ struct MountDeleteArgs {
 #[derive(Args, Debug, Clone)]
 struct MountListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit mounts as JSON.
     #[arg(long)]
     json: bool,
     /// Session id to inspect.
-    #[arg(long)]
+    #[arg(short = 's', long)]
     session: String,
 }
 
@@ -258,8 +256,6 @@ pub(crate) async fn handle(args: VfsArgs) -> Result<()> {
     match args.command {
         VfsCommand::Snapshot(args) => snapshot(args).await,
         VfsCommand::Materialize(args) => materialize(args).await,
-        VfsCommand::Workspace(args) => workspace(args).await,
-        VfsCommand::Mount(args) => mount(args).await,
     }
 }
 
@@ -272,23 +268,23 @@ async fn snapshot(args: SnapshotArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("snapshotRef {}", summary.snapshot_ref);
-    println!("files {}", summary.files);
-    println!("bytes {}", summary.bytes);
-    println!("uploadedBlobs {}", summary.uploaded_blobs);
-    println!("uploadedBytes {}", summary.uploaded_bytes);
-    println!("reusedBlobs {}", summary.reused_blobs);
-    println!("reusedBytes {}", summary.reused_bytes);
+    println!("Snapshot ref: {}", summary.snapshot_ref);
+    println!("Files: {}", summary.files);
+    println!("Bytes: {}", summary.bytes);
+    println!("Uploaded blobs: {}", summary.uploaded_blobs);
+    println!("Uploaded bytes: {}", summary.uploaded_bytes);
+    println!("Reused blobs: {}", summary.reused_blobs);
+    println!("Reused bytes: {}", summary.reused_bytes);
     if summary.skipped_paths > 0 {
-        println!("skippedPaths {}", summary.skipped_paths);
+        println!("Skipped paths: {}", summary.skipped_paths);
         for warning in summary.warnings {
-            println!("warning {}: {}", warning.path, warning.message);
+            println!("Warning: {}: {}", warning.path, warning.message);
         }
     }
     Ok(())
 }
 
-async fn workspace(args: WorkspaceArgs) -> Result<()> {
+pub(crate) async fn workspace(args: WorkspaceArgs) -> Result<()> {
     match args.command {
         WorkspaceCommand::Create(args) => workspace_create(args).await,
         WorkspaceCommand::Read(args) => workspace_read(args).await,
@@ -323,18 +319,17 @@ async fn workspace_list(args: WorkspaceListArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response.workspaces)?);
         return Ok(());
     }
-    for workspace in response.workspaces {
-        let display_name = workspace.display_name.as_deref().unwrap_or("-");
-        println!(
-            "{} {} files {} bytes {} revision {}",
-            workspace.workspace_id,
-            display_name,
-            workspace.files,
-            workspace.bytes,
-            workspace.revision
-        );
-    }
-    Ok(())
+    crate::output::table(
+        &response.workspaces,
+        &[
+            ("workspaceId", "ID"),
+            ("displayName", "NAME"),
+            ("files", "FILES"),
+            ("bytes", "BYTES"),
+            ("revision", "REVISION"),
+        ],
+        "No workspaces found.",
+    )
 }
 
 async fn workspace_read(args: WorkspaceReadArgs) -> Result<()> {
@@ -376,30 +371,19 @@ async fn workspace_delete(args: WorkspaceDeleteArgs) -> Result<()> {
         .map_err(crate::api_client::api_error)?
         .result
         .workspace;
-    print_workspace(workspace, args.json)
+    if args.json {
+        crate::output::show(true, &workspace)
+    } else {
+        println!("Deleted workspace {}.", workspace.workspace_id);
+        Ok(())
+    }
 }
 
 fn print_workspace(workspace: api::VfsWorkspaceView, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string_pretty(&workspace)?);
-        return Ok(());
-    }
-
-    println!("workspaceId {}", workspace.workspace_id);
-    if let Some(display_name) = workspace.display_name {
-        println!("displayName {display_name}");
-    }
-    println!("headSnapshotRef {}", workspace.head_snapshot_ref);
-    if let Some(base) = workspace.base_snapshot_ref {
-        println!("baseSnapshotRef {base}");
-    }
-    println!("files {}", workspace.files);
-    println!("bytes {}", workspace.bytes);
-    println!("revision {}", workspace.revision);
-    Ok(())
+    crate::output::show(json, &workspace)
 }
 
-async fn mount(args: MountArgs) -> Result<()> {
+pub(crate) async fn mount(args: MountArgs) -> Result<()> {
     match args.command {
         MountCommand::Put(args) => mount_put(args).await,
         MountCommand::Delete(args) => mount_delete(args).await,
@@ -437,7 +421,7 @@ async fn mount_put(args: MountPutArgs) -> Result<()> {
     }
 
     print_workspace_attachment(&attachment);
-    println!("session {}", response.session.id);
+    println!("Session: {}", response.session.id);
     Ok(())
 }
 
@@ -480,8 +464,8 @@ async fn mount_delete(args: MountDeleteArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("deleted {}", args.mount_path);
-    println!("session {}", response.session.id);
+    println!("Detached workspace or snapshot at {}.", args.mount_path);
+    println!("Session: {}", response.session.id);
     Ok(())
 }
 
@@ -507,10 +491,16 @@ async fn mount_list(args: MountListArgs) -> Result<()> {
         return Ok(());
     }
 
-    for attachment in &attachments {
-        print_workspace_attachment(attachment);
-    }
-    Ok(())
+    crate::output::table(
+        &attachments,
+        &[
+            ("path", "PATH"),
+            ("workspaceId", "WORKSPACE"),
+            ("snapshotRef", "SNAPSHOT"),
+            ("access", "ACCESS"),
+        ],
+        "No workspaces or snapshots attached.",
+    )
 }
 
 pub(crate) async fn create_workspace_from_snapshot(
@@ -529,7 +519,7 @@ pub(crate) async fn create_workspace_from_snapshot(
         .workspace)
 }
 
-pub(crate) async fn mount_workspace(
+pub(crate) async fn attach_workspace(
     api: &HttpAgentApi,
     session_id: String,
     mount_path: String,
@@ -570,9 +560,15 @@ async fn put_workspace_attachment(
         .ok_or_else(|| anyhow::anyhow!("session is missing config"))?;
     let vfs = config
         .features
-        .as_mut()
-        .and_then(|features| features.vfs.as_mut())
-        .ok_or_else(|| anyhow::anyhow!("session does not grant VFS"))?;
+        .get_or_insert_with(Default::default)
+        .vfs
+        .get_or_insert(api::VfsFeature {
+            version: api::CURRENT_FEATURE_VERSION,
+            working_directory: None,
+            workspaces: vec![],
+            prompts: None,
+            skills: None,
+        });
     vfs.workspaces
         .retain(|existing| existing.path != attachment.path);
     vfs.workspaces.push(attachment);
@@ -611,18 +607,18 @@ async fn materialize(args: MaterializeArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("snapshotRef {}", summary.snapshot_ref);
-    println!("destination {}", summary.destination);
-    println!("files {}", summary.files);
-    println!("bytes {}", summary.bytes);
-    println!("directories {}", summary.directories);
-    println!("createdDirectories {}", summary.created_directories);
-    println!("writtenFiles {}", summary.written_files);
-    println!("writtenBytes {}", summary.written_bytes);
-    println!("reusedFiles {}", summary.reused_files);
-    println!("reusedBytes {}", summary.reused_bytes);
-    println!("downloadedBlobs {}", summary.downloaded_blobs);
-    println!("downloadedBytes {}", summary.downloaded_bytes);
+    println!("Snapshot ref: {}", summary.snapshot_ref);
+    println!("Destination: {}", summary.destination);
+    println!("Files: {}", summary.files);
+    println!("Bytes: {}", summary.bytes);
+    println!("Directories: {}", summary.directories);
+    println!("Created directories: {}", summary.created_directories);
+    println!("Written files: {}", summary.written_files);
+    println!("Written bytes: {}", summary.written_bytes);
+    println!("Reused files: {}", summary.reused_files);
+    println!("Reused bytes: {}", summary.reused_bytes);
+    println!("Downloaded blobs: {}", summary.downloaded_blobs);
+    println!("Downloaded bytes: {}", summary.downloaded_bytes);
     Ok(())
 }
 

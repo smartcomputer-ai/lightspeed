@@ -20,26 +20,26 @@ enum SkillsCommand {
 #[derive(Args, Debug, Clone)]
 struct SkillsListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the skill list as JSON.
     #[arg(long)]
     json: bool,
     /// Session id to inspect.
-    #[arg(long)]
+    #[arg(short = 's', long)]
     session: String,
 }
 
 #[derive(Args, Debug, Clone)]
 struct SkillsUseArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the ordinary run-start or steering response as JSON.
     #[arg(long)]
     json: bool,
     /// Session in which to use the skill.
-    #[arg(long)]
+    #[arg(short = 's', long)]
     session: String,
     /// Skill id from the session catalog.
     skill_id: String,
@@ -81,12 +81,15 @@ pub(crate) fn format_skill_catalogs(response: &api::SkillListResponse) -> String
     let mut lines = Vec::new();
     for catalog in &response.catalogs {
         lines.push(format!(
-            "{} {:?} catalogRef {}",
+            "{} — {} (catalog {})",
             catalog_source_label(&catalog.source),
-            catalog.availability,
+            serde_json::to_value(&catalog.availability)
+                .expect("catalog availability")
+                .as_str()
+                .unwrap_or("unknown"),
             catalog.catalog_ref.as_deref().unwrap_or("-")
         ));
-        lines.push(format!("skills {}", catalog.skills.len()));
+        lines.push(format!("{} skill(s)", catalog.skills.len()));
         for skill in &catalog.skills {
             let enabled = if skill.enabled { "enabled" } else { "disabled" };
             lines.push(format!("- {} [{}] {}", skill.skill_id, enabled, skill.name));
@@ -119,7 +122,7 @@ async fn use_skill(args: SkillsUseArgs) -> Result<()> {
     let session = api
         .read_session(api::SessionReadParams {
             session_id: args.session.clone(),
-            run_limit: Some(0),
+            run_limit: Some(1),
         })
         .await
         .map_err(api_error)?
@@ -139,7 +142,10 @@ async fn use_skill(args: SkillsUseArgs) -> Result<()> {
         if args.json {
             println!("{}", serde_json::to_string_pretty(&response)?);
         } else {
-            println!("steered {} to use {}", response.run.id, args.skill_id);
+            println!(
+                "Asked active run {} to use skill {}.",
+                response.run.id, args.skill_id
+            );
         }
     } else {
         let response = api
@@ -156,7 +162,10 @@ async fn use_skill(args: SkillsUseArgs) -> Result<()> {
         if args.json {
             println!("{}", serde_json::to_string_pretty(&response)?);
         } else {
-            println!("started {} to use {}", response.run.id, args.skill_id);
+            println!(
+                "Submitted run {} to use skill {}.",
+                response.run.id, args.skill_id
+            );
         }
     }
     Ok(())
@@ -261,8 +270,8 @@ mod tests {
         environment.warnings.push("last observation".into());
         response.catalogs.push(environment);
         let rendered = format_skill_catalogs(&response);
-        assert!(rendered.contains("VFS Available catalogRef sha256:catalog"));
-        assert!(rendered.contains("Environment machine Stale catalogRef sha256:environment"));
+        assert!(rendered.contains("VFS — available (catalog sha256:catalog)"));
+        assert!(rendered.contains("Environment machine — stale (catalog sha256:environment)"));
         assert!(rendered.contains("warning: last observation"));
         assert_eq!(rendered.matches("[enabled] Review").count(), 2);
         assert!(
@@ -366,6 +375,7 @@ mod tests {
             let requests = server.await.unwrap();
             assert_eq!(requests[0]["method"], api::METHOD_SESSION_SKILLS_LIST);
             assert_eq!(requests[1]["method"], api::METHOD_SESSION_READ);
+            assert!(requests[1]["params"]["runLimit"].as_u64().unwrap() > 0);
             let submission = &requests[2];
             assert_eq!(submission["params"]["sessionId"], "session_1");
             let items = if status.is_some() {

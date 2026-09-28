@@ -31,7 +31,7 @@ use crate::chat::session::{new_session_id, new_submission_id, validate_session_i
 #[derive(Args, Debug, Clone)]
 pub(crate) struct ChatArgs {
     /// Session ID to open or create through the configured Lightspeed API.
-    #[arg(long)]
+    #[arg(short = 's', long)]
     session: Option<String>,
     /// Start with a fresh session ID.
     #[arg(long)]
@@ -58,11 +58,6 @@ pub(crate) struct ChatArgs {
     /// Disable web fetch for this session.
     #[arg(long = "no-web-fetch")]
     no_web_fetch: bool,
-    /// Access granted on the `--mount` workspace attachment: edit or read.
-    /// File tools are derived from attachments, so without a mount the
-    /// session has a VFS but no file tools.
-    #[arg(long = "filesystem-tools")]
-    filesystem_tools: Option<String>,
     /// Start with no feature grants at all (model + runs only) instead of
     /// the CLI's dev defaults (vfs, web, timers).
     #[arg(long)]
@@ -73,14 +68,25 @@ pub(crate) struct ChatArgs {
     /// Start a new session from an inline agent profile JSON file or literal.
     #[arg(long = "profile-json")]
     profile_json: Option<String>,
-    /// Snapshot a local directory, create a VFS workspace, and mount it for this chat.
-    #[arg(long)]
-    mount: Option<PathBuf>,
-    /// VFS path used for --mount. Defaults to /workspace.
-    #[arg(long = "mount-path", default_value = "/workspace")]
-    mount_path: String,
+    /// Upload a local directory snapshot into a new workspace; no live sync or local writeback.
+    #[arg(long, group = "workspace_source")]
+    upload: Option<PathBuf>,
+    /// Attach an existing runtime workspace to this session.
+    #[arg(long, group = "workspace_source")]
+    workspace: Option<String>,
+    /// Path of the workspace inside the session.
+    #[arg(long, default_value = "/workspace", requires = "workspace_source")]
+    workspace_path: String,
+    /// Access granted to the attached workspace.
+    #[arg(
+        long,
+        value_enum,
+        default_value = "edit",
+        requires = "workspace_source"
+    )]
+    workspace_access: crate::vfs_cli::WorkspaceAccessArg,
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Show full completed tool call arguments and results in the TUI.
     #[arg(long)]
@@ -95,8 +101,6 @@ pub(crate) struct ChatArgs {
 pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
     let draft = draft_settings(&args)?;
     let profile = profile_source_from_args(args.profile.as_deref(), args.profile_json.as_deref())?;
-    let mount = args.mount.clone();
-    let mount_path = args.mount_path.clone();
     let session_id = if args.new {
         new_session_id()
     } else if let Some(session_id) = args.session.as_ref() {
@@ -113,9 +117,18 @@ pub(crate) async fn handle(args: ChatArgs) -> Result<()> {
         profile,
     })
     .await?;
-    if let Some(directory) = mount {
-        let events = driver.mount_local_directory(directory, mount_path).await?;
-        initial_events.extend(events);
+    if let Some(directory) = args.upload {
+        initial_events.extend(
+            driver
+                .upload_directory(directory, args.workspace_path, args.workspace_access.into())
+                .await?,
+        );
+    } else if let Some(workspace) = args.workspace {
+        initial_events.extend(
+            driver
+                .attach_workspace(workspace, args.workspace_path, args.workspace_access.into())
+                .await?,
+        );
     }
 
     if args.json {
@@ -299,13 +312,16 @@ impl ChatSessionDriver {
         })
     }
 
-    pub(crate) async fn mount_local_directory(
+    async fn upload_directory(
         &mut self,
         directory: PathBuf,
-        mount_path: String,
+        workspace_path: String,
+        access: WorkspaceAccess,
     ) -> Result<Vec<ChatEvent>> {
         if !self.is_quiescent() {
-            return Err(anyhow!("cannot mount a directory while a run is active"));
+            return Err(anyhow!(
+                "cannot upload and attach a workspace while a run is active"
+            ));
         }
         let summary = crate::vfs_transfer::upload_snapshot_directory(
             self.api.as_ref(),
@@ -313,20 +329,33 @@ impl ChatSessionDriver {
             crate::vfs_transfer::SnapshotUploadOptions::default(),
         )
         .await
-        .context("failed to upload chat mount directory")?;
+        .context("failed to upload local directory snapshot")?;
         let workspace =
             crate::vfs_cli::create_workspace_from_snapshot(self.api.as_ref(), summary.snapshot_ref)
                 .await
-                .context("failed to create chat mount workspace")?;
-        crate::vfs_cli::mount_workspace(
+                .context("failed to create workspace from uploaded snapshot")?;
+        self.attach_workspace(workspace.workspace_id, workspace_path, access)
+            .await
+    }
+
+    async fn attach_workspace(
+        &mut self,
+        workspace_id: String,
+        workspace_path: String,
+        access: WorkspaceAccess,
+    ) -> Result<Vec<ChatEvent>> {
+        if !self.is_quiescent() {
+            return Err(anyhow!("cannot attach a workspace while a run is active"));
+        }
+        crate::vfs_cli::attach_workspace(
             self.api.as_ref(),
             self.session_id.clone(),
-            mount_path,
-            workspace.workspace_id,
-            mount_access(&self.settings),
+            workspace_path,
+            workspace_id,
+            access,
         )
         .await
-        .context("failed to mount chat workspace")?;
+        .context("failed to attach chat workspace")?;
         self.refresh().await
     }
 
@@ -1807,28 +1836,7 @@ fn draft_settings(args: &ChatArgs) -> Result<ChatDraftSettings> {
         web_search: args.no_web_search.then_some(false),
         web_fetch: args.no_web_fetch.then_some(false),
         bare: args.bare,
-        filesystem_tools: args
-            .filesystem_tools
-            .as_deref()
-            .map(parse_filesystem_tool_mode)
-            .transpose()?,
     })
-}
-
-fn parse_filesystem_tool_mode(value: &str) -> Result<WorkspaceAccess> {
-    match value {
-        "edit" => Ok(WorkspaceAccess::Edit),
-        "read" | "read-only" | "read_only" | "readonly" => Ok(WorkspaceAccess::Read),
-        other => Err(anyhow!(
-            "invalid filesystem tool mode '{other}'; expected edit or read"
-        )),
-    }
-}
-
-/// Access of the workspace the chat client attaches for `--mount`; edit
-/// unless the user narrowed it.
-fn mount_access(settings: &ChatDraftSettings) -> WorkspaceAccess {
-    settings.filesystem_tools.unwrap_or(WorkspaceAccess::Edit)
 }
 
 /// `None` leaves the model to the session, or to the deployment default.
@@ -1853,7 +1861,7 @@ fn session_start_config(settings: &ChatDraftSettings) -> api::SessionConfig {
 /// The CLI's development defaults: features are secure-by-default on the
 /// server (absent = off), so the chat client grants a usable dev surface
 /// explicitly — VFS with prompt sourcing, web, timers. File tools appear once
-/// a workspace is attached (`--mount`); skill discovery requires an explicit
+/// a workspace is attached (`--upload` or `--workspace`); skill discovery requires an explicit
 /// profile/session configuration.
 fn dev_features(settings: &ChatDraftSettings) -> FeaturesConfig {
     let web_fetch = settings.web_fetch.unwrap_or(true);
@@ -2607,7 +2615,7 @@ mod tests {
 
         let rendered = format_skill_list(&response);
 
-        assert!(rendered.contains("catalogRef sha256:catalog"));
+        assert!(rendered.contains("catalog sha256:catalog"));
         assert!(rendered.contains("- lightspeed:review [enabled] Review"));
         assert!(rendered.contains("Review repository changes."));
         assert!(rendered.contains("short review diffs"));
@@ -2716,21 +2724,6 @@ mod tests {
     }
 
     #[test]
-    fn mount_access_defaults_to_edit_and_can_be_narrowed_to_read() {
-        let settings = draft_settings(&chat_args_with_effort(None)).expect("draft settings");
-        assert_eq!(mount_access(&settings), WorkspaceAccess::Edit);
-
-        let mut args = chat_args_with_effort(None);
-        args.filesystem_tools = Some("read-only".to_owned());
-        let settings = draft_settings(&args).expect("draft settings");
-        assert_eq!(mount_access(&settings), WorkspaceAccess::Read);
-
-        let mut args = chat_args_with_effort(None);
-        args.filesystem_tools = Some("none".to_owned());
-        assert!(draft_settings(&args).is_err());
-    }
-
-    #[test]
     fn session_start_config_bare_sends_no_feature_grants() {
         let mut args = chat_args_with_effort(None);
         args.bare = true;
@@ -2811,12 +2804,10 @@ mod tests {
         }
         use clap::Parser;
 
-        let partial = Cli::try_parse_from(["chat", "--api-url", "http://x", "--model", "gpt-5.4"]);
+        let partial = Cli::try_parse_from(["chat", "--model", "gpt-5.4"]);
         assert!(partial.is_err());
         let full = Cli::try_parse_from([
             "chat",
-            "--api-url",
-            "http://x",
             "--provider",
             "openai",
             "--api-kind",
@@ -2838,12 +2829,13 @@ mod tests {
             max_tokens: None,
             no_web_search: false,
             no_web_fetch: false,
-            filesystem_tools: None,
             bare: false,
             profile: None,
             profile_json: None,
-            mount: None,
-            mount_path: "/workspace".into(),
+            upload: None,
+            workspace: None,
+            workspace_path: "/workspace".into(),
+            workspace_access: crate::vfs_cli::WorkspaceAccessArg::Edit,
             api_url: "http://127.0.0.1:18080/rpc".into(),
             show_tool_details: false,
             json: false,

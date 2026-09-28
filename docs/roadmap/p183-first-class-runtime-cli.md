@@ -534,3 +534,31 @@ the same identity and active-row information. Slug lookup respects deployment
 permissions; restricted keys retain useful UUID status with an explicit reason
 when metadata is unavailable. Process tests cover selections, overrides,
 renames, unnamed/missing universes, restricted keys and single mode.
+
+
+### CLI command and output audit
+
+The command surface now uses singular resource names with plural aliases.
+Persistent workspaces, environments and MCP registrations are managed directly;
+session workspace/MCP/environment attachments, profile application and remaining
+skill discovery/use live beneath `session`. External credential administration
+is named `credential`, with model-provider connections beneath `model provider`.
+Lightspeed gateway keys remain `api-key` and client connection setup remains
+`connect`. The endpoint override is global and retains connection isolation.
+
+The audit also adds session read/config read/config put, environment provisioning,
+external registration, template/binding discovery, deployment provider/binding
+administration and ingress control. Attachment edits preserve unrelated config
+with revision checks. MCP attachment lists use declarations instead of derived
+tools. Human output adds labels, table headers, empty states and asynchronous
+lifecycle guidance; profile export remains reusable JSON. OAuth prompts no longer
+contaminate JSON stdout. GitHub App operations filter and check provider kind so
+model connections cannot be mistaken for GitHub Apps. Parser and process-level
+fixtures exercise the new command paths and output contracts.
+
+Chat workspace shortcuts now distinguish a local snapshot upload (`--upload`)
+from reuse of a runtime workspace (`--workspace`). Both use the session
+attachment operation, with `--workspace-path` and `--workspace-access` controls;
+plain session resume preserves attachments. The old mount and filesystem-tool
+flags are removed. Every `--session` option also accepts `-s`. Parser and process
+tests cover the shortcuts, access defaults, configuration preservation and resume.

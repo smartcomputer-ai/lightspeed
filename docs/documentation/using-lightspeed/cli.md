@@ -157,14 +157,14 @@ Provider credentials are separate from the Lightspeed gateway key. Store a
 built-in provider key from an environment variable:
 
 ```bash
-lightspeed auth model add openai --api-key-env OPENAI_API_KEY
-lightspeed models list
+lightspeed model provider add openai --api-key-env OPENAI_API_KEY
+lightspeed model list
 ```
 
 For a compatible endpoint, supply its full configuration:
 
 ```bash
-lightspeed auth model add my-provider \
+lightspeed model provider add my-provider \
   --base-url https://provider.example/v1 \
   --api-kind openai:completions \
   --api-key-env MY_PROVIDER_KEY
@@ -189,6 +189,27 @@ keeps its resolved connection; switching saved defaults elsewhere does not
 retarget a running chat. See [Sessions and runs](sessions-and-runs.md) for
 history, session switching and run controls.
 
+To give the session files, upload a local directory or attach an existing runtime
+workspace:
+
+```bash
+lightspeed chat --upload .
+lightspeed chat --workspace WORKSPACE_ID --workspace-path /repo --workspace-access read
+lightspeed chat -s SESSION_ID
+```
+
+`--upload` takes a one-time snapshot and creates a new runtime workspace. Local
+files are not kept in sync, and agent edits are not written back to your machine.
+`--workspace` reuses an existing workspace. Choose one of these options; both
+default to `/workspace` with `edit` access. `--workspace-path` and
+`--workspace-access read|edit` require one of the two sources.
+
+These shortcuts use the same revision-checked attachment operation as
+`session workspace attach`. They replace an attachment at the specified path
+and preserve other attachments and configuration. Repeating `--upload` creates
+another workspace. Resuming with `chat -s SESSION_ID` alone retains the session's
+existing attachments. Every `--session` option also accepts `-s`.
+
 ## Administer keys and add Platform later
 
 A deployment key with `deployment/api-keys` can issue narrower keys:
@@ -200,7 +221,7 @@ lightspeed api-key list
 lightspeed api-key revoke KEY_PREFIX
 ```
 
-Create prints the secret once as JSON. Add `--group auth` if the client needs
+Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
 to configure provider credentials, and other groups for the resources it
 manages. Omitting groups grants every group allowed by the chosen scope.
 These are integration credentials, not personal Platform login tokens.
@@ -226,3 +247,96 @@ IDs, profiles and sessions stay in the runtime; Platform creates only its
 organization and membership records. This
 association does not automatically share private sessions. Direct CLI access
 continues to work while Platform is stopped.
+
+
+## Command layout
+
+Resource commands use singular names and accept plural aliases: `universe(s)`,
+`api-key(s)`, `session(s)`, `profile(s)`, `model(s)`, `workspace(s)`, `credential(s)`,
+`environment(s)`, and `mcp`/`mcps`. `env` is also an alias for `environment`.
+`connect` (`connections`) manages local connection settings; `chat` (`chats`)
+starts or continues a conversation. `vfs` (`vfses`) uploads and downloads
+immutable snapshots. `--connection`, `--universe`, and `--api-url` can appear
+before or after subcommands. The endpoint override follows the same credential
+isolation rules as saved connections.
+
+Workspaces, MCP registrations, credentials and environments belong to the
+selected universe and have independent lifecycles. Session attachments declare
+which resources an agent may use. Changing an attachment preserves unrelated
+configuration and checks its revision; configuration changes require an idle
+session. Attaching an environment does not activate or provision it.
+
+```bash
+lightspeed workspace list
+lightspeed workspace create --display-name project
+lightspeed mcp list
+lightspeed mcp tools my-server
+lightspeed mcp login my-server
+lightspeed credential list
+lightspeed credential import --provider-id my-service --token-env SERVICE_TOKEN
+lightspeed model provider list
+lightspeed environment list
+lightspeed profile list
+
+lightspeed session read SESSION_ID
+lightspeed session config read SESSION_ID --json > session-config.json
+lightspeed session config put SESSION_ID --file session-config.json
+lightspeed session profile apply SESSION_ID --profile reviewer
+lightspeed session workspace attach --session SESSION_ID --workspace WORKSPACE_ID --path /repo --access read
+lightspeed session mcp attach SERVER_ID --session SESSION_ID --tools search,fetch
+lightspeed session environment attach ENVIRONMENT_ID --session SESSION_ID --access exec --working-directory /repo
+lightspeed session environment activate ENVIRONMENT_ID --session SESSION_ID
+lightspeed session skill list --session SESSION_ID
+lightspeed session skill use SKILL_ID --session SESSION_ID
+```
+
+The workspace, MCP and environment groups under `session` each provide
+`attach`, `detach` and `list`. Lists show declared attachments rather than
+inferring them from materialized tools. Detaching does not delete the resource.
+Environment lists mark the active attachment. Skill selection submits ordinary
+agent input (or steers an existing run); there is no separate skill execution
+or installation registry.
+
+`credential` manages external credentials, not authentication to Lightspeed.
+Its `oauth-client` and `github` subcommands configure reusable OAuth clients and
+GitHub Apps. Model endpoint credentials belong under `model provider`; MCP
+credential binding and OAuth login belong under `mcp`. `api-key` manages keys
+that authenticate callers to Lightspeed itself. Runtime API method-group names
+such as `auth` and `models` are unchanged.
+
+Human output uses labeled details, table headers and explicit empty states.
+Resource operations accept `--json` for scripts. OAuth authorization instructions
+are written to stderr so JSON stdout remains parseable. Profile export always
+emits a reusable JSON document; profile list/read/import/check use human output
+unless `--json` is requested. Configuration `put` replaces a complete document;
+omitted fields return to their defaults. It checks the revision read immediately
+before the write, or the explicit `--expected-revision` supplied by the caller.
+
+## Provision environments from the CLI
+
+A deployment administrator registers a provider controller and binds it to a
+universe. `environment provider put --file provider.json` takes a
+`DeploymentEnvironmentProviderPutParams` document; `environment binding put
+--file binding.json` takes `DeploymentProviderBindingPutParams`, including its
+explicit `universeId`. The public API reference documents their fields. These
+operations require a deployment key; provider list/read/delete do as well.
+Binding deletion acts on the selected universe. Normal environment and template
+operations operate within the selected universe.
+
+```bash
+lightspeed environment provider list
+lightspeed environment binding list
+lightspeed environment template list --binding local
+lightspeed environment create --binding local --template linux-v1 --request-id provision-my-machine
+lightspeed environment register wss://machine.example/envd --request-id register-my-machine
+lightspeed environment read ENVIRONMENT_ID
+lightspeed environment power ENVIRONMENT_ID paused
+lightspeed environment ingress ENVIRONMENT_ID --enable
+```
+
+Reuse the same request ID when retrying an uncertain provisioning or external
+registration request. Creation and closure can be asynchronous: inspect the
+returned lifecycle state with `environment read`. Outbound daemons continue to
+use `environment registration-key create|list|read|revoke`. Credentials bound
+with `environment credential bind` supply the environment's configured secret
+references; attachment access controls the agent's permitted use of the machine.

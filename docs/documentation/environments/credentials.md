@@ -163,15 +163,15 @@ With the [CLI connection settings](../using-lightspeed/sessions-and-runs.md#cont
 configured, bind a stored grant by reference:
 
 ```bash
-target/debug/lightspeed env credentials bind "<environment-id>" \
+target/debug/lightspeed environment credentials bind "<environment-id>" \
   --env-name ACORN_RELEASE_TOKEN --grant-id "<credential-id>"
-target/debug/lightspeed env credentials list "<environment-id>"
+target/debug/lightspeed environment credentials list "<environment-id>"
 ```
 
 Remove that assignment with:
 
 ```bash
-target/debug/lightspeed env credentials unbind "<environment-id>" \
+target/debug/lightspeed environment credentials unbind "<environment-id>" \
   --env-name ACORN_RELEASE_TOKEN
 ```
 

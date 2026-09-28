@@ -1,4 +1,4 @@
-use api::{RunStatus, SessionStatus, WorkspaceAccess};
+use api::{RunStatus, SessionStatus};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -20,9 +20,6 @@ pub(crate) struct ChatDraftSettings {
     pub max_tokens: Option<u32>,
     pub web_search: Option<bool>,
     pub web_fetch: Option<bool>,
-    /// Access of the workspace attached for `--mount`; file tools are
-    /// derived from attachments, so `None` means the default (edit).
-    pub filesystem_tools: Option<WorkspaceAccess>,
     /// Send no feature grants at all: the true secure default (model +
     /// runs only) instead of the CLI's dev feature set.
     #[serde(default)]
@@ -50,7 +47,6 @@ impl Default for ChatDraftSettings {
                 .and_then(|value| value.parse::<u32>().ok()),
             web_search: None,
             web_fetch: None,
-            filesystem_tools: None,
             bare: false,
         }
     }

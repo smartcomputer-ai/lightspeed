@@ -154,14 +154,14 @@ With the [CLI connection settings](sessions-and-runs.md#continue-from-the-cli)
 configured, list the discovered skills:
 
 ```bash
-lightspeed skills list --session "<session-id>"
+lightspeed session skill list --session "<session-id>"
 ```
 
 Copy the returned skill ID. It identifies a catalog entry and may differ from
 the skill's name. Submit a request to read and use it:
 
 ```bash
-lightspeed skills use --session "<session-id>" "<skill-id>"
+lightspeed session skill use --session "<session-id>" "<skill-id>"
 ```
 
 This starts an ordinary run when idle, or steers the current run. In the
@@ -282,7 +282,7 @@ Use a snapshot when the task must keep reading a fixed version.
 | A write fails despite edit tools | Check attachment access and whether the target is a snapshot. Read-only attachments remain read-only. |
 | Prompt files have no effect | Enable Prompt loading, check the default or overridden roots inside attachments, use direct .md or .txt files, and start the next run after the update. |
 | A skill is absent from the catalog | Enable Skill discovery and check the default or overridden root, direct child directory, exact `SKILL.md` name, and required frontmatter. |
-| A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` or `skills use`. Discovery alone loads only its catalog entry. |
+| A discovered skill has not affected the answer | Inspect whether the agent read it, or select it with `/skill` or `session skill use`. Discovery alone loads only its catalog entry. |
 | Saving reports a revision conflict | Reload and reconcile with the intervening edit; do not assume the save was merged. |
 
 ## Copy files to or from a machine

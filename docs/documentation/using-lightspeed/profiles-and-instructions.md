@@ -132,7 +132,7 @@ ordinary session, use the CLI with the connection settings described in
 [Sessions and runs](sessions-and-runs.md#continue-from-the-cli):
 
 ```bash
-lightspeed profiles apply "<session-id>" --profile release-reviewer
+lightspeed session profile apply "<session-id>" --profile release-reviewer
 ```
 
 The API equivalent is `session/profiles/apply`. The session must be open with

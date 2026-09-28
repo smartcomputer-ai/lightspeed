@@ -21,8 +21,11 @@ use crate::vfs_transfer::{SnapshotUploadOptions, upload_snapshot_directory};
 
 #[derive(Args, Debug)]
 pub(crate) struct ProfilesArgs {
+    /// Emit machine-readable JSON (export always writes JSON).
+    #[arg(long = "json", global = true)]
+    output_json: bool,
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     #[command(subcommand)]
     command: ProfilesCommand,
@@ -45,18 +48,6 @@ enum ProfilesCommand {
     },
     /// Delete a profile.
     Delete { profile_id: String },
-    /// Apply a profile to an idle session.
-    Apply {
-        session_id: String,
-        #[arg(long)]
-        profile: Option<String>,
-        #[arg(long = "profile-json")]
-        profile_json: Option<String>,
-        #[arg(long = "expected-config-revision")]
-        expected_config_revision: Option<u64>,
-        #[arg(long = "expected-tools-revision")]
-        expected_tools_revision: Option<u64>,
-    },
     /// Export a stored profile as an AgentProfileInput-shaped JSON document.
     Export {
         profile_id: String,
@@ -151,12 +142,22 @@ impl ValidationReport {
         self.warnings.extend(other.warnings);
     }
 
-    fn finish(self) -> Result<()> {
+    fn finish(self, json: bool) -> Result<()> {
+        if json {
+            crate::output::show(
+                true,
+                &serde_json::json!({"valid":self.errors.is_empty(),"warnings":self.warnings,"errors":self.errors}),
+            )?;
+            if !self.errors.is_empty() {
+                bail!("profile validation failed");
+            }
+            return Ok(());
+        }
         for warning in &self.warnings {
             eprintln!("warning: {warning}");
         }
         if self.errors.is_empty() {
-            println!("ok");
+            println!("Profile validation passed.");
             return Ok(());
         }
         for error in &self.errors {
@@ -187,7 +188,19 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 .list_profiles(ProfileListParams::default())
                 .await
                 .map_err(api_error)?;
-            print_json(&response.result.profiles)
+            if args.output_json {
+                print_json(&response.result.profiles)
+            } else {
+                crate::output::table(
+                    &response.result.profiles,
+                    &[
+                        ("profileId", "ID"),
+                        ("displayName", "NAME"),
+                        ("revision", "REVISION"),
+                    ],
+                    "No profiles found.",
+                )
+            }
         }
         ProfilesCommand::Read { profile_id } => {
             let response = api
@@ -196,7 +209,7 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 })
                 .await
                 .map_err(api_error)?;
-            print_json(&response.result.profile)
+            crate::output::show(args.output_json, &response.result.profile)
         }
         ProfilesCommand::Import { json, no_check } => {
             let mut batch = read_profile_import_arg(&json)?;
@@ -220,7 +233,20 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                     .with_context(|| format!("failed to import profile {profile_id}"))?;
                 profiles.push(profile);
             }
-            print_profile_import_results(profiles, batch.source_was_array)
+            if args.output_json {
+                print_profile_import_results(profiles, batch.source_was_array)
+            } else {
+                println!("Imported {} profile(s).", profiles.len());
+                crate::output::table(
+                    &profiles,
+                    &[
+                        ("profileId", "ID"),
+                        ("displayName", "NAME"),
+                        ("revision", "REVISION"),
+                    ],
+                    "No profiles imported.",
+                )
+            }
         }
         ProfilesCommand::Delete { profile_id } => {
             let response = api
@@ -229,26 +255,12 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
                 })
                 .await
                 .map_err(api_error)?;
-            print_json(&response.result.profile)
-        }
-        ProfilesCommand::Apply {
-            session_id,
-            profile,
-            profile_json,
-            expected_config_revision,
-            expected_tools_revision,
-        } => {
-            let profile = profile_source_from_args(profile.as_deref(), profile_json.as_deref())?;
-            let response = api
-                .apply_profile(ProfileApplyParams {
-                    session_id,
-                    profile,
-                    expected_config_revision,
-                    expected_tools_revision,
-                })
-                .await
-                .map_err(api_error)?;
-            print_json(&response.result)
+            if args.output_json {
+                print_json(&response.result.profile)
+            } else {
+                println!("Deleted profile {}.", response.result.profile.profile_id);
+                Ok(())
+            }
         }
         ProfilesCommand::Export { profile_id, out } => {
             let response = api
@@ -264,7 +276,7 @@ pub(crate) async fn handle(args: ProfilesArgs) -> Result<()> {
             let batch = read_profile_import_arg(&json)?;
             validate_import_documents(&api, &batch.documents, false, batch.source_was_array)
                 .await
-                .finish()
+                .finish(args.output_json)
         }
     }
 }
@@ -1116,5 +1128,60 @@ mod tests {
 
     fn parse_import_batch_for_test(json: &str) -> ProfileImportBatch {
         read_profile_import_json(json, PathBuf::from(".")).unwrap()
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub(crate) struct SessionProfileArgs {
+    #[command(subcommand)]
+    command: SessionProfileCommand,
+}
+#[derive(Subcommand, Debug, Clone)]
+enum SessionProfileCommand {
+    /// Apply a reusable or inline profile to an idle session.
+    Apply {
+        session_id: String,
+        #[arg(
+            long,
+            conflicts_with = "profile_json",
+            required_unless_present = "profile_json"
+        )]
+        profile: Option<String>,
+        #[arg(long, conflicts_with = "profile")]
+        profile_json: Option<String>,
+        #[arg(long)]
+        expected_config_revision: Option<u64>,
+        #[arg(long)]
+        expected_tools_revision: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+pub(crate) async fn session_profile(args: SessionProfileArgs) -> Result<()> {
+    let SessionProfileCommand::Apply {
+        session_id,
+        profile,
+        profile_json,
+        expected_config_revision,
+        expected_tools_revision,
+        json,
+    } = args.command;
+    let profile = profile_source_from_args(profile.as_deref(), profile_json.as_deref())?;
+    let response = HttpAgentApi::new("")
+        .apply_profile(ProfileApplyParams {
+            session_id,
+            profile,
+            expected_config_revision,
+            expected_tools_revision,
+        })
+        .await?
+        .result;
+    if json {
+        print_json(&response)
+    } else {
+        crate::output::show(
+            false,
+            &serde_json::json!({"sessionId":response.session.id,"configRevision":response.session.config_revision,"applied":response.applied}),
+        )
     }
 }

@@ -16,9 +16,7 @@ enum UniverseCommand {
     /// Show the active universe's UUID and current runtime slug.
     Status,
     /// Persist this connection's universe selection.
-    Use {
-        target: String,
-    },
+    Use { target: String },
     /// Create a runtime universe; does not change the selected universe.
     Create {
         #[arg(long)]
@@ -26,14 +24,10 @@ enum UniverseCommand {
         #[arg(long)]
         slug: Option<String>,
     },
-    Read {
-        target: String,
-    },
+    /// Read a universe and its resource counts.
+    Read { target: String },
     /// Assign or change a runtime slug. Existing URLs may stop working.
-    SetSlug {
-        target: String,
-        slug: String,
-    },
+    SetSlug { target: String, slug: String },
 }
 pub async fn universe(args: UniverseArgs) -> Result<()> {
     let active = connection::ACTIVE.get().context("no connection")?;
@@ -41,7 +35,12 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
     match args.command {
         UniverseCommand::Use { target } => {
             let id = connection::resolve_universe(active, &target).await?;
-            connection::select_universe(active, id)?;
+            connection::select_universe(active, id.clone())?;
+            if args.json {
+                print_json(&serde_json::json!({"universeId":id,"connection":active.name}))?;
+            } else {
+                println!("Selected universe {id}.");
+            }
         }
         UniverseCommand::Status => {
             let status = connection::universe_status(active).await?;
@@ -79,6 +78,11 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                     &serde_json::json!({ "universes": universes, "activeUniverseId": active_id }),
                 )?;
             } else {
+                if response.universes.is_empty() {
+                    println!("No universes found.");
+                } else {
+                    println!("  UUID                                  SLUG");
+                }
                 for u in response.universes {
                     println!(
                         "{} {}  {}",
@@ -146,7 +150,7 @@ pub async fn universe(args: UniverseArgs) -> Result<()> {
                 )
                 .await?
                 .result;
-            print_json(&response)?;
+            crate::output::show(args.json, &response.universe)?;
         }
     }
     Ok(())
@@ -197,6 +201,11 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
             if args.json {
                 print_json(&response)?;
             } else {
+                if response.api_keys.is_empty() {
+                    println!("No API keys found.");
+                } else {
+                    println!("PREFIX  STATUS  SCOPE  NAME");
+                }
                 for key in response.api_keys {
                     println!(
                         "{}  {}  {}  {}",
@@ -247,8 +256,10 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                 )
                 .await?
                 .result;
-            // This operation intentionally returns the new secret once.
-            print_json(&response)?;
+            if !args.json {
+                println!("API key created. Save the secret now; it is shown only once.");
+            }
+            crate::output::show(args.json, &response)?;
         }
         ApiKeyCommand::Revoke { key_prefix } => {
             let response: api::DeploymentApiKeyRevokeResponse = client
@@ -258,7 +269,7 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                 )
                 .await?
                 .result;
-            print_json(&response)?;
+            crate::output::show(args.json, &response)?;
         }
     }
     Ok(())
@@ -270,6 +281,9 @@ pub struct ModelsArgs {
 }
 #[derive(Debug, Subcommand)]
 enum ModelsCommand {
+    /// Configure provider endpoints and their API-key or OAuth credentials.
+    #[command(visible_alias = "providers")]
+    Provider(crate::auth_cli::AuthModelArgs),
     List {
         #[arg(long)]
         json: bool,
@@ -278,7 +292,10 @@ enum ModelsCommand {
     },
 }
 pub async fn models(args: ModelsArgs) -> Result<()> {
-    let ModelsCommand::List { json, all } = args.command;
+    let (json, all) = match args.command {
+        ModelsCommand::Provider(args) => return crate::auth_cli::model(args).await,
+        ModelsCommand::List { json, all } => (json, all),
+    };
     let response = HttpAgentApi::new("")
         .list_models(api::ModelListParams {
             selectable_only: !all,
@@ -288,9 +305,15 @@ pub async fn models(args: ModelsArgs) -> Result<()> {
     if json {
         print_json(&response)?;
     } else {
-        for model in &response.models {
-            println!("{}  {}  {}", model.provider_id, model.api_kind, model.model);
-        }
+        crate::output::table(
+            &response.models,
+            &[
+                ("providerId", "PROVIDER"),
+                ("apiKind", "API"),
+                ("model", "MODEL"),
+            ],
+            "No models available. Configure a connection with model provider add.",
+        )?;
         for provider in &response.providers {
             if let Some(error) = &provider.error {
                 eprintln!("{}: {error}", provider.provider_id);

@@ -53,9 +53,9 @@ With the [CLI connection settings](../using-lightspeed/sessions-and-runs.md#cont
 configured, the same power requests are:
 
 ```bash
-target/debug/lightspeed env power "<environment-id>" paused
-target/debug/lightspeed env read "<environment-id>"
-target/debug/lightspeed env power "<environment-id>" running
+target/debug/lightspeed environment power "<environment-id>" paused
+target/debug/lightspeed environment read "<environment-id>"
+target/debug/lightspeed environment power "<environment-id>" running
 ```
 
 Use `stopped` instead of `paused` to request a stop. Each request records desired
@@ -100,13 +100,13 @@ For a development VM you want to keep but avoid leaving active, set only
 The CLI equivalent is:
 
 ```bash
-target/debug/lightspeed env idle-policy "<environment-id>" --pause-after-min 10
+target/debug/lightspeed environment idle-policy "<environment-id>" --pause-after-min 10
 ```
 
 The command replaces the entire policy. To remove automatic idle action:
 
 ```bash
-target/debug/lightspeed env idle-policy "<environment-id>" --clear
+target/debug/lightspeed environment idle-policy "<environment-id>" --clear
 ```
 
 Idle time comes from daemon activity, not time since the last chat message.
@@ -167,8 +167,8 @@ On a provisioned environment, use **Close environment** in its details.
 The CLI works for all source types:
 
 ```bash
-target/debug/lightspeed env close "<environment-id>"
-target/debug/lightspeed env read "<environment-id>"
+target/debug/lightspeed environment close "<environment-id>"
+target/debug/lightspeed environment read "<environment-id>"
 ```
 
 For Incus, closing disables ingress, requests guest shutdown, and deletes the

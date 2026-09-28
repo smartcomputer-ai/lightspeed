@@ -343,7 +343,7 @@ function StatusBadge({ status }: { status: McpServer["status"] }) {
       <Badge
         variant="outline"
         className="border-destructive/50 text-destructive"
-        title="Needs auth configuration before sessions can link it — bind a credential here or run lightspeed mcp server login."
+        title="Needs auth configuration before sessions can link it — bind a credential here or run lightspeed mcp login."
       >
         needs auth
       </Badge>

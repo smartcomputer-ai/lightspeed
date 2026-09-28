@@ -430,6 +430,8 @@ pub async fn resolve(
 
 #[derive(Debug, Args)]
 pub struct ConnectArgs {
+    #[arg(long, global = true)]
+    json: bool,
     #[command(subcommand)]
     command: ConnectCommand,
 }
@@ -452,15 +454,9 @@ enum ConnectCommand {
     /// Verify and select a saved connection.
     Use { name: String },
     /// List saved connections without exposing credentials.
-    List {
-        #[arg(long)]
-        json: bool,
-    },
+    List,
     /// Inspect the effective connection and current server authority.
-    Status {
-        #[arg(long)]
-        json: bool,
-    },
+    Status,
     /// Forget a local connection; does not revoke the runtime key.
     Remove { name: String },
     /// Import and select this checkout's development connection.
@@ -506,9 +502,11 @@ pub async fn handle(
     args: ConnectArgs,
     selected: Option<&str>,
     universe: Option<&str>,
+    api_url: Option<&str>,
 ) -> Result<()> {
     let dir = config_dir()?;
     let mut config = load_at(&dir)?;
+    let json = args.json;
     match args.command {
         ConnectCommand::Add {
             name,
@@ -562,7 +560,14 @@ pub async fn handle(
                 },
             );
             save_at(&dir, &config)?;
-            println!("Saved {name}. Select it with `lightspeed connect use {name}`.");
+            if json {
+                crate::output::show(
+                    true,
+                    &serde_json::json!({"connection":name,"selected":false}),
+                )?;
+            } else {
+                println!("Saved {name}. Select it with `lightspeed connect use {name}`.");
+            }
         }
         ConnectCommand::Use { name } => {
             let saved = config
@@ -572,13 +577,25 @@ pub async fn handle(
             verify(saved_resolved(&name, saved)?).await?;
             config.selected = Some(name.clone());
             save_at(&dir, &config)?;
-            println!("Selected {name}");
+            if json {
+                crate::output::show(
+                    true,
+                    &serde_json::json!({"connection":name,"selected":true}),
+                )?;
+            } else {
+                println!("Selected {name}");
+            }
         }
-        ConnectCommand::List { json } => {
+        ConnectCommand::List => {
             let rows: Vec<_> = config.connections.iter().map(|(name, c)| serde_json::json!({"name": name, "endpoint": c.endpoint, "selected": config.selected.as_ref() == Some(name), "universe": c.universe, "single": c.single})).collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
+                if rows.is_empty() {
+                    println!("No saved connections. Use connect add or connect dev.");
+                } else {
+                    println!("  NAME  RUNTIME");
+                }
                 for row in rows {
                     println!(
                         "{} {}  {}",
@@ -589,8 +606,8 @@ pub async fn handle(
                 }
             }
         }
-        ConnectCommand::Status { json } => {
-            let c = resolve(selected, None, universe).await?;
+        ConnectCommand::Status => {
+            let c = resolve(selected, api_url, universe).await?;
             let caller = c.caller.as_ref().unwrap();
             let status = universe_status(&c).await?;
             let value = serde_json::json!({"connection": c.name, "endpoint": c.endpoint, "selectedUniverse": c.universe, "activeUniverse": status, "caller": caller});
@@ -639,7 +656,14 @@ pub async fn handle(
                 // Only ever unlink this CLI's owned credential directory.
                 std::fs::remove_file(file)?;
             }
-            println!("Forgot {name}; runtime key was not revoked.");
+            if json {
+                crate::output::show(
+                    true,
+                    &serde_json::json!({"removed":name,"keyRevoked":false}),
+                )?;
+            } else {
+                println!("Forgot {name}; runtime key was not revoked.");
+            }
         }
         ConnectCommand::Dev => {
             let cwd = std::env::current_dir()?.canonicalize()?;
@@ -665,7 +689,14 @@ pub async fn handle(
             config.connections.insert(name.clone(), saved);
             config.selected = Some(name.clone());
             save_at(&dir, &config)?;
-            println!("Selected {name}");
+            if json {
+                crate::output::show(
+                    true,
+                    &serde_json::json!({"connection":name,"selected":true}),
+                )?;
+            } else {
+                println!("Selected {name}");
+            }
         }
     }
     Ok(())
@@ -681,7 +712,6 @@ pub fn select_universe(connection: &ResolvedConnection, id: String) -> Result<()
         .context("connection was removed")?
         .universe = Some(id.clone());
     save_at(&dir, &config)?;
-    println!("Selected universe {id} for {name}");
     Ok(())
 }
 

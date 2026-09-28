@@ -13,26 +13,27 @@ pub(crate) struct AuthArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum AuthCommand {
-    /// Manage universe-scoped auth grants.
-    Grant(AuthGrantArgs),
+    #[command(flatten)]
+    Grant(AuthGrantCommand),
     /// Manage OAuth client configurations.
+    #[command(name = "oauth-client", visible_alias = "oauth-clients")]
     Client(AuthClientArgs),
     /// Run an OAuth authorization flow and store the resulting grant.
     Login(AuthLoginArgs),
     /// Manage GitHub App providers and installation grants.
     Github(AuthGithubArgs),
-    /// Manage stored model provider API keys.
-    Model(AuthModelArgs),
 }
 
 #[derive(Args, Debug, Clone)]
-struct AuthModelArgs {
+pub(crate) struct AuthModelArgs {
     #[command(subcommand)]
     command: AuthModelCommand,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum AuthModelCommand {
+    /// Read one stored model-provider connection without revealing its credential.
+    Read(AuthModelRemoveArgs),
     /// Store a model provider API key encrypted; provider API calls
     /// use it instead of the worker's environment key.
     Add(AuthModelAddArgs),
@@ -42,13 +43,14 @@ enum AuthModelCommand {
     /// List stored model provider credentials.
     List(AuthModelListArgs),
     /// Remove a stored model provider credential.
+    #[command(name = "delete")]
     Remove(AuthModelRemoveArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 struct AuthModelBindArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -56,7 +58,7 @@ struct AuthModelBindArgs {
     /// Model provider id from the session model selection (e.g. "openai",
     /// "anthropic"). Stored as the `model:<provider_id>` auth provider row.
     provider_id: String,
-    /// Grant id to bind (e.g. from `lightspeed auth login`).
+    /// Grant id to bind (e.g. from `lightspeed credential login`).
     #[arg(long = "grant")]
     grant_id: String,
     /// Audience URL requested from the broker, typically the provider API
@@ -72,7 +74,7 @@ struct AuthModelBindArgs {
 #[command(group(ArgGroup::new("api_key_source").required(true)))]
 struct AuthModelAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -121,7 +123,7 @@ impl std::fmt::Debug for AuthModelAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthModelListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
@@ -131,7 +133,7 @@ struct AuthModelListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthModelRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
@@ -165,11 +167,12 @@ enum AuthGithubAppCommand {
     /// Register a GitHub App: stores the private key encrypted and the app
     /// config as an auth provider.
     Add(AuthGithubAppAddArgs),
-    /// List auth providers (GitHub Apps and future kinds).
+    /// List registered GitHub Apps.
     List(AuthGithubAppListArgs),
-    /// Read an auth provider.
+    /// Read a registered GitHub App.
     Read(AuthGithubAppReadArgs),
-    /// Remove an auth provider and its stored credential.
+    /// Delete a registered GitHub App and its stored credential.
+    #[command(name = "delete")]
     Remove(AuthGithubAppRemoveArgs),
 }
 
@@ -177,7 +180,7 @@ enum AuthGithubAppCommand {
 #[command(group(ArgGroup::new("private_key_source").required(true)))]
 struct AuthGithubAppAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the created provider as JSON.
     #[arg(long)]
@@ -222,7 +225,7 @@ impl std::fmt::Debug for AuthGithubAppAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit providers as JSON.
     #[arg(long)]
@@ -232,7 +235,7 @@ struct AuthGithubAppListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the provider as JSON.
     #[arg(long)]
@@ -244,7 +247,7 @@ struct AuthGithubAppReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubAppRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the removed provider as JSON.
     #[arg(long)]
@@ -270,7 +273,7 @@ enum AuthGithubInstallationCommand {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubInstallationListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit installations as JSON.
     #[arg(long)]
@@ -283,7 +286,7 @@ struct AuthGithubInstallationListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGithubInstallationGrantArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
@@ -310,13 +313,13 @@ struct AuthGrantArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum AuthGrantCommand {
-    /// Import a static bearer credential as an auth grant.
+    /// Import a reusable bearer token as an external credential.
     Import(AuthGrantImportArgs),
-    /// List auth grants.
+    /// List stored external credentials.
     List(AuthGrantListArgs),
-    /// Read an auth grant.
+    /// Inspect external credential metadata without returning secret values.
     Read(AuthGrantReadArgs),
-    /// Revoke an auth grant.
+    /// Revoke an external credential.
     Revoke(AuthGrantRevokeArgs),
 }
 
@@ -324,7 +327,7 @@ enum AuthGrantCommand {
 #[command(group(ArgGroup::new("token_source").required(true)))]
 struct AuthGrantImportArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the imported grant as JSON.
     #[arg(long)]
@@ -378,7 +381,7 @@ impl std::fmt::Debug for AuthGrantImportArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit grants as JSON.
     #[arg(long)]
@@ -391,7 +394,7 @@ struct AuthGrantListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the grant as JSON.
     #[arg(long)]
@@ -403,7 +406,7 @@ struct AuthGrantReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthGrantRevokeArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the revoked grant as JSON.
     #[arg(long)]
@@ -446,6 +449,7 @@ enum AuthClientCommand {
     /// Read an OAuth client.
     Read(AuthClientReadArgs),
     /// Remove an OAuth client.
+    #[command(name = "delete")]
     Remove(AuthClientRemoveArgs),
 }
 
@@ -453,7 +457,7 @@ enum AuthClientCommand {
 #[command(group(ArgGroup::new("client_secret_source")))]
 struct AuthClientAddArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the created client as JSON.
     #[arg(long)]
@@ -543,7 +547,7 @@ impl std::fmt::Debug for AuthClientAddArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientListArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit clients as JSON.
     #[arg(long)]
@@ -553,7 +557,7 @@ struct AuthClientListArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientReadArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the client as JSON.
     #[arg(long)]
@@ -565,7 +569,7 @@ struct AuthClientReadArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthClientRemoveArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the removed client as JSON.
     #[arg(long)]
@@ -577,7 +581,7 @@ struct AuthClientRemoveArgs {
 #[derive(Args, Debug, Clone)]
 struct AuthLoginArgs {
     /// JSON-RPC agent API URL.
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     /// Emit the final flow status as JSON.
     #[arg(long)]
@@ -632,16 +636,16 @@ impl From<TokenAuthMethodArg> for api::TokenEndpointAuthMethod {
 
 pub(crate) async fn handle(args: AuthArgs) -> Result<()> {
     match args.command {
-        AuthCommand::Grant(args) => grant(args).await,
+        AuthCommand::Grant(command) => grant(AuthGrantArgs { command }).await,
         AuthCommand::Client(args) => client(args).await,
         AuthCommand::Login(args) => login(args).await,
         AuthCommand::Github(args) => github(args).await,
-        AuthCommand::Model(args) => model(args).await,
     }
 }
 
-async fn model(args: AuthModelArgs) -> Result<()> {
+pub(crate) async fn model(args: AuthModelArgs) -> Result<()> {
     match args.command {
+        AuthModelCommand::Read(args) => model_read(args).await,
         AuthModelCommand::Add(args) => model_add(args).await,
         AuthModelCommand::Bind(args) => model_bind(args).await,
         AuthModelCommand::List(args) => model_list(args).await,
@@ -748,14 +752,17 @@ async fn grant_list(args: AuthGrantListArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    if response.grants.is_empty() {
-        println!("grants 0");
-        return Ok(());
-    }
-    for grant in &response.grants {
-        print_grant_summary(grant);
-    }
-    Ok(())
+    crate::output::table(
+        &response.grants,
+        &[
+            ("grantId", "ID"),
+            ("displayName", "NAME"),
+            ("providerKind", "KIND"),
+            ("status", "STATUS"),
+            ("subjectHint", "SUBJECT"),
+        ],
+        "No credentials found.",
+    )
 }
 
 async fn grant_read(args: AuthGrantReadArgs) -> Result<()> {
@@ -863,17 +870,16 @@ async fn client_list(args: AuthClientListArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    if response.clients.is_empty() {
-        println!("clients 0");
-        return Ok(());
-    }
-    for client in &response.clients {
-        println!(
-            "{} {} {:?} {}",
-            client.client_id, client.provider_id, client.provider_kind, client.remote_client_id
-        );
-    }
-    Ok(())
+    crate::output::table(
+        &response.clients,
+        &[
+            ("clientId", "ID"),
+            ("displayName", "NAME"),
+            ("providerId", "PROVIDER"),
+            ("remoteClientId", "OAUTH CLIENT"),
+        ],
+        "No OAuth clients configured.",
+    )
 }
 
 async fn client_read(args: AuthClientReadArgs) -> Result<()> {
@@ -906,7 +912,7 @@ async fn client_remove(args: AuthClientRemoveArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    print_client(&response.client);
+    println!("Deleted OAuth client {}.", response.client.client_id);
     Ok(())
 }
 
@@ -930,10 +936,10 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
         .result;
 
     eprintln!("Open this URL in your browser to authorize:");
-    println!("{}", started.authorize_url);
+    eprintln!("{}", started.authorize_url);
     eprintln!("flowId {}", started.flow_id);
     if args.no_wait {
-        return Ok(());
+        return crate::output::show(args.json, &started);
     }
     eprintln!("Waiting for the authorization callback (ctrl-c to stop waiting)...");
 
@@ -954,8 +960,7 @@ async fn login(args: AuthLoginArgs) -> Result<()> {
                     return Ok(());
                 }
                 let grant_id = response.flow.grant_id.as_deref().unwrap_or("<missing>");
-                println!("login complete");
-                println!("grantId {grant_id}");
+                println!("External authorization complete. Credential: {grant_id}");
                 return Ok(());
             }
             api::AuthFlowStatus::Failed => {
@@ -1143,18 +1148,45 @@ async fn model_list(args: AuthModelListArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&providers)?);
         return Ok(());
     }
-    if providers.is_empty() {
-        println!("providers 0");
-        return Ok(());
-    }
-    for provider in providers {
-        println!("{} {:?}", provider.provider_id, provider.status);
-    }
-    Ok(())
+    crate::output::table(
+        &providers,
+        &[
+            ("providerId", "ID"),
+            ("displayName", "NAME"),
+            ("providerKind", "KIND"),
+            ("status", "STATUS"),
+        ],
+        "No model providers configured.",
+    )
+}
+
+async fn model_read(args: AuthModelRemoveArgs) -> Result<()> {
+    let provider = read_model_provider(&HttpAgentApi::new(args.api_url), &args.provider_id).await?;
+    crate::output::show(args.json, &provider)
+}
+async fn read_model_provider(client: &HttpAgentApi, id: &str) -> Result<api::AuthProviderView> {
+    let provider = client
+        .read_auth_provider(api::AuthProviderReadParams {
+            provider_id: model_provider_row_id(id),
+        })
+        .await?
+        .result
+        .provider;
+    anyhow::ensure!(
+        matches!(
+            provider.config,
+            api::AuthProviderConfigView::ModelApiKey { .. }
+                | api::AuthProviderConfigView::ModelOAuth { .. }
+                | api::AuthProviderConfigView::ModelEndpoint { .. }
+        ),
+        "{id} is not a model-provider connection"
+    );
+    Ok(provider)
 }
 
 async fn model_remove(args: AuthModelRemoveArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
+    read_model_provider(&api, &args.provider_id).await?;
     let response = api
         .delete_auth_provider(api::AuthProviderDeleteParams {
             provider_id: model_provider_row_id(&args.provider_id),
@@ -1166,7 +1198,7 @@ async fn model_remove(args: AuthModelRemoveArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    print_provider(&response.provider);
+    println!("Deleted model provider {}.", response.provider.provider_id);
     Ok(())
 }
 
@@ -1195,31 +1227,52 @@ async fn github_app_add(args: AuthGithubAppAddArgs) -> Result<()> {
 }
 
 async fn github_app_list(args: AuthGithubAppListArgs) -> Result<()> {
-    let api = HttpAgentApi::new(args.api_url);
-    let response = api
+    let providers = HttpAgentApi::new(args.api_url)
         .list_auth_providers(api::AuthProviderListParams {})
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
+        .await?
+        .result
+        .providers;
+    let providers: Vec<_> = providers
+        .into_iter()
+        .filter(|provider| {
+            matches!(
+                provider.config,
+                api::AuthProviderConfigView::GitHubApp { .. }
+            )
+        })
+        .collect();
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        return Ok(());
+        crate::output::show(true, &providers)
+    } else {
+        crate::output::table(
+            &providers,
+            &[
+                ("providerId", "ID"),
+                ("displayName", "NAME"),
+                ("status", "STATUS"),
+            ],
+            "No GitHub Apps configured.",
+        )
     }
-    if response.providers.is_empty() {
-        println!("providers 0");
-        return Ok(());
-    }
-    for provider in &response.providers {
-        println!(
-            "{} {:?} {:?}",
-            provider.provider_id, provider.provider_kind, provider.status
-        );
-    }
-    Ok(())
 }
 
 async fn github_app_read(args: AuthGithubAppReadArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
+    let current = api
+        .read_auth_provider(api::AuthProviderReadParams {
+            provider_id: args.provider_id.clone(),
+        })
+        .await?
+        .result
+        .provider;
+    anyhow::ensure!(
+        matches!(
+            current.config,
+            api::AuthProviderConfigView::GitHubApp { .. }
+        ),
+        "{} is not a GitHub App provider",
+        args.provider_id
+    );
     let response = api
         .read_auth_provider(api::AuthProviderReadParams {
             provider_id: args.provider_id,
@@ -1237,6 +1290,21 @@ async fn github_app_read(args: AuthGithubAppReadArgs) -> Result<()> {
 
 async fn github_app_remove(args: AuthGithubAppRemoveArgs) -> Result<()> {
     let api = HttpAgentApi::new(args.api_url);
+    let current = api
+        .read_auth_provider(api::AuthProviderReadParams {
+            provider_id: args.provider_id.clone(),
+        })
+        .await?
+        .result
+        .provider;
+    anyhow::ensure!(
+        matches!(
+            current.config,
+            api::AuthProviderConfigView::GitHubApp { .. }
+        ),
+        "{} is not a GitHub App provider",
+        args.provider_id
+    );
     let response = api
         .delete_auth_provider(api::AuthProviderDeleteParams {
             provider_id: args.provider_id,
@@ -1248,7 +1316,7 @@ async fn github_app_remove(args: AuthGithubAppRemoveArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    print_provider(&response.provider);
+    println!("Deleted GitHub App {}.", response.provider.provider_id);
     Ok(())
 }
 
@@ -1265,19 +1333,15 @@ async fn github_installation_list(args: AuthGithubInstallationListArgs) -> Resul
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
-    if response.installations.is_empty() {
-        println!("installations 0");
-        return Ok(());
-    }
-    for installation in &response.installations {
-        println!(
-            "{} {} {}",
-            installation.installation_id,
-            installation.account_login.as_deref().unwrap_or("-"),
-            installation.repository_selection.as_deref().unwrap_or("-"),
-        );
-    }
-    Ok(())
+    crate::output::table(
+        &response.installations,
+        &[
+            ("installationId", "ID"),
+            ("accountLogin", "ACCOUNT"),
+            ("repositorySelection", "REPOSITORIES"),
+        ],
+        "No GitHub installations found.",
+    )
 }
 
 async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Result<()> {
@@ -1302,125 +1366,13 @@ async fn github_installation_grant(args: AuthGithubInstallationGrantArgs) -> Res
 }
 
 fn print_provider(provider: &api::AuthProviderView) {
-    println!("providerId {}", provider.provider_id);
-    println!("providerKind {:?}", provider.provider_kind);
-    println!("status {:?}", provider.status);
-    if let Some(display_name) = &provider.display_name {
-        println!("displayName {display_name}");
-    }
-    match &provider.config {
-        api::AuthProviderConfigView::GitHubApp {
-            app_id,
-            api_base_url,
-        } => {
-            println!("appId {app_id}");
-            println!("apiBaseUrl {api_base_url}");
-        }
-        api::AuthProviderConfigView::ModelApiKey { endpoint } => {
-            print_model_endpoint(endpoint.as_ref());
-        }
-        api::AuthProviderConfigView::ModelOAuth {
-            grant_id,
-            audience,
-            endpoint,
-        } => {
-            println!("grantId {grant_id}");
-            if let Some(audience) = audience {
-                println!("audience {audience}");
-            }
-            print_model_endpoint(endpoint.as_ref());
-        }
-        api::AuthProviderConfigView::ModelEndpoint { endpoint } => {
-            print_model_endpoint(Some(endpoint));
-        }
-    }
-    println!("hasCredential {}", provider.has_credential);
-    println!("createdAtMs {}", provider.created_at_ms);
-    println!("updatedAtMs {}", provider.updated_at_ms);
-}
-
-fn print_model_endpoint(endpoint: Option<&api::ModelEndpointConfig>) {
-    let Some(endpoint) = endpoint else { return };
-    println!("baseUrl {}", endpoint.base_url);
-    println!("apiKinds {}", endpoint.api_kinds.join(","));
-    for (name, value) in &endpoint.headers {
-        println!("header {name}={value}");
-    }
+    crate::output::show(false, provider).expect("serializable credential metadata");
 }
 
 fn print_client(client: &api::OAuthClientView) {
-    println!("clientId {}", client.client_id);
-    println!("providerId {}", client.provider_id);
-    println!("providerKind {:?}", client.provider_kind);
-    if let Some(display_name) = &client.display_name {
-        println!("displayName {display_name}");
-    }
-    println!("authorizationEndpoint {}", client.authorization_endpoint);
-    println!("tokenEndpoint {}", client.token_endpoint);
-    println!("remoteClientId {}", client.remote_client_id);
-    println!("hasClientSecret {}", client.has_client_secret);
-    println!("authMethod {:?}", client.token_endpoint_auth_method);
-    if !client.scopes_default.is_empty() {
-        println!("scopesDefault {}", client.scopes_default.join(" "));
-    }
-    if let Some(audience) = &client.audience {
-        println!("audience {audience}");
-    }
-    if let Some(issuer) = &client.authorization_server_issuer {
-        println!("authorizationServerIssuer {issuer}");
-    }
-    println!(
-        "requireCallbackIssuer {}",
-        client.authorization_response_iss_parameter_supported
-    );
-    if !client.authorization_server_scopes_supported.is_empty() {
-        println!(
-            "authorizationServerScopesSupported {}",
-            client.authorization_server_scopes_supported.join(" ")
-        );
-    }
-    println!("createdAtMs {}", client.created_at_ms);
-    println!("updatedAtMs {}", client.updated_at_ms);
-}
-
-fn print_grant_summary(grant: &api::AuthGrantView) {
-    println!(
-        "{} {} {:?} {:?}",
-        grant.grant_id, grant.provider_id, grant.provider_kind, grant.status
-    );
+    crate::output::show(false, client).expect("serializable credential metadata");
 }
 
 fn print_grant(grant: &api::AuthGrantView) {
-    println!("grantId {}", grant.grant_id);
-    println!("providerId {}", grant.provider_id);
-    println!("providerKind {:?}", grant.provider_kind);
-    println!("status {:?}", grant.status);
-    if let Some(display_name) = &grant.display_name {
-        println!("displayName {display_name}");
-    }
-    if let Some(subject_hint) = &grant.subject_hint {
-        println!("subjectHint {subject_hint}");
-    }
-    if !grant.scopes.is_empty() {
-        println!("scopes {}", grant.scopes.join(" "));
-    }
-    if let Some(audience) = &grant.audience {
-        println!("audience {audience}");
-    }
-    println!("hasAccessToken {}", grant.has_access_token);
-    if grant.has_refresh_token {
-        println!("hasRefreshToken true");
-    }
-    if let Some(expires_at_ms) = grant.expires_at_ms {
-        println!("expiresAtMs {expires_at_ms}");
-    }
-    if grant
-        .metadata
-        .as_object()
-        .is_some_and(|metadata| !metadata.is_empty())
-    {
-        println!("metadata {}", grant.metadata);
-    }
-    println!("createdAtMs {}", grant.created_at_ms);
-    println!("updatedAtMs {}", grant.updated_at_ms);
+    crate::output::show(false, grant).expect("serializable credential metadata");
 }

@@ -206,7 +206,7 @@ from the environment of each process and job the daemon starts.
 
 Identity mode (persistent or ephemeral) is not daemon configuration: it is
 the registration key's policy, minted with
-`lightspeed env registration-keys create` or on the Platform Environments
+`lightspeed environment registration-keys create` or on the Platform Environments
 page. A closed environment's daemon identity is spent; the daemon exits with
 a non-zero status on any terminal rejection and never generates a new
 identity on its own.

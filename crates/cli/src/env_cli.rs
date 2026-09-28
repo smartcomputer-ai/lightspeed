@@ -11,14 +11,25 @@ pub(crate) struct EnvArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 enum EnvCommand {
+    /// Administer deployment-wide environment provider controllers (deployment key).
+    #[command(visible_alias = "providers")]
+    Provider(ProviderArgs),
+    /// Provision an environment using an immutable template on a bound provider.
+    Create(CreateArgs),
+    /// Register an existing, Lightspeed-reachable envd WebSocket endpoint.
+    Register(RegisterArgs),
+    /// Inspect the current universe's routing bindings to environment providers.
+    #[command(visible_alias = "bindings")]
+    Binding(BindingArgs),
+    /// Browse immutable templates offered by bound environment providers.
+    #[command(visible_alias = "templates")]
+    Template(TemplateArgs),
+    /// Enable or disable provider-authorized public HTTPS ingress.
+    Ingress(IngressArgs),
     /// List universe environments, optionally filtered by metadata.
     List(EnvListArgs),
     /// Read one universe environment.
     Read(EnvironmentResourceArgs),
-    /// Activate a universe environment for a session.
-    Activate(ActivateArgs),
-    /// Clear a session's active environment.
-    Deactivate(SessionArgs),
     /// Close one universe environment.
     Close(EnvironmentResourceArgs),
     /// Set the desired power state (running, paused, suspended, stopped) of
@@ -28,9 +39,11 @@ enum EnvCommand {
     /// Replace or clear the staged idle policy of a provisioned environment.
     IdlePolicy(IdlePolicyArgs),
     /// Bind, list, or unbind universe environment credentials.
+    #[command(name = "credential", visible_alias = "credentials")]
     Credentials(CredentialArgs),
     /// Mint, list, read, or revoke registration keys that let outbound
     /// `lightspeed-envd` daemons register as environments.
+    #[command(name = "registration-key", visible_alias = "registration-keys")]
     RegistrationKeys(RegistrationKeyArgs),
 }
 
@@ -55,7 +68,7 @@ enum RegistrationKeyCommand {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyCreateArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -85,7 +98,7 @@ enum IdentityModeArg {
 
 #[derive(Args, Debug, Clone)]
 struct RegistrationKeyResourceArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -152,7 +165,7 @@ struct IdlePolicyArgs {
 
 #[derive(Args, Debug, Clone)]
 struct ResourceArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -160,6 +173,12 @@ struct ResourceArgs {
 
 #[derive(Args, Debug, Clone)]
 struct EnvListArgs {
+    #[arg(long)]
+    provider: Option<String>,
+    #[arg(long)]
+    binding: Option<String>,
+    #[arg(long)]
+    registration_key: Option<String>,
     #[command(flatten)]
     common: ResourceArgs,
     #[command(flatten)]
@@ -168,27 +187,10 @@ struct EnvListArgs {
 
 #[derive(Args, Debug, Clone)]
 struct EnvironmentResourceArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     #[arg(long)]
     json: bool,
-    environment_id: String,
-}
-
-#[derive(Args, Debug, Clone)]
-struct SessionArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
-    api_url: String,
-    #[arg(long)]
-    json: bool,
-    #[arg(long)]
-    session: String,
-}
-
-#[derive(Args, Debug, Clone)]
-struct ActivateArgs {
-    #[command(flatten)]
-    session: SessionArgs,
     environment_id: String,
 }
 
@@ -207,7 +209,7 @@ enum CredentialCommand {
 
 #[derive(Args, Debug, Clone)]
 struct CredentialListArgs {
-    #[arg(long = "api-url", env = "LIGHTSPEED_API_URL", default_value = "")]
+    #[arg(skip)]
     api_url: String,
     #[arg(long)]
     json: bool,
@@ -238,10 +240,14 @@ struct CredentialUnbindArgs {
 
 pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
     match args.command {
+        EnvCommand::Provider(args) => provider(args).await,
+        EnvCommand::Create(args) => create(args).await,
+        EnvCommand::Register(args) => register(args).await,
+        EnvCommand::Binding(args) => binding(args).await,
+        EnvCommand::Template(args) => template(args).await,
+        EnvCommand::Ingress(args) => ingress(args).await,
         EnvCommand::List(args) => list(args).await,
         EnvCommand::Read(args) => read(args).await,
-        EnvCommand::Activate(args) => activate(args).await,
-        EnvCommand::Deactivate(args) => deactivate(args).await,
         EnvCommand::Close(args) => close(args).await,
         EnvCommand::Power(args) => power(args).await,
         EnvCommand::IdlePolicy(args) => idle_policy(args).await,
@@ -301,6 +307,9 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
                 .map_err(crate::api_client::api_error)?
                 .result;
             print_json_or(args.json, &response, || {
+                if response.registration_keys.is_empty() {
+                    println!("No environment registration keys found.");
+                }
                 for key in &response.registration_keys {
                     print_registration_key(key);
                 }
@@ -338,18 +347,7 @@ async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
 }
 
 fn print_registration_key(key: &api::EnvironmentRegistrationKeyView) {
-    println!(
-        "{} {:?} {} {:?} active={} total={} max={}",
-        key.registration_key_id,
-        key.status,
-        key.display_name,
-        key.identity_mode,
-        key.active_environment_count,
-        key.registered_environment_count,
-        key.max_active_environments
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "unlimited".to_owned())
-    );
+    crate::output::show(false, key).expect("serializable registration key metadata");
 }
 
 async fn power(args: PowerArgs) -> Result<()> {
@@ -361,14 +359,15 @@ async fn power(args: PowerArgs) -> Result<()> {
         .await
         .map_err(crate::api_client::api_error)?
         .result;
-    print_json_or(args.common.json, &response, || {
-        println!(
-            "{} desired {:?} (observed {:?})",
-            response.environment.environment_id,
-            response.environment.desired_power,
-            response.environment.status
+    if args.common.json {
+        crate::output::show(true, &response)
+    } else {
+        println!("Power change requested; the runtime converges it asynchronously.");
+        crate::output::show(
+            false,
+            &serde_json::json!({"environmentId":response.environment.environment_id,"desiredPower":response.environment.desired_power,"observedStatus":response.environment.status}),
         )
-    })
+    }
 }
 
 async fn idle_policy(args: IdlePolicyArgs) -> Result<()> {
@@ -395,43 +394,42 @@ async fn idle_policy(args: IdlePolicyArgs) -> Result<()> {
         .await
         .map_err(crate::api_client::api_error)?
         .result;
-    print_json_or(args.common.json, &response, || {
-        match &response.environment.idle_policy {
-            Some(policy) => println!(
-                "{} idle policy pause={:?} suspend={:?} stop={:?} close={:?} (ms)",
-                response.environment.environment_id,
-                policy.pause_after_ms,
-                policy.suspend_after_ms,
-                policy.stop_after_ms,
-                policy.close_after_ms
-            ),
-            None => println!(
-                "{} idle policy cleared",
-                response.environment.environment_id
-            ),
-        }
-    })
+    if args.common.json {
+        crate::output::show(true, &response)
+    } else {
+        crate::output::show(
+            false,
+            &serde_json::json!({"environmentId":response.environment.environment_id,"idlePolicy":response.environment.idle_policy}),
+        )
+    }
 }
 
 async fn list(args: EnvListArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.common.api_url)
         .list_environments(api::EnvironmentListParams {
             metadata: args.metadata.map(),
+            provider_id: args.provider,
+            binding_id: args.binding,
+            registration_key_id: args.registration_key,
             ..Default::default()
         })
         .await
         .map_err(crate::api_client::api_error)?
         .result;
-    print_json_or(args.common.json, &response, || {
-        for environment in &response.environments {
-            println!(
-                "{} {} {:?}",
-                environment.environment_id,
-                source_label(&environment.source),
-                environment.status
-            );
-        }
-    })
+    if args.common.json {
+        crate::output::show(true, &response)
+    } else {
+        crate::output::table(
+            &response.environments,
+            &[
+                ("environmentId", "ID"),
+                ("displayName", "NAME"),
+                ("status", "STATUS"),
+                ("desiredPower", "DESIRED POWER"),
+            ],
+            "No environments found.",
+        )
+    }
 }
 
 async fn read(args: EnvironmentResourceArgs) -> Result<()> {
@@ -439,63 +437,13 @@ async fn read(args: EnvironmentResourceArgs) -> Result<()> {
         .read_environment(api::EnvironmentReadParams {
             environment_id: args.environment_id,
         })
-        .await
-        .map_err(crate::api_client::api_error)?
+        .await?
         .result;
-    print_json_or(args.json, &response, || {
-        println!(
-            "{} {} {:?}",
-            response.environment.environment_id,
-            source_label(&response.environment.source),
-            response.environment.status
-        );
-    })
+    crate::output::show(args.json, &response.environment)
 }
 
 /// One-word origin of an environment for table output: the provider id, the
 /// registration key it was admitted by, or `external`.
-fn source_label(source: &api::EnvironmentSourceView) -> String {
-    match source {
-        api::EnvironmentSourceView::Provisioned { provider_id, .. } => provider_id.clone(),
-        api::EnvironmentSourceView::External { .. } => "external".to_owned(),
-        api::EnvironmentSourceView::Registered {
-            registration_key_id,
-            ..
-        } => format!("registered:{registration_key_id}"),
-    }
-}
-
-async fn activate(args: ActivateArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.session.api_url)
-        .activate_session_environment(api::SessionEnvironmentActivateParams {
-            session_id: args.session.session,
-            environment_id: args.environment_id,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    print_json_or(args.session.json, &response, || {
-        println!(
-            "active {}",
-            response
-                .session
-                .active_environment_id
-                .as_deref()
-                .unwrap_or("-")
-        );
-    })
-}
-
-async fn deactivate(args: SessionArgs) -> Result<()> {
-    let response = HttpAgentApi::new(args.api_url)
-        .deactivate_session_environment(api::SessionEnvironmentDeactivateParams {
-            session_id: args.session,
-        })
-        .await
-        .map_err(crate::api_client::api_error)?
-        .result;
-    print_json_or(args.json, &response, || println!("active -"))
-}
 
 async fn close(args: EnvironmentResourceArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.api_url)
@@ -506,7 +454,10 @@ async fn close(args: EnvironmentResourceArgs) -> Result<()> {
         .map_err(crate::api_client::api_error)?
         .result;
     print_json_or(args.json, &response, || {
-        println!("closed {}", response.environment.environment_id)
+        println!(
+            "Close requested for {}. Use environment read to inspect completion.",
+            response.environment.environment_id
+        )
     })
 }
 
@@ -547,6 +498,9 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
                 .map_err(crate::api_client::api_error)?
                 .result;
             print_json_or(args.json, &response, || {
+                if response.credentials.is_empty() {
+                    println!("No credentials bound to this environment.");
+                }
                 for credential in &response.credentials {
                     print_credential(credential);
                 }
@@ -569,10 +523,7 @@ async fn credentials(args: CredentialArgs) -> Result<()> {
 }
 
 fn print_credential(credential: &api::EnvironmentCredentialView) {
-    println!(
-        "{} {} {:?}",
-        credential.environment_id, credential.env_name, credential.source
-    );
+    crate::output::show(false, credential).expect("serializable credential binding");
 }
 
 pub(crate) fn print_json_or<T: serde::Serialize>(
@@ -586,4 +537,354 @@ pub(crate) fn print_json_or<T: serde::Serialize>(
         text();
     }
     Ok(())
+}
+
+#[derive(Args, Debug, Clone)]
+struct CreateArgs {
+    #[command(flatten)]
+    common: ResourceArgs,
+    #[arg(long)]
+    binding: String,
+    #[arg(long)]
+    template: String,
+    /// Supply the same request ID when retrying an uncertain creation.
+    #[arg(long)]
+    request_id: String,
+    #[arg(long)]
+    display_name: Option<String>,
+    #[command(flatten)]
+    metadata: crate::session_cli::MetadataPairs,
+}
+#[derive(Args, Debug, Clone)]
+struct RegisterArgs {
+    #[command(flatten)]
+    common: ResourceArgs,
+    /// A ws:// or wss:// endpoint reachable from the runtime.
+    endpoint: String,
+    /// Supply the same request ID when retrying registration.
+    #[arg(long)]
+    request_id: String,
+    #[arg(long)]
+    display_name: Option<String>,
+    #[command(flatten)]
+    metadata: crate::session_cli::MetadataPairs,
+}
+#[derive(Args, Debug, Clone)]
+struct BindingArgs {
+    #[command(subcommand)]
+    command: BindingCommand,
+}
+#[derive(Subcommand, Debug, Clone)]
+enum BindingCommand {
+    /// Create or replace a universe binding from DeploymentProviderBindingPutParams JSON (deployment key).
+    Put(DocumentArgs),
+    /// Delete a binding from the selected universe (deployment key).
+    Delete {
+        binding_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    List(ResourceArgs),
+    Read {
+        binding_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+#[derive(Args, Debug, Clone)]
+struct TemplateArgs {
+    #[command(subcommand)]
+    command: TemplateCommand,
+}
+#[derive(Subcommand, Debug, Clone)]
+enum TemplateCommand {
+    List {
+        #[arg(long)]
+        binding: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Read {
+        template_id: String,
+        #[arg(long)]
+        binding: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+#[derive(Args, Debug, Clone)]
+struct IngressArgs {
+    #[command(flatten)]
+    common: EnvironmentResourceArgs,
+    #[arg(long, conflicts_with = "disable", required_unless_present = "disable")]
+    enable: bool,
+    #[arg(long)]
+    disable: bool,
+}
+async fn create(args: CreateArgs) -> Result<()> {
+    let response: api::EnvironmentCreateResponse = HttpAgentApi::new(args.common.api_url)
+        .request(
+            api::METHOD_ENVIRONMENTS_CREATE,
+            api::EnvironmentCreateParams {
+                request_id: args.request_id,
+                binding_id: args.binding,
+                template_id: args.template,
+                display_name: args.display_name,
+                metadata: args.metadata.map(),
+                idle_policy: None,
+            },
+        )
+        .await?
+        .result;
+    if !args.common.json {
+        println!("Provisioning requested; use environment read to inspect progress.");
+    }
+    crate::output::show(args.common.json, &response.environment)
+}
+async fn register(args: RegisterArgs) -> Result<()> {
+    let endpoint = reqwest::Url::parse(&args.endpoint)?;
+    anyhow::ensure!(
+        matches!(endpoint.scheme(), "ws" | "wss"),
+        "envd endpoint must use ws:// or wss://"
+    );
+    let response: api::EnvironmentExternalCreateResponse = HttpAgentApi::new(args.common.api_url)
+        .request(
+            api::METHOD_ENVIRONMENTS_EXTERNAL_CREATE,
+            api::EnvironmentExternalCreateParams {
+                request_id: args.request_id,
+                connection: api::EnvironmentConnectionView {
+                    endpoint: args.endpoint,
+                    transport: api::EnvironmentConnectionTransportView::WebSocket,
+                },
+                display_name: args.display_name,
+                metadata: args.metadata.map(),
+            },
+        )
+        .await?
+        .result;
+    crate::output::show(args.common.json, &response.environment)
+}
+async fn binding(args: BindingArgs) -> Result<()> {
+    let client = HttpAgentApi::new("");
+    match args.command {
+        BindingCommand::Put(args) => {
+            let params: api::DeploymentProviderBindingPutParams = read_document(&args.file)?;
+            let response: api::DeploymentProviderBindingPutResponse = client
+                .request(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT, params)
+                .await?
+                .result;
+            crate::output::show(args.json, &response.binding)
+        }
+        BindingCommand::Delete { binding_id, json } => {
+            let universe_id = crate::connection::ACTIVE
+                .get()
+                .and_then(|c| c.active_universe_id())
+                .ok_or_else(|| anyhow::anyhow!("select a universe before deleting a binding"))?;
+            let response: api::DeploymentProviderBindingDeleteResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
+                    api::DeploymentProviderBindingDeleteParams {
+                        universe_id,
+                        binding_id,
+                    },
+                )
+                .await?
+                .result;
+            if !json {
+                println!("Deleted environment provider binding.");
+            }
+            crate::output::show(json, &response.binding)
+        }
+        BindingCommand::List(args) => {
+            let response: api::EnvironmentProviderBindingListResponse = client
+                .request(
+                    api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST,
+                    api::EnvironmentProviderBindingListParams {},
+                )
+                .await?
+                .result;
+            if args.json {
+                crate::output::show(true, &response)
+            } else {
+                crate::output::table(
+                    &response.bindings,
+                    &[
+                        ("bindingId", "ID"),
+                        ("providerId", "PROVIDER"),
+                        ("status", "STATUS"),
+                        ("revision", "REVISION"),
+                    ],
+                    "No environment provider bindings available.",
+                )
+            }
+        }
+        BindingCommand::Read { binding_id, json } => {
+            let response: api::EnvironmentProviderBindingReadResponse = client
+                .request(
+                    api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ,
+                    api::EnvironmentProviderBindingReadParams { binding_id },
+                )
+                .await?
+                .result;
+            crate::output::show(json, &response.binding)
+        }
+    }
+}
+async fn template(args: TemplateArgs) -> Result<()> {
+    let client = HttpAgentApi::new("");
+    match args.command {
+        TemplateCommand::List { binding, json } => {
+            let response: api::EnvironmentTemplateListResponse = client
+                .request(
+                    api::METHOD_ENVIRONMENTS_TEMPLATES_LIST,
+                    api::EnvironmentTemplateListParams {
+                        binding_id: binding,
+                    },
+                )
+                .await?
+                .result;
+            if json {
+                crate::output::show(true, &response)
+            } else {
+                crate::output::table(
+                    &response.templates,
+                    &[
+                        ("templateId", "ID"),
+                        ("displayName", "NAME"),
+                        ("bindingId", "BINDING"),
+                        ("deprecated", "DEPRECATED"),
+                    ],
+                    "No environment templates available.",
+                )
+            }
+        }
+        TemplateCommand::Read {
+            template_id,
+            binding,
+            json,
+        } => {
+            let response: api::EnvironmentTemplateReadResponse = client
+                .request(
+                    api::METHOD_ENVIRONMENTS_TEMPLATES_READ,
+                    api::EnvironmentTemplateReadParams {
+                        binding_id: binding,
+                        template_id,
+                    },
+                )
+                .await?
+                .result;
+            crate::output::show(json, &response.template)
+        }
+    }
+}
+async fn ingress(args: IngressArgs) -> Result<()> {
+    let response: api::EnvironmentIngressPutResponse = HttpAgentApi::new(args.common.api_url)
+        .request(
+            api::METHOD_ENVIRONMENTS_INGRESS_PUT,
+            api::EnvironmentIngressPutParams {
+                environment_id: args.common.environment_id,
+                enabled: args.enable,
+            },
+        )
+        .await?
+        .result;
+    crate::output::show(args.common.json, &response.environment)
+}
+
+#[derive(Args, Debug, Clone)]
+struct DocumentArgs {
+    /// Typed API request JSON document. See the public API reference for fields.
+    #[arg(long)]
+    file: std::path::PathBuf,
+    #[arg(long)]
+    json: bool,
+}
+fn read_document<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T> {
+    use anyhow::Context;
+    serde_json::from_slice(
+        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .context("invalid API request document")
+}
+#[derive(Args, Debug, Clone)]
+struct ProviderArgs {
+    #[command(subcommand)]
+    command: ProviderCommand,
+}
+#[derive(Subcommand, Debug, Clone)]
+enum ProviderCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Read {
+        provider_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create or replace a controller using DeploymentEnvironmentProviderPutParams JSON.
+    Put(DocumentArgs),
+    Delete {
+        provider_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+async fn provider(args: ProviderArgs) -> Result<()> {
+    let client = HttpAgentApi::new("");
+    match args.command {
+        ProviderCommand::List { json } => {
+            let response: api::DeploymentEnvironmentProviderListResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST,
+                    api::DeploymentEnvironmentProviderListParams {},
+                )
+                .await?
+                .result;
+            if json {
+                crate::output::show(true, &response)
+            } else {
+                crate::output::table(
+                    &response.providers,
+                    &[
+                        ("providerId", "ID"),
+                        ("displayName", "NAME"),
+                        ("controllerConnection", "CONTROLLER"),
+                    ],
+                    "No environment provider controllers configured.",
+                )
+            }
+        }
+        ProviderCommand::Read { provider_id, json } => {
+            let response: api::DeploymentEnvironmentProviderReadResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ,
+                    api::DeploymentEnvironmentProviderReadParams { provider_id },
+                )
+                .await?
+                .result;
+            crate::output::show(json, &response.provider)
+        }
+        ProviderCommand::Put(args) => {
+            let params: api::DeploymentEnvironmentProviderPutParams = read_document(&args.file)?;
+            let response: api::DeploymentEnvironmentProviderPutResponse = client
+                .request(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT, params)
+                .await?
+                .result;
+            crate::output::show(args.json, &response.provider)
+        }
+        ProviderCommand::Delete { provider_id, json } => {
+            let response: api::DeploymentEnvironmentProviderDeleteResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE,
+                    api::DeploymentEnvironmentProviderDeleteParams { provider_id },
+                )
+                .await?
+                .result;
+            if !json {
+                println!("Deleted environment provider controller.");
+            }
+            crate::output::show(json, &response.provider)
+        }
+    }
 }
