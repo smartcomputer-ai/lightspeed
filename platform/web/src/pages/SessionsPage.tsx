@@ -83,7 +83,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { sessionDraftKey } from "@/lib/sessions/draft";
-import { SessionComposer, type ComposerMode } from "@/components/session/composer";
+import { SessionComposer, type ComposerMessage, type ComposerMode } from "@/components/session/composer";
 import { Switch } from "@/components/ui/switch";
 import {
   ApprovalCards,
@@ -103,10 +103,13 @@ import { ReadError } from "@/components/read-error";
 import { useSessionTail } from "@/lib/sessions/tail";
 import {
   mediaByHandle,
+  mediaHandleFor,
   runInProgress,
   type ActiveRun,
   type TranscriptEntry,
+  type TranscriptMedia,
 } from "@/lib/sessions/transcript";
+import type { SentAttachment } from "@/lib/composer-attachments";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import { managedSessionBotId, managedSessionOwnerLabel } from "@/lib/sessions/management";
 import {
@@ -114,7 +117,7 @@ import {
   setupResourceFeatureError,
 } from "@/lib/sessions/resource-features";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
-import { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults } from "@/lib/model-defaults";
+import { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
 import { useActionPermissions } from "@/lib/permissions";
 import { useActiveUniverse, useFeature } from "@/lib/universes";
 import { cn } from "@/lib/utils";
@@ -1304,6 +1307,7 @@ export function SessionDetail({
   sessionHref?: (sessionId: string) => string;
 }) {
   const dictation = useDictationAvailability(universeId);
+  const modelDiscovery = useModelDiscovery(universeId);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const tail = useSessionTail(universeId, sessionId);
@@ -1556,7 +1560,7 @@ export function SessionDetail({
       .map((message) => ({
         key: message.id,
         runId: message.runId ?? null,
-        text: message.text,
+        text: message.text || attachmentSummary(message.media),
       })),
   ];
   const closed = session.data?.status === "closed";
@@ -1619,13 +1623,15 @@ export function SessionDetail({
     }
   }, [settingsOpen, runActive]);
 
-  const send = async (text: string, mode: ComposerMode | null) => {
+  const send = async (message: ComposerMessage, mode: ComposerMode | null) => {
     if (!canControl) return;
     setSendError(null);
     if (mode === "steer") {
-      await steer(text);
+      await steer(message);
       return;
     }
+    const { text } = message;
+    const media = echoMedia(message.attachments);
     // The submission id doubles as the engine idempotency key: a retried
     // POST returns the original run instead of starting a second one.
     const submissionId = crypto.randomUUID();
@@ -1635,13 +1641,18 @@ export function SessionDetail({
     ));
     setPending((prev) => [
       ...prev,
-      { id: submissionId, text, runId: null, status: "sending", expectQueued },
+      { id: submissionId, text, media, runId: null, status: "sending", expectQueued },
     ]);
     try {
       const accepted = await api<SessionRunAccepted>(
         "POST",
         `/api/v1/universes/${universeId}/sessions/${sessionId}/messages`,
-        { text, submissionId },
+        {
+          text,
+          submissionId,
+          ...(message.attachments.length ? { attachments: message.attachments.map(wireAttachment) } : {}),
+          ...(message.options ? { options: message.options } : {}),
+        },
       );
       setFollowRequest((request) => request + 1);
       setLocalSubmissions((previous) => new Map(previous).set(
@@ -1664,7 +1675,7 @@ export function SessionDetail({
     }
   };
 
-  const steer = async (text: string) => {
+  const steer = async ({ text, attachments }: ComposerMessage) => {
     if (!canControl) return;
     const runId = steerTargetRunId;
     if (!runId) {
@@ -1674,18 +1685,31 @@ export function SessionDetail({
       return;
     }
     const id = crypto.randomUUID();
-    setPendingSteers((prev) => [...prev, { id, runId, text }]);
+    setPendingSteers((prev) => [...prev, { id, runId, text, media: echoMedia(attachments) }]);
     try {
       await api<SessionRunSteered>(
         "POST",
         `/api/v1/universes/${universeId}/sessions/${sessionId}/runs/${runId}/steer`,
-        { text },
+        attachments.length ? { text, attachments: attachments.map(wireAttachment) } : { text },
       );
       setFollowRequest((request) => request + 1);
     } catch (error) {
       setPendingSteers((prev) => prev.filter((steer) => steer.id !== id));
       setSendError(error instanceof Error ? error.message : String(error));
     }
+  };
+
+  /// The composer's model choice becomes the session default. Config
+  /// replacement needs an idle session and the revision last read.
+  const saveModelDefault = async (config: Record<string, unknown>) => {
+    const current = session.data;
+    if (!current) return;
+    const updated = await api<SessionView>(
+      "PUT",
+      `/api/v1/universes/${universeId}/sessions/${sessionId}/config`,
+      { config, expectedConfigRevision: current.configRevision },
+    );
+    queryClient.setQueryData(["session", universeId, sessionId], updated);
   };
 
   const cancelRun = async (runId: string) => {
@@ -2062,7 +2086,7 @@ export function SessionDetail({
               ))}
               {visiblePendingSteers.map((steer) => (
                 <MessageScrollerItem key={steer.id} messageId={steer.id}>
-                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} steering /></TranscriptEntrance>
+                  <TranscriptEntrance motionKey={steer.id}><UserBand text={steer.text} media={steer.media} steering /></TranscriptEntrance>
                 </MessageScrollerItem>
               ))}
               {notices.map((notice) => (
@@ -2139,8 +2163,16 @@ export function SessionDetail({
             </span>
           </div>
         ) : undefined}
+        attachments={{ universeId, apiKind: modelFromConfig(session.data?.config)?.apiKind }}
+        model={session.data?.config ? {
+          config: session.data.config,
+          models: modelDiscovery.data?.models,
+          canSaveDefault: canControl && !closed,
+          onSaveDefault: saveModelDefault,
+        } : undefined}
         error={sendError}
-        onSend={(text, mode) => void send(text, mode)}
+        onDismissError={() => setSendError(null)}
+        onSend={(message, mode) => void send(message, mode)}
         onStop={() => void stop()}
       />
       {!embedded && canControl && (
@@ -2163,6 +2195,8 @@ export function SessionDetail({
 interface PendingMessage {
   id: string;
   text: string;
+  /// Attachments sent with the message, previewed from local files.
+  media?: TranscriptMedia[];
   /// Engine run id once the POST returned; null while in flight.
   runId: string | null;
   status: "sending" | "running" | "queued";
@@ -2174,6 +2208,32 @@ interface PendingSteer {
   id: string;
   runId: string;
   text: string;
+  media?: TranscriptMedia[];
+}
+
+/// The attachment fields the message routes accept.
+function wireAttachment({ blobRef, mime, kind, name }: SentAttachment) {
+  return { blobRef, mime, kind, name };
+}
+
+/// Attachments as transcript media for the optimistic echo, previewed from
+/// the picked files until the stored entries arrive.
+function echoMedia(attachments: SentAttachment[]): TranscriptMedia[] | undefined {
+  if (!attachments.length) return undefined;
+  return attachments.map((attachment) => ({
+    handle: mediaHandleFor(attachment.blobRef),
+    blobRef: attachment.blobRef,
+    mime: attachment.mime,
+    kind: attachment.kind,
+    name: attachment.name,
+    ...(attachment.previewUrl ? { localUrl: attachment.previewUrl } : {}),
+  }));
+}
+
+function attachmentSummary(media: TranscriptMedia[] | undefined): string {
+  const count = media?.length ?? 0;
+  if (count === 1) return media![0]!.name ?? "1 attachment";
+  return count ? `${count} attachments` : "";
 }
 
 /// Text for a queued run: from the authoritative session view when it has
@@ -2190,7 +2250,8 @@ function queuedRunText(
       return text;
     }
   }
-  return pending.find((message) => message.runId === runId)?.text ?? "(queued message)";
+  const sent = pending.find((message) => message.runId === runId);
+  return sent?.text || attachmentSummary(sent?.media) || "(queued message)";
 }
 
 function SessionScrollFollower({

@@ -138,3 +138,25 @@ export function mergeFeatureOverrides(stored: unknown, changes: FeatureOverrides
 }
 export { AGENT_MODEL_API_KINDS, modelDefaultsPutSchema } from "./model-defaults.js";
 export { MAX_DICTATION_AUDIO_BYTES, MAX_DICTATION_SECONDS, transcriptionStartSchema, transcriptionUploadSchema } from "./transcriptions.js";
+export {
+  ATTACHMENT_ACCEPT,
+  ATTACHMENT_MIMES,
+  ATTACHMENT_SUMMARY,
+  MAX_ANTHROPIC_IMAGE_BYTES,
+  MAX_ATTACHMENT_BYTES,
+  MAX_MESSAGE_ATTACHMENTS,
+  attachmentLimit,
+  attachmentType,
+  attachmentUploadSchema,
+  messageAttachmentSchema,
+  messageInputItems,
+  messageRunConfig,
+  messageRunOptionsSchema,
+  reasoningEffortTiers,
+  sessionMessageSchema,
+  sessionSteerSchema,
+  type AttachmentKind,
+  type AttachmentType,
+  type MessageAttachment,
+  type MessageRunOptions,
+} from "./messages.js";

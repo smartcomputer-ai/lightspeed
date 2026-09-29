@@ -19,8 +19,9 @@ export function useMediaUrl(media: TranscriptMedia | null): string | null {
   const mime = media?.mime;
   const key = JSON.stringify([blobRef, mime]);
   const [loaded, setLoaded] = useState<{ loader: MediaLoader; key: string; url: string } | null>(null);
+  const localUrl = media?.localUrl;
   useEffect(() => {
-    if (!blobRef || !mime || !loadMedia) return;
+    if (localUrl || !blobRef || !mime || !loadMedia) return;
     let cancelled = false;
     let objectUrl: string | undefined;
     let cache = blobCache.get(loadMedia);
@@ -43,7 +44,8 @@ export function useMediaUrl(media: TranscriptMedia | null): string | null {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [blobRef, mime, key, loadMedia]);
+  }, [blobRef, mime, key, loadMedia, localUrl]);
+  if (media?.localUrl) return media.localUrl;
   return loaded?.loader === loadMedia && loaded?.key === key ? loaded.url : null;
 }
 

@@ -19,6 +19,9 @@ export interface TranscriptMedia {
   mime: string;
   kind: "image" | "document";
   name?: string;
+  /// An object URL for media the user just sent, shown until the stored
+  /// entry replaces the optimistic echo.
+  localUrl?: string;
 }
 
 export type TranscriptEntry =
@@ -591,7 +594,7 @@ function applyItems(state: TranscriptState, items: SessionItem[]) {
     const source = item.source;
     const runId = source && "runId" in source ? String(source.runId) : undefined;
 
-    if (kind.type === "message" && kind.role === "user" && item.content.mediaHandle) {
+    if (kind.type === "message" && kind.role === "user" && (item.content.mediaHandle || isAttachedTextDocument(item))) {
       const media = transcriptMedia(item);
       if (source?.type === "tool") {
         if (lastToolResultCallId) {
@@ -789,6 +792,14 @@ function transcriptMedia(item: SessionItem): TranscriptMedia {
     kind: mime.startsWith("image/") ? "image" : "document",
     ...(name ? { name } : {}),
   };
+}
+
+/// A text file attached as input (Markdown, CSV, JSON, plain text). The
+/// model reads it as text, so it carries no media handle, but its preview
+/// names the file; typed messages have no preview. Shown as a document chip
+/// rather than as the file's contents.
+function isAttachedTextDocument(item: SessionItem): boolean {
+  return item.source?.type !== "tool" && /^\[document: .+\]$/.test(item.preview?.trim() ?? "");
 }
 
 /// The handle the model uses for a blob: `media:` plus the first twelve hex

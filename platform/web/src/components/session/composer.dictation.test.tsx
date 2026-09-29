@@ -7,6 +7,7 @@ import { SessionComposer } from "./composer";
 const mocks = vi.hoisted(() => ({ capture: vi.fn(), transcribe: vi.fn(), cancel: vi.fn() }));
 vi.mock("@/lib/audio-capture", () => ({ startAudioCapture: mocks.capture, isDemoDictation: false }));
 vi.mock("@/lib/dictation", () => ({ transcribeRecording: mocks.transcribe, cancelRecording: mocks.cancel }));
+vi.mock("@/components/ui/popover", () => import("@/components/ui/popover.test-double"));
 let root: Root;
 let container: HTMLDivElement;
 let finish: (text: string) => void;
@@ -57,7 +58,42 @@ it("appends to the latest edited draft and waits for an explicit send", async ()
   expect(onSend).not.toHaveBeenCalled();
   expect(stop).toHaveBeenCalled();
   await click("Send message");
-  expect(onSend).toHaveBeenCalledWith("Edited while transcribing. Spoken text.", null);
+  expect(onSend).toHaveBeenCalledWith({ text: "Edited while transcribing. Spoken text.", attachments: [] }, null);
+});
+it("inserts at the caret the field last had, when the text is unchanged", async () => {
+  await show();
+  await type("Hello world");
+  const input = container.querySelector("textarea")!;
+  await act(async () => {
+    input.focus();
+    input.setSelectionRange(5, 5);
+    input.blur();
+  });
+  await record();
+  await act(async () => finish("big"));
+  expect(input.value).toBe("Hello big world");
+  expect(input.selectionStart).toBe(9);
+});
+it("stops and transcribes on Enter while recording instead of sending", async () => {
+  await show();
+  await type("Draft");
+  await click("Dictate message");
+  expect(container.querySelector('[aria-label^="Recording"]')).not.toBeNull();
+  const input = container.querySelector("textarea")!;
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(stop).toHaveBeenCalled();
+  expect(onSend).not.toHaveBeenCalled();
+  await act(async () => finish("Spoken."));
+  expect(input.value).toBe("Draft Spoken.");
+});
+it("discards the recording on Escape", async () => {
+  await show();
+  await click("Dictate message");
+  const input = container.querySelector("textarea")!;
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(stop).toHaveBeenCalled();
+  expect(container.querySelector('[aria-label="Dictate message"]')).not.toBeNull();
+  expect(mocks.transcribe).not.toHaveBeenCalled();
 });
 it.each(["Cancel dictation", "Send message"])("ignores late completion after %s", async (action) => {
   await show();
@@ -78,11 +114,17 @@ it("cancels on navigation without modifying the saved draft", async () => {
   expect(mocks.transcribe.mock.calls[0]![2].aborted).toBe(true);
   expect(localStorage.getItem("voice-test")).toBe("Saved draft");
 });
-it.each([["Set a speech-to-text default", false], [undefined, true]] as const)("disables recording for missing defaults or session permissions", async (reason, disabled) => {
-  await show(reason, disabled);
+it("explains a missing speech default instead of recording", async () => {
+  await show("Set a speech-to-text default in Models to enable dictation.");
   const button = container.querySelector<HTMLButtonElement>('[aria-label="Dictate message"]')!;
-  expect(button.disabled).toBe(true);
+  expect(button.getAttribute("aria-disabled")).toBe("true");
   await click("Dictate message");
+  expect(mocks.capture).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("Set a speech-to-text default in Models");
+});
+it("offers no dictation when the composer is disabled", async () => {
+  await show(undefined, true);
+  expect(container.querySelector('[aria-label="Dictate message"]')).toBeNull();
   expect(mocks.capture).not.toHaveBeenCalled();
 });
 it("retains the draft and recording for a transcription retry", async () => {

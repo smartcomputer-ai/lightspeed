@@ -1,6 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import { effectiveFeatures, type FeatureOverrides, type UniverseRole } from "@lightspeed/platform-shared";
+import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole } from "@lightspeed/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -99,7 +99,7 @@ export interface SessionRecord {
   queue: Array<{ runId: string; begin: () => void }>;
   /// Steering admitted while a run is in flight; consumed at the run's
   /// next turn boundary, where the entry carries its steering source.
-  steering: Array<{ text: string; steeringId: string; origin?: string }>;
+  steering: Array<{ text: string; steeringId: string; origin?: string; media?: MessageAttachment[] }>;
   timers: Set<ReturnType<typeof setTimeout>>;
   /// Long-poll wakers, notified on every appended event.
   waiters: Set<() => void>;

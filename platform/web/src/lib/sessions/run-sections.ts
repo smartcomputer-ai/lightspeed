@@ -1,4 +1,4 @@
-import type { ActiveRun, TranscriptEntry, TranscriptRunSummary } from "./transcript";
+import type { ActiveRun, TranscriptEntry, TranscriptMedia, TranscriptRunSummary } from "./transcript";
 
 /// One level of structure over the flat transcript: the entries a run
 /// produced, between the input that started it and the summary that ended
@@ -36,7 +36,7 @@ export type TranscriptSection =
 /// runs use their run id even when older history later reveals their input.
 export function withPendingRunInputs(
   sections: TranscriptSection[],
-  pending: { id: string; text: string; runId: string | null }[],
+  pending: { id: string; text: string; runId: string | null; media?: TranscriptMedia[] }[],
   submissionKeys: ReadonlyMap<string, string>,
 ): TranscriptSection[] {
   const attached = new Set<string>();
@@ -62,8 +62,8 @@ export function withPendingRunInputs(
   return result;
 }
 
-function pendingInput(message: { id: string; text: string }): TranscriptMessage {
-  return { kind: "message", key: message.id, role: "user", text: message.text };
+function pendingInput(message: { id: string; text: string; media?: TranscriptMedia[] }): TranscriptMessage {
+  return { kind: "message", key: message.id, role: "user", text: message.text, ...(message.media?.length ? { media: message.media } : {}) };
 }
 
 /// Group entries into run sections. Session-level markers outside any run

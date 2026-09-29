@@ -1,6 +1,7 @@
 import type { BlobPutResponse, TranscriptionView } from "@lightspeed-ai/agent-client";
 import { MAX_DICTATION_AUDIO_BYTES } from "@lightspeed/platform-shared";
 import { api } from "@/api";
+import { blobBase64 } from "@/lib/blob-base64";
 
 export interface DictationRecording {
   blob: Blob;
@@ -10,19 +11,6 @@ export interface DictationRecording {
   transcriptionId?: string;
 }
 
-function base64(blob: Blob, signal: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    const abort = () => reader.abort();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]!);
-    reader.onerror = () => reject(new Error("Could not read the recording."));
-    reader.onabort = () => reject(new DOMException("Cancelled", "AbortError"));
-    reader.onloadend = () => signal.removeEventListener("abort", abort);
-    signal.throwIfAborted();
-    signal.addEventListener("abort", abort, { once: true });
-    reader.readAsDataURL(blob);
-  });
-}
 function pause(signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     signal.throwIfAborted();
@@ -41,7 +29,7 @@ export async function transcribeRecording(universeId: string, recording: Dictati
   if (recording.blob.size > MAX_DICTATION_AUDIO_BYTES) throw new Error("Recording exceeds 25 MiB. Try a shorter recording.");
   const path = `/api/v1/universes/${universeId}/transcriptions`;
   if (!recording.blobRef) {
-    const bytesBase64 = await base64(recording.blob, signal);
+    const bytesBase64 = await blobBase64(recording.blob, signal);
     const result = await api<BlobPutResponse>("POST", `${path}/audio`, { bytesBase64 }, signal);
     recording.blobRef = result.blobs?.[0]?.blobRef;
     if (!recording.blobRef) throw new Error("Audio upload did not return a reference.");

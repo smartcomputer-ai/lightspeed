@@ -761,6 +761,35 @@ describe("session transcript run control", () => {
     expect(state.runRevision).toBeGreaterThan(2);
   });
 
+  it("folds attachments and text into one input band, text documents as chips", () => {
+    const png = `sha256:${"a".repeat(64)}`;
+    const notes = `sha256:${"b".repeat(64)}`;
+    const source = (inputIndex: number) => ({ type: "runInput" as const, runId: "run_1", inputIndex });
+    const state = applyEvents(emptyTranscript(), [
+      event(1, {
+        type: "contextEntriesApplied",
+        entries: [
+          { id: "image", kind: { type: "message", role: "user" }, preview: "[image: screen.png]", source: source(0),
+            content: { contentRef: png, mediaType: "image/png", providerKind: null, mediaHandle: mediaHandleFor(png) } },
+          { id: "notes", kind: { type: "message", role: "user" }, preview: "[document: notes.md]", source: source(1),
+            text: "# Raw file contents", content: { contentRef: notes, mediaType: "text/markdown", providerKind: null } },
+          item("text", { type: "message", role: "user" }, { text: "Compare these", source: source(2) }),
+        ],
+      }),
+    ]);
+    expect(state.entries).toEqual([{
+      kind: "message",
+      key: "image",
+      role: "user",
+      text: "Compare these",
+      runId: "run_1",
+      media: [
+        { handle: mediaHandleFor(png), blobRef: png, mime: "image/png", kind: "image", name: "screen.png" },
+        { handle: mediaHandleFor(notes), blobRef: notes, mime: "text/markdown", kind: "document", name: "notes.md" },
+      ],
+    }]);
+  });
+
   it("folds steering messages as tagged user entries on their run", () => {
     const state = applyEvents(emptyTranscript(), [
       event(1, {

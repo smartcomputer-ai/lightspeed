@@ -26,7 +26,21 @@ import {
   type SessionConfig,
 } from "@lightspeed-ai/agent-client";
 import { schema } from "@lightspeed/platform-db";
-import { MAX_DICTATION_AUDIO_BYTES, transcriptionStartSchema, transcriptionUploadSchema, modelDefaultsPutSchema, roleAtLeast, slugify, workspaceCreateSchema } from "@lightspeed/platform-shared";
+import {
+  MAX_ATTACHMENT_BYTES,
+  MAX_DICTATION_AUDIO_BYTES,
+  attachmentUploadSchema,
+  messageInputItems,
+  messageRunConfig,
+  modelDefaultsPutSchema,
+  roleAtLeast,
+  sessionMessageSchema,
+  sessionSteerSchema,
+  slugify,
+  transcriptionStartSchema,
+  transcriptionUploadSchema,
+  workspaceCreateSchema,
+} from "@lightspeed/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
 import {
@@ -303,15 +317,6 @@ export function environmentSecretGrantParams(
 /// One text message = one run. `submissionId` is client-minted so a
 /// retried POST (network flake) returns the original run instead of
 /// starting a duplicate.
-const sessionMessageSchema = z.object({
-  text: z.string().min(1).max(100_000),
-  submissionId: z.string().min(1).max(200),
-});
-
-const sessionSteerSchema = z.object({
-  text: z.string().min(1).max(100_000),
-});
-
 const sessionApprovalDecideSchema = z.object({
   decisions: z
     .array(
@@ -774,11 +779,12 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
-  /// One user message → one run from input items. Returns the accepted
-  /// run immediately (`running`, or `queued` behind an active run) —
-  /// replies land in the event log, which the web follows via the long-poll
-  /// tail. No server-side await: runs can take minutes and an HTTP request
-  /// must not.
+  /// One user message → one run from input items: its attachments as media
+  /// items, then its text. Per-message model options ride the run as
+  /// overrides. Returns the accepted run immediately (`running`, or `queued`
+  /// behind an active run) — replies land in the event log, which the web
+  /// follows via the long-poll tail. No server-side await: runs can take
+  /// minutes and an HTTP request must not.
   app.post("/:id/sessions/:sessionId/messages", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -791,17 +797,15 @@ export function gatewayRoutes(ctx: AppContext) {
     const input = body.data;
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
+      const config = messageRunConfig(input.options);
       const response = await client.call("session/runs/start", {
         sessionId: c.req.param("sessionId"),
         source: {
           type: "input" as const,
-          items: [{
-            type: "text" as const,
-            text: input.text,
-            origin: `user:${c.get("session").user.id}`,
-          }],
+          items: messageInputItems(input.text, input.attachments, `user:${c.get("session").user.id}`),
         },
         submissionId: input.submissionId,
+        ...(config ? { config } : {}),
       });
       const run = response.result.run;
       return c.json({ run: { id: run.id, status: run.status } });
@@ -827,9 +831,9 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
-  /// Steer the active run: the text is admitted into the run and reaches
-  /// the model at its next turn boundary without interrupting the in-flight
-  /// turn. Rejected for queued, cancelling, or finished runs.
+  /// Steer the active run: the text and attachments are admitted into the
+  /// run and reach the model at its next turn boundary without interrupting
+  /// the in-flight turn. Rejected for queued, cancelling, or finished runs.
   app.post("/:id/sessions/:sessionId/runs/:runId/steer", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
@@ -844,11 +848,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("session/runs/steer", {
         sessionId: c.req.param("sessionId"),
         runId: c.req.param("runId"),
-        items: [{
-          type: "text" as const,
-          text: body.data.text,
-          origin: `user:${c.get("session").user.id}`,
-        }],
+        items: messageInputItems(body.data.text, body.data.attachments, `user:${c.get("session").user.id}`),
       });
       const run = response.result.run;
       return c.json({
@@ -936,6 +936,24 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const params: McpServerAuthDiscoverParams = body.data;
       const response = await client.call("mcp/servers/auth/discover", params);
+      return c.json(response.result);
+    });
+  });
+
+  /// Composer attachments upload as content-addressed blobs before the
+  /// message is sent, so sending is instant; an unsent upload is collected by
+  /// the ordinary blob grace period. Type and per-API limits are checked at
+  /// pick time in the browser and again by the runtime on admission.
+  app.post("/:id/attachments", bodyLimit({ maxSize: 16 * 1024 * 1024 }), async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    const body = await parseBody(c, attachmentUploadSchema);
+    if (!body.ok) return body.response;
+    if (Buffer.from(body.data.bytesBase64, "base64").length > MAX_ATTACHMENT_BYTES) {
+      return c.json({ error: "Attachment exceeds the 10 MiB limit." }, 413);
+    }
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("blobs/put", { blobs: [body.data] });
       return c.json(response.result);
     });
   });

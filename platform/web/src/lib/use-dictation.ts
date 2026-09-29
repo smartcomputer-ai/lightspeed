@@ -103,7 +103,8 @@ export function useDictation(universeId: string | undefined, enabled: boolean, o
       }, 250);
     } catch (cause) { fail(attempt, cause); }
   };
-  return { phase, error, seconds, start, stop, cancel,
+  const level = useCallback(() => active.current?.capture?.level?.() ?? 0, []);
+  return { phase, error, seconds, start, stop, cancel, level,
     retry: () => { if (active.current) void transcribe(active.current); },
     canRetry: phase === "error" && recording.current !== null,
   };

@@ -16,6 +16,7 @@ import type {
   SessionEventsReadResponse,
   ToolCallEventView,
 } from "@lightspeed-ai/agent-client";
+import type { MessageAttachment } from "@lightspeed/platform-shared";
 import type { SessionManagement, SessionOrigin, SessionView } from "@/api";
 import type {
   DemoResponder,
@@ -91,6 +92,57 @@ export function contextMessage(
     ...(source ? { source } : {}),
     ...(origin ? { origin } : {}),
   } as ContextEntryView;
+}
+
+/// A user image or document the composer attached: the blob is the content
+/// and the preview names the file, the way the runtime admits media input.
+export function contextMedia(
+  id: string,
+  attachment: MessageAttachment,
+  source?: ContextEntrySourceView,
+  origin?: string,
+): ContextEntryView {
+  const hex = attachment.blobRef.slice(attachment.blobRef.indexOf(":") + 1);
+  const textDocument = attachment.kind === "document" && attachment.mime !== "application/pdf";
+  return {
+    id,
+    content: {
+      contentRef: attachment.blobRef,
+      mediaType: attachment.mime,
+      providerKind: null,
+      // Text documents reach the model as text; the runtime gives only
+      // images and PDFs a media handle.
+      ...(textDocument ? {} : { mediaHandle: `media:${hex.slice(0, 12)}` }),
+    },
+    kind: { type: "message", role: "user" },
+    preview: `[${attachment.kind}: ${attachment.name}]`,
+    ...(source ? { source } : {}),
+    ...(origin ? { origin } : {}),
+  } as ContextEntryView;
+}
+
+/// Context entries for one user input: its attachments, then its text.
+function inputEntries(
+  store: DemoStore,
+  text: string,
+  media: readonly MessageAttachment[],
+  source: ContextEntrySourceView,
+  origin?: string,
+): ContextEntryView[] {
+  return [
+    ...media.map((attachment, index) =>
+      contextMedia(store.nextId("entry"), attachment, { ...source, inputIndex: index } as ContextEntrySourceView, origin)),
+    ...(text.trim()
+      ? [contextMessage(store.nextId("entry"), "user", text, { ...source, inputIndex: media.length } as ContextEntrySourceView, origin)]
+      : []),
+  ];
+}
+
+/// What a scripted responder reads for an input with attachments.
+function responderText(text: string, media: readonly MessageAttachment[]): string {
+  if (!media.length) return text;
+  const names = media.map((attachment) => attachment.name).join(", ");
+  return text.trim() ? `${text}\n\n(Attached: ${names})` : `(Attached: ${names})`;
 }
 
 export function contextToolCall(id: string, callId: string, name: string): ContextEntryView {
@@ -336,6 +388,8 @@ export function activeRun(session: SessionRecord): RunView | null {
 
 export interface RunInput {
   text: string;
+  /// Composer attachments, admitted as media entries before the text.
+  media?: MessageAttachment[];
   origin?: string;
   submissionId?: string | null;
   /// Scripted turn; defaults to the session's or universe's responder.
@@ -361,7 +415,10 @@ export function startRun(
   }
   const source = {
     type: "input" as const,
-    items: input.source?.items ?? [{ type: "text" as const, text: input.text, origin: input.origin }],
+    items: input.source?.items ?? [
+      ...(input.media ?? []).map((attachment) => ({ type: "media" as const, origin: input.origin, ...attachment })),
+      ...(input.text.trim() ? [{ type: "text" as const, text: input.text, origin: input.origin }] : []),
+    ],
     preview: input.text,
     previewTruncated: false,
   };
@@ -395,18 +452,12 @@ export function startRun(
     session.turns += 1;
     applyEntries(
       session,
-      [
-        contextMessage(store.nextId("entry"), "user", input.text, {
-          type: "runInput",
-          inputIndex: 0,
-          runId: run.id,
-        }, input.origin),
-      ],
+      inputEntries(store, input.text, input.media ?? [], { type: "runInput", inputIndex: 0, runId: run.id }, input.origin),
       joins,
     );
     const respond = session.responder ?? universe.responder;
     const turn =
-      input.turn ?? respond(input.text, { store, universe, session, turn: session.turns });
+      input.turn ?? respond(responderText(input.text, input.media ?? []), { store, universe, session, turn: session.turns });
     schedule(session, run, turnSteps(store, session, run, turn, 1), () =>
       afterTurns(store, universe, session, run, 2, input.onFinished),
     );
@@ -436,18 +487,16 @@ function afterTurns(
   }
   applyEntries(
     session,
-    [
-      contextMessage(store.nextId("entry"), "user", steer.text, {
-        type: "steering",
-        inputIndex: 0,
-        runId: run.id,
-        steeringId: steer.steeringId,
-      }, steer.origin),
-    ],
+    inputEntries(store, steer.text, steer.media ?? [], {
+      type: "steering",
+      inputIndex: 0,
+      runId: run.id,
+      steeringId: steer.steeringId,
+    }, steer.origin),
     { runId: run.id },
   );
   const respond = session.responder ?? universe.responder;
-  const turn = respond(steer.text, { store, universe, session, turn: session.turns });
+  const turn = respond(responderText(steer.text, steer.media ?? []), { store, universe, session, turn: session.turns });
   schedule(session, run, turnSteps(store, session, run, turn, turnIndex), () =>
     afterTurns(store, universe, session, run, turnIndex + 1, onFinished),
   );
@@ -523,18 +572,27 @@ export function steerRun(
   runId: string,
   text: string,
   origin?: string,
+  media: MessageAttachment[] = [],
 ): { steeringId: string; run: RunView } | null {
   const run = findRun(session, runId);
   if (!run || run.status !== "running") return null;
   const steeringId = store.nextId("steer");
-  session.steering.push({ text, steeringId, origin });
+  session.steering.push({ text, steeringId, origin, media });
   pushEvent(
     session,
     {
       type: "runSteeringAccepted",
       runId,
       steeringId,
-      input: [{ origin, content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message", role: "user" }, preview: text }],
+      input: [
+        ...media.map((attachment) => {
+          const entry = contextMedia("", attachment, undefined, origin);
+          return { origin, content: entry.content, kind: entry.kind, preview: entry.preview };
+        }),
+        ...(text.trim()
+          ? [{ origin, content: { contentRef: store.putText(text), mediaType: "text/plain", providerKind: null }, kind: { type: "message" as const, role: "user" as const }, preview: text }]
+          : []),
+      ],
     },
     { runId },
   );

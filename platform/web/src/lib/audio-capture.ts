@@ -4,6 +4,39 @@ export interface AudioCapture {
   result: Promise<Blob>;
   stop: () => void;
   name: string;
+  /// Current input level from 0 to 1, for a live meter. Absent when the
+  /// browser has no Web Audio analyser.
+  level?: () => number;
+}
+
+/// Reads the microphone's loudness beside the recorder. The meter is only
+/// feedback, so any failure leaves the recording untouched.
+function levelMeter(stream: MediaStream): { level: () => number; close: () => void } | undefined {
+  const Context = globalThis.AudioContext
+    ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Context) return;
+  try {
+    const context = new Context();
+    // Safari starts a context created outside a user gesture suspended,
+    // which would leave the meter flat for the whole recording.
+    if (context.state === "suspended") void context.resume().catch(() => {});
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    context.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    return {
+      level: () => {
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) sum += ((sample - 128) / 128) ** 2;
+        // Speech sits around 0.02–0.2 RMS; scale so normal speech fills the meter.
+        return Math.min(1, Math.sqrt(sum / samples.length) * 4);
+      },
+      close: () => void context.close().catch(() => {}),
+    };
+  } catch {
+    return;
+  }
 }
 export const isDemoDictation = import.meta.env.MODE === "demo";
 const formats = [
@@ -23,14 +56,22 @@ export async function startAudioCapture(signal: AbortSignal, onError: (error: Er
   if (isDemoDictation) {
     let finish!: (blob: Blob) => void;
     const result = new Promise<Blob>((resolve) => { finish = resolve; });
-    return { result, name: "demo.webm", stop: () => finish(new Blob(["demo audio"], { type: "audio/webm" })) };
+    const started = Date.now();
+    return {
+      result, name: "demo.webm", stop: () => finish(new Blob(["demo audio"], { type: "audio/webm" })),
+      level: () => 0.35 + 0.3 * Math.sin((Date.now() - started) / 180) * Math.sin((Date.now() - started) / 470),
+    };
   }
   const { MediaRecorder } = await import("extendable-media-recorder");
   signal.throwIfAborted();
   const format = formats.find(([mime]) => MediaRecorder.isTypeSupported(mime));
   if (!format) throw new Error("This browser cannot record a supported audio format.");
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
-  const release = () => stream.getTracks().forEach((track) => track.stop());
+  const meter = levelMeter(stream);
+  const release = () => {
+    meter?.close();
+    stream.getTracks().forEach((track) => track.stop());
+  };
   if (signal.aborted) { release(); signal.throwIfAborted(); }
   try {
     const recorder = new MediaRecorder(stream, { mimeType: format[0], audioBitsPerSecond: 64_000 });
@@ -81,6 +122,6 @@ export async function startAudioCapture(signal: AbortSignal, onError: (error: Er
     stream.getTracks().forEach((track) => track.addEventListener("ended", ended, { once: true }));
     signal.addEventListener("abort", abort, { once: true });
     try { recorder.start(1000); } catch (error) { cleanup(); throw error; }
-    return { result, stop, name: `dictation.${format[1]}` };
+    return { result, stop, name: `dictation.${format[1]}`, ...(meter ? { level: meter.level } : {}) };
   } catch (error) { release(); throw error; }
 }

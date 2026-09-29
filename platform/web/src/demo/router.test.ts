@@ -186,6 +186,32 @@ describe("demo router", () => {
     expect((await call("POST", `${path}/share`)).status).toBe(409);
   });
 
+  it("uploads an attachment and runs it through the transcript as input media", async () => {
+    const { store, call } = await boot();
+    const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const created = (await call("POST", `${base}/sessions`, { profile: { kind: "inline", profile: {} } })).json as SessionView;
+    const uploaded = await call("POST", `${base}/attachments`, { bytesBase64: btoa("%PDF-1.7") });
+    expect(uploaded.status).toBe(200);
+    const blobRef = (uploaded.json as { blobs: { blobRef: string }[] }).blobs[0]!.blobRef;
+    const attachment = { blobRef, mime: "application/pdf", kind: "document", name: "offer.pdf" };
+    const path = `${base}/sessions/${created.id}`;
+    expect((await call("POST", `${path}/messages`, { submissionId: "missing", attachments: [{ ...attachment, blobRef: `sha256:${"0".repeat(64)}` }] })).status).toBe(400);
+    const pinned = created.config!.model as { providerId: string; apiKind: string };
+    expect((await call("POST", `${path}/messages`, {
+      text: "hi", submissionId: "wrong-route", options: { model: { providerId: "elsewhere", apiKind: pinned.apiKind, model: "x" } },
+    })).status).toBe(400);
+    const accepted = await call("POST", `${path}/messages`, { text: "Summarize this", submissionId: "with-file", attachments: [attachment] });
+    expect(accepted.status).toBe(200);
+    const session = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!.sessions.get(created.id)!;
+    const transcript = applyEvents(emptyTranscript(), session.events);
+    expect(transcript.entries[0]).toMatchObject({
+      kind: "message",
+      role: "user",
+      text: "Summarize this",
+      media: [{ blobRef, mime: "application/pdf", kind: "document", name: "offer.pdf" }],
+    });
+  });
+
   it("keeps full run output after its entries leave active context", async () => {
     const { store } = await boot();
     const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
