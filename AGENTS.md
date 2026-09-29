@@ -61,6 +61,13 @@ boundaries. `npm run check` is the full TypeScript gate; its `check:generated`
 step fails while regenerated files are uncommitted, so run the remaining steps
 directly until they are committed.
 
+Before opening or updating a PR with Rust changes, run the exact CI Clippy
+command, including test targets and treating warnings as errors:
+
+```bash
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
 Testing rules:
 
 - Unit tests live beside the code in `mod tests`; use integration tests for
