@@ -187,10 +187,11 @@ function WorkspacePane({
             <SelectTrigger className="w-full" aria-label="Workspace">
               <FolderGit2 className="size-4 shrink-0 text-muted-foreground" />
               <SelectValue>
-                {(value: string) =>
-                  workspaces.data?.find((w) => w.workspaceId === value)?.displayName ??
-                  value
-                }
+                {(value: string) => {
+                  const label = workspaces.data?.find((w) => w.workspaceId === value)?.displayName ?? value;
+                  // Text directly inside the flex value cannot ellipsize.
+                  return <span className="min-w-0 truncate" title={label}>{label}</span>;
+                }}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -207,22 +208,22 @@ function WorkspacePane({
           </p>
         )}
         {tree.data && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             {/* The id is what profile workspace attachments reference — keep it in sight. */}
             <code
-              className="cursor-pointer rounded bg-muted px-1.5 py-0.5 font-mono hover:bg-accent"
-              title="Workspace id (used by profile workspace attachments) — click to copy"
+              className="min-w-0 cursor-pointer truncate rounded bg-muted px-1.5 py-0.5 font-mono hover:bg-accent"
+              title={`${tree.data.workspace.workspaceId} (used by profile workspace attachments) — click to copy`}
               onClick={() =>
                 void navigator.clipboard.writeText(tree.data.workspace.workspaceId)
               }
             >
               {tree.data.workspace.workspaceId}
             </code>
-            <span>
+            <span className="shrink-0 whitespace-nowrap">
               {tree.data.workspace.files} file{tree.data.workspace.files === 1 ? "" : "s"} ·
               r{tree.data.workspace.revision}
             </span>
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex shrink-0 items-center gap-1">
               {canEditFiles && (
                 <Button
                   variant="ghost"
@@ -316,8 +317,11 @@ function DirectoryEntries({
           />
         ) : (
           <li key={path}>
+            {/* The size is on hover and in the open file's header; a column of
+                bare numbers crowds the names in a narrow pane. */}
             <NavLink
               to={`/u/${slug}/workspaces/${workspaceId}/files/${path}`}
+              title={`${name} · ${formatBytes(entry.size_bytes)}`}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-muted/50",
                 activePath === path && "bg-muted font-medium",
@@ -325,9 +329,6 @@ function DirectoryEntries({
             >
               <File className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{name}</span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                {formatBytes(entry.size_bytes)}
-              </span>
             </NavLink>
           </li>
         );
