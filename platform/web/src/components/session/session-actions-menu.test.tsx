@@ -58,7 +58,7 @@ it("puts what can be done first, then view preferences, then the id and metadata
     lifecycle: <span>Close session…</span>,
   });
   expect(actions).toMatch(/^Session settings\s*Share with universe…\s*Close session…$/);
-  expect(preferences).toMatch(/^Collapse completed runs\s*Show run statistics$/);
+  expect(preferences).toMatch(/^Collapse completed runs\s*Show run statistics\s*Show session resources$/);
   expect(identity).toMatch(/^Session ID\s*session-1/);
   expect(metadata).toContain("team");
   expect(rest).toEqual([]);

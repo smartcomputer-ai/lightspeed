@@ -20,6 +20,13 @@ export function SessionMenuPreferences() {
         >
           Show run statistics
         </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          checked={preferences.showSessionResources}
+          onCheckedChange={preferences.setShowSessionResources}
+          closeOnClick={false}
+        >
+          Show session resources
+        </DropdownMenuCheckboxItem>
     </DropdownMenuGroup>
   );
 }

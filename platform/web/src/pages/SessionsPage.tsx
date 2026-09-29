@@ -2,7 +2,7 @@ import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
 import { ActivityDot, activityLabel } from "@/components/activity-dot";
 import { SessionActionsMenu } from "@/components/session/session-actions-menu";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   type InfiniteData,
   useInfiniteQuery,
@@ -84,6 +84,8 @@ import {
 } from "@/components/ui/select";
 import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionComposer, type ComposerMessage, type ComposerMode } from "@/components/session/composer";
+import { SessionResourceChips, useSessionResources } from "@/components/session/session-resources";
+import { hasResources } from "@/lib/sessions/session-resources";
 import { Switch } from "@/components/ui/switch";
 import {
   ApprovalCards,
@@ -1354,7 +1356,10 @@ export function SessionDetail({
     message: string;
   } | null>(null);
 
-  const { showRunStatistics, collapseCompletedRuns } = useUserPreferences();
+  const { showRunStatistics, collapseCompletedRuns, showSessionResources } = useUserPreferences();
+  const resources = useSessionResources(
+    universeId, session.data?.config, session.data?.activeEnvironmentId, showSessionResources && Boolean(session.data),
+  );
   const entries = tail.transcript.entries;
   const loadFullText = useCallback(
     async (blobRef: string) => {
@@ -2045,6 +2050,10 @@ export function SessionDetail({
         origin={session.data?.origin ?? null}
         runRevision={runRevision}
         sessionHref={sessionHref}
+        resources={showSessionResources && session.data && hasResources(resources) ? (
+          <SessionResourceChips resources={resources} slug={slug}
+            onConfigure={!embedded && canControl ? () => setSettingsOpen(true) : undefined} />
+        ) : undefined}
       />
       <TranscriptLinksContext.Provider value={transcriptLinks}>
       <MessageScrollerProvider key={`${universeId}/${sessionId}`} autoScroll defaultScrollPosition="end">
@@ -2312,6 +2321,7 @@ export function SessionLineage({
   origin,
   runRevision,
   sessionHref,
+  resources,
 }: {
   universeId: string;
   slug: string;
@@ -2319,6 +2329,8 @@ export function SessionLineage({
   origin: SessionOrigin | null;
   runRevision: number;
   sessionHref?: (sessionId: string) => string;
+  /// What the session can reach, shown first in the strip.
+  resources?: ReactNode;
 }) {
   const href = sessionHref ?? ((id: string) => `/u/${slug}/sessions/${id}`);
   const parentId = origin?.parentSessionId;
@@ -2359,10 +2371,12 @@ export function SessionLineage({
   const parentName = parent.data?.displayName?.trim();
   const parentLabel = parentName || (parentId ? compactSessionId(parentId) : "");
   const tagClass = "inline-flex min-w-0 max-w-64 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium text-foreground transition-colors hover:bg-muted";
-  if (!origin && list.length === 0) return null;
+  if (!origin && list.length === 0 && !resources) return null;
   return (
     <div className="shrink-0 border-b bg-muted/30">
       <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-xs text-muted-foreground md:px-8">
+      {resources}
+      {resources && (origin || list.length > 0) && <span className="hidden h-4 w-px bg-border sm:block" aria-hidden />}
       {origin && (
         <span className="flex min-w-0 flex-wrap items-center gap-1">
           <span>Parent:</span>

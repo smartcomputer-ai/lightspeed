@@ -6,6 +6,9 @@ const KEY_PREFIX = "lightspeed:user-preferences:";
 export interface UserPreferences {
   /** Show context and token usage on finished runs. */
   showRunStatistics: boolean;
+  /** Show what a session can reach (environment, files, MCP servers, …)
+   * in the strip under its header. */
+  showSessionResources: boolean;
   /** Fold a finished run's tool calls, thinking, and interim notes behind
    * one strip; applies when a session or older history loads. */
   collapseCompletedRuns: boolean;
@@ -20,6 +23,7 @@ export interface UserPreferences {
 
 const DEFAULTS: UserPreferences = {
   showRunStatistics: false,
+  showSessionResources: true,
   collapseCompletedRuns: true,
   sidebarWidth: null,
   sidebarCollapsed: false,
@@ -32,6 +36,7 @@ function storedWidth(value: unknown): number | null {
 
 const Context = createContext<UserPreferences & {
   setShowRunStatistics: (show: boolean) => void;
+  setShowSessionResources: (show: boolean) => void;
   setCollapseCompletedRuns: (collapse: boolean) => void;
   setSidebarWidth: (width: number | null) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
@@ -39,6 +44,7 @@ const Context = createContext<UserPreferences & {
 }>({
   ...DEFAULTS,
   setShowRunStatistics: () => {},
+  setShowSessionResources: () => {},
   setCollapseCompletedRuns: () => {},
   setSidebarWidth: () => {},
   setSidebarCollapsed: () => {},
@@ -53,6 +59,8 @@ export function readUserPreferences(userId: string): UserPreferences {
     return {
       showRunStatistics: typeof record.showRunStatistics === "boolean"
         ? record.showRunStatistics : DEFAULTS.showRunStatistics,
+      showSessionResources: typeof record.showSessionResources === "boolean"
+        ? record.showSessionResources : DEFAULTS.showSessionResources,
       collapseCompletedRuns: typeof record.collapseCompletedRuns === "boolean"
         ? record.collapseCompletedRuns : DEFAULTS.collapseCompletedRuns,
       sidebarWidth: storedWidth(record.sidebarWidth),
@@ -93,6 +101,7 @@ function AccountPreferences({ userId, children }: { userId: string; children: Re
       value={{
         ...preferences,
         setShowRunStatistics: (showRunStatistics) => update({ showRunStatistics }),
+        setShowSessionResources: (showSessionResources) => update({ showSessionResources }),
         setCollapseCompletedRuns: (collapseCompletedRuns) => update({ collapseCompletedRuns }),
         setSidebarWidth: (sidebarWidth) => update({ sidebarWidth }),
         setSidebarCollapsed: (sidebarCollapsed) => update({ sidebarCollapsed }),
