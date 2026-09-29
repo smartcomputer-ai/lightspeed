@@ -29,6 +29,7 @@ import { ProfilesPage } from "@/pages/ProfilesPage";
 import { SessionsPage } from "@/pages/SessionsPage";
 import { SetupsPage } from "@/pages/SetupsPage";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
+import { BlobPage } from "@/pages/BlobPage";
 import { UserPreferencesProvider } from "@/lib/user-preferences";
 import { FeatureGate } from "@/components/feature-gate";
 import { finishAutomaticSignIn } from "@/lib/automatic-sign-in";
@@ -124,6 +125,7 @@ export function App() {
           path="u/:slug/bots/:botId/activity"
           element={<FeatureGate feature="bots"><BotsPage admin={admin} view="activity" /></FeatureGate>}
         />
+        <Route path="u/:slug/blobs/:digest" element={<BlobPage admin={admin} />} />
         <Route path="u/:slug/profiles" element={<ProfilesPage admin={admin} />} />
         <Route
           path="u/:slug/profiles/:profileId"

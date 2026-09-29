@@ -60,12 +60,20 @@ export function MediaStrip({ items, className }: { items: TranscriptMedia[]; cla
   );
 }
 
+/// The shareable blob page for media, when the page provides one; else the
+/// loaded object URL is the link.
+function useBlobPage(media: TranscriptMedia | null): string | null {
+  const blobHref = useContext(TranscriptLinksContext).blobHref;
+  return media && blobHref ? blobHref(media.blobRef, { ...(media.name ? { name: media.name } : {}), type: media.mime }) : null;
+}
+
 function mediaTitle(media: TranscriptMedia): string {
   return media.name ? `${media.name} · ${media.handle}` : media.handle;
 }
 
 export function MediaThumb({ media, className }: { media: TranscriptMedia; className?: string }) {
   const url = useMediaUrl(media);
+  const page = useBlobPage(media);
   const title = mediaTitle(media);
   if (!url) {
     return (
@@ -79,7 +87,7 @@ export function MediaThumb({ media, className }: { media: TranscriptMedia; class
     );
   }
   return (
-    <a href={url} target="_blank" rel="noreferrer" title={title} className={cn("block max-w-full", className)}>
+    <a href={page ?? url} target="_blank" rel="noreferrer" title={title} className={cn("block max-w-full", className)}>
       <img
         src={url}
         alt={media.name ?? media.handle}
@@ -91,7 +99,10 @@ export function MediaThumb({ media, className }: { media: TranscriptMedia; class
 }
 
 export function DocumentChip({ media }: { media: TranscriptMedia }) {
-  const url = useMediaUrl(media);
+  const page = useBlobPage(media);
+  // With a blob page there is nothing to preload; the page reads the bytes.
+  const loaded = useMediaUrl(page ? null : media);
+  const url = page ?? loaded;
   const label = media.name ?? media.handle;
   const body = (
     <>
@@ -114,7 +125,8 @@ export function DocumentChip({ media }: { media: TranscriptMedia }) {
 export function MediaByHandle({ handle, alt, inline = false }: { handle: string; alt?: string; inline?: boolean }) {
   const links = useContext(TranscriptLinksContext);
   const media = links.mediaByHandle?.get(handle) ?? null;
-  const url = useMediaUrl(media);
+  const url = useMediaUrl(media?.kind === "image" ? media : null);
+  const page = useBlobPage(media);
   if (!media) {
     return (
       <span className="rounded border border-dashed px-1 text-xs text-muted-foreground" title="This media is not part of the session">
@@ -129,7 +141,7 @@ export function MediaByHandle({ handle, alt, inline = false }: { handle: string;
     return <span className="text-xs text-muted-foreground">{alt || media.name || handle}</span>;
   }
   return (
-    <a href={url} target="_blank" rel="noreferrer" title={mediaTitle(media)} className={inline ? "inline-block align-middle" : "block"}>
+    <a href={page ?? url} target="_blank" rel="noreferrer" title={mediaTitle(media)} className={inline ? "inline-block align-middle" : "block"}>
       <img src={url} alt={alt || media.name || handle} className="max-h-96 max-w-full rounded-lg border object-contain" loading="lazy" />
     </a>
   );

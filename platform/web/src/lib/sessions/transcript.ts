@@ -47,6 +47,8 @@ export type TranscriptEntry =
       kind: "system";
       key: string;
       text: string;
+      /// The stored instructions or catalog text, opened from the chip.
+      contentRef?: string;
       /// A catalog version a newer version has updated; kept in context so
       /// the rendered prefix stays cacheable, shown dimmed.
       superseded?: boolean;
@@ -711,6 +713,7 @@ function applyNonToolCallItem(
           kind: "system",
           key: item.id,
           text: item.preview ?? "",
+          contentRef: item.content.contentRef,
           ...(item.supersededBy ? { superseded: true } : {}),
         });
       }
@@ -724,6 +727,7 @@ function applyNonToolCallItem(
           kind: "system",
           key: item.id,
           text: item.supersedes ? `${text} (updated)` : text,
+          contentRef: item.content.contentRef,
           ...(item.supersededBy ? { superseded: true } : {}),
         });
       }

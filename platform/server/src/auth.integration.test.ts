@@ -86,6 +86,23 @@ async function companyUser() {
 }
 
 it.each([
+  ["enabled", identityEnv.oidc, "emergency.sign_in"],
+  ["disabled", null, "password.sign_in"],
+] as const)("audits bootstrap admin password sign-in with SSO %s", async (_name, oidc, action) => {
+  const auth = createAuth(fixture.db, { ...identityEnv, oidc });
+  const response = await auth.handler(new Request(`${identityEnv.baseUrl}/api/auth/sign-in/email`, {
+    method: "POST", headers: { "content-type": "application/json", origin: identityEnv.baseUrl },
+    body: JSON.stringify({ email: identityEnv.adminEmail, password: identityEnv.adminPassword }),
+  }));
+  expect(response.status).toBe(200);
+  const admin = (await fixture.db.select().from(schema.user).where(eq(schema.user.email, identityEnv.adminEmail!)))[0]!;
+  expect(admin.emergencyAdmin).toBe(true);
+  expect(await fixture.db.select().from(schema.identityAudit)).toEqual([
+    expect.objectContaining({ actorId: admin.id, targetId: admin.id, action, outcome: "success" }),
+  ]);
+});
+
+it.each([
   [["lightspeed-users"], "user"], [["lightspeed-admins"], "admin"], [["lightspeed-users", "lightspeed-admins"], "admin"],
 ])("admits %j with local platform role %s and no universe membership", async (groups, role) => {
   const { cookie } = await login({ groups });

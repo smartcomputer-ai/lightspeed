@@ -86,6 +86,7 @@ import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionComposer, type ComposerMessage, type ComposerMode } from "@/components/session/composer";
 import { SessionResourceChips, useSessionResources } from "@/components/session/session-resources";
 import { hasResources } from "@/lib/sessions/session-resources";
+import { appHref, blobHref } from "@/lib/blob-view";
 import { Switch } from "@/components/ui/switch";
 import {
   ApprovalCards,
@@ -1607,11 +1608,16 @@ export function SessionDetail({
     return {
       botName: (botId) => names.get(botId),
       sessionHref: href,
+      // A browser address: these links open in a new tab, outside the router.
+      blobHref: (blobRef, hints) => {
+        const path = blobHref(slug, blobRef, { ...hints, session: sessionId });
+        return path && appHref(path);
+      },
       navigate: (target) => void navigate(target),
       loadMedia,
       mediaByHandle: transcriptMedia,
     };
-  }, [botRoster, sessionHref, slug, navigate, loadMedia, transcriptMedia]);
+  }, [botRoster, sessionHref, slug, sessionId, navigate, loadMedia, transcriptMedia]);
   // Operator override: the engine happily admits direct runs on a managed
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the

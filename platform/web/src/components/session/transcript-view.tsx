@@ -94,19 +94,29 @@ export function TranscriptEntryView({
 export function SystemChips({ entries }: { entries: Extract<TranscriptEntry, { kind: "system" }>[] }) {
   return (
     <div className="flex min-w-0 flex-wrap gap-1.5 px-2 py-0.5" aria-label="Context updates">
-      {entries.map((entry) => (
-        <span
-          key={entry.key}
-          className={cn(
-            "max-w-full truncate rounded-full border border-dashed px-2 text-[11px] leading-4 text-muted-foreground",
-            entry.superseded && "opacity-50",
-          )}
-          title={entry.superseded ? `${entry.text} — superseded by a newer version` : entry.text}
-        >
-          {entry.text}
-        </span>
-      ))}
+      {entries.map((entry) => <SystemChip key={entry.key} entry={entry} />)}
     </div>
+  );
+}
+
+/// Instructions and catalogs the model was given. A chip opens the stored
+/// text on its blob page; a superseded catalog opens the version it replaced.
+function SystemChip({ entry }: { entry: Extract<TranscriptEntry, { kind: "system" }> }) {
+  const blobHref = useContext(TranscriptLinksContext).blobHref;
+  const title = entry.superseded ? `${entry.text} — superseded by a newer version` : entry.text;
+  const className = cn(
+    "max-w-full truncate rounded-full border border-dashed px-2 text-[11px] leading-4 text-muted-foreground",
+    entry.superseded && "opacity-50",
+  );
+  const href = entry.contentRef && blobHref ? blobHref(entry.contentRef, { name: entry.text, type: "text/markdown" }) : null;
+  if (!href) {
+    return <span className={className} title={title}>{entry.text}</span>;
+  }
+  return (
+    <a href={href} target="_blank" rel="noreferrer" title={`${title} — open in a new tab`}
+      className={cn(className, "transition-colors hover:border-solid hover:bg-muted hover:text-foreground")}>
+      {entry.text}
+    </a>
   );
 }
 

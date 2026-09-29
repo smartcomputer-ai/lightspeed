@@ -208,8 +208,11 @@ export class DemoStore {
     return this.putBytes(new TextEncoder().encode(text));
   }
 
+  /// Seeded text is stored under a digest-shaped reference, so blob pages
+  /// address it the way they address real content. Uploads compute a real
+  /// SHA-256 instead; a counter padded to 64 hex digits never collides with one.
   putBytes(bytes: Uint8Array): string {
-    const blobRef = this.nextId("blob");
+    const blobRef = `sha256:${this.nextId("blob").slice("blob-".length).padStart(64, "0")}`;
     this.blobs.set(blobRef, { blobRef, bytes: bytes.length, bytesBase64: bytesToBase64(bytes) });
     return blobRef;
   }

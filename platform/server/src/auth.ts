@@ -84,8 +84,8 @@ export function createAuth(db: Db, env: ServerEnv) {
         },
         after: async (session) => {
           const [user] = await db.select().from(schema.user).where(eq(schema.user.id, session.userId));
-          if (user?.emergencyAdmin && requests.getStore()?.identity?.source === "password") {
-            await auditIdentity(db, { actorId: user.id, action: "emergency.sign_in", targetId: user.id });
+          if (user && requests.getStore()?.identity?.source === "password") {
+            await auditIdentity(db, { actorId: user.id, action: oidc && user.emergencyAdmin ? "emergency.sign_in" : "password.sign_in", targetId: user.id });
           }
         },
       } },
