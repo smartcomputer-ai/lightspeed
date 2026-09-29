@@ -626,23 +626,6 @@ pub fn openai_completions_live_model() -> ModelSelection {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn live_test_deadline_covers_a_stuck_request() {
-        let error = bounded_live_test(
-            "stuck request",
-            Duration::from_millis(10),
-            std::future::pending::<anyhow::Result<()>>(),
-        )
-        .await
-        .expect_err("a pending API request must not bypass the deadline");
-        assert!(error.to_string().contains("stuck request"));
-    }
-}
-
 /// Tests that exercise omitted models configure the same durable policy as clients.
 pub async fn seed_agent_default(
     store: &store_pg::PgStore,
@@ -667,4 +650,21 @@ pub async fn seed_agent_default(
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn live_test_deadline_covers_a_stuck_request() {
+        let error = bounded_live_test(
+            "stuck request",
+            Duration::from_millis(10),
+            std::future::pending::<anyhow::Result<()>>(),
+        )
+        .await
+        .expect_err("a pending API request must not bypass the deadline");
+        assert!(error.to_string().contains("stuck request"));
+    }
 }
