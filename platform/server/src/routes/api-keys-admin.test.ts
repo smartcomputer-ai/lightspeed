@@ -16,13 +16,14 @@ function setup(platformRole: string | undefined) {
     const rpc = JSON.parse(String(init.body));
     calls.push({ method: rpc.method, params: rpc.params, headers: new Headers(init.headers) });
     const apiKey = { keyPrefix: "lsk_abcdefgh" };
-    const result = rpc.method === "deployment/api-keys/create" ? { apiKey, secret: "lsk_secret" }
+    const result = ["deployment/api-keys/create", "deployment/api-keys/rotate"].includes(rpc.method) ? { apiKey, secret: "lsk_secret" }
       : rpc.method === "deployment/api-keys/list" ? { apiKeys: [apiKey] } : { apiKey };
     return Response.json({ id: rpc.id, result: { result, notifications: [] } });
   }));
   const query = { from: () => query, where: () => query, limit: async () => [universe] };
+  const audit = vi.fn(async () => undefined);
   const ctx = {
-    db: { insert: () => ({ values: async () => undefined }), select: (fields: unknown) => { expect(fields).toHaveProperty("lightspeedUniverseId", schema.universes.lightspeedUniverseId); return query; } },
+    db: { insert: () => ({ values: audit }), select: (fields: unknown) => { expect(fields).toHaveProperty("lightspeedUniverseId", schema.universes.lightspeedUniverseId); return query; } },
     env: { lightspeedApiUrl: "https://core.example/rpc", lightspeedApiKey: "lsk_platform" },
   } as unknown as AppContext;
   const app = new Hono<{ Variables: ApiVariables }>();
@@ -34,7 +35,7 @@ function setup(platformRole: string | undefined) {
   const request = (method: string, path: string, body?: unknown) => app.request(path, {
     method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  return { request, calls };
+  return { request, calls, audit };
 }
 
 it("is for platform admins only", async () => {
@@ -42,6 +43,7 @@ it("is for platform admins only", async () => {
   expect((await request("GET", "/api-keys")).status).toBe(403);
   expect((await request("POST", "/api-keys", { displayName: "x", scope: { kind: "deployment" } })).status).toBe(403);
   expect((await request("DELETE", "/api-keys/lsk_abcdefgh")).status).toBe(403);
+  expect((await request("POST", "/api-keys/lsk_abcdefgh/rotate")).status).toBe(403);
   expect(calls).toEqual([]);
 });
 
@@ -70,4 +72,13 @@ it("mints a deployment key that may assert actors, and lists and revokes keys", 
   expect(await (await request("GET", "/api-keys")).json()).toEqual([{ keyPrefix: "lsk_abcdefgh" }]);
   expect((await request("DELETE", "/api-keys/lsk_abcdefgh")).status).toBe(200);
   expect(calls.map((call) => call.method)).toEqual(["deployment/api-keys/create", "deployment/api-keys/list", "deployment/api-keys/revoke"]);
+});
+
+it("rotates an admin key and audits only its identifiers", async () => {
+  const { request, calls, audit } = setup("admin");
+  const response = await request("POST", "/api-keys/lsk_previous/rotate");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ apiKey: { keyPrefix: "lsk_abcdefgh" }, secret: "lsk_secret" });
+  expect(calls).toEqual([expect.objectContaining({ method: "deployment/api-keys/rotate", params: { keyPrefix: "lsk_previous" } })]);
+  expect(audit).toHaveBeenCalledWith({ actorId: "admin", action: "key.rotate", targetId: "lsk_previous", details: { newKeyPrefix: "lsk_abcdefgh" }, outcome: "success" });
 });

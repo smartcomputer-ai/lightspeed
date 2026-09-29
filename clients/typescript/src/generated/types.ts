@@ -4379,7 +4379,7 @@ export interface AgentApiOutcomeOfDeploymentApiKeyCreateResponse {
   result: DeploymentApiKeyCreateResponse;
 }
 /**
- * A newly minted key. `secret` is returned only by create and cannot be
+ * A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
  * recovered later. Its custom `Debug` implementation redacts the DTO before
  * JSON-RPC serialization; the serialized response payload remains sensitive
  * and must not be logged.
@@ -7073,7 +7073,7 @@ export interface DeploymentApiKeyCreateParams {
   displayName: string;
   /**
    * The method groups the key may call; absent grants every group its
-   * scope allows. Keys never change: to change what a key may do, revoke
+   * scope allows. To change what a key may do, revoke
    * it and mint another.
    */
   groups?: MethodGroup[] | null;
@@ -7098,6 +7098,13 @@ export interface DeploymentApiKeyListParams {
  * via the `definition` "DeploymentApiKeyRevokeParams".
  */
 export interface DeploymentApiKeyRevokeParams {
+  keyPrefix: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentApiKeyRotateParams".
+ */
+export interface DeploymentApiKeyRotateParams {
   keyPrefix: string;
 }
 /**

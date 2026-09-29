@@ -2,8 +2,8 @@
 //!
 //! A key names what it reaches (one universe, or the deployment), the method
 //! groups it may call, and whether it may assert the actor a request acts
-//! for. That is its whole authority. Keys are immutable apart from their
-//! display name and revocation: changing what a key may do is revoking it and
+//! for. That is its whole authority. Rotation replaces the secret without
+//! changing authority: changing what a key may do is revoking it and
 //! minting another, so a running process never gains or loses rights
 //! silently. Persistence belongs to the deployment store, before universe
 //! resolution.

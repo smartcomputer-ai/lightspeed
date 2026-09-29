@@ -8031,7 +8031,7 @@
           "type": "string"
         },
         "groups": {
-          "description": "The method groups the key may call; absent grants every group its\nscope allows. Keys never change: to change what a key may do, revoke\nit and mint another.",
+          "description": "The method groups the key may call; absent grants every group its\nscope allows. To change what a key may do, revoke\nit and mint another.",
           "items": {
             "$ref": "#/definitions/MethodGroup"
           },
@@ -8056,7 +8056,7 @@
       "type": "object"
     },
     "DeploymentApiKeyCreateResponse": {
-      "description": "A newly minted key. `secret` is returned only by create and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
+      "description": "A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be\nrecovered later. Its custom `Debug` implementation redacts the DTO before\nJSON-RPC serialization; the serialized response payload remains sensitive\nand must not be logged.",
       "properties": {
         "apiKey": {
           "$ref": "#/definitions/DeploymentApiKeyView"
@@ -8120,6 +8120,18 @@
       },
       "required": [
         "apiKey"
+      ],
+      "type": "object"
+    },
+    "DeploymentApiKeyRotateParams": {
+      "additionalProperties": false,
+      "properties": {
+        "keyPrefix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "keyPrefix"
       ],
       "type": "object"
     },

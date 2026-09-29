@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, ShieldOff } from "lucide-react";
+import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/agent-client";
 import { api, type Universe } from "@/api";
 import { GroupSummary, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
+import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { ReadError } from "@/components/read-error";
 import {
@@ -50,11 +51,11 @@ import { useUniverses } from "@/lib/universes";
 const DEPLOYMENT = "deployment";
 
 /// Every core key of the deployment: what it reaches, the method groups it
-/// may call, and whether it may assert actors. Keys are immutable; changing
-/// one is revoke and mint.
+/// may call, and whether it may assert actors. Rotation preserves authority.
 export function AdminApiKeysPage() {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [rotatingKey, setRotatingKey] = useState<DeploymentApiKeyView | null>(null);
   const keys = useQuery({
     queryKey: ["admin-api-keys"],
     queryFn: () => api<DeploymentApiKeyView[]>("GET", "/api/v1/admin/api-keys"),
@@ -131,6 +132,11 @@ export function AdminApiKeysPage() {
                     </TableCell>
                     <TableActionsCell>
                       {!revoked && (
+                        <Button variant="ghost" size="icon-sm" aria-label={`Rotate ${key.displayName ?? key.keyPrefix}`} onClick={() => setRotatingKey(key)}>
+                          <RotateCw />
+                        </Button>
+                      )}
+                      {!revoked && (
                         <AlertDialog>
                           <AlertDialogTrigger
                             render={
@@ -183,6 +189,12 @@ export function AdminApiKeysPage() {
           onCheckedChange={setShowRevoked}
         />
       </div>
+      {rotatingKey && <RotateKeyDialog
+        apiKey={rotatingKey}
+        basePath={"/api/v1/admin/api-keys"}
+        onClose={() => setRotatingKey(null)}
+        onRotated={() => void invalidate()}
+      />}
       <CreateKeyDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

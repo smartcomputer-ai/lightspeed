@@ -23,6 +23,7 @@ pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST: &str =
 
 pub const METHOD_DEPLOYMENT_API_KEYS_CREATE: &str = "deployment/api-keys/create";
 pub const METHOD_DEPLOYMENT_API_KEYS_LIST: &str = "deployment/api-keys/list";
+pub const METHOD_DEPLOYMENT_API_KEYS_ROTATE: &str = "deployment/api-keys/rotate";
 pub const METHOD_DEPLOYMENT_API_KEYS_REVOKE: &str = "deployment/api-keys/revoke";
 pub const METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT: &str =
     "deployment/environment-providers/put";
@@ -162,7 +163,7 @@ pub struct DeploymentApiKeyCreateParams {
     /// with the `x-lightspeed-universe` header and may hold deployment groups.
     pub scope: AccessScope,
     /// The method groups the key may call; absent grants every group its
-    /// scope allows. Keys never change: to change what a key may do, revoke
+    /// scope allows. To change what a key may do, revoke
     /// it and mint another.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub groups: Option<Vec<MethodGroup>>,
@@ -175,7 +176,7 @@ pub struct DeploymentApiKeyCreateParams {
     pub display_name: String,
 }
 
-/// A newly minted key. `secret` is returned only by create and cannot be
+/// A newly minted or rotated key. `secret` is returned only by create or rotate and cannot be
 /// recovered later. Its custom `Debug` implementation redacts the DTO before
 /// JSON-RPC serialization; the serialized response payload remains sensitive
 /// and must not be logged.
@@ -209,6 +210,12 @@ pub struct DeploymentApiKeyListParams {
 pub struct DeploymentApiKeyListResponse {
     #[serde(default)]
     pub api_keys: Vec<DeploymentApiKeyView>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentApiKeyRotateParams {
+    pub key_prefix: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -436,6 +443,11 @@ pub trait DeploymentApiService: Send + Sync {
         params: DeploymentApiKeyListParams,
     ) -> Result<AgentApiOutcome<DeploymentApiKeyListResponse>, AgentApiError>;
 
+    async fn rotate_api_key(
+        &self,
+        params: DeploymentApiKeyRotateParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError>;
+
     async fn revoke_api_key(
         &self,
         params: DeploymentApiKeyRevokeParams,
@@ -579,9 +591,11 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_UNIVERSES_DELETE => delete_universe(DeploymentUniverseDeleteParams) -> DeploymentUniverseDeleteResponse =>
         ["Purge a universe", "Permanently terminates live session workflows, deletes external blob objects, and cascades universe data. The purge is resumable/idempotent after partial failure."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_CREATE => create_api_key(DeploymentApiKeyCreateParams) -> DeploymentApiKeyCreateResponse =>
-        ["Create a scoped API key", "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do."], access: MethodAccess::Deployment,
+        ["Create a scoped API key", "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_LIST => list_api_keys(DeploymentApiKeyListParams) -> DeploymentApiKeyListResponse =>
         ["List scoped API keys", "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned."], access: MethodAccess::Deployment,
+    METHOD_DEPLOYMENT_API_KEYS_ROTATE => rotate_api_key(DeploymentApiKeyRotateParams) -> DeploymentApiKeyCreateResponse =>
+        ["Rotate a scoped API key", "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
         ["Revoke a scoped API key", "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>

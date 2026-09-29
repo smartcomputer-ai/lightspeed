@@ -1656,7 +1656,7 @@ Permanently terminates live session workflows, deletes external blob objects, an
 
 **Create a scoped API key**
 
-Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.
+Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/api-keys`
@@ -1677,6 +1677,19 @@ Returns non-secret key metadata, all keys or those of one scope, including group
 - Target: `none`
 - Params: `DeploymentApiKeyListParams`
 - Result: `AgentApiOutcome<DeploymentApiKeyListResponse>`
+
+### `deployment/api-keys/rotate`
+
+**Rotate a scoped API key**
+
+Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/api-keys`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentApiKeyRotateParams`
+- Result: `AgentApiOutcome<DeploymentApiKeyCreateResponse>`
 
 ### `deployment/api-keys/revoke`
 

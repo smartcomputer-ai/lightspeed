@@ -1,9 +1,10 @@
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, ShieldOff } from "lucide-react";
+import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
 import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/agent-client";
 import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
+import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";
 import { api } from "@/api";
 import {
@@ -62,6 +63,7 @@ export function ApiKeysPage({ admin: _admin }: { admin: boolean }) {
 function ApiKeyList({ universeId }: { universeId: string }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [rotatingKey, setRotatingKey] = useState<DeploymentApiKeyView | null>(null);
   const keys = useQuery({
     queryKey: ["api-keys", universeId],
     queryFn: () =>
@@ -150,6 +152,11 @@ function ApiKeyList({ universeId }: { universeId: string }) {
                       )}
                     </TableCell>
                     <TableActionsCell>
+                      {!revoked && !key.assertActor && (
+                        <Button variant="ghost" size="icon-sm" aria-label={`Rotate ${key.displayName ?? key.keyPrefix}`} onClick={() => setRotatingKey(key)}>
+                          <RotateCw />
+                        </Button>
+                      )}
                       {!revoked && (
                         <AlertDialog>
                           <AlertDialogTrigger
@@ -205,9 +212,15 @@ function ApiKeyList({ universeId }: { universeId: string }) {
       </div>
       <p className="mt-4 text-sm text-muted-foreground">
         Use a key as <code className="font-mono text-xs">Authorization: Bearer lsk_…</code>.
-        Keys reach this universe only. A key never changes; revoke it and create another to
-        change what it may call.
+        Keys reach this universe only. Rotate a secret to replace it immediately, or revoke
+        the key and create another to change what it may call.
       </p>
+      {rotatingKey && <RotateKeyDialog
+        apiKey={rotatingKey}
+        basePath={`/api/v1/universes/${universeId}/api-keys`}
+        onClose={() => setRotatingKey(null)}
+        onRotated={() => void invalidate()}
+      />}
       <CreateApiKeyDialog
         universeId={universeId}
         open={createOpen}

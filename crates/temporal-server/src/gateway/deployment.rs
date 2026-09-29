@@ -17,8 +17,8 @@ use api::AccessScope;
 use api::{
     AgentApiError, AgentApiOutcome, DeploymentApiKeyCreateParams, DeploymentApiKeyCreateResponse,
     DeploymentApiKeyListParams, DeploymentApiKeyListResponse, DeploymentApiKeyRevokeParams,
-    DeploymentApiKeyRevokeResponse, DeploymentApiKeyView, DeploymentApiService,
-    DeploymentEnvironmentAdoptParams, DeploymentEnvironmentAdoptResponse,
+    DeploymentApiKeyRevokeResponse, DeploymentApiKeyRotateParams, DeploymentApiKeyView,
+    DeploymentApiService, DeploymentEnvironmentAdoptParams, DeploymentEnvironmentAdoptResponse,
     DeploymentEnvironmentProviderConnection, DeploymentEnvironmentProviderDeleteParams,
     DeploymentEnvironmentProviderDeleteResponse, DeploymentEnvironmentProviderListParams,
     DeploymentEnvironmentProviderListResponse, DeploymentEnvironmentProviderPutParams,
@@ -646,6 +646,30 @@ impl DeploymentApiService for GatewayDeploymentApi {
                 .collect();
             Ok(AgentApiOutcome::new(DeploymentApiKeyListResponse {
                 api_keys,
+            }))
+        })
+        .await
+    }
+
+    async fn rotate_api_key(
+        &self,
+        params: DeploymentApiKeyRotateParams,
+    ) -> Result<AgentApiOutcome<DeploymentApiKeyCreateResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_API_KEYS_ROTATE, async {
+            let key_prefix = params.key_prefix.trim();
+            if key_prefix.is_empty() {
+                return Err(AgentApiError::invalid_request(
+                    "api key keyPrefix must not be empty",
+                ));
+            }
+            let rotated = store_pg::PgApiKeyStore::new(self.pool().clone())
+                .rotate_api_key(key_prefix)
+                .await
+                .map_err(map_api_key_error)?
+                .ok_or_else(|| AgentApiError::not_found("unknown or revoked api key prefix"))?;
+            Ok(AgentApiOutcome::new(DeploymentApiKeyCreateResponse {
+                api_key: api_key_view(rotated.record),
+                secret: rotated.secret.expose().to_owned(),
             }))
         })
         .await

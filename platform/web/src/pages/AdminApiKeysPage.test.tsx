@@ -95,3 +95,27 @@ it("mints a universe key with only universe groups, then shows its secret once",
   });
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
 });
+
+it("rotates a key after confirmation and clears the displayed secret on close", async () => {
+  await act(async () => root.render(<QueryClientProvider client={client}><AdminApiKeysPage /></QueryClientProvider>));
+  await settle();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Rotate Agent"]')!.click());
+  await settle();
+  expect(dialogText()).toContain("will stop working immediately");
+  expect(mocks.api.mock.calls.some(([method]) => method === "POST")).toBe(false);
+  // Refetch replaces the row's prefix; the secret dialog must survive it.
+  mocks.api.mockImplementation(async (method: string) => method === "POST"
+    ? { apiKey: { keyPrefix: "lsk_new" }, secret: "lsk_new_secret" }
+    : keys.map((key) => key.keyPrefix === "lsk_universe" ? { ...key, keyPrefix: "lsk_new" } : key));
+  await act(async () => button("Rotate key")!.click());
+  await settle();
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/admin/api-keys/lsk_universe/rotate");
+  expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
+  await act(async () => button("I saved the key")!.click());
+  await settle();
+  expect(document.querySelector("#api-key-secret")).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Rotate Agent"]')!.click());
+  await settle();
+  expect(document.querySelector("#api-key-secret")).toBeNull();
+  expect(dialogText()).toContain("Rotate this API key?");
+});

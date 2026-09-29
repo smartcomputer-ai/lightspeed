@@ -3120,7 +3120,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.",
+      "description": "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
       "group": "deployment/api-keys",
       "method": "deployment/api-keys/create",
       "params": {
@@ -3162,6 +3162,30 @@
       "role": null,
       "scope": "deployment",
       "summary": "List scoped API keys",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
+      "group": "deployment/api-keys",
+      "method": "deployment/api-keys/rotate",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentApiKeyRotateParams"
+        },
+        "type": "DeploymentApiKeyRotateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentApiKeyCreateResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentApiKeyCreateResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Rotate a scoped API key",
       "target": null
     },
     {

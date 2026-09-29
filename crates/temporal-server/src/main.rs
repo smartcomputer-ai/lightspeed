@@ -123,6 +123,8 @@ enum ApiKeyCommand {
     },
     #[command(about = "List API keys (prefixes only; secrets are never stored)")]
     List,
+    /// Replace an active key secret immediately; prints the new secret once.
+    Rotate { key_prefix: String },
     #[command(about = "Revoke an API key by its display prefix")]
     Revoke { key_prefix: String },
 }
@@ -464,6 +466,17 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                     record.display_name.as_deref().unwrap_or("-"),
                 );
             }
+            Ok(())
+        }
+        ApiKeyCommand::Rotate { key_prefix } => {
+            let key = api_keys
+                .rotate_api_key(&key_prefix)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("no active api key with prefix {key_prefix}"))?;
+            println!(
+                "{}",
+                serde_json::json!({ "keyPrefix": key.record.key_prefix, "secret": key.secret.expose() })
+            );
             Ok(())
         }
         ApiKeyCommand::Revoke { key_prefix } => {

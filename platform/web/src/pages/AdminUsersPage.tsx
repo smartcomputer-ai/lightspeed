@@ -535,7 +535,7 @@ function auditAction(action: string): string {
     "user.suspend": "User suspended", "user.reinstate": "User reinstated",
     "session.revoke_all": "All sessions signed out", "member.add": "Universe member added",
     "member.role": "Universe role changed", "member.remove": "Universe member removed",
-    "key.create": "API key created", "key.revoke": "API key revoked",
+    "key.create": "API key created", "key.revoke": "API key revoked", "key.rotate": "API key rotated",
     "create_user": "User created", "update_user": "User updated", "set_user_password": "Password reset",
     "emergency.designate": "Emergency admin designated", "emergency.create": "Emergency admin created",
   };

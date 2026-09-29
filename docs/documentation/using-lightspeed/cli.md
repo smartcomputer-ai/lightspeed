@@ -246,8 +246,13 @@ A deployment key with `deployment/api-keys` can issue narrower keys:
 lightspeed api-key create --name "Agent client" --universe-id UNIVERSE_UUID \
   --group session --group models --group vfs --group blobs/put
 lightspeed api-key list
+lightspeed api-key rotate KEY_PREFIX
 lightspeed api-key revoke KEY_PREFIX
 ```
+
+Rotation replaces the secret immediately and prints its replacement once.
+Use the returned prefix for later key-management commands and update every
+client using the old secret. Scope and permissions stay the same.
 
 Create prints the secret once; use `--json` for machine-readable output. Add `--group auth` if the client needs
 to configure provider credentials, and other groups for the resources it

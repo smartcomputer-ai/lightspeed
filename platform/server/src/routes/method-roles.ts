@@ -159,6 +159,7 @@ export const UNMEMBERED_METHODS: ReadonlySet<string> = new Set([
   "deployment/api-keys/create",
   "deployment/api-keys/list",
   "deployment/api-keys/revoke",
+  "deployment/api-keys/rotate",
   "deployment/channels/accounts/list",
   "deployment/environment-provider-bindings/list",
   "deployment/environment-providers/bindings/delete",

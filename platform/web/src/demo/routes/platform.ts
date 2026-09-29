@@ -224,6 +224,18 @@ export function platformRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret }, 201);
   });
 
+  app.post("/universes/:id/api-keys/:keyPrefix/rotate", (c) => {
+    const state = universeFor(store, c);
+    if (!state) return notFound(c);
+    const apiKey = state.apiKeys.find((key) => key.keyPrefix === c.req.param("keyPrefix") && key.revokedAtMs == null);
+    if (!apiKey) return notFound(c);
+    if (apiKey.assertActor) return c.json({ error: "Rotate this key from Platform admin" }, 403);
+    const secret = `lsk_${randomHex(24)}`;
+    apiKey.keyPrefix = secret.slice(0, 12);
+    apiKey.lastUsedAtMs = null;
+    return c.json({ apiKey, secret });
+  });
+
   app.delete("/universes/:id/api-keys/:keyPrefix", (c) => {
     const state = universeFor(store, c);
     if (!state) return notFound(c);

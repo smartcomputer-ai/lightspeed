@@ -22,8 +22,7 @@ const createSchema = z.object({
 });
 
 /// Every core key of the deployment, for platform admins: what each reaches
-/// and may call, and whether it may assert actors. Keys are immutable; a
-/// change is revoke and mint. The secret exists only in the create response.
+/// and may call, and whether it may assert actors. Key authority is immutable. Secrets are returned only on create or rotation.
 export function apiKeyAdminRoutes(ctx: AppContext) {
   const app = new Hono<{ Variables: ApiVariables }>();
 
@@ -68,6 +67,13 @@ export function apiKeyAdminRoutes(ctx: AppContext) {
       return c.json(response.result, 201);
     });
   });
+
+  app.post("/api-keys/:keyPrefix/rotate", (c) => withGateway(c, async () => {
+    const keyPrefix = c.req.param("keyPrefix");
+    const response = await deploymentClientFor(ctx).call("deployment/api-keys/rotate", { keyPrefix });
+    await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyPrefix, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
+    return c.json(response.result);
+  }));
 
   app.delete("/api-keys/:keyPrefix", (c) => withGateway(c, async () => {
     const response = await deploymentClientFor(ctx).call("deployment/api-keys/revoke", {

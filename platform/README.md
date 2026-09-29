@@ -179,8 +179,9 @@ under **API keys**, choosing the method groups each key may call from presets
 actors, and credential leasing and channel delivery are opt-in. Platform admins see and
 mint every key under **Platform admin → API keys**, choosing what a key reaches (the
 deployment or one universe), the method groups it may call, and whether it
-speaks for people. A secret is shown once; keys never change, so revoke and mint
-instead. The Configurator template asks which key its MCP server acts with:
+speaks for people. A secret is shown once. Rotate it to replace it immediately
+while preserving authority; revoke and mint a replacement to change permissions.
+The Configurator template asks which key its MCP server acts with:
 the current one, a new key with chosen groups (starting from the configuration
 groups), or an existing universe key whose secret the Admin pastes; it revokes
 only keys it minted. The server lists only the tools that key may call, and

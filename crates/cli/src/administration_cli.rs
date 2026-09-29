@@ -183,6 +183,10 @@ enum ApiKeyCommand {
         #[arg(long)]
         assert_actor: bool,
     },
+    /// Replace an active key secret immediately; prints the new secret once.
+    Rotate {
+        key_prefix: String,
+    },
     Revoke {
         key_prefix: String,
     },
@@ -258,6 +262,21 @@ pub async fn api_key(args: ApiKeyArgs) -> Result<()> {
                 .result;
             if !args.json {
                 println!("API key created. Save the secret now; it is shown only once.");
+            }
+            crate::output::show(args.json, &response)?;
+        }
+        ApiKeyCommand::Rotate { key_prefix } => {
+            let response: api::DeploymentApiKeyCreateResponse = client
+                .request(
+                    api::METHOD_DEPLOYMENT_API_KEYS_ROTATE,
+                    api::DeploymentApiKeyRotateParams { key_prefix },
+                )
+                .await?
+                .result;
+            if !args.json {
+                println!(
+                    "API key rotated. The old secret no longer works. Save the new secret now."
+                );
             }
             crate::output::show(args.json, &response)?;
         }

@@ -102,7 +102,9 @@ If provisioning a universe directly through the server host, use
 printed UUID. Platform-created universes are provisioned through its deployment
 key. See [People and roles](people-and-roles.md) for account administration.
 
-## Create and revoke keys
+<a id="create-and-revoke-keys"></a>
+
+## Create, rotate and revoke keys
 
 Universe Admins can open their universe's **API keys** page, choose **Create
 key**, supply a name, and choose the method groups the key may call. The form
@@ -136,16 +138,37 @@ does not mean read-only access. Verify it with a profile read through the
 an operation outside that group is refused.
 
 Core stores a SHA-256 hash of the random secret, a display prefix, and key
-metadata. The scope, groups, and actor flag cannot be edited. To rotate or
-change authority, create a replacement, update and verify its consumer, then
-revoke the old key in the UI or by prefix:
+metadata. Choose **Rotate** on an active key to replace its secret immediately.
+The new secret is shown once and the old secret stops working for subsequent
+requests, with no grace period. Update every client using that key. Rotation
+changes the display prefix and clears last use, while preserving the name,
+scope, groups, actor flag, creator and creation time. Revoked keys cannot be
+rotated. The Platform records the old and new prefixes in its access audit.
+Keys that assert actors must be rotated from **Platform admin → API keys**.
+
+Both CLIs support rotation by the current prefix:
+
+```bash
+lightspeed api-key rotate "<key-prefix>"
+lightspeed-server api-key rotate "<key-prefix>"
+```
+
+The first command uses the configured connection; the second accesses the
+store from the server host. Each returns the new secret once. If you rotate
+the credential used by your CLI connection or Platform service, update that
+configuration before making further requests.
+
+The scope, groups, and actor flag cannot be edited. To change authority,
+create a replacement, update and verify its consumer, then revoke the old
+key in the UI or by prefix:
 
 ```bash
 lightspeed-server api-key list
 lightspeed-server api-key revoke "<key-prefix>"
 ```
 
-Revocation rejects subsequent requests. Already admitted requests, including
+Rotation and revocation reject subsequent requests using the old secret.
+Already admitted requests, including
 parked long-poll reads, are not reauthenticated while waiting. Revocation does
 not cancel admitted work or recall credentials delivered to another process.
 

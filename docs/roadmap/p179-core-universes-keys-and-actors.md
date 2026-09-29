@@ -343,6 +343,21 @@ but the tables changed, so a development database needs `./dev.sh reset`.
 
 Step 4 is the one the Platform half waits for.
 
+## Immediate secret rotation follow-up
+
+Implemented on 2026-09-29: `deployment/api-keys/rotate`, both CLI commands,
+and both Platform key-management pages replace the hash and display prefix
+atomically in the existing row. There is no grace period or schema migration.
+Authority and creation metadata stay unchanged; last use resets. Revoked and
+stale prefixes cannot rotate, and concurrent rotations of one prefix have a
+single winner. The Platform audit records both prefixes without the secret.
+Universe admins cannot obtain actor-asserting credentials through rotation;
+those keys use Platform administration.
+
+Validation: API dispatch and schema freshness tests, an isolated PostgreSQL
+test covering immediate invalidation and concurrent rotation, Platform route
+and UI tests, generated-client checks, and production/demo builds pass.
+
 ## Validation
 
 - Unit: group derivation covers every manifest method; key checks for

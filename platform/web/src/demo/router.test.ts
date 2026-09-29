@@ -420,6 +420,22 @@ describe("demo router", () => {
     expect((await call("DELETE", `/api/v1/admin/api-keys/${apiKey.keyPrefix}`)).status).toBe(200);
   });
 
+  it.each(["admin", "universe"])("rotates %s keys immediately and refuses stale or revoked prefixes", async (scope) => {
+    const { store, call } = await boot();
+    const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+    const base = scope === "admin" ? "/api/v1/admin/api-keys" : `/api/v1/universes/${universe.universe.id}/api-keys`;
+    const created = await call("POST", base, { displayName: "Rotation test", groups: ["session"], scope: { kind: "deployment" } });
+    const before = created.json as { apiKey: Record<string, unknown> & { keyPrefix: string }; secret: string };
+    const rotated = await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`);
+    expect(rotated.status).toBe(200);
+    const after = rotated.json as typeof before;
+    expect(after.secret).not.toBe(before.secret);
+    expect(after.apiKey).toEqual({ ...before.apiKey, keyPrefix: after.secret.slice(0, 12), lastUsedAtMs: null });
+    expect((await call("POST", `${base}/${before.apiKey.keyPrefix}/rotate`)).status).toBe(404);
+    expect((await call("DELETE", `${base}/${after.apiKey.keyPrefix}`)).status).toBe(200);
+    expect((await call("POST", `${base}/${after.apiKey.keyPrefix}/rotate`)).status).toBe(404);
+  });
+
   it("updates a user's admin-managed account fields and accepts a password reset", async () => {
     const { store, call } = await boot();
     const target = [...store.users.values()].find((user) => user.id !== store.currentUser.id)!;

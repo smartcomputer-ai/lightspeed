@@ -211,6 +211,92 @@ async fn exercise(pool: &sqlx::PgPool) {
             .is_none()
     );
 
+    // Rotation updates the same row, preserving authority and creation metadata.
+    let rotated = api_keys
+        .rotate_api_key(&right_key.record.key_prefix)
+        .await
+        .expect("rotate")
+        .expect("active key");
+    let mut expected = right_key.record.clone();
+    expected.key_prefix = rotated.record.key_prefix.clone();
+    assert_eq!(rotated.record, expected);
+    assert_ne!(rotated.record.key_prefix, right_key.record.key_prefix);
+    assert_ne!(rotated.secret.expose(), right_key.secret.expose());
+    assert_eq!(
+        rotated.key_hash,
+        auth::api_key_hash(rotated.secret.expose())
+    );
+    assert!(
+        api_keys
+            .resolve_api_key(&right_key.key_hash, later)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        api_keys
+            .resolve_api_key(&rotated.key_hash, later)
+            .await
+            .unwrap(),
+        Some(expected)
+    );
+    assert_eq!(api_keys.list_api_keys(Some(right)).await.unwrap().len(), 1);
+    assert!(
+        api_keys
+            .rotate_api_key(&right_key.record.key_prefix)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        api_keys
+            .rotate_api_key(&left_key.record.key_prefix)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        api_keys
+            .rotate_api_key("lsk_unknown00")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Only one concurrent rotation can replace a given secret.
+    let (first, second) = tokio::join!(
+        api_keys.rotate_api_key(&rotated.record.key_prefix),
+        api_keys.rotate_api_key(&rotated.record.key_prefix),
+    );
+    let winners: Vec<_> = [first.unwrap(), second.unwrap()]
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(winners.len(), 1);
+    assert!(
+        api_keys
+            .resolve_api_key(&rotated.key_hash, later)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        api_keys
+            .resolve_api_key(&winners[0].key_hash, later)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let rotated_gate = api_keys
+        .rotate_api_key(&gate_key.record.key_prefix)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut expected_gate = gate_key.record.clone();
+    expected_gate.key_prefix = rotated_gate.record.key_prefix.clone();
+    assert_eq!(rotated_gate.record, expected_gate);
+
     // Deleting a universe removes its keys.
     store_pg::delete_universe(pool, left_universe)
         .await
@@ -220,13 +306,13 @@ async fn exercise(pool: &sqlx::PgPool) {
         .expect("delete right universe");
     assert!(
         api_keys
-            .resolve_api_key(&right_key.key_hash, later)
+            .resolve_api_key(&winners[0].key_hash, later)
             .await
             .expect("resolve after delete")
             .is_none()
     );
     api_keys
-        .revoke_api_key(&gate_key.record.key_prefix, later)
+        .revoke_api_key(&rotated_gate.record.key_prefix, later)
         .await
         .expect("revoke gate key");
 }

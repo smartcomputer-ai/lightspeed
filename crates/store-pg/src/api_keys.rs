@@ -2,7 +2,7 @@
 //!
 //! The store uses the deployment pool because authentication precedes
 //! universe resolution. A key's authority is its row: scope, groups and the
-//! actor flag. Keys change only by revocation.
+//! actor flag. Rotation replaces only the secret and its display prefix.
 
 use std::collections::BTreeSet;
 
@@ -147,6 +147,46 @@ impl PgApiKeyStore {
         .iter()
         .map(record_from_row)
         .collect()
+    }
+
+    /// Replace an active key's secret atomically. The old prefix stops identifying
+    /// a key, so concurrent rotations cannot both succeed. Revoked keys stay revoked.
+    pub async fn rotate_api_key(
+        &self,
+        key_prefix: &str,
+    ) -> Result<Option<auth::MintedApiKey>, ApiKeyError> {
+        for _ in 0..3 {
+            let secret = auth::generate_prefixed_secret(auth::API_KEY_SECRET_PREFIX);
+            let key_hash = auth::api_key_hash(&secret);
+            let new_prefix = auth::api_key_display_prefix(&secret);
+            if new_prefix == key_prefix {
+                continue;
+            }
+            let result = sqlx::query(&format!(
+                "UPDATE api_keys SET key_hash = $2, key_prefix = $3, last_used_at_ms = NULL
+                 WHERE key_prefix = $1 AND revoked_at_ms IS NULL RETURNING {KEY_COLUMNS}"
+            ))
+            .bind(key_prefix)
+            .bind(&key_hash)
+            .bind(&new_prefix)
+            .fetch_optional(&self.pool)
+            .await;
+            match result {
+                Ok(Some(row)) => {
+                    return Ok(Some(auth::MintedApiKey {
+                        secret: auth::SecretValue::new(secret),
+                        key_hash,
+                        record: record_from_row(&row)?,
+                    }));
+                }
+                Ok(None) => return Ok(None),
+                Err(sqlx::Error::Database(error)) if error.is_unique_violation() => continue,
+                Err(error) => return Err(map_sqlx_error(error)),
+            }
+        }
+        Err(ApiKeyError::Store {
+            message: "could not allocate a unique api key prefix".into(),
+        })
     }
 
     /// Revoke a key by its display prefix. `None` for an unknown prefix; a

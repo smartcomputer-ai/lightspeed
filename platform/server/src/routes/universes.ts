@@ -302,7 +302,7 @@ export function universeRoutes(ctx: AppContext) {
   /// Universe API keys, for a universe admin. Keys are minted with the
   /// Platform's deployment key, scoped to this universe, with the groups the
   /// admin chose and no actor assertion. The plaintext secret exists only in the
-  /// create response and is never persisted by the platform.
+  /// create or rotation response and is never persisted by the platform.
   app.get("/:id/api-keys", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access || access.role !== "admin") {
@@ -334,6 +334,28 @@ export function universeRoutes(ctx: AppContext) {
       });
       await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.create", targetId: response.result.apiKey.keyPrefix, universeId: access.universe.id });
       return c.json(response.result, 201);
+    });
+  });
+
+  app.post("/:id/api-keys/:keyPrefix/rotate", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access || access.role !== "admin") {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const client = deploymentClientFor(ctx, access.universe.gatewayUrl);
+      const keys = await client.call("deployment/api-keys/list", {
+        scope: { kind: "universe", universeId: access.universe.lightspeedUniverseId },
+      });
+      const keyPrefix = c.req.param("keyPrefix");
+      const key = keys.result.apiKeys?.find((key) => key.keyPrefix === keyPrefix);
+      if (!key || key.revokedAtMs != null) return c.json({ error: "not found" }, 404);
+      // Rotation reveals a credential: universe admins cannot acquire actor
+      // assertion authority that only platform admins may grant.
+      if (key.assertActor) return c.json({ error: "Rotate this key from Platform admin" }, 403);
+      const response = await client.call("deployment/api-keys/rotate", { keyPrefix });
+      await auditIdentity(ctx.db, { actorId: c.get("session").user.id, action: "key.rotate", targetId: keyPrefix, universeId: access.universe.id, details: { newKeyPrefix: response.result.apiKey.keyPrefix } });
+      return c.json(response.result);
     });
   });
 

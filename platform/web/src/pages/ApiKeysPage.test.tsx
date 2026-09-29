@@ -94,3 +94,47 @@ it("starts a key as an agent client and sends exactly the groups chosen", async 
   });
   expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
 });
+
+it("rotates a key after confirmation and clears the displayed secret on close", async () => {
+  await render();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Rotate Agent"]')!.click());
+  await settle();
+  expect(dialogText()).toContain("will stop working immediately");
+  expect(mocks.api.mock.calls.some(([method]) => method === "POST")).toBe(false);
+  // Refetch replaces the row's prefix; the secret dialog must survive it.
+  mocks.api.mockImplementation(async (method: string) => method === "POST"
+    ? { apiKey: { keyPrefix: "lsk_new" }, secret: "lsk_new_secret" }
+    : keys.map((key) => key.keyPrefix === "lsk_agent" ? { ...key, keyPrefix: "lsk_new" } : key));
+  await act(async () => button("Rotate key")!.click());
+  await settle();
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/platform-universe/api-keys/lsk_agent/rotate");
+  expect(document.querySelector<HTMLInputElement>("#api-key-secret")?.value).toBe("lsk_new_secret");
+  await act(async () => button("I saved the key")!.click());
+  await settle();
+  expect(document.querySelector("#api-key-secret")).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Rotate Agent"]')!.click());
+  await settle();
+  expect(document.querySelector("#api-key-secret")).toBeNull();
+  expect(dialogText()).toContain("Rotate this API key?");
+});
+
+it("keeps rotation failures visible without showing a secret", async () => {
+  await render();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Rotate Agent"]')!.click());
+  await settle();
+  mocks.api.mockRejectedValueOnce(new Error("Key was already rotated"));
+  await act(async () => button("Rotate key")!.click());
+  await settle();
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe("Key was already rotated");
+  expect(document.querySelector("#api-key-secret")).toBeNull();
+});
+
+it("does not offer rotation for revoked or actor-asserting keys", async () => {
+  mocks.api.mockResolvedValue([...keys, { ...keys[0], keyPrefix: "lsk_actor", displayName: "Actor", assertActor: true }]);
+  await render();
+  const toggle = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("Show revoked keys (1)"));
+  await act(async () => toggle!.querySelector<HTMLElement>('[role="switch"]')!.click());
+  await settle();
+  expect(container.querySelector('[aria-label="Rotate Old"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Rotate Actor"]')).toBeNull();
+});

@@ -132,6 +132,7 @@ export const METHODS = [
   "deployment/universes/delete",
   "deployment/api-keys/create",
   "deployment/api-keys/list",
+  "deployment/api-keys/rotate",
   "deployment/api-keys/revoke",
   "deployment/environment-providers/put",
   "deployment/environment-providers/list",
@@ -898,13 +899,19 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Create a scoped API key",
-    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.",
+    description: "Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.",
   },
   "deployment/api-keys/list": {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "List scoped API keys",
     description: "Returns non-secret key metadata, all keys or those of one scope, including groups, revocation and last-use timestamps. Plaintext secrets are never stored or returned.",
+  },
+  "deployment/api-keys/rotate": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Rotate a scoped API key",
+    description: "Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.",
   },
   "deployment/api-keys/revoke": {
     scope: "deployment",
@@ -2103,7 +2110,7 @@ export interface MethodMap {
   /**
    * Create a scoped API key
    *
-   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.
+   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
    */
   "deployment/api-keys/create": {
     params: Api.DeploymentApiKeyCreateParams;
@@ -2117,6 +2124,15 @@ export interface MethodMap {
   "deployment/api-keys/list": {
     params: Api.DeploymentApiKeyListParams;
     result: Api.AgentApiOutcomeOfDeploymentApiKeyListResponse;
+  };
+  /**
+   * Rotate a scoped API key
+   *
+   * Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+   */
+  "deployment/api-keys/rotate": {
+    params: Api.DeploymentApiKeyRotateParams;
+    result: Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse;
   };
   /**
    * Revoke a scoped API key
@@ -3212,7 +3228,7 @@ export const rpc = {
   /**
    * Create a scoped API key
    *
-   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Keys are immutable: revoke and mint to change what one may do.
+   * Mints a key for a universe or the deployment with the method groups it may call and whether it may assert actors. The plaintext secret is returned exactly once and cannot be recovered; persist only the displayed prefix for identification. Key authority is immutable: revoke and mint to change what one may do.
    */
   deploymentApiKeysCreate(client: RpcCaller, params: Api.DeploymentApiKeyCreateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
     return client.call("deployment/api-keys/create", params);
@@ -3224,6 +3240,14 @@ export const rpc = {
    */
   deploymentApiKeysList(client: RpcCaller, params: Api.DeploymentApiKeyListParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyListResponse> {
     return client.call("deployment/api-keys/list", params);
+  },
+  /**
+   * Rotate a scoped API key
+   *
+   * Atomically replaces an active key secret and display prefix, immediately rejecting the old secret on subsequent requests. Preserves scope, groups, actor authority, name, creator and creation time; clears last use. Returns the new secret once. Unknown or revoked prefixes are not found. Already admitted work continues.
+   */
+  deploymentApiKeysRotate(client: RpcCaller, params: Api.DeploymentApiKeyRotateParams): Promise<Api.AgentApiOutcomeOfDeploymentApiKeyCreateResponse> {
+    return client.call("deployment/api-keys/rotate", params);
   },
   /**
    * Revoke a scoped API key

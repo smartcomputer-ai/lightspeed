@@ -143,6 +143,17 @@ export function adminRoutes(store: DemoStore): Hono {
     return c.json({ apiKey, secret }, 201);
   });
 
+  app.post("/admin/api-keys/:keyPrefix/rotate", (c) => {
+    const prefix = c.req.param("keyPrefix");
+    const apiKey = [...store.deploymentKeys, ...[...store.universes.values()].flatMap((state) => state.apiKeys)]
+      .find((key) => key.keyPrefix === prefix && key.revokedAtMs == null);
+    if (!apiKey) return notFound(c);
+    const secret = `lsk_${crypto.randomUUID().replaceAll("-", "")}`;
+    apiKey.keyPrefix = secret.slice(0, 12);
+    apiKey.lastUsedAtMs = null;
+    return c.json({ apiKey, secret });
+  });
+
   app.delete("/admin/api-keys/:keyPrefix", (c) => {
     const prefix = c.req.param("keyPrefix");
     const key = store.deploymentKeys.find((candidate) => candidate.keyPrefix === prefix)
