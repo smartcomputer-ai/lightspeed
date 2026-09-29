@@ -684,10 +684,10 @@ pub async fn emit_chat_event(
     }
     let mut document = chat_message_document(&request);
     document.summary = original_summary;
-    if !request.transcript_refs.is_empty() {
-        if let Some(data) = document.data.as_mut() {
-            data["message"]["originalText"] = serde_json::Value::String(original_text);
-        }
+    if !request.transcript_refs.is_empty()
+        && let Some(data) = document.data.as_mut()
+    {
+        data["message"]["originalText"] = serde_json::Value::String(original_text);
     }
     let mut input = StoreBotEventInput::new(event_id.clone(), document);
     input.prompt_data = Some(chat_prompt_data(&request.media));
