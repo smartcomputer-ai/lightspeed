@@ -13,6 +13,23 @@ import {
   workspaceAttachmentsFromConfig,
 } from "./session-config-editor";
 
+describe("provider-triggered compaction", () => {
+  const model = { providerId: "anthropic", apiKind: "anthropic:messages", model: "claude-opus-5" };
+
+  it.each([undefined, 50_000, 150_000])("accepts Anthropic threshold %s", (compactThresholdTokens) => {
+    expect(configError({ model, context: { compaction: { mode: "providerTriggered", compactThresholdTokens } } })).toBeNull();
+  });
+
+  it.each([0, 1_000, 49_999])("rejects Anthropic threshold %s before saving", (compactThresholdTokens) => {
+    expect(configError({ model, context: { compaction: { mode: "providerTriggered", compactThresholdTokens } } })).toContain("50,000");
+  });
+
+  it("rejects Chat Completions and preserves standalone's lower threshold", () => {
+    expect(configError({ model: { ...model, apiKind: "openai:completions" }, context: { compaction: { mode: "providerTriggered" } } })).toContain("requires OpenAI Responses or Anthropic Messages");
+    expect(configError({ model, context: { compaction: { mode: "providerStandalone", compactThresholdTokens: 1_000 } } })).toBeNull();
+  });
+});
+
 describe("specific tool choice", () => {
   it.each([
     { providerId: "openai", apiKind: "openai:responses", model: "gpt-5.5" },

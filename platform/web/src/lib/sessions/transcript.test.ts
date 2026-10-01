@@ -336,12 +336,12 @@ describe("session transcript traces", () => {
     }]);
   });
 
-  it("shows native compaction once across repeated context events without its payload", () => {
+  it.each(["openai.responses.compaction", "anthropic.messages.compaction"])("shows %s once across repeated context events without its payload", (providerKind) => {
     const compacted = item("native-compaction", { type: "providerOpaque" }, {
       content: {
         contentRef: "sha256:compaction",
         mediaType: "application/json",
-        providerKind: "openai.responses.compaction",
+        providerKind,
       },
       text: '{"encrypted_content":"hidden-encrypted-payload"}',
       preview: "hidden-encrypted-preview",

@@ -388,6 +388,15 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
   if (toolChoice.type === "specific" && !string(toolChoice.toolId)) {
     return "A specific tool choice needs a tool id.";
   }
+  const compaction = record(record(config.context).compaction);
+  const apiKind = pinnedApiKind ?? string(model.apiKind);
+  if (compaction.mode === "providerTriggered") {
+    if (apiKind === "openai:completions") return "Provider-triggered compaction requires OpenAI Responses or Anthropic Messages.";
+    const minimum = apiKind === "anthropic:messages" ? 50_000 : apiKind === "openai:responses" ? 1_000 : undefined;
+    if (minimum !== undefined && typeof compaction.compactThresholdTokens === "number" && compaction.compactThresholdTokens < minimum) {
+      return `Provider-triggered compaction requires a threshold of at least ${minimum.toLocaleString("en-US")} tokens for this provider.`;
+    }
+  }
   const search = record(record(record(config.features).web).search);
   if (
     (pinnedApiKind ?? string(model.apiKind)) === "anthropic:messages"

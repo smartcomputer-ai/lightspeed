@@ -4,8 +4,8 @@
 //! Anthropic Messages API requests and maps responses back into context
 //! entries and reducer facts, mirroring the OpenAI Responses adapter.
 //!
-//! Anthropic has no server-side compaction endpoint, so the standalone
-//! compaction path runs a summarization request over the compactable context
+//! Provider-triggered compaction runs inside ordinary generation requests.
+//! The standalone path runs a summarization request over the compactable context
 //! and returns the summary as a user-visible replacement message.
 
 use std::sync::Arc;
@@ -459,16 +459,18 @@ async fn materialize_request_with_catalog(
                 .to_owned(),
         });
     }
-    if matches!(
-        request.compaction,
-        Some(CompactionPolicy::ProviderTriggered { .. })
-    ) {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: "Anthropic Messages does not support provider-triggered compaction; \
-                      use the provider-standalone compaction policy"
-                .to_owned(),
-        });
-    }
+    let context_management = match request.compaction.as_ref() {
+        Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        }) => {
+            let mut edit = json!({"type": "compact_20260112"});
+            if let Some(threshold) = compact_threshold_tokens {
+                edit["trigger"] = json!({"type": "input_tokens", "value": threshold});
+            }
+            Some(json!({"edits": [edit]}))
+        }
+        _ => None,
+    };
 
     let max_tokens = request
         .output_limit
@@ -525,6 +527,7 @@ async fn materialize_request_with_catalog(
         service_tier: params.service_tier.clone(),
         container: params.container.clone(),
         mcp_servers: non_empty(mcp_servers).map(Value::from),
+        context_management,
         extra: params.extra.clone(),
     })
 }
@@ -579,6 +582,7 @@ async fn materialize_compact_request_with_binding(
         service_tier: None,
         container: None,
         mcp_servers: None,
+        context_management: None,
         extra: Default::default(),
     })
 }
@@ -1331,16 +1335,23 @@ pub async fn result_from_response(
     context_entries.extend(text_run_context_entries(blobs, text_run).await?);
 
     let usage = response.parsed.usage.as_ref().map(llm_usage);
-    let context_token_estimate =
-        response
-            .parsed
-            .usage
-            .as_ref()
-            .and_then(prompt_tokens)
-            .map(|tokens| TokenEstimate {
-                tokens: u64_to_u32(tokens),
-                quality: TokenEstimateQuality::ProviderCounted,
-            });
+    let context_token_estimate = response
+        .parsed
+        .usage
+        .as_ref()
+        .and_then(|usage| {
+            prompt_tokens(
+                usage
+                    .iterations
+                    .as_ref()
+                    .and_then(|items| items.last())
+                    .unwrap_or(usage),
+            )
+        })
+        .map(|tokens| TokenEstimate {
+            tokens: u64_to_u32(tokens),
+            quality: TokenEstimateQuality::ProviderCounted,
+        });
     let finish = finish_reason(response.parsed.stop_reason, !tool_calls.is_empty());
     // A turn cut off at `max_tokens` fails, keeping the partial text the
     // user can see; tool calls from an unfinished turn have nothing to
@@ -1712,6 +1723,15 @@ async fn opaque_context_entry(
     raw_block: Value,
 ) -> LlmAdapterResult<ContextEntryInput> {
     let provider_kind = match block.r#type.as_str() {
+        "compaction"
+            if block
+                .content
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|summary| !summary.trim().is_empty()) =>
+        {
+            ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
+        }
         "server_tool_use" => ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND,
         "mcp_tool_use" => ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
         "mcp_tool_result" => ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
@@ -1737,6 +1757,7 @@ async fn opaque_context_entry(
 
 fn opaque_preview(block: &am::ContentBlock) -> String {
     match (block.r#type.as_str(), block.name.as_deref()) {
+        ("compaction", _) => "compaction state".to_owned(),
         ("server_tool_use", Some(name)) => {
             format!("Anthropic Messages server tool call: {name}")
         }
@@ -1760,6 +1781,17 @@ fn finish_reason(stop_reason: Option<am::StopReason>, has_tool_calls: bool) -> L
 }
 
 fn llm_usage(usage: &am::Usage) -> LlmUsage {
+    if let Some(iterations) = usage
+        .iterations
+        .as_ref()
+        .filter(|iterations| !iterations.is_empty())
+    {
+        let mut total = None;
+        for iteration in iterations {
+            merge_llm_usage(&mut total, Some(&llm_usage(iteration)));
+        }
+        return total.expect("nonempty usage iterations");
+    }
     let input_tokens = prompt_tokens(usage);
     let output_tokens = usage.output_tokens;
     LlmUsage {
@@ -3119,6 +3151,103 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn provider_triggered_compaction_materializes_and_replays_native_summary() {
+        let blobs = InMemoryBlobStore::new();
+        for threshold in [None, Some(50_000)] {
+            let mut request = intent_request(Vec::new());
+            request.compaction = Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: threshold,
+            });
+            let native = materialize_create_request(&blobs, &request).await.unwrap();
+            let mut edit = json!({"type": "compact_20260112"});
+            if let Some(value) = threshold {
+                edit["trigger"] = json!({"type": "input_tokens", "value": value});
+            }
+            assert_eq!(native.context_management, Some(json!({"edits": [edit]})));
+            assert!(
+                native
+                    .required_betas()
+                    .contains(&am::ANTHROPIC_COMPACTION_BETA)
+            );
+        }
+
+        let summary = json!({"type": "compaction", "content": "Keep the user's goals.", "signature": "native-signature"});
+        let raw_json = json!({
+            "id": "msg_compacted", "stop_reason": "end_turn",
+            "content": [summary, {"type": "text", "text": "Continuing."}],
+            "usage": {
+                "input_tokens": 23000, "output_tokens": 1000,
+                "iterations": [
+                    {"type": "compaction", "input_tokens": 180000, "output_tokens": 3500, "cache_read_input_tokens": 10000},
+                    {"type": "message", "input_tokens": 23000, "output_tokens": 1000}
+                ]
+            }
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).unwrap(),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let result = result_from_response(&blobs, &generation_request(), &response)
+            .await
+            .unwrap();
+        assert_eq!(result.context_entries.len(), 2);
+        let entry = &result.context_entries[0];
+        assert_eq!(entry.kind, ContextEntryKind::ProviderOpaque);
+        assert_eq!(
+            entry.content.provider_kind.as_deref(),
+            Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
+        );
+        assert_eq!(
+            read_json(&blobs, &entry.content.content_ref).await.unwrap(),
+            summary
+        );
+        let usage = result.facts.usage.as_ref().unwrap();
+        assert_eq!(usage.input_tokens, Some(213000));
+        assert_eq!(usage.output_tokens, Some(4500));
+        assert_eq!(usage.total_tokens, Some(217500));
+        assert_eq!(usage.cached_input_tokens, Some(10000));
+        assert_eq!(result.facts.context_token_estimate.unwrap().tokens, 23000);
+
+        let entries = result
+            .context_entries
+            .iter()
+            .enumerate()
+            .map(|(index, item)| retained_context_entry(index, item))
+            .collect();
+        // Replay still requires the beta if compaction has since been disabled.
+        let followup = materialize_create_request(&blobs, &intent_request(entries))
+            .await
+            .unwrap();
+        assert!(followup.context_management.is_none());
+        assert!(
+            followup
+                .required_betas()
+                .contains(&am::ANTHROPIC_COMPACTION_BETA)
+        );
+        let body = serde_json::to_value(followup).unwrap();
+        assert_eq!(body["messages"][0]["role"], "assistant");
+        assert_eq!(body["messages"][0]["content"][0], summary);
+        assert_eq!(body["messages"][0]["content"][1]["text"], "Continuing.");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn missing_native_compaction_summary_does_not_mark_history_for_pruning() {
+        let blobs = InMemoryBlobStore::new();
+        for content in [Value::Null, json!(""), json!(" ")] {
+            let block: am::ContentBlock =
+                serde_json::from_value(json!({"type": "compaction", "content": content})).unwrap();
+            let raw = serde_json::to_value(&block).unwrap();
+            let entry = opaque_context_entry(&blobs, &block, raw).await.unwrap();
+            assert_eq!(
+                entry.content.provider_kind.as_deref(),
+                Some(PROVIDER_KIND_BLOCK)
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn materialize_create_request_rejects_unsupported_intents() {
         let blobs = InMemoryBlobStore::new();
 
@@ -3127,18 +3256,6 @@ mod tests {
         let error = materialize_create_request(&blobs, &continuation)
             .await
             .expect_err("continuation must fail");
-        assert!(matches!(
-            error,
-            LlmAdapterError::InvalidProviderRequest { .. }
-        ));
-
-        let mut provider_triggered = intent_request(Vec::new());
-        provider_triggered.compaction = Some(CompactionPolicy::ProviderTriggered {
-            compact_threshold_tokens: Some(1000),
-        });
-        let error = materialize_create_request(&blobs, &provider_triggered)
-            .await
-            .expect_err("provider-triggered compaction must fail");
         assert!(matches!(
             error,
             LlmAdapterError::InvalidProviderRequest { .. }

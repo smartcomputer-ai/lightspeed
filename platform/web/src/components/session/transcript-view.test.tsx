@@ -6,7 +6,7 @@ import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
 import { ApprovalCards, QueuedRunsBar, TranscriptEntryView } from "./transcript-view";
 
 describe("TranscriptEntryView", () => {
-  it("renders native compaction as a marker without exposing or loading encrypted contents", () => {
+  it.each(["openai.responses.compaction", "anthropic.messages.compaction"])("renders %s as a marker without exposing or loading its contents", (providerKind) => {
     const event: SessionEvent = {
       cursor: { seq: 1 }, observedAtMs: 1, joins: {}, sessionId: "session-test",
       kind: {
@@ -15,7 +15,7 @@ describe("TranscriptEntryView", () => {
           id: "native-compaction", kind: { type: "providerOpaque" },
           content: {
             contentRef: "sha256:compaction", mediaType: "application/json",
-            providerKind: "openai.responses.compaction",
+            providerKind,
           },
           text: '{"encrypted_content":"hidden-encrypted-payload"}',
           preview: "hidden-encrypted-preview",

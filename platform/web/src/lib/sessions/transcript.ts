@@ -643,7 +643,7 @@ function applyItems(state: TranscriptState, items: SessionItem[]) {
       if (kind.type === "toolCall" || kind.type === "toolResult") {
         recordToolCall(state, String(source.runId), kind.callId);
       } else if (kind.type === "providerOpaque" && item.display?.toolName
-        && item.content.providerKind !== "openai.responses.compaction") {
+        && !["openai.responses.compaction", "anthropic.messages.compaction"].includes(item.content.providerKind ?? "")) {
         recordToolCall(state, String(source.runId), item.id);
       }
     }
@@ -746,7 +746,7 @@ function applyNonToolCallItem(
       break;
     }
     case "providerOpaque":
-      if (item.content.providerKind === "openai.responses.compaction") {
+      if (["openai.responses.compaction", "anthropic.messages.compaction"].includes(item.content.providerKind ?? "")) {
         state.entries.push({
           kind: "marker",
           key: item.id,

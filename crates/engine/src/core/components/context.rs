@@ -956,10 +956,13 @@ fn is_provider_compaction_entry(entry: &ContextEntry) -> bool {
         Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND) => {
             matches!(entry.kind, ContextEntryKind::ProviderOpaque)
         }
-        // The Anthropic adapter compacts by summarization and returns the
-        // summary as a user-visible replacement message.
+        // Anthropic returns a native block for provider-triggered compaction
+        // and a plain-text message for standalone summarization.
         Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND) => {
-            matches!(entry.kind, ContextEntryKind::Message { .. })
+            matches!(
+                entry.kind,
+                ContextEntryKind::Message { .. } | ContextEntryKind::ProviderOpaque
+            )
         }
         Some(OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND) => {
             matches!(entry.kind, ContextEntryKind::Message { .. })

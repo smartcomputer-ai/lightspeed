@@ -5,6 +5,7 @@ use crate::{
 };
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
+const MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD: u32 = 50_000;
 
 /// Current version of every feature block. Bumps per feature once a breaking
 /// behavior revision ships; `validate_feature_version` then becomes a
@@ -1092,6 +1093,22 @@ fn validate_context_config(
             ProviderApiKind::OpenAiResponses,
         ) => validate_openai_responses_compact_threshold(*compact_threshold_tokens),
         (
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens,
+            }),
+            ProviderApiKind::AnthropicMessages,
+        ) => {
+            if compact_threshold_tokens
+                .is_some_and(|threshold| threshold < MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD)
+            {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "Anthropic Messages compact_threshold_tokens must be at least {} when set",
+                    MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD
+                )));
+            }
+            Ok(())
+        }
+        (
             Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
                 target_tokens,
@@ -1102,7 +1119,7 @@ fn validate_context_config(
         ) => validate_provider_standalone_compaction(*compact_threshold_tokens, *target_tokens),
         (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
-                "provider-triggered compaction requires OpenAI Responses api kind, got {:?}",
+                "provider-triggered compaction requires OpenAI Responses or Anthropic Messages api kind, got {:?}",
                 api_kind
             )))
         }
@@ -1360,9 +1377,9 @@ mod tests {
     }
 
     #[test]
-    fn provider_triggered_compaction_rejects_non_openai_responses_api_kind() {
+    fn provider_triggered_compaction_rejects_openai_completions_api_kind() {
         let config = config(
-            ProviderApiKind::AnthropicMessages,
+            ProviderApiKind::OpenAiCompletions,
             Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: None,
             }),
@@ -1370,9 +1387,34 @@ mod tests {
 
         let error = config
             .validate()
-            .expect_err("provider-triggered compaction is OpenAI Responses only");
+            .expect_err("Chat Completions has no provider-triggered compaction");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn provider_triggered_compaction_validates_anthropic_threshold() {
+        for threshold in [None, Some(50_000), Some(150_000)] {
+            config(
+                ProviderApiKind::AnthropicMessages,
+                Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: threshold,
+                }),
+            )
+            .validate()
+            .expect("valid Anthropic compaction threshold");
+        }
+        for threshold in [0, 1000, 49_999] {
+            let error = config(
+                ProviderApiKind::AnthropicMessages,
+                Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: Some(threshold),
+                }),
+            )
+            .validate()
+            .expect_err("threshold below Anthropic minimum");
+            assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+        }
     }
 
     #[test]

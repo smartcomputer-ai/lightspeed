@@ -1,9 +1,7 @@
 //! Live engine-loop compaction tests for the Anthropic Messages adapter.
 //!
-//! Anthropic has no provider-triggered compaction (the adapter rejects that
-//! policy), so these cover the provider-standalone path: the engine plans a
-//! compaction task, the adapter runs a summarization request, and the engine
-//! prunes the compacted history in favor of the summary entry.
+//! Provider-triggered tests exercise native summaries, pruning, and recall.
+//! Standalone tests exercise summarization requests planned by the engine.
 
 use std::sync::Arc;
 
@@ -30,6 +28,165 @@ use support::{
 use support::retrying_anthropic_messages_client;
 
 const LIVE_MARKER: &str = "LIGHTSPEED-ANTHROPIC-COMPACTION-LIVE-4217";
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY and a compaction-capable Anthropic model (costs real money)"]
+async fn anthropic_messages_live_engine_prunes_and_reuses_provider_compaction() {
+    const NEWSLETTER_TITLE: &str = "Spring Garden Notes: April Edition";
+    let session_id = SessionId::new("session-live-anthropic-provider-compaction");
+    let (runner, blobs) = live_runner(&session_id).await;
+    let model = live_model_selection();
+    let mut config = standalone_session_config(model.clone(), None);
+    config.context.compaction = Some(CompactionPolicy::ProviderTriggered {
+        compact_threshold_tokens: Some(50_000),
+    });
+    config.generation.max_output_tokens = Some(4096);
+    let opened = runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 10,
+            command: CoreAgentCommand::OpenSession { config },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("open provider-triggered session");
+    assert!(opened.accepted, "open rejected: {:?}", opened.rejection);
+
+    let mut prompt = format!(
+        "Remember this working title for the spring newsletter: {NEWSLETTER_TITLE}. \
+         Preserve the exact title for a later question. The following inventory \
+         is background reference and can be summarized.\n"
+    );
+    for index in 1..=1200 {
+        prompt.push_str(&format!(
+            "Inventory row {index}: shelf {} holds {} cardboard cartons. Checked and \
+             ready for dispatch; routine inspection complete.\n",
+            index % 20,
+            24 + index % 16
+        ));
+    }
+    prompt.push_str(&format!(
+        "\nKeep the newsletter title {NEWSLETTER_TITLE} for later. Reply with only READY."
+    ));
+    let counted = live_client()
+        .count_tokens(
+            llm_clients::anthropic::messages::CountTokensRequest::user_text(&model.model, &prompt),
+        )
+        .await
+        .expect("count provider-triggered prompt tokens");
+    let tokens = counted.parsed.input_tokens.expect("input token count");
+    eprintln!(
+        "Anthropic provider-triggered compaction: model={}, prompt_tokens={tokens}",
+        model.model
+    );
+    assert!(
+        tokens > 50_000,
+        "fixture must exceed the native compaction threshold"
+    );
+
+    let first_input_ref = blobs
+        .put_bytes(prompt.into_bytes())
+        .await
+        .expect("store first prompt");
+    let first = runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 20,
+            command: provider_compaction_run(first_input_ref.clone()),
+            max_steps: Some(128),
+        })
+        .await
+        .expect("drive provider-triggered run");
+    assert!(first.accepted, "run rejected: {:?}", first.rejection);
+    assert_eq!(first.quiescence, RunnerQuiescence::Idle);
+    assert_eq!(
+        first.state.runs.completed[0].status,
+        RunStatus::Completed,
+        "{}",
+        run_failure_text(blobs.as_ref(), &first.state).await
+    );
+    assert!(
+        has_provider_compacted_removal(&first.emitted_entries),
+        "native compaction must prune older context"
+    );
+    assert!(
+        !active_context_contains_ref(&first.state, &first_input_ref),
+        "original input must be pruned"
+    );
+    let summaries = compaction_summary_entries(&first.state);
+    assert_eq!(summaries.len(), 1, "retain one native compaction summary");
+    assert_eq!(summaries[0].kind, ContextEntryKind::ProviderOpaque);
+    let raw: serde_json::Value = serde_json::from_str(
+        &blobs
+            .read_text(&summaries[0].content.content_ref)
+            .await
+            .expect("native compaction JSON"),
+    )
+    .expect("parse native summary");
+    assert_eq!(raw["type"], "compaction");
+    assert!(
+        raw["content"]
+            .as_str()
+            .expect("native summary text")
+            .contains(NEWSLETTER_TITLE),
+        "summary must preserve the newsletter title"
+    );
+
+    let question_ref = blobs
+        .put_bytes(
+            b"Draft a one-sentence invitation for the spring newsletter launch. Include its working title."
+                .to_vec(),
+        )
+        .await
+        .expect("store recall question");
+    let second = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 30,
+            command: provider_compaction_run(question_ref),
+            max_steps: Some(128),
+        })
+        .await
+        .expect("continue from native compaction summary");
+    assert!(second.accepted, "recall rejected: {:?}", second.rejection);
+    assert_eq!(second.quiescence, RunnerQuiescence::Idle);
+    assert_eq!(
+        second.state.runs.completed[1].status,
+        RunStatus::Completed,
+        "{}",
+        run_failure_text(blobs.as_ref(), &second.state).await
+    );
+    let answer = assistant_text(blobs.as_ref(), &second.emitted_entries).await;
+    assert!(
+        answer.contains(NEWSLETTER_TITLE),
+        "recall must use the replayed native summary: {answer:?}"
+    );
+}
+
+fn provider_compaction_run(content_ref: BlobRef) -> CoreAgentCommand {
+    CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+        requested_by: None,
+        notify_on_terminal: Vec::new(),
+        submission_id: None,
+        source: engine::RunRequestSource::Input {
+            input: vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content: engine::ContentRef {
+                    content_ref,
+                    media_type: None,
+                    provider_kind: None,
+                },
+                preview: None,
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+            }],
+        },
+        run_config: run_config(),
+    })
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]

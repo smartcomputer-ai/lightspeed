@@ -32,6 +32,7 @@ pub const ANTHROPIC_MCP_BETA: &str = "mcp-client-2025-11-20";
 /// with preserved thinking whose conversation prefix has changed. The field
 /// is rejected without it, so requests carrying it always send the header.
 pub const ANTHROPIC_THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
+pub const ANTHROPIC_COMPACTION_BETA: &str = "compact-2026-01-12";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -455,6 +456,8 @@ pub struct CreateMessageRequest {
     pub container: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_servers: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Value>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -463,6 +466,19 @@ impl CreateMessageRequest {
     /// Betas the request body depends on, sent alongside the configured ones.
     pub fn required_betas(&self) -> Vec<&'static str> {
         let mut betas = Vec::new();
+        let compaction_enabled = self.context_management.as_ref().is_some_and(|management| {
+            management["edits"]
+                .as_array()
+                .is_some_and(|edits| edits.iter().any(|edit| edit["type"] == "compact_20260112"))
+        });
+        let replays_compaction = self.messages.iter().any(|message| {
+            matches!(&message.content, MessageParamContent::Blocks(blocks) if blocks.iter().any(|block| {
+                matches!(block, ContentBlockParam::Raw(raw) if raw["type"] == "compaction")
+            }))
+        });
+        if compaction_enabled || replays_compaction {
+            betas.push(ANTHROPIC_COMPACTION_BETA);
+        }
         if self
             .thinking
             .as_ref()
@@ -492,6 +508,7 @@ impl CreateMessageRequest {
             service_tier: None,
             container: None,
             mcp_servers: None,
+            context_management: None,
             extra: BTreeMap::new(),
         }
     }
@@ -987,6 +1004,8 @@ pub enum StopReason {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<Usage>>,
     #[serde(default)]
     pub input_tokens: Option<u64>,
     #[serde(default)]
@@ -1255,6 +1274,34 @@ mod tests {
         let mut config = Config::new("test-key");
         config.beta_headers = betas.iter().map(|beta| (*beta).to_owned()).collect();
         Client::new(config).expect("client")
+    }
+
+    #[test]
+    fn compaction_betas_merge_with_thinking_and_configured_betas() {
+        let mut request = CreateMessageRequest::user_text("model", "hi", 16);
+        request.context_management = Some(json!({"edits": [{"type": "compact_20260112"}]}));
+        let mut thinking = Thinking::adaptive();
+        thinking.extra.insert(
+            "block_binding".to_owned(),
+            json!({"prefix_mismatch_behavior": "drop_block"}),
+        );
+        request.thinking = Some(thinking);
+        assert_eq!(
+            request.required_betas(),
+            [ANTHROPIC_COMPACTION_BETA, ANTHROPIC_THINKING_BINDING_BETA]
+        );
+        let client = client_with_betas(&["context-1m", ANTHROPIC_COMPACTION_BETA]);
+        let mut betas = request.required_betas();
+        betas.push(ANTHROPIC_OAUTH_BETA);
+        assert_eq!(
+            client
+                .request_beta_header(&betas)
+                .unwrap()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "context-1m,compact-2026-01-12,thinking-binding-controls-2026-08-01,oauth-2025-04-20"
+        );
     }
 
     #[test]
