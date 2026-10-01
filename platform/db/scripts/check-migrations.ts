@@ -89,6 +89,8 @@ async function requirePlatformShape(pool: pg.Pool): Promise<void> {
   await requireColumn(pool, "user", "oidc_subject");
   await requireColumn(pool, "session", "access_version");
   await requireColumn(pool, "universes", "lightspeed_universe_id");
+  await requireColumn(pool, "universes", "icon");
+  await requireColumn(pool, "universes", "icon_color");
   for (const table of [
     "bots",
     "bot_triggers",

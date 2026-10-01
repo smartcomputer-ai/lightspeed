@@ -1,4 +1,4 @@
-import type { FeatureStates, UniverseRole } from "@lightspeed/platform-shared";
+import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed/platform-shared";
 export type { ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
 import type {
   Attribution,
@@ -77,6 +77,8 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
 }
 
 export interface Universe {
+  icon?: UniverseIconName;
+  iconColor?: UniverseIconColor;
   id: string;
   lightspeedUniverseId: string;
   name: string;

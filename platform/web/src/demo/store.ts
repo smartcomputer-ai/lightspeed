@@ -1,6 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole } from "@lightspeed/platform-shared";
+import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -164,6 +164,8 @@ export interface UniverseInit {
   id?: string;
   slug: string;
   name: string;
+  icon?: UniverseIconName;
+  iconColor?: UniverseIconColor;
   lightspeedUniverseId?: string;
   /// Membership role of the demo user; null = platform admin browsing.
   role?: UniverseRole | null;
@@ -242,6 +244,8 @@ export class DemoStore {
         id,
         lightspeedUniverseId: init.lightspeedUniverseId ?? crypto.randomUUID(),
         name: init.name,
+        icon: init.icon ?? "orbit",
+        iconColor: init.iconColor ?? "default",
         slug: init.slug,
         gatewayUrl: null,
         status: "active",

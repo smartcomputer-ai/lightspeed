@@ -33,6 +33,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
+import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
 
 export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -47,11 +48,12 @@ export function GeneralSettingsPage({ admin: _admin }: { admin: boolean }) {
 
   return (
     <>
-      <PageHeader title="General" description="Universe name, features, identifiers, and lifecycle." />
+      <PageHeader title="General" description="Universe name, features, appearance, identifiers, and lifecycle." />
       <div className="grid gap-6">
         <RenameCard universe={universe} />
         <SlugCard key={`${universe.id}/${universe.slug}`} universe={universe} />
         <FeaturesCard universe={universe} />
+        <UniverseAppearanceCard key={`${universe.id}/${universe.icon}/${universe.iconColor}`} universe={universe} />
         <IdentifiersCard universe={universe} />
         <DangerZone universe={universe} />
       </div>

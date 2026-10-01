@@ -4429,6 +4429,8 @@ export function seedSoftwareFactory(store: DemoStore): void {
     id: SOFTWARE_FACTORY_UNIVERSE_ID,
     slug: SOFTWARE_FACTORY_SLUG,
     name: "Software Factory",
+    icon: "code",
+    iconColor: "blue",
     lightspeedUniverseId: ENGINE_UNIVERSE_ID,
     role: "admin",
     createdAt: agoIso(70 * DAY_MS),

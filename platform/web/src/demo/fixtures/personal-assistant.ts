@@ -2693,6 +2693,8 @@ export function seedPersonalAssistant(store: DemoStore): void {
     id: PERSONAL_ASSISTANT_UNIVERSE_ID,
     slug: PERSONAL_ASSISTANT_SLUG,
     name: "Personal Assistant",
+    icon: "sparkles",
+    iconColor: "violet",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
     role: "admin",
     createdAt: agoIso(5 * 7 * DAY_MS),
