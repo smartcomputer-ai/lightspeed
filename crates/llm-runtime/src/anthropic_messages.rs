@@ -33,8 +33,8 @@ use crate::{
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_native_tools},
     params::{
-        anthropic_messages_params, anthropic_thinking_from_effort,
-        default_anthropic_thinking_display,
+        ThinkingPrefixMismatch, anthropic_messages_params, anthropic_thinking_from_effort,
+        default_anthropic_block_binding, default_anthropic_thinking_display,
     },
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
@@ -123,6 +123,7 @@ pub struct AnthropicMessagesLlmAdapter {
     secrets: Arc<dyn SecretResolver>,
     provider_keys: Arc<dyn ModelProviderResolver>,
     inventory: Arc<dyn McpInventoryResolver>,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 }
 
 impl AnthropicMessagesLlmAdapter {
@@ -134,7 +135,17 @@ impl AnthropicMessagesLlmAdapter {
             secrets: Arc::new(UnconfiguredSecretResolver),
             provider_keys: Arc::new(NoStoredModelProviders),
             inventory: Arc::new(UnconfiguredMcpInventoryResolver),
+            thinking_prefix_mismatch: ThinkingPrefixMismatch::default(),
         }
+    }
+
+    /// What the provider does with preserved thinking after a history edit.
+    /// Production keeps the `DropBlock` default so repairs never strand a
+    /// session; suites that exercise no repair use `Error` so an unintended
+    /// edit fails instead of being absorbed.
+    pub fn with_thinking_prefix_mismatch(mut self, behavior: ThinkingPrefixMismatch) -> Self {
+        self.thinking_prefix_mismatch = behavior;
+        self
     }
 
     pub fn with_secret_resolver(mut self, secrets: Arc<dyn SecretResolver>) -> Self {
@@ -169,6 +180,7 @@ impl AnthropicMessagesLlmAdapter {
             self.blobs.as_ref(),
             self.inventory.as_ref(),
             request,
+            self.thinking_prefix_mismatch,
         )
         .await
     }
@@ -207,6 +219,7 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             self.inventory.as_ref(),
             &request.request,
             &mut catalog,
+            self.thinking_prefix_mismatch,
         )
         .await?;
         let (mut send_request, mut redacted_request) =
@@ -227,6 +240,7 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
                     provider.as_ref().map(|provider| provider.as_request_auth()),
                 )
                 .await?;
+            log_input_transformations(&request, &response.raw_json);
             let paused = response.parsed.stop_reason == Some(am::StopReason::PauseTurn);
             if paused && responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
                 return Err(LlmAdapterError::InvalidProviderRequest {
@@ -279,6 +293,32 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
     }
 }
 
+/// Log every thinking block the provider dropped or let through despite a
+/// changed conversation prefix. `drop_block` would otherwise absorb history
+/// edits silently, including ones the runtime makes by mistake.
+fn log_input_transformations(request: &LlmGenerationRequest, raw_response: &Value) {
+    let Some(entries) = raw_response
+        .get("input_transformations")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for entry in entries {
+        let field = |name: &str| entry.get(name).and_then(Value::as_str).unwrap_or_default();
+        let (kind, path, reason) = (field("type"), field("path"), field("reason"));
+        tracing::warn!(
+            session_id = %request.session_id,
+            run_id = %request.run_id,
+            turn_id = %request.turn_id,
+            model = %request.request.model.model,
+            kind,
+            path,
+            reason,
+            "Anthropic transformed replayed thinking"
+        );
+    }
+}
+
 fn paused_assistant_message(raw_response: &Value) -> LlmAdapterResult<am::MessageParam> {
     let blocks = raw_response
         .get("content")
@@ -325,14 +365,20 @@ pub async fn materialize_create_request(
     blobs: &dyn BlobStore,
     request: &LlmRequest,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
-    materialize_create_request_with_inventory(blobs, &UnconfiguredMcpInventoryResolver, request)
-        .await
+    materialize_create_request_with_inventory(
+        blobs,
+        &UnconfiguredMcpInventoryResolver,
+        request,
+        ThinkingPrefixMismatch::default(),
+    )
+    .await
 }
 
 async fn materialize_create_request_with_inventory(
     blobs: &dyn BlobStore,
     inventory: &dyn McpInventoryResolver,
     request: &LlmRequest,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
     let mut catalog = crate::tool_catalog::ToolCatalog::resolve(
         blobs,
@@ -340,7 +386,14 @@ async fn materialize_create_request_with_inventory(
         &request.tools,
     )
     .await?;
-    materialize_request_with_catalog(blobs, inventory, request, &mut catalog).await
+    materialize_request_with_catalog(
+        blobs,
+        inventory,
+        request,
+        &mut catalog,
+        thinking_prefix_mismatch,
+    )
+    .await
 }
 
 async fn materialize_request_with_catalog(
@@ -348,6 +401,7 @@ async fn materialize_request_with_catalog(
     inventory: &dyn McpInventoryResolver,
     request: &LlmRequest,
     catalog: &mut crate::tool_catalog::ToolCatalog,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
     if request.processing_tier.is_some() {
         return Err(LlmAdapterError::InvalidProviderRequest {
@@ -369,6 +423,10 @@ async fn materialize_request_with_catalog(
     // summary; current models omit it unless told otherwise.
     if let Some(thinking) = params.thinking.as_mut() {
         default_anthropic_thinking_display(thinking);
+        // Every repair that rewrites content the provider has already seen
+        // invalidates the thinking produced after it; the binding policy
+        // decides whether the session continues without that reasoning.
+        default_anthropic_block_binding(thinking, thinking_prefix_mismatch);
     }
     if request.provider_response_id.is_some() {
         return Err(LlmAdapterError::InvalidProviderRequest {
@@ -773,12 +831,13 @@ async fn materialize_block(
                 ContextMessageRole::Assistant => am::MessageRole::Assistant,
             };
             if let Some(mime) = crate::blob_io::image_media_type(entry.content.media_type.as_deref()) {
-                let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                let image =
+                    crate::media::model_image(blobs, &entry.content.content_ref, mime).await?;
                 return Ok((
                     role,
                     vec![
-                        am::ContentBlockParam::text(crate::blob_io::media_announcement(entry)),
-                        am::ContentBlockParam::image_base64(mime, data),
+                        am::ContentBlockParam::text(image.announcement(entry)),
+                        am::ContentBlockParam::image_base64(image.media_type, image.base64),
                     ],
                 ));
             }
@@ -1902,7 +1961,11 @@ mod tests {
 
         assert_eq!(
             value["thinking"],
-            json!({ "type": "adaptive", "display": "summarized" })
+            json!({
+                "type": "adaptive",
+                "display": "summarized",
+                "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+            })
         );
         assert_eq!(value["output_config"], json!({ "effort": "max" }));
     }
@@ -1958,7 +2021,11 @@ mod tests {
 
         assert_eq!(
             value["thinking"],
-            json!({ "type": "adaptive", "display": "omitted" })
+            json!({
+                "type": "adaptive",
+                "display": "omitted",
+                "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+            })
         );
     }
 
@@ -2009,7 +2076,12 @@ mod tests {
         // still fills in so the reasoning entries carry text.
         assert_eq!(
             value["thinking"],
-            json!({ "type": "enabled", "budget_tokens": 512, "display": "summarized" })
+            json!({
+                "type": "enabled",
+                "budget_tokens": 512,
+                "display": "summarized",
+                "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+            })
         );
         assert!(value.get("output_config").is_none());
     }
@@ -2226,7 +2298,12 @@ mod tests {
                 "stop_sequences": ["<END>"],
                 "stream": false,
                 "temperature": 0.2,
-                "thinking": { "type": "enabled", "budget_tokens": 1024, "display": "summarized" },
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": 1024,
+                    "display": "summarized",
+                    "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+                },
                 "output_config": { "effort": "high" },
                 "tool_choice": {
                     "type": "tool",
@@ -4432,5 +4509,130 @@ mod tests {
                 .starts_with("[document: report.pdf · media:")
         );
         assert_eq!(blocks[4]["title"], json!("report.pdf"));
+    }
+
+    fn png_bytes(width: u32, height: u32, seed: u8) -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let image = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([seed, (x % 256) as u8, (y % 256) as u8])
+        });
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&image, width, height, image::ExtendedColorType::Rgb8)
+            .expect("encode png");
+        bytes
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn many_image_history_lowers_within_the_pixel_cap() {
+        // Anthropic rejects a request with more than 20 images when any side
+        // exceeds 2000 px, counting images from earlier turns.
+        use base64::Engine as _;
+        const OVERSIZED: usize = 7;
+        let blobs = InMemoryBlobStore::new();
+        let mut entries = Vec::new();
+        let mut sources = Vec::new();
+        for index in 0..32 {
+            let bytes = if index == OVERSIZED {
+                png_bytes(2166, 2464, index as u8)
+            } else {
+                png_bytes(64, 48, index as u8)
+            };
+            let content_ref = blobs.put_bytes(bytes.clone()).await.expect("store image");
+            let mut entry = user_entry(index as u64 + 1, content_ref);
+            entry.content.media_type = Some("image/png".to_owned());
+            entry.preview = Some("[image]".to_owned());
+            entries.push(entry);
+            sources.push(bytes);
+        }
+
+        let request = materialize_create_request(&blobs, &intent_request(entries))
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(request).expect("json");
+        let blocks = value["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .flat_map(|message| message["content"].as_array().expect("blocks").iter())
+            .collect::<Vec<_>>();
+        let images = blocks
+            .iter()
+            .filter(|block| block["type"] == json!("image"))
+            .collect::<Vec<_>>();
+        assert_eq!(images.len(), 32);
+        for (index, (image, source)) in images.iter().zip(&sources).enumerate() {
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(image["source"]["data"].as_str().expect("image data"))
+                .expect("base64");
+            let (width, height) = image::ImageReader::new(std::io::Cursor::new(&data))
+                .with_guessed_format()
+                .expect("format")
+                .into_dimensions()
+                .expect("dimensions");
+            assert!(
+                width <= 2000 && height <= 2000,
+                "image {index}: {width}×{height}"
+            );
+            if index != OVERSIZED {
+                assert_eq!(&data, source, "compliant image {index} is sent unchanged");
+            }
+        }
+        let resized = blocks
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .filter(|text| text.contains("shown at"))
+            .collect::<Vec<_>>();
+        assert_eq!(resized.len(), 1);
+        assert!(
+            resized[0].ends_with("· image/png · shown at 1758×2000 of 2166×2464]"),
+            "{}",
+            resized[0]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adapter_sends_its_thinking_prefix_mismatch_behavior() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("high".to_owned());
+
+        let default = AnthropicMessagesLlmAdapter::new(
+            fake_api(completed_text_response_json()),
+            blobs.clone(),
+        )
+        .materialize_create_request(&request)
+        .await
+        .expect("materialize");
+        let thinking = default.thinking.as_ref().expect("thinking");
+        assert_eq!(
+            thinking.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "drop_block" }))
+        );
+        assert_eq!(
+            default.required_betas(),
+            [am::ANTHROPIC_THINKING_BINDING_BETA]
+        );
+
+        let strict =
+            AnthropicMessagesLlmAdapter::new(fake_api(completed_text_response_json()), blobs)
+                .with_thinking_prefix_mismatch(ThinkingPrefixMismatch::Error)
+                .materialize_create_request(&request)
+                .await
+                .expect("materialize");
+        let thinking = strict.thinking.as_ref().expect("thinking");
+        assert_eq!(
+            thinking.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "error" }))
+        );
+
+        request.reasoning_effort = Some("none".to_owned());
+        let disabled = materialize_create_request(&InMemoryBlobStore::new(), &request)
+            .await
+            .expect("materialize");
+        assert!(
+            disabled.required_betas().is_empty(),
+            "disabled thinking rejects block_binding"
+        );
     }
 }

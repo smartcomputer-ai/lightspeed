@@ -17,7 +17,7 @@ use llm_clients::{
 use llm_runtime::{
     AnthropicMessagesLlmAdapter, LlmAdapterRegistry, LlmRuntime, McpInventoryResolver,
     ModelProviderResolver, OpenAiCompletionsLlmAdapter, OpenAiResponsesLlmAdapter,
-    secrets::SecretResolver,
+    ThinkingPrefixMismatch, secrets::SecretResolver,
 };
 use store_pg::PgStore;
 use vfs::VfsWorkspaceStore;
@@ -402,6 +402,7 @@ impl ActivityState {
             clients.openai_completions.clone(),
             clients.anthropic.clone(),
             crate::config::llm_debug_dumps_from_env()?,
+            crate::config::anthropic_thinking_prefix_mismatch_from_env()?,
         );
         let temporal_client_for_workflow_tools = temporal_client.clone();
         let hosted = Arc::new(
@@ -533,6 +534,7 @@ fn default_llm_runtime(
         openai_completions,
         anthropic,
         debug_dumps,
+        crate::config::anthropic_thinking_prefix_mismatch_from_env()?,
     ))
 }
 
@@ -546,6 +548,7 @@ fn llm_runtime_with_clients(
     openai_completions: Arc<oai_completions::Client>,
     anthropic: Arc<am::Client>,
     debug_dumps: bool,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 ) -> Arc<dyn CoreAgentLlm> {
     let mut registry = LlmAdapterRegistry::new();
 
@@ -576,8 +579,9 @@ fn llm_runtime_with_clients(
     registry.insert_generation_adapter(ProviderApiKind::OpenAiCompletions, adapter.clone());
     registry.insert_compaction_adapter(ProviderApiKind::OpenAiCompletions, adapter);
 
-    let mut adapter =
-        AnthropicMessagesLlmAdapter::new(anthropic, blobs).with_debug_dumps(debug_dumps);
+    let mut adapter = AnthropicMessagesLlmAdapter::new(anthropic, blobs)
+        .with_debug_dumps(debug_dumps)
+        .with_thinking_prefix_mismatch(thinking_prefix_mismatch);
     if let Some(secrets) = &secrets {
         adapter = adapter.with_secret_resolver(secrets.clone());
     }

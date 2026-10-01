@@ -125,6 +125,32 @@ pub fn llm_debug_dumps_from_env() -> anyhow::Result<bool> {
     }
 }
 
+/// `LIGHTSPEED_ANTHROPIC_THINKING_PREFIX_MISMATCH`: what Anthropic does with
+/// preserved thinking after content the provider has already seen changes.
+/// `drop_block` (the default) continues without the affected reasoning, so a
+/// repaired session never stalls; `error` fails the request, for suites that
+/// must catch unintended history edits.
+pub fn anthropic_thinking_prefix_mismatch_from_env()
+-> anyhow::Result<llm_runtime::ThinkingPrefixMismatch> {
+    parse_thinking_prefix_mismatch(
+        optional_env("LIGHTSPEED_ANTHROPIC_THINKING_PREFIX_MISMATCH").as_deref(),
+    )
+}
+
+fn parse_thinking_prefix_mismatch(
+    value: Option<&str>,
+) -> anyhow::Result<llm_runtime::ThinkingPrefixMismatch> {
+    use llm_runtime::ThinkingPrefixMismatch;
+    match value {
+        None | Some("drop_block") => Ok(ThinkingPrefixMismatch::DropBlock),
+        Some("error") => Ok(ThinkingPrefixMismatch::Error),
+        Some(value) => Err(anyhow::anyhow!(
+            "invalid LIGHTSPEED_ANTHROPIC_THINKING_PREFIX_MISMATCH={value:?}; \
+             expected drop_block or error"
+        )),
+    }
+}
+
 /// Default minimum age since a blob's last put before a sweep may collect
 /// it. Long enough to cover the longest activity, sub-agent, or environment
 /// job that holds a ref before appending it, and a human uploading through
@@ -420,6 +446,24 @@ fn optional_env(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thinking_prefix_mismatch_defaults_to_drop_block() {
+        use llm_runtime::ThinkingPrefixMismatch;
+        assert_eq!(
+            parse_thinking_prefix_mismatch(None).unwrap(),
+            ThinkingPrefixMismatch::DropBlock
+        );
+        assert_eq!(
+            parse_thinking_prefix_mismatch(Some("drop_block")).unwrap(),
+            ThinkingPrefixMismatch::DropBlock
+        );
+        assert_eq!(
+            parse_thinking_prefix_mismatch(Some("error")).unwrap(),
+            ThinkingPrefixMismatch::Error
+        );
+        assert!(parse_thinking_prefix_mismatch(Some("strict")).is_err());
+    }
 
     #[test]
     fn retired_model_environment_is_rejected_with_a_configuration_action() {

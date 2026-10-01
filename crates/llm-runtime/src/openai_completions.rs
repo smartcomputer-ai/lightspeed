@@ -647,14 +647,16 @@ async fn materialize_message(
                 if drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else {
-                    let data =
-                        crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    let image =
+                        crate::media::model_image(blobs, &entry.content.content_ref, mime).await?;
                     oai_c::CompletionMessageContent::Parts(vec![
-                        text_part(crate::blob_io::media_announcement(entry)),
+                        text_part(image.announcement(entry)),
                         part_with_extra(
                             "image_url",
                             "image_url",
-                            json!({ "url": format!("data:{mime};base64,{data}") }),
+                            json!({
+                                "url": format!("data:{};base64,{}", image.media_type, image.base64)
+                            }),
                         ),
                     ])
                 }

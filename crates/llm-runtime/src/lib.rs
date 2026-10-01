@@ -10,6 +10,7 @@ mod catalog_prompts;
 pub mod error;
 pub mod executor;
 pub mod mcp;
+pub mod media;
 pub mod openai_completions;
 pub mod openai_responses;
 pub mod params;
@@ -31,7 +32,7 @@ pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
 pub use params::{
     AnthropicMessagesParams, AnthropicThinkingConfig, OpenAiCompletionsParams,
     OpenAiReasoningConfig, OpenAiResponsesParams, OpenAiServiceTier, PROVIDER_PARAMS_VERSION,
-    validate_provider_params,
+    ThinkingPrefixMismatch, validate_provider_params,
 };
 pub use provider_keys::{
     ModelProviderResolver, NoStoredModelProviders, NoStoredProviderKeys, ProviderAuthScheme,

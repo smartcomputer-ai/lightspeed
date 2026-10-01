@@ -457,17 +457,18 @@ async fn materialize_input_item(
             };
             if let Some(mime) = crate::blob_io::image_media_type(item.content.media_type.as_deref())
             {
-                let data = crate::blob_io::read_base64(blobs, &item.content.content_ref).await?;
+                let image =
+                    crate::media::model_image(blobs, &item.content.content_ref, mime).await?;
                 return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                     role,
                     content: oai::InputMessageContent::Parts(vec![
                         oai::InputContent::InputText {
                             r#type: oai::InputContentType::InputText,
-                            text: crate::blob_io::media_announcement(item),
+                            text: image.announcement(item),
                         },
                         oai::InputContent::InputImage {
                             r#type: oai::InputImageContentType::InputImage,
-                            image_url: format!("data:{mime};base64,{data}"),
+                            image_url: format!("data:{};base64,{}", image.media_type, image.base64),
                             detail: None,
                         },
                     ]),

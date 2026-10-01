@@ -160,6 +160,7 @@ fn generation_request(turn_id: u64, request: LlmRequest) -> LlmGenerationRequest
 
 fn adapter(blobs: Arc<InMemoryBlobStore>) -> AnthropicMessagesLlmAdapter {
     AnthropicMessagesLlmAdapter::new(retrying_anthropic_messages_client(live_client()), blobs)
+        .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
 }
 
 async fn generate(

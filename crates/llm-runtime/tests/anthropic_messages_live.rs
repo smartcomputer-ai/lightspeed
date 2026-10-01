@@ -186,6 +186,7 @@ async fn anthropic_messages_live_adapter_generates_result() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = generation_request(
         1,
@@ -365,6 +366,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_search() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let execution = adapter
@@ -429,6 +431,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_fetch() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let execution = adapter
@@ -492,6 +495,7 @@ async fn anthropic_messages_live_adapter_describes_image_input() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = generation_request(
         1,
@@ -584,6 +588,7 @@ async fn anthropic_messages_live_adapter_reads_pdf_document_input() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = generation_request(
         1,
@@ -644,6 +649,7 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -760,6 +766,7 @@ async fn anthropic_messages_live_adapter_preserves_thinking_blocks() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -779,7 +786,11 @@ async fn anthropic_messages_live_adapter_preserves_thinking_blocks() {
         provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
     assert_eq!(
         provider_request["thinking"],
-        json!({ "type": "adaptive", "display": "summarized" }),
+        json!({
+            "type": "adaptive",
+            "display": "summarized",
+            "block_binding": { "prefix_mismatch_behavior": "error" }
+        }),
         "the effort tier must derive adaptive thinking with a visible summary"
     );
     assert_eq!(
@@ -879,6 +890,7 @@ async fn anthropic_messages_live_adapter_thinks_across_tool_round_trip() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -908,7 +920,11 @@ async fn anthropic_messages_live_adapter_thinks_across_tool_round_trip() {
     );
     assert_eq!(
         provider_request["thinking"],
-        json!({ "type": "adaptive", "display": "summarized" })
+        json!({
+            "type": "adaptive",
+            "display": "summarized",
+            "block_binding": { "prefix_mismatch_behavior": "error" }
+        })
     );
     assert_visible_thinking(&execution.result, "tool call turn");
     let kinds = execution
@@ -1024,6 +1040,7 @@ async fn anthropic_messages_live_adapter_default_output_cap_is_accepted() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let mut request = intent_request(
         "live-anthropic-messages-default-cap",
@@ -1078,6 +1095,7 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_truncation_but_keeps_
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let mut request = intent_request(
         "live-anthropic-messages-truncation",
@@ -1171,6 +1189,7 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_refusal() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = intent_request(
         "live-anthropic-messages-refusal",
@@ -1223,6 +1242,7 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = ContextCompactionRequest {
         session_id: SessionId::new("session-live-anthropic-compaction"),
@@ -1311,6 +1331,7 @@ async fn tool_media_round_trip(model: String, set: support::tool_media::ToolMedi
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -1362,4 +1383,240 @@ async fn tool_media_round_trip(model: String, set: support::tool_media::ToolMedi
     let final_text =
         support::content_text(blobs.as_ref(), &assistant_entry(&followup_execution)).await;
     assert_tool_media_answer(&final_text, &fixture);
+}
+
+/// Model for the preserved-thinking repair test. It must run the
+/// conversation check on replayed thinking, which the default live model
+/// does not, so the test names one explicitly instead of relying on the
+/// account's enforcement default.
+fn preserved_thinking_model() -> String {
+    env_or_dotenv_var("ANTHROPIC_PRESERVED_THINKING_MODEL")
+        .unwrap_or_else(|_| "claude-opus-5-5".to_string())
+}
+
+fn is_http_status(error: &llm_runtime::LlmAdapterError, status: u16) -> bool {
+    matches!(
+        error,
+        llm_runtime::LlmAdapterError::Provider { source }
+            if matches!(source.as_ref(), llm_clients::LlmApiError::HttpStatus(http) if http.status == status)
+    )
+}
+
+/// A repair that rewrites an image the provider has already seen changes
+/// the conversation prefix that later thinking is bound to. With
+/// `drop_block` the session continues and the provider reports the dropped
+/// reasoning; with `error` the same request fails, which is what lets suites
+/// catch unintended history edits. An unchanged replay passes under `error`,
+/// so the adapter's ordinary lowering makes no edit of its own.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let strict = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+    let lenient = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+    let model = ModelSelection {
+        model: preserved_thinking_model(),
+        ..model_selection()
+    };
+
+    let image_ref = blobs
+        .put_bytes(support::media::png_image(800, 600, [200, 40, 40]))
+        .await
+        .expect("store image");
+    let mut image = user_entry(1, image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let question = user_entry(
+        2,
+        text_blob(
+            &blobs,
+            "Name the dominant color of this image in one word. Then compute 13 * 17 + 29 * 31, \
+             thinking it through carefully, and reply with the color and the number.",
+        )
+        .await,
+    );
+    let request = |fingerprint: &str, entries: Vec<ContextEntry>| {
+        let mut request = intent_request(fingerprint, entries);
+        request.model = model.clone();
+        request.output_limit = Some(8192);
+        request.reasoning_effort = Some("high".to_string());
+        request
+    };
+
+    let first = strict
+        .generate(generation_request(
+            1,
+            request(
+                "live-anthropic-edit-1",
+                vec![image.clone(), question.clone()],
+            ),
+        ))
+        .await
+        .expect("first turn");
+    assert_eq!(first.result.status, LlmGenerationStatus::Succeeded);
+    assert_visible_thinking(&first.result, "first turn");
+
+    let history = |image: ContextEntry| {
+        let mut entries = vec![image, question.clone()];
+        let offset = entries.len();
+        entries.extend(
+            first
+                .result
+                .context_entries
+                .iter()
+                .enumerate()
+                .map(|(index, item)| retained_context_entry(offset + index, item)),
+        );
+        entries
+    };
+    let followup = text_blob(
+        &blobs,
+        "Now add 4 to that number. Reply with just the number.",
+    )
+    .await;
+    let with_followup = |mut entries: Vec<ContextEntry>| {
+        entries.push(user_entry(entries.len() as u64 + 1, followup.clone()));
+        entries
+    };
+
+    // Control: an unchanged replay verifies under the strict policy.
+    let unchanged = strict
+        .generate(generation_request(
+            2,
+            request(
+                "live-anthropic-edit-2",
+                with_followup(history(image.clone())),
+            ),
+        ))
+        .await
+        .expect("unchanged replay verifies");
+    assert_eq!(unchanged.result.status, LlmGenerationStatus::Succeeded);
+
+    // The edit: the earlier image now lowers to different bytes, as when
+    // normalization first applies to an oversized image already in history.
+    let edited_ref = blobs
+        .put_bytes(support::media::oversized_png([200, 40, 40]))
+        .await
+        .expect("store edited image");
+    let mut edited = image.clone();
+    edited.content.content_ref = edited_ref;
+    let edited_history = with_followup(history(edited));
+
+    let error = strict
+        .generate(generation_request(
+            3,
+            request("live-anthropic-edit-3", edited_history.clone()),
+        ))
+        .await
+        .expect_err("strict policy rejects thinking bound to the edited prefix");
+    assert!(is_http_status(&error, 400), "expected a 400, got {error:?}");
+
+    let continued = lenient
+        .generate(generation_request(
+            4,
+            request("live-anthropic-edit-4", edited_history),
+        ))
+        .await
+        .expect("drop_block continues after the edit");
+    assert_eq!(continued.result.status, LlmGenerationStatus::Succeeded);
+    let sent = provider_request_json(&blobs, &dumps(&continued).provider_request_ref).await;
+    assert_eq!(
+        sent["thinking"]["block_binding"],
+        json!({ "prefix_mismatch_behavior": "drop_block" })
+    );
+    let response = provider_request_json(&blobs, &dumps(&continued).raw_response_ref).await;
+    let transformations = response["input_transformations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("input_transformations missing: {response}"));
+    assert!(
+        transformations.iter().any(|entry| {
+            entry["type"] == json!("thinking_dropped")
+                && entry["reason"] == json!("prefix_binding_mismatch")
+        }),
+        "expected a dropped thinking block, got {transformations:?}"
+    );
+    let answer = continued
+        .result
+        .context_entries
+        .iter()
+        .find_map(|item| match item.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(item.content.clone()),
+            _ => None,
+        })
+        .expect("answer after the edit");
+    let answer = support::content_text(blobs.as_ref(), &answer).await;
+    assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
+}
+
+/// An image over the pixel cap is sent as a downscaled copy the provider
+/// accepts and the model can still read, announced with the dimensions the
+/// model sees.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_sees_oversized_image() {
+    use support::media::{OVERSIZED_SHOWN_AT, oversized_png, texts_containing};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_ref = blobs
+        .put_bytes(oversized_png([30, 60, 220]))
+        .await
+        .expect("store image");
+    let mut image = user_entry(1, image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let question = user_entry(
+        2,
+        text_blob(
+            &blobs,
+            "What is the dominant color of this image? Reply with one English word in lowercase.",
+        )
+        .await,
+    );
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+
+    let execution = adapter
+        .generate(generation_request(
+            1,
+            intent_request("live-anthropic-oversized-image", vec![image, question]),
+        ))
+        .await
+        .expect("generate");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let sent = provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
+    assert_eq!(
+        texts_containing(&sent, OVERSIZED_SHOWN_AT).len(),
+        1,
+        "{sent}"
+    );
+    let answer = execution
+        .result
+        .context_entries
+        .iter()
+        .find_map(|item| match item.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(item.content.clone()),
+            _ => None,
+        })
+        .expect("assistant answer");
+    let answer = support::content_text(blobs.as_ref(), &answer)
+        .await
+        .to_lowercase();
+    assert!(answer.contains("blue"), "expected blue, got {answer:?}");
 }

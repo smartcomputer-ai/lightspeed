@@ -268,10 +268,13 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
         .await
         .expect("create session");
 
-    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
-        retrying_anthropic_messages_client(live_client()),
-        blobs.clone(),
-    ));
+    let adapter = Arc::new(
+        AnthropicMessagesLlmAdapter::new(
+            retrying_anthropic_messages_client(live_client()),
+            blobs.clone(),
+        )
+        .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error),
+    );
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new()
             .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter.clone())

@@ -458,6 +458,47 @@ pub fn anthropic_thinking_from_effort(effort: &str) -> LlmAdapterResult<Anthropi
     })
 }
 
+/// What Anthropic does with a replayed thinking block whose conversation
+/// prefix no longer matches the one it was produced in.
+///
+/// Repairs that rewrite content the provider has already seen (image
+/// normalization of an existing history, media omission, redaction) change
+/// that prefix. `DropBlock` lets the session continue without the affected
+/// reasoning; `Error` fails the request, which suites use to catch
+/// unintended history edits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThinkingPrefixMismatch {
+    #[default]
+    DropBlock,
+    Error,
+}
+
+impl ThinkingPrefixMismatch {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DropBlock => "drop_block",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// Fill in `block_binding` when params leave it unset. Anthropic accepts it
+/// only with thinking on (`adaptive` or `enabled`); explicit params keep
+/// their value.
+pub fn default_anthropic_block_binding(
+    thinking: &mut AnthropicThinkingConfig,
+    behavior: ThinkingPrefixMismatch,
+) {
+    if matches!(thinking.r#type.as_str(), "adaptive" | "enabled")
+        && !thinking.extra.contains_key("block_binding")
+    {
+        thinking.extra.insert(
+            "block_binding".to_owned(),
+            serde_json::json!({ "prefix_mismatch_behavior": behavior.as_str() }),
+        );
+    }
+}
+
 /// Fill in the thinking display mode when params leave it unset so reasoning
 /// entries carry summary text. Explicit params keep their value; disabled
 /// thinking never gets one.
@@ -670,6 +711,40 @@ mod tests {
         };
         default_anthropic_thinking_display(&mut disabled);
         assert_eq!(disabled.display, None);
+    }
+
+    #[test]
+    fn default_anthropic_block_binding_fills_only_unset_thinking_on_modes() {
+        let thinking = |kind: &str| AnthropicThinkingConfig {
+            r#type: kind.to_owned(),
+            budget_tokens: None,
+            display: None,
+            extra: BTreeMap::new(),
+        };
+        for kind in ["adaptive", "enabled"] {
+            let mut config = thinking(kind);
+            default_anthropic_block_binding(&mut config, ThinkingPrefixMismatch::DropBlock);
+            assert_eq!(
+                config.extra.get("block_binding"),
+                Some(&json!({ "prefix_mismatch_behavior": "drop_block" }))
+            );
+        }
+        for kind in ["disabled", "between_tools"] {
+            let mut config = thinking(kind);
+            default_anthropic_block_binding(&mut config, ThinkingPrefixMismatch::DropBlock);
+            assert!(config.extra.is_empty(), "{kind} rejects block_binding");
+        }
+
+        let mut explicit = thinking("adaptive");
+        explicit.extra.insert(
+            "block_binding".to_owned(),
+            json!({ "prefix_mismatch_behavior": "error" }),
+        );
+        default_anthropic_block_binding(&mut explicit, ThinkingPrefixMismatch::DropBlock);
+        assert_eq!(
+            explicit.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "error" }))
+        );
     }
 
     #[test]
