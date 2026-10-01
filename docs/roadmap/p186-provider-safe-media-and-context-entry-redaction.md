@@ -8,8 +8,8 @@
 A session can recover when its active context no longer fits or is no longer
 accepted by its provider, while preserving its durable history and as much
 useful information as possible. Known media limits are handled before sending
-the request. If protected newest media cannot fit, or a provider rejects a
-request for a reason the runtime cannot predict, the failure says so plainly.
+the request. If a provider rejects a request for a reason the runtime cannot
+predict, the failure says so plainly.
 An operator can neutralize an offending entry with one public API call that
 appends an ordinary event, instead of rewriting the session log.
 
@@ -48,10 +48,7 @@ continuity. Compaction loses detail; omission hides older media; redaction
 neutralizes selected content. If a repair invalidates provider-bound thinking,
 the provider may also need to discard that reasoning. Losing it can require
 the model to reconstruct conclusions or repeat analysis, but does not require
-discarding the rest of the conversation or starting a new session. Important
-decisions, constraints, progress, and remaining work should be explicit in
-messages or workspace artifacts; recovery must also support existing sessions
-without such checkpoints.
+discarding the rest of the conversation or starting a new session.
 
 Durable context repairs use revision guards, safe execution boundaries, and
 ordinary audit events. Request-time transformations leave stored entries and
@@ -111,7 +108,7 @@ one entry it no longer accepts, and the runtime has no supported way out.
 ### Provider limits
 
 The request limits check (Decision 2) keeps one row per provider API kind.
-Slice 2 is complete only when every API kind has its row.
+Slice 3 is complete only when every API kind has its row.
 
 Anthropic Messages, first-party API, as of 2026-10-01:
 
@@ -179,18 +176,26 @@ table: image block count, per-image encoded bytes, and total body bytes.
   replaced, oldest first, with the placeholder text the text-only path already
   uses:
   `[image · media:3f9a2c1d4e7b · omitted from this request to stay within provider limits]`.
-  Media from the current run's input and from the latest tool batch is never
-  omitted, because the model must see what it just asked for.
+  Media from the current run's input and from the latest tool batch is
+  protected: it is omitted only after all older media, because the model must
+  see what it just asked for.
+- **Protected media degrades newest-first.** Per-item admission does not bound
+  the aggregate request: eight images at the 5 MB encoded budget already
+  exceed a 32 MB body limit, even in a single result, and documents and
+  parallel tool batches can exceed it too. When the protected media alone
+  does not fit, its newest items are kept and the rest receive the same
+  placeholder. Failing the turn instead would not help: the latest tool batch
+  stays the latest after the run fails, so every later request would fail the
+  same way.
 - **The cut point moves in steps.** Which media is omitted is a pure function
   of the context, so retries produce identical requests. The boundary moves
   only when the request crosses the limit, and then it drops to a low-water
   mark well below the limit, so a growing session invalidates its prompt
   cache rarely rather than every turn.
-- **If the protected newest media alone does not fit**, the adapter fails the
-  turn with a typed error before any provider call. Per-item admission does
-  not bound the aggregate request: eight images at the 5 MB encoded budget
-  already exceed a 32 MB body limit, even in a single result. Documents and
-  parallel tool batches can exceed it too.
+- **The check never fails a request.** It manages media only, and a single
+  image always fits within the per-image budget. A request whose non-media
+  content alone exceeds the body limit is a context-size problem for
+  compaction, or a rejection under Decision 3.
 
 Omission rewrites earlier user content as the provider sees it, in sessions
 that are still healthy. Decision 1 keeps it rare, because pixel limits no
@@ -274,24 +279,42 @@ other request content. This policy remains on subsequent requests and after
 restart; it is not a one-request retry setting. See the provider's
 [preserved-thinking contract](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
 
-The adapter continues sending the stored thinking unchanged and records
-reported `input_transformations` for diagnostics. Original reasoning stays
-in the event history. New responses may still generate thinking. Other
-request errors continue through Decision 3; this policy does not make every
-provider rejection recoverable.
+Setting the field also changes behavior on accounts the provider does not
+enforce by default (created before 2026-08-31): any value opts the request into
+enforcement, so mismatched thinking that such accounts currently pass to the
+model is dropped instead. This is the intended contract, and it makes every
+deployment behave the same.
+
+The adapter continues sending the stored thinking unchanged. Original
+reasoning stays in the event history. New responses may still generate
+thinking. Other request errors continue through Decision 3; this policy does
+not make every provider rejection recoverable.
+
+`drop_block` also absorbs history edits the runtime makes by mistake, which
+would otherwise surface as rejections. Two measures keep such bugs visible:
+
+- Production logs every reported `input_transformations` entry with its path
+  and reason, and exports a count of dropped blocks per session, so unexpected
+  drops are observable.
+- Live and CI suites that do not exercise a repair send `"error"`, so an
+  unintended history edit fails a test instead of being absorbed.
 
 Models or modes that cannot use this policy need a separately tested fallback
 that durably excludes affected historical thinking from future requests,
 without gaps or later reintroduction. The exclusion must survive restart and
 preserve a valid tool sequence. Recovery support for such a mode is not
-complete until that path is verified. Other adapters follow their native
+complete until that path is verified. Anthropic accepts `block_binding` only
+with `adaptive` and `enabled` thinking, so this applies today to `disabled`,
+which the adapter sends for reasoning effort `none`, and would apply to
+`between_tools` if the adapter adopts it. Other adapters follow their native
 contracts; Anthropic's policy does not authorize stripping OpenAI reasoning
 items or other provider-opaque content.
 
-Provider wire settings and interpretation remain in the adapter. The engine
-records provider-neutral repair facts and performs no signature inspection.
-Stable normalization and stepped omission still matter: fewer history edits
-preserve more reasoning and more of the prompt cache.
+Provider wire settings, their interpretation, and dropped-block diagnostics
+remain in the adapter. This decision does not change the engine or the
+public contract, and nothing inspects signatures. Stable normalization and
+stepped omission still matter: fewer history edits preserve more reasoning
+and more of the prompt cache.
 
 ## How a failing session recovers
 
@@ -299,7 +322,7 @@ preserve more reasoning and more of the prompt cache.
 | --- | --- | --- |
 | Context exceeds its token budget | Existing compaction policy: older context summarized | According to session policy |
 | Image over a provider's pixel or per-image byte limit | Normalization (Decision 1): a bounded copy is sent | Yes |
-| Request over a provider's image count or total size | Request limits check (Decision 2): oldest eligible media omitted; fails locally if it still cannot fit | When eligible media can make it fit |
+| Request over a provider's image count or total size | Request limits check (Decision 2): oldest media omitted, protected media last and newest-first | Yes |
 | Unexplained rejection caused by a redactable entry | `RequestRejected` (Decision 3), then redaction by an operator (Decision 4) | No |
 | A repair invalidates preserved thinking | Provider-specific continuation (Decision 5): incompatible past thinking excluded from model input | For verified model and mode combinations |
 
@@ -312,35 +335,36 @@ every rejection is caused by content it can repair.
 
 ## Slices
 
-1. **Normalization.** Shared lowering function in `llm-runtime`, header probe,
-   fixed cap, byte budget, deterministic encoding, worker-local cache, all three
-   adapters. Tests: oversized PNG and JPEG are downscaled within the cap;
-   compliant images pass through byte-identical; output is identical across
-   calls; a 32-image history with a 2166 × 2464 image lowers within the
-   many-image rule.
-2. **Request limits check.** Limits rows for every API kind, stepped omission,
-   typed failure before the provider call. Tests: omission order, protected
-   newest media, identical requests across retries, the cut point holds steady
-   while under the limit.
-3. **Rejection and redaction.** `RequestRejected` through the I/O boundary,
-   turn, and run failure; the redaction command, event, and placeholders;
-   `session/context/redact`; CLI support; contract regeneration; replay vectors
-   for redaction, its rejections, and a redacted tool result lowering as its
-   placeholder with pairing intact on every adapter.
-4. **Thinking continuation.** Anthropic adapter defaults, beta header, and
-   transformation diagnostics; verified fallback for unsupported modes before
-   claiming recovery support. Tests: unchanged histories retain valid thinking;
+1. **Thinking continuation.** Anthropic adapter defaults, beta header,
+   dropped-block logging and counts, `"error"` in suites that do not exercise a
+   repair; verified fallback for `disabled` thinking before claiming recovery
+   support there. Tests: unchanged histories retain valid thinking;
    existing-image normalization, omission, redaction, and compaction that
    retains thinking continue with prefix enforcement enabled; later turns and
    a restart continue; original history is unchanged. A credentialed live
    suite exercises an enforcing model and mode explicitly, rather than relying
    on the account age or the default model.
+2. **Normalization.** Shared lowering function in `llm-runtime`, header probe,
+   fixed cap, byte budget, deterministic encoding, worker-local cache, all three
+   adapters. Tests: oversized PNG and JPEG are downscaled within the cap;
+   compliant images pass through byte-identical; output is identical across
+   calls; a 32-image history with a 2166 × 2464 image lowers within the
+   many-image rule.
+3. **Request limits check.** Limits rows for every API kind, stepped omission,
+   newest-first degradation of protected media. Tests: omission order;
+   protected media omitted last; an eight-image result over the body limit
+   keeps its newest images, and the next request is identical; identical
+   requests across retries; the cut point holds steady while under the limit.
+4. **Rejection and redaction.** `RequestRejected` through the I/O boundary,
+   turn, and run failure; the redaction command, event, and placeholders;
+   `session/context/redact`; CLI support; contract regeneration; replay vectors
+   for redaction, its rejections, and a redacted tool result lowering as its
+   placeholder with pairing intact on every adapter.
 
-Slice 1 addresses the incident's per-image limit. Slice 3 supplies operator
-repair for unexplained rejections caused by redactable entries. Slice 4 must
-land with any slice that changes previously sent content on a model enforcing
-thinking binding; repair is complete only when the session can continue after
-the change.
+Slice 1 comes first because every later slice can change content the provider
+has already seen; repair is complete only when the session can continue after
+the change. Slice 2 addresses the incident's per-image limit. Slice 4 supplies
+operator repair for unexplained rejections caused by redactable entries.
 
 ## Non-goals
 
