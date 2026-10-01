@@ -4,20 +4,26 @@
 - Later / exploratory. Written 2026-10-01 as a review for roadmap discussion,
   not a decision.
 - Effort figures are estimates from reading the code, not from a prototype.
+- Direction preference: if we pursue a local runtime, it is Option C (one
+  orchestration core, two substrates). A separate, forked local runtime
+  (Option B) is not on the table.
 
 A local Lightspeed with no Temporal, Postgres or Docker looks achievable in
-four to five months with two engineers, including a validation spike. The
+three to four months with two engineers, with a validation spike running in
+parallel to the first phase. The
 reason is that Temporal only orchestrates our work: every durable fact already
 lives in Postgres and CAS, and the agent loop already runs in-process for
 evals.
 
-Suggested direction to explore:
+Direction:
 
 - Keep Temporal for the hosted runtime.
-- Add a local runtime for interactive sessions: SQLite, a filesystem CAS and an
-  embedded envd, behind the existing public API.
-- Have both runtimes share one session orchestration core rather than forking
-  it.
+- Lift session orchestration out of the Temporal workflow into a sans-IO
+  `sessions` crate. This is worth doing on its own, before and without a local
+  runtime.
+- Add a local runtime for interactive sessions on top of the same `sessions`
+  crate: SQLite, a filesystem CAS and an embedded envd, behind the existing
+  public API.
 - Leave bots, channels and schedules as hosted-only features.
 
 ## How much we rely on Temporal
@@ -107,11 +113,36 @@ abstraction between it and the SDK.
 | **C. One orchestration core, two substrates** | Do for the session workflow what the engine did for the agent loop: move admission racing, preparation, promise polling, emission delivery and the watchdog into a sans-IO orchestrator. Temporal and a local tokio/SQLite substrate each interpret it. | Temporal stays, behind a thinner shell | Single binary, no services | 3–5 months, mostly refactoring the hosted path first | A large refactor of working, live-validated code; Temporal's determinism rules (e.g. no custom wakers) constrain the shared design |
 | **D. Drop Temporal everywhere** | Option C, plus a Postgres-backed durable substrate (inbox, outbox, timers, leases) replaces Temporal in hosted too. | Postgres-only; we own scheduling, leases and failover | Same binary with SQLite | 6+ months | We take on the distributed-systems work Temporal does today: worker leases, failover, timer sweeps, at-least-once delivery, schedules |
 
-Option B is the fastest route to a real local product, but every orchestration
-feature then has to be built twice. Option C costs more up front and leaves a
-single definition of session behaviour; it is also the only path that keeps
-Option D open later without committing to it now. Option A is worth a short
-spike only to test whether "one command" alone moves adoption.
+Option C is the preferred direction. Option B is the fastest route to a real
+local product, but every orchestration feature then has to be built twice and
+the two runtimes drift. Option C costs more up front and leaves a single
+definition of session behaviour; it is also the only path that keeps Option D
+open later without committing to it now. Option A is worth a short spike only
+to test whether "one command" alone moves adoption.
+
+### Option C pays off without a local runtime
+
+Lifting orchestration out of the Temporal workflow improves the hosted runtime
+even if no local runtime follows:
+
+- **Testability.** Admission racing, preparation, promise polling, emission
+  retry, the cancel watchdog and continue-as-new gating are today testable only
+  through Temporal, and some failures (such as the custom-waker restriction,
+  TMPRL1100) surface only in live suites. As a plain state machine they get
+  fast unit tests and replay vectors, as the engine already has.
+- **Smaller determinism surface.** Only the thin interpreter has to obey
+  Temporal's workflow rules, not about 20k lines of orchestration.
+- **Less SDK exposure.** The Temporal Rust SDK is at 0.4.0. A thinner shell
+  limits how much code each SDK upgrade touches.
+- **One copy of session behaviour.** `test-support`'s `SessionRunner` already
+  duplicates hosted behaviour by hand (its prompt-refresh fallback "mirrors the
+  hosted product"). With a shared `sessions` crate, eval and tests run the
+  production orchestration.
+- **Proven pattern.** `bots::controller::state` is already a pure state machine
+  inside a Temporal shell; sessions would follow the same pattern.
+
+The cost is a refactor of live-validated code. It pays back because session
+orchestration keeps changing: most recent roadmap items touched it.
 
 ## Where a local runtime plugs in
 
@@ -124,8 +155,8 @@ flowchart TD
   end
   subgraph Shared["Shared, runtime-neutral"]
     API["Public API<br/>AgentApiService + JSON-RPC"]
-    Orch["Session orchestrator (new)<br/>sans-IO: admissions, awaits,<br/>promises, sub-agents"]
-    Engine["Engine and adapters<br/>CoreAgentDrive, llm-runtime,<br/>tools, MCP"]
+    Orch["sessions (new)<br/>sans-IO orchestration: admissions,<br/>awaits, promises, sub-agents"]
+    Engine["harness and adapters<br/>CoreAgentDrive, llm-runtime,<br/>tools, MCP"]
   end
   subgraph Hosted["Hosted substrate (today)"]
     Temporal["Temporal<br/>durable workflows"]
@@ -149,6 +180,79 @@ flowchart TD
 The local runtime keeps the public API, the engine and the adapters as they
 are. The new work is the extracted orchestrator and the substrate under it. The
 CLI and web UI need no changes to talk to either runtime.
+
+### Crate layout
+
+The orchestration gets its own crate rather than living in the engine:
+
+| Crate | Role |
+| --- | --- |
+| `harness` (renamed from `engine`) | Lightspeed's native agent loop: events, session state, context, tool planning, `CoreAgentDrive`. Deterministic and event-sourced. |
+| `sessions` (new) | Sans-IO session orchestration: admission inbox, run slot, preparation steps, promise sources, emission outbox, workflow-start dedupe, wake computation, cancel watchdog. Depends on `harness`. |
+| `temporal-workflow` | Thin interpreters that run `sessions`, `bots` and `channels` state machines on Temporal. |
+| `temporal-runtime` (renamed from `temporal-server`) | Activities, roles and Temporal wiring. |
+| `local-runtime` (later) | Tokio interpreter of `sessions` over SQLite, filesystem CAS and embedded envd. |
+
+Why `sessions` is separate from `harness`:
+
+- **Different state models.** Harness state is reduced from the event log;
+  replaying the log reconstructs it. Orchestration state is in-flight
+  bookkeeping (pending admissions, undelivered emissions, start dedupe, timers)
+  that is carried across continue-as-new and partly derived from harness state.
+  Mixing them blurs the "replay the log, get the state" invariant.
+- **Vocabulary.** [External harness sessions](../p185-external-harness-sessions.md)
+  uses "harness" for what owns model calls, context, tools and the inner loop,
+  and gives Lightspeed admission, orchestration, access policy and supervision.
+  That maps onto `harness` and `sessions` respectively. Keeping orchestration
+  above the harness also leaves room to drive an external harness through the
+  same `sessions` machinery later.
+- **Naming convention.** `bots`, `channels` and `environments` already hold
+  their domain's pure state machines and policy; `sessions` matches.
+
+A later split could also move the gateway's service layer (about 23k lines,
+little Temporal coupling) out of `temporal-runtime` into its own crate once a
+`SessionControl` trait exists, so both runtimes serve the API from the same
+code. That is independent of the renames.
+
+### A sync core with async interpreters
+
+`sessions` should be a synchronous state machine: inputs such as "admission
+arrived", "activity completed" or "timer fired"; outputs such as start or
+cancel an activity, set a timer, signal or start a workflow, roll over. Each
+runtime provides a small async interpreter that owns the racing and the
+plumbing. Shared async code generic over a host trait (`start_activity`,
+`timer`, `next_admission`, `select`) is a real alternative, but the sync core
+is preferred because:
+
+- **Temporal's rules stay out of shared code.** Under Temporal, await order,
+  `select` and combinators must be deterministic on its executor. Shared async
+  code would have to obey that even on tokio, where nothing enforces it, and
+  violations surface only under Temporal. A machine without futures cannot
+  violate them.
+- **Racing becomes explicit input.** The hard behaviour is what happens when
+  an admission, cancel or approval arrives during a model or tool call. In
+  async code that is a `select` whose semantics differ between executors
+  (branch order; dropping a future versus Temporal's explicit cancellation and
+  waiting for its result). As ordered inputs, interleavings are testable,
+  including the awkward ones.
+- **State is already a value.** Continue-as-new carry, and a local restart,
+  need the orchestration state as a serializable struct. Async code keeps it in
+  future stack frames and needs hand-extracted carry state, which is what
+  `AgentSessionContinuationState` does today.
+- **Cheaper tests.** Feed input sequences, assert emitted commands; no fake
+  executor or timing.
+
+Costs: state machines invert control, so linear multi-step flows (such as the
+preparation retry loop) read worse than top-to-bottom async code. Versioning
+is not avoided either: changing what the machine decides still changes the
+commands in Temporal history. The bot controller's split is the working
+precedent: decisions in a sync core, racing in a small async shell. Linear
+steps that never race can stay async in the interpreter rather than being
+forced into states.
+
+To settle it with evidence rather than preference, the first step of the
+extraction ports one slice both ways (the wait loop plus admission racing
+against a running activity) and compares the code and its tests.
 
 ## What a local version would take
 
@@ -181,7 +285,8 @@ notes where Option B differs.
 
 Total: about 22–33 engineer-weeks for Option C, or 19–28 for Option B before
 the duplication cost. With two people in parallel, that is roughly three to
-four months of calendar time, plus the spike in the sequence below.
+four months of calendar time; the spike in the sequence below runs alongside
+the first phase.
 
 Two items are mostly mechanical. The gateway's Temporal calls are concentrated
 in `workflow.rs` and `session_lifecycle.rs` (start, `submit_admissions`,
@@ -212,10 +317,10 @@ disagree about what a session does.
   Codex and Claude Code avoid this by being one process per conversation.
 - **Every schema change twice.** Each `store-pg` migration needs a SQLite twin.
   The release metadata currently pins one schema revision.
-- **Shared orchestrator under Temporal's rules.** For Option C, the shared code
-  must stay deterministic and avoid custom wakers (the TMPRL1100 constraint).
-  That suggests a sans-IO state machine, as `bots::controller::state` already
-  is, rather than shared async code.
+- **Shared orchestrator under Temporal's rules.** The shared code must stay
+  deterministic and avoid custom wakers (the TMPRL1100 constraint). The sync
+  core described under [A sync core with async interpreters](#a-sync-core-with-async-interpreters)
+  is the mitigation; the risk is that awkward flows get forced into states.
 - **Plugin contract.** The workflow-tool contract is defined in Temporal terms
   (signals, queries, task queues). External plugin workflows would not run
   locally unless the contract gets a second, non-Temporal binding.
@@ -238,20 +343,21 @@ disagree about what a session does.
 
 ## Suggested sequence
 
-A short spike decides whether the refactor starts. Durations are calendar weeks
-for two engineers; each gate sits between phases, and the first one is the real
-decision.
+Because the extraction is worth doing on its own, it does not have to wait for
+the spike; the spike gates only the local substrate. Durations are calendar
+weeks for two engineers.
 
 | Phase | Duration | Work | Gate after |
 | --- | --- | --- | --- |
-| 0 · Spike | 2–4 weeks | CLI over `SessionRunner`; in-memory or SQLite store; embedded envd; try with design partners | **Go / no-go:** spike used on real tasks; pick Option B or C |
-| 1 · Extract the core | 5–7 weeks | Sans-IO orchestrator; thin Temporal shell; `SessionControl` trait; neutral activity errors | **Hosted unchanged:** live Temporal suites green on the thin shell |
-| 2 · Local substrate | 5–7 weeks | SQLite store; local session tasks; shell approvals; one-binary packaging | **Parity:** conformance suite green on both substrates |
+| 0 · Spike | 2–4 weeks, in parallel with phase 1 | CLI over `SessionRunner`; in-memory or SQLite store; embedded envd; try with design partners | **Go / no-go on local:** spike used on real tasks |
+| 1 · Extract `sessions` | 5–7 weeks | Port one slice both ways and pick sync core or async host trait; sans-IO orchestrator; thin Temporal interpreter; `SessionControl` trait; neutral activity errors; `engine` → `harness` and `temporal-server` → `temporal-runtime` renames | **Hosted unchanged:** live Temporal suites green on the thin interpreter |
+| 2 · Local substrate | 5–7 weeks | SQLite store; tokio interpreter of `sessions`; shell approvals; one-binary packaging | **Parity:** conformance suite green on both substrates |
 | 3 · Beta and bridge | 2–3 weeks | Public local release; push session to hosted; docs and onboarding | Then revisit Option D |
 
-Start with a throwaway-tolerant spike. Wire the existing CLI to an in-process
-`SessionRunner` with an embedded envd, then put it in front of a few design
-partners. That tests the adoption hypothesis for 2–4 weeks of work, before we
-commit to refactoring hosted orchestration. If the spike lands, extract the
-orchestrator while hosted is the only consumer, so live suites prove nothing
-changed. Only then build the local substrate on top of it.
+The spike is throwaway-tolerant: wire the existing CLI to an in-process
+`SessionRunner` with an embedded envd and put it in front of a few design
+partners to test the adoption hypothesis. Meanwhile, extract `sessions` while
+hosted is its only consumer, so live suites prove nothing changed. If the spike
+does not land, phase 1 still stands on its own and phases 2 and 3 wait. If it
+does, the local substrate is built on the extracted core, and the spike's
+`SessionRunner` is replaced by the production orchestration.
