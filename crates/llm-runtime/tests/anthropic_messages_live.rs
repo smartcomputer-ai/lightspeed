@@ -1523,7 +1523,7 @@ async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
     let continued = lenient
         .generate(generation_request(
             4,
-            request("live-anthropic-edit-4", edited_history),
+            request("live-anthropic-edit-4", edited_history.clone()),
         ))
         .await
         .expect("drop_block continues after the edit");
@@ -1557,6 +1557,75 @@ async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
         .expect("answer after the edit");
     let answer = support::content_text(blobs.as_ref(), &answer).await;
     assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
+
+    // Compaction summarizes the same edited history, replayed thinking
+    // included, and is bound by the same policy.
+    let compaction = |entries: Vec<ContextEntry>| ContextCompactionRequest {
+        session_id: SessionId::new("session-live-anthropic-edit"),
+        request: ContextCompactionTask {
+            model: model.clone(),
+            request_fingerprint: "live-anthropic-edit-compaction".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::AnthropicMessages,
+                context_revision: 1,
+                entries,
+                token_estimate: None,
+            },
+            target_tokens: Some(300),
+            params: None,
+        },
+    };
+    let error = strict
+        .compact_context(compaction(edited_history.clone()))
+        .await
+        .expect_err("strict compaction rejects thinking bound to the edited prefix");
+    assert!(is_http_status(&error, 400), "expected a 400, got {error:?}");
+    let compacted = lenient
+        .compact_context(compaction(edited_history))
+        .await
+        .expect("drop_block compaction continues after the edit");
+    assert_eq!(compacted.status, ContextCompactionStatus::Succeeded);
+}
+
+/// Reasoning effort `none` must not send `{type: "disabled"}` to models
+/// that reject it: Claude Opus 5.5 keeps thinking on at every effort and
+/// Claude Sonnet 5.5 turns it off only with `between_tools`.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_none_effort_runs_where_disabled_is_rejected() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+    let input_ref = text_blob(&blobs, "Reply with the single word: ready").await;
+
+    for (model, thinking_type) in [
+        ("claude-opus-5-5", "adaptive"),
+        ("claude-sonnet-5-5", "between_tools"),
+    ] {
+        let mut request = intent_request(
+            "live-anthropic-none-effort",
+            vec![user_entry(1, input_ref.clone())],
+        );
+        request.model.model = model.to_owned();
+        request.reasoning_effort = Some("none".to_owned());
+
+        let execution = adapter
+            .generate(generation_request(1, request))
+            .await
+            .unwrap_or_else(|error| panic!("{model}: {error:?}"));
+
+        assert_eq!(
+            execution.result.status,
+            LlmGenerationStatus::Succeeded,
+            "{model}"
+        );
+        let sent = provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
+        assert_eq!(sent["thinking"]["type"], json!(thinking_type), "{model}");
+    }
 }
 
 /// An image over the pixel cap is sent as a downscaled copy the provider

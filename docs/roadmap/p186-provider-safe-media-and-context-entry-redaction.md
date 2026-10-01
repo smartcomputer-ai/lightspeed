@@ -1,6 +1,7 @@
 # P186 — Provider-safe media and context entry redaction
 
-**Status:** Proposed, 2026-10-01. Revises the request-time media rules of
+**Status:** Slice 1 implemented and live-verified, 2026-10-01; slices 2–4
+proposed. Revises the request-time media rules of
 [tool result media](p171-tool-result-media.md).
 
 ## Outcome
@@ -329,15 +330,19 @@ would otherwise surface as rejections. Two measures keep such bugs visible:
   unintended history edit fails a test instead of being absorbed.
 
 Anthropic accepts `block_binding` only with `adaptive` and `enabled` thinking.
-The adapter sends `disabled` for reasoning effort `none`, so the behavior of
-mismatched historical thinking under `disabled` is verified against the live
-API before recovery is claimed for that mode. If the provider ignores or
-drops historical thinking there, nothing more is needed. Only if it rejects
-the request does that mode need a fallback that durably excludes the affected
-thinking from future requests; that fallback is designed then, not in
-advance. Other adapters follow their native contracts; Anthropic's policy
-does not authorize stripping OpenAI reasoning items or other provider-opaque
-content.
+Thinking that is off needs no fallback: every model that checks preserved
+thinking (Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5) rejects
+`disabled` outright. Reasoning effort `none` therefore lowers by model: to
+`disabled` where the model accepts it, to `between_tools` on Claude Sonnet
+5.5, and to adaptive thinking at the lowest effort where thinking cannot be
+turned off (Claude Opus 5.5, the Fable and Mythos lines). Requests without a
+thinking config on a model that thinks by default carry no binding and keep
+the provider's account default; compaction requests, which replay earlier
+thinking, send an explicit adaptive config on those models so the policy
+applies to them too. Other adapters follow their native contracts;
+Anthropic's policy does not authorize stripping OpenAI reasoning items or
+other provider-opaque content. OpenAI Responses accepts replayed encrypted
+reasoning after an earlier image changes, so it needs no equivalent.
 
 Provider wire settings, their interpretation, and dropped-block diagnostics
 remain in the adapter. This decision does not change the engine or the
@@ -368,8 +373,8 @@ every rejection is caused by content it can repair.
    `llm-runtime`, header probe, fixed cap, byte budget, deterministic
    encoding, resize announcement, worker-local cache, all three adapters.
    Anthropic `drop_block` default, beta header, `input_transformations`
-   logging, `"error"` in suites that do not exercise a repair, and the live
-   check of `disabled` thinking. Tests: oversized PNG and JPEG are downscaled
+   logging, `"error"` in suites that do not exercise a repair, and
+   model-specific lowering of effort `none`. Tests: oversized PNG and JPEG are downscaled
    within the cap; compliant images pass through byte-identical; output is
    identical across calls; a 32-image history with a 2166 × 2464 image lowers
    within the many-image rule; unchanged histories retain valid thinking; an
@@ -403,6 +408,18 @@ content, so each verifies continuation for its own repair. Slice 3 supplies
 operator repair for unexplained rejections caused by redactable entries.
 Slice 4 comes last because, after normalization, only aggregate media can
 trigger it.
+
+### Progress
+
+Slice 1 is implemented: `llm-runtime::media` normalizes images for all three
+adapters, and the Anthropic adapter sends the binding policy, configurable on
+the hosted runtime through `LIGHTSPEED_ANTHROPIC_THINKING_PREFIX_MISMATCH`.
+Live suites cover an oversized image on every adapter, and on Claude Opus 5.5
+an unchanged replay verifying under `error`, an edited image failing generation
+and compaction under `error`, and both continuing under `drop_block` with the
+dropped thinking reported. Restart continuity is not separately tested: the
+policy and normalization are pure functions of configuration and stored
+content, so a restarted worker sends the same request.
 
 ## Non-goals
 

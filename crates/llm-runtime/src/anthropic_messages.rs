@@ -34,7 +34,8 @@ use crate::{
     mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_native_tools},
     params::{
         ThinkingPrefixMismatch, anthropic_messages_params, anthropic_thinking_from_effort,
-        default_anthropic_block_binding, default_anthropic_thinking_display,
+        anthropic_thinks_by_default, default_anthropic_block_binding,
+        default_anthropic_thinking_display,
     },
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
@@ -189,7 +190,12 @@ impl AnthropicMessagesLlmAdapter {
         &self,
         task: &ContextCompactionTask,
     ) -> LlmAdapterResult<am::CreateMessageRequest> {
-        materialize_compact_request(self.blobs.as_ref(), task).await
+        materialize_compact_request_with_binding(
+            self.blobs.as_ref(),
+            task,
+            self.thinking_prefix_mismatch,
+        )
+        .await
     }
 }
 
@@ -413,7 +419,7 @@ async fn materialize_request_with_catalog(
     // per-run provider params win: derived values never overwrite fields the
     // params body already sets.
     if let Some(effort) = request.reasoning_effort.as_deref() {
-        let derived = anthropic_thinking_from_effort(effort)?;
+        let derived = anthropic_thinking_from_effort(effort, &request.model.model)?;
         if params.thinking.is_none() && params.output_config.is_none() {
             params.thinking = Some(derived.thinking);
             params.output_config = derived.output_config;
@@ -516,6 +522,26 @@ pub async fn materialize_compact_request(
     blobs: &dyn BlobStore,
     task: &ContextCompactionTask,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
+    materialize_compact_request_with_binding(blobs, task, ThinkingPrefixMismatch::default()).await
+}
+
+async fn materialize_compact_request_with_binding(
+    blobs: &dyn BlobStore,
+    task: &ContextCompactionTask,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
+) -> LlmAdapterResult<am::CreateMessageRequest> {
+    // The summarized history replays earlier thinking. On models that think
+    // by default, an explicit adaptive config is otherwise a no-op but lets
+    // the request carry the binding policy, so compaction still succeeds
+    // after a repair changed content that thinking was bound to.
+    let thinking = anthropic_thinks_by_default(&task.model.model).then(|| {
+        let mut thinking = am::Thinking::adaptive();
+        thinking.extra.insert(
+            "block_binding".to_owned(),
+            thinking_prefix_mismatch.block_binding(),
+        );
+        thinking
+    });
     let mut messages = materialize_messages(blobs, &task.context.entries).await?;
     messages.push(am::MessageParam::user(compaction_instruction(
         task.target_tokens,
@@ -533,7 +559,7 @@ pub async fn materialize_compact_request(
         stop_sequences: None,
         stream: None,
         temperature: None,
-        thinking: None,
+        thinking,
         output_config: None,
         tool_choice: None,
         tools: None,
@@ -4634,5 +4660,60 @@ mod tests {
             disabled.required_betas().is_empty(),
             "disabled thinking rejects block_binding"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn none_effort_uses_between_tools_where_disabled_is_rejected() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.model.model = "claude-sonnet-5-5".to_owned();
+        request.reasoning_effort = Some("none".to_owned());
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+
+        let value = serde_json::to_value(&materialized).expect("json");
+        assert_eq!(value["thinking"], json!({ "type": "between_tools" }));
+        assert!(value.get("output_config").is_none());
+        assert!(materialized.required_betas().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compaction_carries_the_binding_policy_on_models_that_think_by_default() {
+        let blobs = InMemoryBlobStore::new();
+        let input_ref = text_blob(&blobs, "Summarize me").await;
+        let task = |id: &str| ContextCompactionTask {
+            model: ModelSelection {
+                model: id.to_owned(),
+                ..model()
+            },
+            request_fingerprint: "sha256:compact".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::AnthropicMessages,
+                context_revision: 1,
+                entries: vec![user_entry(1, input_ref.clone())],
+                token_estimate: None,
+            },
+            target_tokens: None,
+            params: None,
+        };
+
+        let thinking = materialize_compact_request(&blobs, &task("claude-opus-5-5"))
+            .await
+            .expect("materialize")
+            .thinking
+            .expect("explicit thinking");
+        assert_eq!(thinking.r#type, "adaptive");
+        assert_eq!(thinking.display, None);
+        assert_eq!(
+            thinking.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "drop_block" }))
+        );
+
+        let older = materialize_compact_request(&blobs, &task("claude-opus-4-8"))
+            .await
+            .expect("materialize");
+        assert!(older.thinking.is_none(), "omitted thinking means off there");
     }
 }

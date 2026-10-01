@@ -103,7 +103,8 @@ provider credential.
 | `ANTHROPIC_API_KEY` | Conditional | Default Anthropic Messages credential. |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com/v1` | Anthropic-compatible API base URL. |
 | `ANTHROPIC_VERSION` | `2023-06-01` | Anthropic API version header. |
-| `ANTHROPIC_BETA` | Unset | Comma-separated Anthropic beta headers. Anthropic provider-mode MCP requires `mcp-client-2025-11-20`; native MCP does not. |
+| `ANTHROPIC_BETA` | Unset | Comma-separated Anthropic beta headers. Anthropic provider-mode MCP requires `mcp-client-2025-11-20`; native MCP does not. Betas a request body needs, such as `thinking-binding-controls-2026-08-01` for `thinking.block_binding`, are added per request. |
+| `LIGHTSPEED_ANTHROPIC_THINKING_PREFIX_MISMATCH` | `drop_block` | What Anthropic does with preserved thinking once content it was bound to has changed, for example an earlier image newly downscaled: `drop_block` continues without the affected reasoning; `error` fails the request. Use `error` in live suites that must catch unintended history edits. An Anthropic-compatible endpoint behind `ANTHROPIC_BASE_URL` must accept `thinking.block_binding` and its beta header. |
 
 ### Object storage
 
@@ -432,6 +433,7 @@ fixtures. Ordinary unit tests do not require them.
 | `OPENAI_AUDIO_TRANSCRIPTION_EXPECT` | Optional case-insensitive text expected in the transcription. |
 | `ANTHROPIC_LIVE_MODEL` | Shared fallback model for Anthropic live suites (default `claude-opus-5`). |
 | `ANTHROPIC_MESSAGES_MODEL` | Anthropic Messages live-test model (default `claude-opus-5`). |
+| `ANTHROPIC_PRESERVED_THINKING_MODEL` | Model for the Anthropic history-edit live test; must enforce preserved thinking (default `claude-opus-5-5`). |
 
 Provider live tests also use the production provider transport variables from
 the core-runtime section. Most Rust live suites read either the process
