@@ -361,6 +361,9 @@ impl RunSource {
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKind {
     ModelFailure,
+    /// The provider rejected the request as invalid or too large. The
+    /// failure message is the provider's own text.
+    RequestRejected,
     ToolFailure,
     ContextFailure,
     LimitExceeded,
@@ -466,6 +469,15 @@ fn terminal_run_proposal(
                 },
             }))
         }
+        (TurnStatus::Failed, Some(TurnOutcome::Rejected { failure_ref })) => {
+            Some(CoreAgentEvent::Run(Event::Failed {
+                run_id: active_run.run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::RequestRejected,
+                    message_ref: failure_ref.clone(),
+                },
+            }))
+        }
         (TurnStatus::Cancelled, Some(TurnOutcome::Cancelled)) => {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
@@ -502,6 +514,7 @@ fn terminal_run_proposal(
             Some(
                 TurnOutcome::FinalOutput { .. }
                 | TurnOutcome::Failed { .. }
+                | TurnOutcome::Rejected { .. }
                 | TurnOutcome::Cancelled,
             ),
         ) => {

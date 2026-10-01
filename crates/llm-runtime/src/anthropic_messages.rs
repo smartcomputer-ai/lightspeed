@@ -39,8 +39,8 @@ use crate::{
     },
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, debug_dump_request, partial_output_entries, store_debug_dumps,
-        truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
+        partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
     secrets::{
         REDACTED_SECRET_PLACEHOLDER, SecretResolveError, SecretResolver, UnconfiguredSecretResolver,
@@ -137,6 +137,15 @@ impl AnthropicMessagesLlmAdapter {
             provider_keys: Arc::new(NoStoredModelProviders),
             inventory: Arc::new(UnconfiguredMcpInventoryResolver),
             thinking_prefix_mismatch: ThinkingPrefixMismatch::default(),
+        }
+    }
+
+    async fn log_rejection(&self, request: &LlmGenerationRequest, message: &str) {
+        match materialize_messages_tracked(self.blobs.as_ref(), &message_entries(&request.request))
+            .await
+        {
+            Ok((_, positions)) => log_request_rejection(request, "messages", &positions, message),
+            Err(error) => tracing::warn!(%error, "could not map a rejected Anthropic request"),
         }
     }
 
@@ -239,13 +248,22 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             if let Some(dump) = debug_dump_request(self.debug_dumps, &redacted_request)? {
                 request_dumps.push(dump);
             }
-            let response = self
+            let response = match self
                 .client
                 .create(
                     send_request.clone(),
                     provider.as_ref().map(|provider| provider.as_request_auth()),
                 )
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    if let Some(rejection) = error.request_rejection() {
+                        self.log_rejection(&request, &rejection.message).await;
+                    }
+                    return Err(error.into());
+                }
+            };
             log_input_transformations(&request, &response.raw_json);
             let paused = response.parsed.stop_reason == Some(am::StopReason::PauseTurn);
             if paused && responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
@@ -475,14 +493,7 @@ async fn materialize_request_with_catalog(
     // detail; nothing in the planned request or the session log changes.
     let cache_control = prompt_cache_control(params.prompt_cache_ttl.as_deref());
     let system = materialize_system(blobs, &request.context.entries, &cache_control).await?;
-    let message_entries = request
-        .context
-        .entries
-        .iter()
-        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut messages = materialize_messages(blobs, &message_entries).await?;
+    let mut messages = materialize_messages(blobs, &message_entries(request)).await?;
     place_message_breakpoint(&mut messages, &cache_control);
     let (mut tools, mcp_servers) =
         materialize_tools(inventory, &request.model.model, catalog).await?;
@@ -733,13 +744,23 @@ async fn materialize_messages(
     blobs: &dyn BlobStore,
     entries: &[ContextEntry],
 ) -> LlmAdapterResult<Vec<am::MessageParam>> {
+    Ok(materialize_messages_tracked(blobs, entries).await?.0)
+}
+
+/// [`materialize_messages`] plus the message each entry landed in.
+async fn materialize_messages_tracked(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+) -> LlmAdapterResult<(Vec<am::MessageParam>, RequestPositions)> {
     let mut messages: Vec<am::MessageParam> = Vec::new();
+    let mut positions = RequestPositions::with_capacity(entries.len());
     for entry in entries {
         if is_raw_input_message(entry) {
             let (role, blocks) = materialize_input_message(blobs, entry).await?;
             for block in blocks {
                 push_block(&mut messages, role, block)?;
             }
+            positions.push((entry.entry_id, messages.len().saturating_sub(1)));
             continue;
         }
         if entry.content.provider_kind.as_deref()
@@ -752,14 +773,28 @@ async fn materialize_messages(
                     am::ContentBlockParam::Raw(block),
                 )?;
             }
+            positions.push((entry.entry_id, messages.len().saturating_sub(1)));
             continue;
         }
         let (role, blocks) = materialize_block(blobs, entry).await?;
         for block in blocks {
             push_block(&mut messages, role, block)?;
         }
+        positions.push((entry.entry_id, messages.len().saturating_sub(1)));
     }
-    Ok(messages)
+    Ok((messages, positions))
+}
+
+/// Entries the request lowers into `messages`; instructions become the
+/// system prompt instead.
+fn message_entries(request: &LlmRequest) -> Vec<ContextEntry> {
+    request
+        .context
+        .entries
+        .iter()
+        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
+        .cloned()
+        .collect()
 }
 
 async fn text_blocks(blobs: &dyn BlobStore, entry: &ContextEntry) -> LlmAdapterResult<Vec<Value>> {
@@ -4715,5 +4750,35 @@ mod tests {
             .await
             .expect("materialize");
         assert!(older.thinking.is_none(), "omitted thinking means off there");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tracked_lowering_maps_each_entry_to_its_message() {
+        let blobs = InMemoryBlobStore::new();
+        let text = text_blob(&blobs, "hello").await;
+        let mut assistant = user_entry(3, text.clone());
+        assistant.kind = ContextEntryKind::Message {
+            role: ContextMessageRole::Assistant,
+        };
+        let entries = vec![
+            user_entry(1, text.clone()),
+            user_entry(2, text.clone()),
+            assistant,
+            user_entry(4, text),
+        ];
+
+        let (messages, positions) = materialize_messages_tracked(&blobs, &entries)
+            .await
+            .expect("materialize");
+
+        assert_eq!(
+            messages.len(),
+            3,
+            "consecutive user entries share a message"
+        );
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 0), (3, 1), (4, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
     }
 }

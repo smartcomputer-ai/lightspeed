@@ -1689,3 +1689,45 @@ async fn anthropic_messages_live_adapter_sees_oversized_image() {
         .to_lowercase();
     assert!(answer.contains("blue"), "expected blue, got {answer:?}");
 }
+
+/// A request the provider refuses crosses the runtime boundary as
+/// `Rejected`, carrying the provider's own message rather than a wrapped
+/// runtime error, so the run fails as `request_rejected`.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_runtime_reports_provider_rejections() {
+    use engine::{CoreAgentIoError, CoreAgentLlm as _};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let mut corrupt = b"\x89PNG\r\n\x1a\n".to_vec();
+    corrupt.extend(std::iter::repeat_n(0x5a, 4096));
+    let image_ref = blobs.put_bytes(corrupt).await.expect("store image");
+    let mut image = user_entry(1, image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let question = user_entry(2, text_blob(&blobs, "Describe this image.").await);
+    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    ));
+    let runtime = llm_runtime::LlmRuntime::new(
+        llm_runtime::LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter),
+    );
+
+    let error = runtime
+        .generate(generation_request(
+            1,
+            intent_request("live-anthropic-rejection", vec![image, question]),
+        ))
+        .await
+        .expect_err("the provider rejects an undecodable image");
+
+    let CoreAgentIoError::Rejected { message } = error else {
+        panic!("expected a rejection, got {error:?}");
+    };
+    assert!(!message.is_empty());
+    assert!(
+        !message.contains("provider call failed"),
+        "the provider's message is kept without runtime wrapping: {message}"
+    );
+}

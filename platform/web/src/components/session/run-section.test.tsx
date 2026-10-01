@@ -76,6 +76,14 @@ it("keeps the recorded final answer visible when trailing reasoning is collapsed
   expect(container.textContent).not.toContain("Keep it light.");
 });
 
+it("names the provider when it rejected the run's request", async () => {
+  const section = finished();
+  section.summary = { ...section.summary!, failureKind: "request_rejected", error: "prompt is too long" };
+  await render(section);
+  expect(container.textContent).toContain("The provider rejected the request: prompt is too long");
+  expect(container.textContent).not.toContain("Run failed");
+});
+
 it("folds a finished run behind one strip that names the outcome, keeps the reply visible, and mounts nothing inside", async () => {
   await render(finished());
   expect(container.textContent).toContain("Fix the test");

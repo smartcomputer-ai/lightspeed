@@ -12978,15 +12978,24 @@
       },
       "RunFailureKindView": {
         "description": "Why a run failed, as the engine classified it.",
-        "enum": [
-          "model_failure",
-          "tool_failure",
-          "context_failure",
-          "limit_exceeded",
-          "cancelled",
-          "internal"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "model_failure",
+              "tool_failure",
+              "context_failure",
+              "limit_exceeded",
+              "cancelled",
+              "internal"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "request_rejected",
+            "description": "The provider rejected the request as invalid or larger than the model\naccepts. `message` is the provider's own text, unchanged; resending the\nsame context fails the same way.",
+            "type": "string"
+          }
+        ]
       },
       "RunLimitsConfig": {
         "properties": {
@@ -14273,7 +14282,7 @@
             "type": "object"
           },
           {
-            "description": "The run ended in failure. `kind` is the engine's classification;\n`message` is free text for display.",
+            "description": "The run ended in failure. `kind` is the engine's classification;\n`message` is free text for display, and the provider's own message for\n`request_rejected`.",
             "properties": {
               "kind": {
                 "$ref": "#/components/schemas/RunFailureKindView"

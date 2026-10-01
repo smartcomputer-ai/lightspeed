@@ -1074,7 +1074,9 @@ impl ChatSessionDriver {
                 events.push(self.status_event("finishing"));
             }
             SessionEventKindView::RunFailed {
-                run_id, message, ..
+                run_id,
+                kind,
+                message,
             } => {
                 events.push(ChatEvent::RunChanged(self.run_view_from_status(
                     run_id,
@@ -1082,7 +1084,7 @@ impl ChatSessionDriver {
                     event.observed_at_ms,
                 )));
                 events.push(ChatEvent::Error(ChatErrorView {
-                    message: message.clone(),
+                    message: run_failure_message(*kind, message),
                     action: None,
                 }));
             }
@@ -2226,9 +2228,35 @@ fn run_seq_from_id(id: &str) -> u64 {
         .unwrap_or_default()
 }
 
+/// The error line for a failed run. A provider rejection names the provider
+/// as the source; its message is the provider's own text, shown unchanged.
+fn run_failure_message(kind: api::RunFailureKindView, message: &str) -> String {
+    match kind {
+        api::RunFailureKindView::RequestRejected => {
+            format!("The provider rejected the request: {message}")
+        }
+        _ => message.to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_rejections_name_the_provider() {
+        assert_eq!(
+            run_failure_message(
+                api::RunFailureKindView::RequestRejected,
+                "prompt is too long"
+            ),
+            "The provider rejected the request: prompt is too long"
+        );
+        assert_eq!(
+            run_failure_message(api::RunFailureKindView::ModelFailure, "boom"),
+            "boom"
+        );
+    }
 
     fn session_fixture(provider: &str, api_kind: &str, model: &str) -> SessionView {
         serde_json::from_value(serde_json::json!({

@@ -709,18 +709,23 @@ async fn failed_generation_result_from_error(
     request: LlmGenerationRequest,
     error: CoreAgentIoError,
 ) -> Result<LlmGenerationResult, engine::storage::BlobStoreError> {
-    let failure_ref = write_error_blob(
-        blobs,
-        format!(
-            "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
-            request.run_id, request.turn_id
+    // Mirrors the hosted activity: a rejection keeps the provider's message
+    // word for word.
+    let (status, text) = match error {
+        CoreAgentIoError::Rejected { message } => (LlmGenerationStatus::Rejected, message),
+        error => (
+            LlmGenerationStatus::Failed,
+            format!(
+                "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
+                request.run_id, request.turn_id
+            ),
         ),
-    )
-    .await?;
+    };
+    let failure_ref = write_error_blob(blobs, text).await?;
     Ok(LlmGenerationResult {
         run_id: request.run_id,
         turn_id: request.turn_id,
-        status: LlmGenerationStatus::Failed,
+        status,
         failure_ref: Some(failure_ref),
         context_entries: Vec::new(),
         facts: LlmGenerationFacts {
@@ -859,6 +864,22 @@ mod tests {
     }
 
     struct FailCompactionLlm;
+
+    const REJECTION: &str = "messages.3.content.1.image.source.base64: image exceeds 2000 pixels";
+
+    struct RejectingLlm;
+
+    #[async_trait]
+    impl CoreAgentLlm for RejectingLlm {
+        async fn generate(
+            &self,
+            _request: LlmGenerationRequest,
+        ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+            Err(CoreAgentIoError::Rejected {
+                message: REJECTION.to_owned(),
+            })
+        }
+    }
 
     #[async_trait]
     impl CoreAgentLlm for FailOnceLlm {
@@ -2356,6 +2377,43 @@ mod tests {
                 assert!(index < user_position);
             }
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_rejection_fails_the_run_with_the_provider_message() {
+        let (runner, session_id) = runner_with(Arc::new(RejectingLlm)).await;
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+
+        let driven = runner
+            .drive_command(DriveCommand {
+                session_id,
+                observed_at_ms: 20,
+                command: request_run_command(BlobRef::from_bytes(b"input")),
+                max_steps: Some(32),
+            })
+            .await
+            .expect("drive request");
+
+        let run = &driven.state.runs.completed[0];
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("run failure");
+        assert_eq!(failure.kind, engine::RunFailureKind::RequestRejected);
+        let message_ref = failure.message_ref.as_ref().expect("provider message");
+        let message = runner
+            .stores
+            .blobs
+            .read_bytes(message_ref)
+            .await
+            .expect("read message");
+        assert_eq!(message, REJECTION.as_bytes());
     }
 
     #[tokio::test(flavor = "current_thread")]

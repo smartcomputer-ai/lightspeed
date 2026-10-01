@@ -211,11 +211,19 @@ pub enum TurnStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnOutcome {
-    FinalOutput { output: Option<crate::ContentRef> },
+    FinalOutput {
+        output: Option<crate::ContentRef>,
+    },
     ToolCallsQueued,
     ContextUpdateRequired,
     ApprovalsRequested,
-    Failed { failure_ref: Option<BlobRef> },
+    Failed {
+        failure_ref: Option<BlobRef>,
+    },
+    /// The provider rejected the request; `failure_ref` holds its message.
+    Rejected {
+        failure_ref: Option<BlobRef>,
+    },
     Cancelled,
 }
 
@@ -240,6 +248,9 @@ pub struct LlmGenerationFacts {
 pub enum LlmGenerationStatus {
     Succeeded,
     Failed,
+    /// The provider rejected the request instead of serving it. The runtime
+    /// supplies this classification; the engine only records it.
+    Rejected,
     Cancelled,
 }
 
@@ -448,7 +459,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 | TurnOutcome::ToolCallsQueued
                 | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ApprovalsRequested => TurnStatus::Completed,
-                TurnOutcome::Failed { .. } => TurnStatus::Failed,
+                TurnOutcome::Failed { .. } | TurnOutcome::Rejected { .. } => TurnStatus::Failed,
                 TurnOutcome::Cancelled => TurnStatus::Cancelled,
             };
             active_run.active_turn_id = None;
@@ -539,6 +550,7 @@ fn validate_outcome_for_generation(
     let valid = match status {
         LlmGenerationStatus::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
         LlmGenerationStatus::Failed => matches!(outcome, TurnOutcome::Failed { .. }),
+        LlmGenerationStatus::Rejected => matches!(outcome, TurnOutcome::Rejected { .. }),
         LlmGenerationStatus::Succeeded => match facts.finish {
             LlmFinish::ToolCalls => matches!(outcome, TurnOutcome::ToolCallsQueued),
             LlmFinish::ContextLimit => matches!(outcome, TurnOutcome::ContextUpdateRequired),

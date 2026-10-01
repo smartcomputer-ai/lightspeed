@@ -568,6 +568,12 @@ pub enum CoreAgentIoError {
         message: String,
         retry_after: Option<std::time::Duration>,
     },
+    /// The provider refused the request itself, as invalid or too large,
+    /// rather than failing to serve it. `message` is the provider's own text,
+    /// unchanged. Resending the same request fails the same way, so the
+    /// runtime records the rejection instead of retrying.
+    #[error("provider rejected the request: {message}")]
+    Rejected { message: String },
 }
 
 #[cfg(test)]

@@ -1405,7 +1405,8 @@ pub enum SessionEventKindView {
         output: Option<crate::ContentRefView>,
     },
     /// The run ended in failure. `kind` is the engine's classification;
-    /// `message` is free text for display.
+    /// `message` is free text for display, and the provider's own message for
+    /// `request_rejected`.
     RunFailed {
         run_id: RunId,
         kind: RunFailureKindView,
@@ -1573,6 +1574,10 @@ pub enum SessionEventKindView {
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKindView {
     ModelFailure,
+    /// The provider rejected the request as invalid or larger than the model
+    /// accepts. `message` is the provider's own text, unchanged; resending the
+    /// same context fails the same way.
+    RequestRejected,
     ToolFailure,
     ContextFailure,
     LimitExceeded,

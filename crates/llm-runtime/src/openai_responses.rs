@@ -25,8 +25,8 @@ use crate::{
     params::{openai_reasoning_from_effort, openai_responses_params},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, debug_dump_request, partial_output_entries, store_debug_dumps,
-        truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
+        partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
     secrets::{
         REDACTED_SECRET_PLACEHOLDER, SecretResolveError, SecretResolver, UnconfiguredSecretResolver,
@@ -111,6 +111,15 @@ impl OpenAiResponsesLlmAdapter {
     }
 
     /// Enable or disable storing raw provider request/response dumps.
+    async fn log_rejection(&self, request: &LlmGenerationRequest, message: &str) {
+        match materialize_input_items_tracked(self.blobs.as_ref(), &input_entries(&request.request))
+            .await
+        {
+            Ok((_, positions)) => log_request_rejection(request, "input", &positions, message),
+            Err(error) => tracing::warn!(%error, "could not map a rejected Responses request"),
+        }
+    }
+
     pub fn with_debug_dumps(mut self, enabled: bool) -> Self {
         self.debug_dumps = enabled;
         self
@@ -196,7 +205,16 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
                     .and_then(|provider| provider.endpoint.as_ref())
                     .map(|endpoint| &endpoint.transport),
             )
-            .await?;
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(rejection) = error.request_rejection() {
+                    self.log_rejection(&request, &rejection.message).await;
+                }
+                return Err(error.into());
+            }
+        };
         let mut result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
         catalog.normalize(&mut result);
         let debug_dumps = store_debug_dumps(
@@ -289,14 +307,7 @@ async fn materialize_request_with_catalog(
         params.parallel_tool_calls = request.parallel_tool_use;
     }
     let instructions = materialize_instructions(blobs, &request.context.entries).await?;
-    let input_entries = request
-        .context
-        .entries
-        .iter()
-        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
-        .cloned()
-        .collect::<Vec<_>>();
-    let input_items = materialize_input_items(blobs, &input_entries).await?;
+    let input_items = materialize_input_items(blobs, &input_entries(request)).await?;
     let tools = materialize_tools(blobs, inventory, catalog).await?;
 
     let mut extra = params.extra.clone();
@@ -395,7 +406,16 @@ async fn materialize_input_items(
     blobs: &dyn BlobStore,
     entries: &[ContextEntry],
 ) -> LlmAdapterResult<Vec<oai::ResponseInputItem>> {
+    Ok(materialize_input_items_tracked(blobs, entries).await?.0)
+}
+
+/// [`materialize_input_items`] plus the input item each entry landed in.
+async fn materialize_input_items_tracked(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+) -> LlmAdapterResult<(Vec<oai::ResponseInputItem>, RequestPositions)> {
     let mut input: Vec<oai::ResponseInputItem> = Vec::with_capacity(entries.len());
+    let mut positions = RequestPositions::with_capacity(entries.len());
     for item in entries {
         let next = materialize_input_item(blobs, item).await?;
         // Consecutive same-role USER messages (for example an image entry
@@ -421,8 +441,20 @@ async fn materialize_input_items(
             }
             (_, next) => input.push(next),
         }
+        positions.push((item.entry_id, input.len().saturating_sub(1)));
     }
-    Ok(input)
+    Ok((input, positions))
+}
+
+/// Entries the request lowers into `input`; instructions travel separately.
+fn input_entries(request: &LlmRequest) -> Vec<ContextEntry> {
+    request
+        .context
+        .entries
+        .iter()
+        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
+        .cloned()
+        .collect()
 }
 
 fn input_message_parts(content: oai::InputMessageContent) -> Vec<oai::InputContent> {
@@ -3808,5 +3840,46 @@ mod tests {
                 .starts_with("[image · media:")
         );
         assert_eq!(parts[3]["filename"], json!("report.pdf"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tracked_lowering_maps_each_entry_to_its_input_item() {
+        let blobs = InMemoryBlobStore::new();
+        let text = text_blob(&blobs, "hello").await;
+        let message = |id: u64, role: ContextMessageRole| ContextEntry {
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind: ContextEntryKind::Message { role },
+            source: ContextEntrySource::RunInput {
+                run_id: RunId::new(1),
+                input_index: 0,
+            },
+            content: engine::ContentRef::text(text.clone()),
+            preview: None,
+            origin: None,
+            provenance_ref: None,
+            token_estimate: None,
+            supersedes: None,
+        };
+        let entries = vec![
+            message(1, ContextMessageRole::User),
+            message(2, ContextMessageRole::User),
+            message(3, ContextMessageRole::Assistant),
+            message(4, ContextMessageRole::User),
+        ];
+
+        let (input, positions) = materialize_input_items_tracked(&blobs, &entries)
+            .await
+            .expect("materialize");
+
+        assert_eq!(
+            input.len(),
+            3,
+            "consecutive user messages fold into one item"
+        );
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 0), (3, 1), (4, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
     }
 }

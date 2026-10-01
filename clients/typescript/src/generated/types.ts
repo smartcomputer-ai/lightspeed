@@ -811,12 +811,15 @@ export type ApprovalDecisionKind = "approve" | "reject";
  * via the `definition` "RunFailureKindView".
  */
 export type RunFailureKindView =
-  | "model_failure"
-  | "tool_failure"
-  | "context_failure"
-  | "limit_exceeded"
-  | "cancelled"
-  | "internal";
+  | (
+      | "model_failure"
+      | "tool_failure"
+      | "context_failure"
+      | "limit_exceeded"
+      | "cancelled"
+      | "internal"
+    )
+  | "request_rejected";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunViewSource".

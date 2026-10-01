@@ -1,7 +1,7 @@
 # P186 — Provider-safe media and context entry redaction
 
-**Status:** Slice 1 implemented and live-verified, 2026-10-01; slices 2–4
-proposed. Revises the request-time media rules of
+**Status:** Slices 1 and 2 implemented and live-verified, 2026-10-01;
+slices 3 and 4 proposed. Revises the request-time media rules of
 [tool result media](p171-tool-result-media.md).
 
 ## Outcome
@@ -420,6 +420,17 @@ and compaction under `error`, and both continuing under `drop_block` with the
 dropped thinking reported. Restart continuity is not separately tested: the
 policy and normalization are pure functions of configuration and stored
 content, so a restarted worker sends the same request.
+
+Slice 2 is implemented: the I/O boundary carries `CoreAgentIoError::Rejected`
+and `LlmGenerationStatus::Rejected`, the turn records `TurnOutcome::Rejected`,
+and the run fails as `request_rejected` with the provider's message as its
+failure text. The web transcript and the CLI say that the provider rejected
+the request. Each adapter logs, on a rejection, which entries each message or
+input item holds (`messages.3=[12,13]`). A hosted live test sends an image the
+provider cannot decode and checks the kind and the unwrapped provider message.
+Only HTTP rejections are classified: an OpenAI Responses response that reports
+`status: failed` in-band, and a rejected compaction request, still fail as
+before.
 
 ## Non-goals
 

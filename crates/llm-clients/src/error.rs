@@ -119,6 +119,12 @@ impl ProviderFailureKind {
             Self::RateLimit | Self::Server | Self::Timeout | Self::Network
         )
     }
+
+    /// Whether the provider refused the request itself, as invalid or larger
+    /// than the model accepts, rather than failing to serve it.
+    pub fn rejects_request(self) -> bool {
+        matches!(self, Self::InvalidRequest | Self::ContextLength)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Error)]
@@ -223,6 +229,14 @@ impl LlmApiError {
             Self::HttpStatus(error) => error.retryable,
             Self::Stream(error) => error.retryable,
             Self::Configuration(_) | Self::Decode(_) | Self::Unsupported(_) => false,
+        }
+    }
+
+    /// The provider's HTTP error when it rejected the request itself.
+    pub fn request_rejection(&self) -> Option<&ProviderHttpError> {
+        match self {
+            Self::HttpStatus(error) if error.kind.rejects_request() => Some(error),
+            _ => None,
         }
     }
 

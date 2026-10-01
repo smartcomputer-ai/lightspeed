@@ -26,8 +26,8 @@ use crate::{
     params::{openai_completions_params, validate_openai_reasoning_effort},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, debug_dump_request, partial_output_entries, store_debug_dumps,
-        truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
+        partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
 };
 
@@ -124,6 +124,20 @@ impl OpenAiCompletionsLlmAdapter {
     }
 
     /// Enable or disable storing raw provider request/response dumps.
+    async fn log_rejection(&self, request: &LlmGenerationRequest, message: &str) {
+        let dialect = CompletionDialect::for_provider(&request.request.model.provider_id);
+        match materialize_messages_tracked(
+            self.blobs.as_ref(),
+            &request.request.context.entries,
+            dialect,
+        )
+        .await
+        {
+            Ok((_, positions)) => log_request_rejection(request, "messages", &positions, message),
+            Err(error) => tracing::warn!(%error, "could not map a rejected Completions request"),
+        }
+    }
+
     pub fn with_debug_dumps(mut self, enabled: bool) -> Self {
         self.debug_dumps = enabled;
         self
@@ -205,7 +219,16 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
                     .and_then(|provider| provider.endpoint.as_ref())
                     .map(|endpoint| &endpoint.transport),
             )
-            .await?;
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(rejection) = error.request_rejection() {
+                    self.log_rejection(&request, &rejection.message).await;
+                }
+                return Err(error.into());
+            }
+        };
         reject_failure_finish(&response)?;
         let mut result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
         catalog.normalize(&mut result);
@@ -397,7 +420,19 @@ async fn materialize_messages(
     entries: &[ContextEntry],
     dialect: CompletionDialect,
 ) -> LlmAdapterResult<Vec<oai_c::CompletionMessage>> {
+    Ok(materialize_messages_tracked(blobs, entries, dialect)
+        .await?
+        .0)
+}
+
+/// [`materialize_messages`] plus the message each entry landed in.
+async fn materialize_messages_tracked(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+    dialect: CompletionDialect,
+) -> LlmAdapterResult<(Vec<oai_c::CompletionMessage>, RequestPositions)> {
     let mut messages = Vec::new();
+    let mut positions = RequestPositions::with_capacity(entries.len());
     let mut last_assistant_source: Option<ContextEntrySource> = None;
 
     for entry in entries {
@@ -506,8 +541,9 @@ async fn materialize_messages(
                 last_assistant_source = assistant.then(|| entry.source.clone());
             }
         }
+        positions.push((entry.entry_id, messages.len().saturating_sub(1)));
     }
-    Ok(messages)
+    Ok((messages, positions))
 }
 
 // Reasoning and visible output have distinct provenance labels, but belong
@@ -2807,5 +2843,39 @@ mod tests {
             materialize_create_request(&blobs, &input_request).await,
             Err(LlmAdapterError::InvalidProviderRequest { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tracked_lowering_maps_each_entry_to_its_message() {
+        let blobs = InMemoryBlobStore::new();
+        let text = blobs.insert_text("hello").await;
+        let source = ContextEntrySource::RunInput {
+            run_id: RunId::new(1),
+            input_index: 0,
+        };
+        let message = |id: u64, role: ContextMessageRole| {
+            entry(
+                id,
+                ContextEntryKind::Message { role },
+                source.clone(),
+                text.clone(),
+            )
+        };
+        let entries = vec![
+            message(1, ContextMessageRole::User),
+            message(2, ContextMessageRole::Assistant),
+            message(3, ContextMessageRole::User),
+        ];
+
+        let (messages, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::OpenAi)
+                .await
+                .expect("materialize");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 1), (3, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
     }
 }

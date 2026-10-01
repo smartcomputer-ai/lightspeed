@@ -66,11 +66,22 @@ export interface TranscriptRunSummary {
   /// null means the completed run explicitly has no output; undefined means unknown.
   outputContentRef?: string | null;
   error?: string;
+  /// The engine's classification of a failed run, e.g. `request_rejected`.
+  failureKind?: string;
   contextTokens?: number;
   usage?: RunUsage;
   usageComplete: boolean;
   toolCalls?: number;
   durationMs?: number;
+}
+
+/// The line a failed run shows. A provider rejection names the provider as
+/// the source; its message is the provider's own text, shown unchanged.
+export function runFailureText(summary: Pick<TranscriptRunSummary, "error" | "failureKind">): string {
+  const detail = summary.error ? `: ${summary.error}` : "";
+  return summary.failureKind === "request_rejected"
+    ? `The provider rejected the request${detail}`
+    : `Run failed${detail}`;
 }
 
 export interface TranscriptToolCall {
@@ -387,6 +398,7 @@ export function applyEvents(
         next.entries.push({
           ...runSummary(next, event, runId, "failed"),
           error: String(kind.message ?? "unknown error"),
+          failureKind: kind.kind,
         });
         break;
       }

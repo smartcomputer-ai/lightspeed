@@ -100,18 +100,23 @@ pub(super) async fn failed_generation_result_from_error(
     request: LlmGenerationRequest,
     error: CoreAgentIoError,
 ) -> Result<LlmGenerationResult, BlobStoreError> {
-    let failure_ref = write_error_blob(
-        blobs,
-        format!(
-            "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
-            request.run_id, request.turn_id
+    // A rejection keeps the provider's message word for word: it is what the
+    // run failure shows, and the operator's starting point for a repair.
+    let (status, text) = match error {
+        CoreAgentIoError::Rejected { message } => (LlmGenerationStatus::Rejected, message),
+        error => (
+            LlmGenerationStatus::Failed,
+            format!(
+                "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
+                request.run_id, request.turn_id
+            ),
         ),
-    )
-    .await?;
+    };
+    let failure_ref = write_error_blob(blobs, text).await?;
     Ok(LlmGenerationResult {
         run_id: request.run_id,
         turn_id: request.turn_id,
-        status: LlmGenerationStatus::Failed,
+        status,
         failure_ref: Some(failure_ref),
         context_entries: Vec::new(),
         facts: LlmGenerationFacts {

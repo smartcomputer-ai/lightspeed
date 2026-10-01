@@ -120,6 +120,19 @@ async fn temporal_live_session_start_then_run_start_completes_openai_run() -> an
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
+async fn temporal_live_provider_rejection_fails_the_run_as_request_rejected() -> anyhow::Result<()>
+{
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    require_openai_live_env()?;
+
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, run_provider_rejection_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
 async fn temporal_live_openai_completions_tool_call_round_trip() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -1637,5 +1650,106 @@ async fn run_session_metadata_live_client(
         force: true,
     })
     .await?;
+    Ok(())
+}
+
+/// An image the provider cannot process: admission sees a PNG signature, the
+/// runtime cannot read its header and sends it unchanged, and the provider
+/// rejects the whole request. The run fails as `request_rejected` and its
+/// message is the provider's own text, not a runtime wrapper.
+async fn run_provider_rejection_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(task_queue)
+        .build();
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: Some("Provider rejection live test".to_owned()),
+        config: Some(SessionConfig {
+            model: Some(model_to_api(&model)),
+            ..SessionConfig::default()
+        }),
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+
+    let mut corrupt = b"\x89PNG\r\n\x1a\n".to_vec();
+    corrupt.extend(std::iter::repeat_n(0x5a, 4096));
+    let blob_ref = api
+        .put_blobs(api::BlobPutParams {
+            blobs: vec![api::BlobPutItem {
+                bytes_base64: base64::engine::general_purpose::STANDARD.encode(&corrupt),
+            }],
+        })
+        .await?
+        .result
+        .blobs
+        .remove(0)
+        .blob_ref;
+    let run = api
+        .start_run(RunStartParams {
+            notify_on_terminal: None,
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            source: RunStartSource::Input {
+                items: vec![
+                    InputItem::Media {
+                        origin: None,
+                        blob_ref,
+                        mime: "image/png".to_owned(),
+                        kind: api::MediaKind::Image,
+                        name: Some("corrupt.png".to_owned()),
+                    },
+                    InputItem::Text {
+                        provenance_ref: None,
+                        origin: None,
+                        text: "Describe this image.".to_owned(),
+                    },
+                ],
+            },
+            config: None,
+        })
+        .await?;
+    let run = wait_for_terminal_run(&api, &session_id, run.result.run.id.as_str()).await?;
+    assert_eq!(run.status, api::RunStatus::Failed);
+
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            direction: Default::default(),
+            before: None,
+            session_id: session_id.as_str().to_owned(),
+            after: None,
+            limit: Some(500),
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    let (kind, message) = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            api::SessionEventKindView::RunFailed {
+                run_id,
+                kind,
+                message,
+            } if run_id.as_str() == run.id.as_str() => Some((*kind, message.clone())),
+            _ => None,
+        })
+        .expect("runFailed event");
+    assert_eq!(kind, api::RunFailureKindView::RequestRejected, "{message}");
+    assert!(!message.is_empty());
+    assert!(
+        !message.contains("core agent") && !message.contains("provider call failed"),
+        "the provider's message is kept without runtime wrapping: {message}"
+    );
     Ok(())
 }

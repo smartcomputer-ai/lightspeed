@@ -662,6 +662,9 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
         LlmGenerationStatus::Failed => TurnOutcome::Failed {
             failure_ref: result.failure_ref.clone(),
         },
+        LlmGenerationStatus::Rejected => TurnOutcome::Rejected {
+            failure_ref: result.failure_ref.clone(),
+        },
         LlmGenerationStatus::Succeeded => match result.facts.finish {
             LlmFinish::ToolCalls => TurnOutcome::ToolCallsQueued,
             LlmFinish::ContextLimit => TurnOutcome::ContextUpdateRequired,
@@ -5694,6 +5697,83 @@ mod tests {
             drive.next_action(32, 8).expect("next"),
             CoreAgentAction::Idle
         ));
+    }
+
+    #[test]
+    fn rejected_generation_fails_run_as_request_rejected_and_replays() {
+        let session_id = SessionId::new("session-rejected");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut entries = Vec::new();
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        entries.extend(commit_action(&mut drive, open));
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        entries.extend(commit_action(&mut drive, request));
+        let llm_request = loop {
+            let action = drive.next_action(21, 8).expect("next");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        };
+
+        let failure_ref = BlobRef::from_bytes(b"messages.3.content.1: image exceeds 2000 px");
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Rejected,
+                    failure_ref: Some(failure_ref.clone()),
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: None,
+                        finish: LlmFinish::Failed,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume rejected generation");
+        entries.extend(commit_action(&mut drive, resumed));
+        let fail_run = drive.next_action(31, 8).expect("fail run");
+        entries.extend(commit_action(&mut drive, fail_run));
+
+        let completed = drive.state().runs.completed.last().expect("completed run");
+        assert_eq!(completed.status, RunStatus::Failed);
+        let failure = completed.failure.as_ref().expect("run failure");
+        assert_eq!(failure.kind, RunFailureKind::RequestRejected);
+        assert_eq!(failure.message_ref.as_ref(), Some(&failure_ref));
+        assert!(matches!(
+            drive.next_action(32, 8).expect("next"),
+            CoreAgentAction::Idle
+        ));
+
+        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .expect("replay");
+        assert_eq!(replayed.state(), drive.state());
     }
 
     #[test]

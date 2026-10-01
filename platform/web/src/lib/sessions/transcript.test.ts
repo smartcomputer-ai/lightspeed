@@ -9,8 +9,10 @@ import {
   mediaByHandle,
   mediaHandleFor,
   reconcileRuns,
+  runFailureText,
   runInProgress,
   type TranscriptEntry,
+  type TranscriptRunSummary,
 } from "./transcript";
 import type { SessionRunView } from "@/api";
 import { TranscriptWindow } from "./transcript-window";
@@ -955,6 +957,18 @@ describe("run statistics", () => {
     let state = reconcileRuns(emptyTranscript(), [{ ...runView("run-test", "running"), startedAtMs: 1_000 }]);
     state = applyEvents(state, [event(3, { type: "runCompleted" }, 3_500)]);
     expect(state.entries).toMatchObject([{ durationMs: 2500, usageComplete: false }]);
+  });
+
+  it("names the provider when it rejected the request, keeping its message verbatim", () => {
+    const message = "messages.3.content.1.image.source.base64: image exceeds 2000 pixels";
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "runFailed", kind: "request_rejected", message }),
+    ]);
+    const [summary] = state.entries;
+    expect(summary).toMatchObject({ kind: "run-summary", failureKind: "request_rejected", error: message });
+    expect(runFailureText(summary as TranscriptRunSummary)).toBe(`The provider rejected the request: ${message}`);
+    expect(runFailureText({ failureKind: "model_failure", error: "boom" })).toBe("Run failed: boom");
   });
 
   it.each(["runFailed", "runCancelled"] as const)("retains statistics for %s", (type) => {

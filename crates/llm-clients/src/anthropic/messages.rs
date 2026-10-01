@@ -214,7 +214,10 @@ impl Client {
                     Some(crate::RequestAuth::ApiKey(api_key)) => Some(api_key),
                     _ => None,
                 };
-                with_betas(builder.header("x-api-key", self.auth_header(api_key)?), false)
+                with_betas(
+                    builder.header("x-api-key", self.auth_header(api_key)?),
+                    false,
+                )
             }
             Some(crate::RequestAuth::Bearer(token)) => {
                 let mut bearer =
