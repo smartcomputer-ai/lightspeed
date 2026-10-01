@@ -416,8 +416,9 @@ async fn materialize_input_items_tracked(
 ) -> LlmAdapterResult<(Vec<oai::ResponseInputItem>, RequestPositions)> {
     let mut input: Vec<oai::ResponseInputItem> = Vec::with_capacity(entries.len());
     let mut positions = RequestPositions::with_capacity(entries.len());
+    let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
     for item in entries {
-        let next = materialize_input_item(blobs, item).await?;
+        let next = materialize_input_item(blobs, item, &mut media).await?;
         // Consecutive same-role USER messages (for example an image entry
         // plus its caption) fold into one message with multiple content
         // parts — the canonical Responses input shape. Assistant history is
@@ -470,6 +471,7 @@ fn input_message_parts(content: oai::InputMessageContent) -> Vec<oai::InputConte
 async fn materialize_input_item(
     blobs: &dyn BlobStore,
     item: &ContextEntry,
+    media: &mut crate::media::RequestMedia,
 ) -> LlmAdapterResult<oai::ResponseInputItem> {
     if is_openai_raw_item(item)
         || (item.content.media_type.as_deref() == Some(MEDIA_TYPE_JSON)
@@ -487,10 +489,18 @@ async fn materialize_input_item(
                 ContextMessageRole::User => oai::MessageRole::User,
                 ContextMessageRole::Assistant => oai::MessageRole::Assistant,
             };
+            if media.is_omitted(item) {
+                return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
+                    role,
+                    content: oai::InputMessageContent::Text(crate::media::omission_placeholder(
+                        item,
+                    )),
+                    extra: Default::default(),
+                }));
+            }
             if let Some(mime) = crate::blob_io::image_media_type(item.content.media_type.as_deref())
             {
-                let image =
-                    crate::media::model_image(blobs, &item.content.content_ref, mime).await?;
+                let image = media.image(blobs, item, mime).await?;
                 return Ok(oai::ResponseInputItem::Message(oai::InputMessage {
                     role,
                     content: oai::InputMessageContent::Parts(vec![
@@ -512,8 +522,7 @@ async fn materialize_input_item(
                 item.preview.as_deref(),
             ) {
                 let parts = if document.is_pdf {
-                    let data =
-                        crate::blob_io::read_base64(blobs, &item.content.content_ref).await?;
+                    let data = media.pdf_base64(blobs, item).await?;
                     vec![
                         oai::InputContent::InputText {
                             r#type: oai::InputContentType::InputText,
@@ -3610,7 +3619,7 @@ mod tests {
             supersedes: None,
         };
 
-        let item = materialize_input_item(&blobs, &entry)
+        let item = materialize_input_item(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize image entry");
 

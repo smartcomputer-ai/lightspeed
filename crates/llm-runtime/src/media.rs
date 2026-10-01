@@ -12,13 +12,17 @@
 //! entries, and `media:` handles keep referring to the original, because a
 //! session may change models and a copy computed for one request shape must
 //! not become durable state.
+//!
+//! A whole request is also held to one media budget, the same for every
+//! provider and model: [`RequestMedia`] omits the oldest media when the
+//! request would carry too many items or too many bytes.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::sync::{Mutex, OnceLock};
 
 use base64::Engine as _;
-use engine::{BlobRef, storage::BlobStore};
+use engine::{BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, storage::BlobStore};
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
 use image::imageops::FilterType;
@@ -41,6 +45,151 @@ const JPEG_QUALITY: u8 = 85;
 /// Upper bound on normalized copies held in memory per worker. Normalization
 /// is deterministic, so a miss only costs a decode.
 const CACHE_CAPACITY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Most media items one request carries. Anthropic accepts 100 images per
+/// request on 200k-context models and more elsewhere; OpenAI accepts more.
+pub const MAX_REQUEST_MEDIA_ITEMS: usize = 100;
+/// Most encoded media bytes one request carries, leaving room for text below
+/// Anthropic's 32 MB request body limit; OpenAI's limits are higher.
+pub const MAX_REQUEST_MEDIA_BYTES: usize = 24 * 1024 * 1024;
+/// Omitted media is counted in whole chunks, so the cut point moves once per
+/// chunk of new media rather than every turn: each move rewrites history the
+/// provider has seen, invalidating its prompt cache and preserved reasoning.
+const OMISSION_CHUNK: usize = 10;
+/// Rounding to a chunk never omits media below this many of the newest items
+/// that fit, so a single large tool batch keeps its newest images.
+const MIN_KEPT_MEDIA: usize = 4;
+
+/// The media a request carries, prepared before any entry is lowered so the
+/// request can be held to the media budget as a whole. Which media is omitted
+/// is a pure function of the entries, so retries send identical requests.
+#[derive(Default)]
+pub struct RequestMedia {
+    prepared: HashMap<ContextEntryId, PreparedMedia>,
+    omitted: HashSet<ContextEntryId>,
+}
+
+enum PreparedMedia {
+    Image(ModelImage),
+    Pdf(String),
+}
+
+impl PreparedMedia {
+    fn encoded_len(&self) -> usize {
+        match self {
+            Self::Image(image) => image.base64.len(),
+            Self::Pdf(base64) => base64.len(),
+        }
+    }
+}
+
+impl RequestMedia {
+    pub async fn prepare(
+        blobs: &dyn BlobStore,
+        entries: &[ContextEntry],
+    ) -> LlmAdapterResult<Self> {
+        let mut media = Vec::new();
+        for entry in entries {
+            if !matches!(entry.kind, ContextEntryKind::Message { .. }) {
+                continue;
+            }
+            let content = &entry.content;
+            let prepared = if let Some(mime) =
+                crate::blob_io::image_media_type(content.media_type.as_deref())
+            {
+                PreparedMedia::Image(model_image(blobs, &content.content_ref, mime).await?)
+            } else if crate::blob_io::document_entry(
+                content.media_type.as_deref(),
+                entry.preview.as_deref(),
+            )
+            .is_some_and(|document| document.is_pdf)
+            {
+                PreparedMedia::Pdf(crate::blob_io::read_base64(blobs, &content.content_ref).await?)
+            } else {
+                continue;
+            };
+            media.push((entry.entry_id, prepared));
+        }
+        let sizes = media
+            .iter()
+            .map(|(_, prepared)| prepared.encoded_len())
+            .collect::<Vec<_>>();
+        let omit = omission_count(&sizes);
+        let mut request = Self::default();
+        for (index, (entry_id, prepared)) in media.into_iter().enumerate() {
+            if index < omit {
+                request.omitted.insert(entry_id);
+            } else {
+                request.prepared.insert(entry_id, prepared);
+            }
+        }
+        Ok(request)
+    }
+
+    /// The entry's media is left out of this request to keep it in budget.
+    pub fn is_omitted(&self, entry: &ContextEntry) -> bool {
+        self.omitted.contains(&entry.entry_id)
+    }
+
+    /// The image to send for `entry`, prepared or computed now.
+    pub async fn image(
+        &mut self,
+        blobs: &dyn BlobStore,
+        entry: &ContextEntry,
+        mime: &str,
+    ) -> LlmAdapterResult<ModelImage> {
+        match self.prepared.remove(&entry.entry_id) {
+            Some(PreparedMedia::Image(image)) => Ok(image),
+            _ => model_image(blobs, &entry.content.content_ref, mime).await,
+        }
+    }
+
+    /// The base64 PDF to send for `entry`, prepared or read now.
+    pub async fn pdf_base64(
+        &mut self,
+        blobs: &dyn BlobStore,
+        entry: &ContextEntry,
+    ) -> LlmAdapterResult<String> {
+        match self.prepared.remove(&entry.entry_id) {
+            Some(PreparedMedia::Pdf(base64)) => Ok(base64),
+            _ => crate::blob_io::read_base64(blobs, &entry.content.content_ref).await,
+        }
+    }
+}
+
+/// The text sent in place of media omitted to keep a request in budget:
+/// `[image · media:3f9a2c1d4e7b · omitted from this request to stay within
+/// provider limits]`. The handle stays, so the model can still name it.
+pub fn omission_placeholder(entry: &ContextEntry) -> String {
+    let announcement = crate::blob_io::media_announcement(entry);
+    match announcement.rsplit_once(" · ") {
+        Some((head, _media_type)) => {
+            format!("{head} · omitted from this request to stay within provider limits]")
+        }
+        None => announcement,
+    }
+}
+
+/// How many of the oldest media items to omit, given each item's encoded
+/// size in context order: the fewest that bring the rest within the budget,
+/// rounded up to a whole chunk but never below the newest items that fit
+/// (at least [`MIN_KEPT_MEDIA`] of them).
+fn omission_count(sizes: &[usize]) -> usize {
+    let total = sizes.len();
+    let mut omit = total.saturating_sub(MAX_REQUEST_MEDIA_ITEMS);
+    let mut bytes = sizes[omit..].iter().sum::<usize>();
+    while bytes > MAX_REQUEST_MEDIA_BYTES && omit < total {
+        bytes -= sizes[omit];
+        omit += 1;
+    }
+    if omit == 0 {
+        return 0;
+    }
+    omit.div_ceil(OMISSION_CHUNK)
+        .saturating_mul(OMISSION_CHUNK)
+        .min(total.saturating_sub(MIN_KEPT_MEDIA))
+        .max(omit)
+}
 
 /// One image as the model receives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -469,6 +618,73 @@ mod tests {
                 "[image · {} · image/png · shown at 2000×1400 of 4000×2800]",
                 engine::media::media_handle(&blob_ref)
             )
+        );
+    }
+
+    #[test]
+    fn requests_within_budget_omit_nothing() {
+        assert_eq!(omission_count(&[]), 0);
+        assert_eq!(omission_count(&[1024; MAX_REQUEST_MEDIA_ITEMS]), 0);
+    }
+
+    #[test]
+    fn omission_drops_the_oldest_media_in_whole_chunks() {
+        // One item over the count limit omits a whole chunk of the oldest.
+        assert_eq!(omission_count(&[1024; MAX_REQUEST_MEDIA_ITEMS + 1]), 10);
+        // The cut holds until the next chunk is needed.
+        assert_eq!(omission_count(&[1024; MAX_REQUEST_MEDIA_ITEMS + 10]), 10);
+        assert_eq!(omission_count(&[1024; MAX_REQUEST_MEDIA_ITEMS + 11]), 20);
+    }
+
+    #[test]
+    fn an_oversized_batch_keeps_its_newest_items() {
+        // Eight 5 MiB images exceed the byte budget: the oldest go first, and
+        // rounding to a chunk never drops the newest items that fit.
+        let sizes = [5 * 1024 * 1024; 8];
+        let omit = omission_count(&sizes);
+        assert_eq!(omit, 4);
+        assert!(sizes[omit..].iter().sum::<usize>() <= MAX_REQUEST_MEDIA_BYTES);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_media_omits_the_oldest_and_keeps_the_rest_prepared() {
+        let blobs = engine::storage::InMemoryBlobStore::new();
+        let png = {
+            let mut bytes = Vec::new();
+            PngEncoder::new(&mut bytes)
+                .write_image(&[0, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+                .expect("encode png");
+            bytes
+        };
+        let mut entries = Vec::new();
+        for index in 0..MAX_REQUEST_MEDIA_ITEMS + 1 {
+            let mut bytes = png.clone();
+            bytes.extend((index as u32).to_le_bytes());
+            let blob_ref = blobs.put_bytes(bytes).await.expect("store");
+            let mut entry = image_entry(blob_ref);
+            entry.entry_id = ContextEntryId::new(index as u64 + 1);
+            entries.push(entry);
+        }
+
+        let mut media = RequestMedia::prepare(&blobs, &entries)
+            .await
+            .expect("prepare");
+
+        let omitted = entries
+            .iter()
+            .filter(|entry| media.is_omitted(entry))
+            .map(|entry| entry.entry_id.as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(omitted, (1..=10).collect::<Vec<_>>());
+        let newest = entries.last().expect("newest");
+        let image = media
+            .image(&blobs, newest, "image/png")
+            .await
+            .expect("prepared image");
+        assert_eq!(image.media_type, "image/png");
+        assert!(
+            omission_placeholder(&entries[0])
+                .ends_with(" · omitted from this request to stay within provider limits]")
         );
     }
 

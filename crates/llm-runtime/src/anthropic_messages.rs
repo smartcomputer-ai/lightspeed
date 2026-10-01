@@ -754,6 +754,7 @@ async fn materialize_messages_tracked(
 ) -> LlmAdapterResult<(Vec<am::MessageParam>, RequestPositions)> {
     let mut messages: Vec<am::MessageParam> = Vec::new();
     let mut positions = RequestPositions::with_capacity(entries.len());
+    let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
     for entry in entries {
         if is_raw_input_message(entry) {
             let (role, blocks) = materialize_input_message(blobs, entry).await?;
@@ -776,7 +777,7 @@ async fn materialize_messages_tracked(
             positions.push((entry.entry_id, messages.len().saturating_sub(1)));
             continue;
         }
-        let (role, blocks) = materialize_block(blobs, entry).await?;
+        let (role, blocks) = materialize_block(blobs, entry, &mut media).await?;
         for block in blocks {
             push_block(&mut messages, role, block)?;
         }
@@ -884,6 +885,7 @@ async fn materialize_input_message(
 async fn materialize_block(
     blobs: &dyn BlobStore,
     entry: &ContextEntry,
+    media: &mut crate::media::RequestMedia,
 ) -> LlmAdapterResult<(am::MessageRole, Vec<am::ContentBlockParam>)> {
     match &entry.kind {
         ContextEntryKind::Message { role } => {
@@ -891,9 +893,16 @@ async fn materialize_block(
                 ContextMessageRole::User => am::MessageRole::User,
                 ContextMessageRole::Assistant => am::MessageRole::Assistant,
             };
+            if media.is_omitted(entry) {
+                return Ok((
+                    role,
+                    vec![am::ContentBlockParam::text(
+                        crate::media::omission_placeholder(entry),
+                    )],
+                ));
+            }
             if let Some(mime) = crate::blob_io::image_media_type(entry.content.media_type.as_deref()) {
-                let image =
-                    crate::media::model_image(blobs, &entry.content.content_ref, mime).await?;
+                let image = media.image(blobs, entry, mime).await?;
                 return Ok((
                     role,
                     vec![
@@ -907,7 +916,7 @@ async fn materialize_block(
                 entry.preview.as_deref(),
             ) {
                 let blocks = if document.is_pdf {
-                    let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    let data = media.pdf_base64(blobs, entry).await?;
                     vec![
                         am::ContentBlockParam::text(crate::blob_io::media_announcement(entry)),
                         am::ContentBlockParam::document_base64(document.mime, data, document.name),
@@ -4050,7 +4059,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, blocks) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize image entry");
 
@@ -4106,7 +4115,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, blocks) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize pdf entry");
 
@@ -4157,7 +4166,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, blocks) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize markdown entry");
 
@@ -4201,7 +4210,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (_, blocks) = materialize_block(&blobs, &entry)
+        let (_, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize text entry");
 
@@ -4780,5 +4789,56 @@ mod tests {
             positions,
             [(1, 0), (2, 0), (3, 1), (4, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn media_over_the_request_budget_omits_the_oldest_identically_every_time() {
+        let blobs = InMemoryBlobStore::new();
+        let mut entries = Vec::new();
+        for index in 0..crate::media::MAX_REQUEST_MEDIA_ITEMS + 1 {
+            let content_ref = blobs
+                .put_bytes(png_bytes(8, 8, index as u8))
+                .await
+                .expect("store image");
+            let mut entry = user_entry(index as u64 + 1, content_ref);
+            entry.content.media_type = Some("image/png".to_owned());
+            entry.preview = Some("[image]".to_owned());
+            entries.push(entry);
+        }
+        let request = intent_request(entries);
+
+        let first = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let second = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize again");
+        assert_eq!(first, second, "retries send identical requests");
+
+        let value = serde_json::to_value(first).expect("json");
+        let blocks = value["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .flat_map(|message| message["content"].as_array().expect("blocks").iter())
+            .collect::<Vec<_>>();
+        let images = blocks
+            .iter()
+            .filter(|block| block["type"] == json!("image"))
+            .count();
+        let omitted = blocks
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .filter(|text| {
+                text.ends_with("omitted from this request to stay within provider limits]")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(images, crate::media::MAX_REQUEST_MEDIA_ITEMS + 1 - 10);
+        assert_eq!(omitted.len(), 10, "the oldest chunk is omitted");
+        let first_text = blocks
+            .iter()
+            .find_map(|block| block["text"].as_str())
+            .expect("first block");
+        assert!(first_text.contains("omitted"), "{first_text}");
     }
 }

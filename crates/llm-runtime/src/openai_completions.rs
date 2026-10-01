@@ -434,6 +434,7 @@ async fn materialize_messages_tracked(
     let mut messages = Vec::new();
     let mut positions = RequestPositions::with_capacity(entries.len());
     let mut last_assistant_source: Option<ContextEntrySource> = None;
+    let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
 
     for entry in entries {
         match &entry.kind {
@@ -535,7 +536,7 @@ async fn materialize_messages_tracked(
             }
             _ => {
                 reject_foreign_provider_kind(entry)?;
-                let message = materialize_message(blobs, entry, dialect).await?;
+                let message = materialize_message(blobs, entry, dialect, &mut media).await?;
                 let assistant = message.role == "assistant";
                 push_message(&mut messages, message);
                 last_assistant_source = assistant.then(|| entry.source.clone());
@@ -635,6 +636,7 @@ async fn materialize_message(
     blobs: &dyn BlobStore,
     entry: &ContextEntry,
     dialect: CompletionDialect,
+    media: &mut crate::media::RequestMedia,
 ) -> LlmAdapterResult<oai_c::CompletionMessage> {
     match &entry.kind {
         ContextEntryKind::Message { role } => {
@@ -677,14 +679,15 @@ async fn materialize_message(
             // in `validate_dialect_capabilities`.
             let drop_media =
                 dialect == CompletionDialect::DeepSeek && crate::blob_io::is_tool_sourced(entry);
-            let content = if let Some(mime) =
+            let content = if media.is_omitted(entry) && !drop_media {
+                oai_c::CompletionMessageContent::Text(crate::media::omission_placeholder(entry))
+            } else if let Some(mime) =
                 crate::blob_io::image_media_type(entry.content.media_type.as_deref())
             {
                 if drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else {
-                    let image =
-                        crate::media::model_image(blobs, &entry.content.content_ref, mime).await?;
+                    let image = media.image(blobs, entry, mime).await?;
                     oai_c::CompletionMessageContent::Parts(vec![
                         text_part(image.announcement(entry)),
                         part_with_extra(
@@ -703,8 +706,7 @@ async fn materialize_message(
                 if document.is_pdf && drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else if document.is_pdf {
-                    let data =
-                        crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    let data = media.pdf_base64(blobs, entry).await?;
                     oai_c::CompletionMessageContent::Parts(vec![
                         text_part(crate::blob_io::media_announcement(entry)),
                         part_with_extra(

@@ -1,7 +1,7 @@
 # P186 — Provider-safe media and context entry redaction
 
-**Status:** Slices 1–3 implemented and live-verified, 2026-10-01; slice 4
-proposed. Revises the request-time media rules of
+**Status:** Implemented and live-verified, 2026-10-01 (all four slices).
+Revises the request-time media rules of
 [tool result media](p171-tool-result-media.md).
 
 ## Outcome
@@ -180,7 +180,11 @@ already seen. This migration uses the thinking-continuation policy in Decision
 After normalization, lowering counts the media in the request against one
 media budget: a maximum number of media items and a maximum of encoded media
 bytes. The budget is a constant, the same for every provider and model, and
-conservative enough to sit below every supported API kind's limits.
+conservative enough to sit below every supported API kind's limits: at most
+100 media items (Anthropic's per-request cap on 200k-context models) and
+24 MiB of encoded media (room for text below Anthropic's 32 MB body limit).
+Omission is counted in chunks of 10, and rounding never drops below the four
+newest items that fit.
 
 - **One budget, not a limits table per provider.** A table per API kind would
   have to track provider limits by hand, and a stale row would either omit
@@ -443,6 +447,15 @@ Slice 3 is implemented as entry replacement (Decision 4). The hosted live
 test continues past the rejection: it replaces the undecodable image with a
 placeholder through `session/context/replace`, checks that the entry keeps
 its id and is no longer media, and runs the same session again successfully.
+
+Slice 4 is implemented: `RequestMedia` prepares every image and PDF of a
+request once, decides which oldest items to omit, and hands the prepared
+copies to the adapter, so the budget costs no extra blob reads; compaction
+requests go through the same lowering. Unit tests cover omission order,
+whole-chunk steps, an oversized batch keeping its newest items, and
+identical requests across calls. A live test on Claude Opus 5.5 crosses the
+budget after a thinking turn: the strict policy rejects the rewritten
+history, and `drop_block` continues with the right answer.
 
 ## Non-goals
 

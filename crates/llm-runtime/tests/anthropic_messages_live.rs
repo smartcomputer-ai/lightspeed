@@ -1731,3 +1731,132 @@ async fn anthropic_messages_live_runtime_reports_provider_rejections() {
         "the provider's message is kept without runtime wrapping: {message}"
     );
 }
+
+/// Crossing the request media budget omits the oldest media, which rewrites
+/// content the provider has already seen. On a model that checks preserved
+/// thinking, the session continues under `drop_block`, while the strict
+/// policy rejects the same request.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_continues_after_media_omission() {
+    use llm_runtime::media::MAX_REQUEST_MEDIA_ITEMS;
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let strict = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+    let lenient = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+    let model = ModelSelection {
+        model: preserved_thinking_model(),
+        ..model_selection()
+    };
+    let request = |fingerprint: &str, entries: Vec<ContextEntry>| {
+        let mut request = intent_request(fingerprint, entries);
+        request.model = model.clone();
+        request.output_limit = Some(8192);
+        request.reasoning_effort = Some("high".to_string());
+        request
+    };
+    async fn swatch(blobs: &InMemoryBlobStore, id: u64, index: usize) -> ContextEntry {
+        let bytes = support::media::png_image(16, 16, [(index * 7 % 256) as u8, 90, 160]);
+        let mut entry = user_entry(id, blobs.put_bytes(bytes).await.expect("store image"));
+        entry.content.media_type = Some("image/png".to_owned());
+        entry.preview = Some("[image]".to_owned());
+        entry
+    }
+    let mut next_id = 0u64;
+
+    // A turn within the budget, with real thinking to replay.
+    let mut history = Vec::new();
+    for index in 0..MAX_REQUEST_MEDIA_ITEMS - 1 {
+        next_id += 1;
+        history.push(swatch(&blobs, next_id, index).await);
+    }
+    next_id += 1;
+    history.push(user_entry(
+        next_id,
+        text_blob(
+            &blobs,
+            "These are color swatches. Compute 13 * 17 + 29 * 31, thinking it through \
+             carefully, and reply with just the number.",
+        )
+        .await,
+    ));
+    let first = strict
+        .generate(generation_request(
+            1,
+            request("live-anthropic-budget-1", history.clone()),
+        ))
+        .await
+        .expect("first turn within the budget");
+    assert_eq!(first.result.status, LlmGenerationStatus::Succeeded);
+    assert_visible_thinking(&first.result, "first turn");
+    let offset = next_id as usize;
+    history.extend(
+        first
+            .result
+            .context_entries
+            .iter()
+            .enumerate()
+            .map(|(index, item)| retained_context_entry(offset + index, item)),
+    );
+    next_id = history.len() as u64;
+
+    // New media pushes the request over the budget: the oldest chunk of
+    // images is now sent as placeholders.
+    for index in 0..5 {
+        next_id += 1;
+        history.push(swatch(&blobs, next_id, 200 + index).await);
+    }
+    next_id += 1;
+    history.push(user_entry(
+        next_id,
+        text_blob(
+            &blobs,
+            "Now add 4 to that number. Reply with just the number.",
+        )
+        .await,
+    ));
+
+    let error = strict
+        .generate(generation_request(
+            2,
+            request("live-anthropic-budget-2", history.clone()),
+        ))
+        .await
+        .expect_err("strict policy rejects thinking bound to the omitted media");
+    assert!(is_http_status(&error, 400), "expected a 400, got {error:?}");
+
+    let continued = lenient
+        .generate(generation_request(
+            3,
+            request("live-anthropic-budget-3", history),
+        ))
+        .await
+        .expect("drop_block continues after the omission");
+    assert_eq!(continued.result.status, LlmGenerationStatus::Succeeded);
+    let sent = provider_request_json(&blobs, &dumps(&continued).provider_request_ref).await;
+    assert_eq!(
+        support::media::texts_containing(&sent, "omitted from this request").len(),
+        10
+    );
+    let answer = continued
+        .result
+        .context_entries
+        .iter()
+        .find_map(|item| match item.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(item.content.clone()),
+            _ => None,
+        })
+        .expect("answer after the omission");
+    let answer = support::content_text(blobs.as_ref(), &answer).await;
+    assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
+}
