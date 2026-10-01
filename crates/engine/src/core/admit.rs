@@ -347,6 +347,47 @@ pub fn admit_command(
                 }),
             )])
         }
+        CoreAgentCommand::ReplaceContextEntries {
+            expected_revision,
+            entries,
+        } => {
+            require_open(state)?;
+            require_no_pending_compaction(
+                state,
+                "context cannot be edited while context compaction is pending",
+            )?;
+            if state.runs.active.is_some() {
+                return reject(
+                    CommandRejectionKind::ActiveWork,
+                    "context entries cannot be replaced while a run is active",
+                );
+            }
+            validate_expected_context_revision(state, expected_revision)?;
+            let mut replaced = Vec::new();
+            for (entry_id, input) in entries {
+                let Some(entry) =
+                    crate::core::components::context::replacement_entry(state, entry_id, input)
+                else {
+                    continue;
+                };
+                if crate::core::components::context::entry_by_id(state, entry_id) == Some(&entry) {
+                    continue;
+                }
+                crate::core::components::context::validate_entry_replacement(state, &entry)
+                    .map_err(command_rejection_from_domain)?;
+                replaced.push(entry);
+            }
+            if replaced.is_empty() {
+                return Ok(Vec::new());
+            }
+            Ok(vec![CoreAgentEventProposal::new(
+                CoreAgentJoins::default(),
+                CoreAgentEvent::Context(ContextEvent::EntriesReplaced {
+                    base_revision: state.context.revision,
+                    entries: replaced,
+                }),
+            )])
+        }
         CoreAgentCommand::CompactContext => {
             require_open(state)?;
             crate::core::components::context::manual_compaction_requested_proposal(state)

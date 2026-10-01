@@ -2079,6 +2079,24 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn replace_context(
+        &self,
+        params: ContextReplaceParams,
+    ) -> Result<AgentApiOutcome<ContextReplaceResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(ContextReplaceResponse {
+            context_revision: 1,
+            results: params
+                .entries
+                .iter()
+                .map(|entry| ContextReplaceResult {
+                    entry_id: entry.entry_id.clone(),
+                    status: ContextReplaceStatus::Replaced,
+                    failure: None,
+                })
+                .collect(),
+        }))
+    }
+
     async fn remove_context(
         &self,
         params: ContextRemoveParams,

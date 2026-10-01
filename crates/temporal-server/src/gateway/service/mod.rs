@@ -496,6 +496,45 @@ fn input_admission_failure_from_api_error(error: AgentApiError) -> InputAdmissio
     }
 }
 
+/// The converted item as a replacement of `active`: the entry keeps its kind,
+/// so only tool results and user messages qualify and a tool result takes
+/// only text.
+fn replacement_input(
+    active: &engine::ContextEntry,
+    mut input: engine::ContextEntryInput,
+    item: &InputItem,
+) -> Result<engine::ContextEntryInput, InputAdmissionFailureView> {
+    let rejected = |message: &str| InputAdmissionFailureView {
+        kind: InputAdmissionFailureKind::AdmissionRejected,
+        message: message.to_owned(),
+    };
+    match &active.kind {
+        ContextEntryKind::ToolResult { .. } if matches!(item, InputItem::Media { .. }) => {
+            return Err(rejected("a tool result can only be replaced with text"));
+        }
+        ContextEntryKind::ToolResult { .. }
+        | ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        } => {}
+        _ => {
+            return Err(rejected(
+                "only tool results and user messages can be replaced",
+            ));
+        }
+    }
+    input.kind = active.kind.clone();
+    input.origin = input.origin.or_else(|| active.origin.clone());
+    // Keep the context's combined estimate known when the entry carried one.
+    input.token_estimate = active.token_estimate.as_ref().map(|estimate| match item {
+        InputItem::Text { text, .. } => engine::TokenEstimate {
+            tokens: u32::try_from(text.trim().len().div_ceil(4)).unwrap_or(u32::MAX),
+            quality: engine::TokenEstimateQuality::Estimated,
+        },
+        _ => estimate.clone(),
+    });
+    Ok(input)
+}
+
 fn input_admission_failure_from_workflow(
     failure: &AgentAdmissionFailure,
 ) -> InputAdmissionFailureView {
@@ -2836,6 +2875,141 @@ impl AgentApiService for GatewayAgentApi {
         Ok(AgentApiOutcome::new(ContextAppendResponse {
             context_revision,
             results: response_results,
+        }))
+    }
+
+    async fn replace_context(
+        &self,
+        params: ContextReplaceParams,
+    ) -> Result<AgentApiOutcome<ContextReplaceResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_REPLACE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        const MAX_CONTEXT_REPLACE_ENTRIES: usize = 64;
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.entries.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "session/context/replace requires at least one entry",
+            ));
+        }
+        if params.entries.len() > MAX_CONTEXT_REPLACE_ENTRIES {
+            return Err(AgentApiError::invalid_request(format!(
+                "session/context/replace accepts at most {MAX_CONTEXT_REPLACE_ENTRIES} entries per call"
+            )));
+        }
+        // Items convert like `session/context/append`: media problems fail
+        // their entry, any other invalid item fails the request.
+        let mut converted = Vec::with_capacity(params.entries.len());
+        for entry in &params.entries {
+            let entry_id = api_projection::parse_api_item_id(&entry.entry_id)?;
+            if converted.iter().any(|(id, _, _)| *id == entry_id) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate entry id in replace batch: {}",
+                    entry.entry_id
+                )));
+            }
+            if matches!(entry.item, InputItem::Catalog { .. }) {
+                return Err(AgentApiError::invalid_request(
+                    "session/context/replace items are text, textRef, or media",
+                ));
+            }
+            let input = match context_entry_input_from_api(self.store.as_ref(), &entry.item).await {
+                Ok(input) => Ok(input),
+                Err(error) if matches!(entry.item, InputItem::Media { .. }) => {
+                    Err(input_admission_failure_from_api_error(error))
+                }
+                Err(error) => return Err(error),
+            };
+            converted.push((entry_id, entry, input));
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() {
+            return Err(AgentApiError::rejected(
+                "context entries cannot be replaced while a run is active",
+            ));
+        }
+        let mut outcomes = Vec::with_capacity(converted.len());
+        let mut pending = BTreeMap::new();
+        for (entry_id, entry, input) in converted {
+            let outcome = match (
+                input,
+                loaded
+                    .state
+                    .context
+                    .entries
+                    .iter()
+                    .find(|active| active.entry_id == entry_id),
+            ) {
+                (Err(failure), _) => (ContextReplaceStatus::Failed, Some(failure)),
+                (Ok(_), None) => (ContextReplaceStatus::Absent, None),
+                (Ok(input), Some(active)) => match replacement_input(active, input, &entry.item) {
+                    Err(failure) => (ContextReplaceStatus::Failed, Some(failure)),
+                    Ok(input) if input.content == active.content => {
+                        (ContextReplaceStatus::Unchanged, None)
+                    }
+                    Ok(input) => {
+                        pending.insert(entry_id, input);
+                        (ContextReplaceStatus::Replaced, None)
+                    }
+                },
+            };
+            outcomes.push((entry_id, entry.entry_id.clone(), outcome));
+        }
+
+        let mut context_revision = loaded.state.context.revision;
+        if !pending.is_empty() {
+            let expected = pending
+                .iter()
+                .map(|(entry_id, input)| (*entry_id, input.content.clone()))
+                .collect::<Vec<_>>();
+            let correlation_token = format!("admit_{}", uuid::Uuid::new_v4().simple());
+            self.signal_submit_admissions(
+                &session_id,
+                vec![AgentAdmission {
+                    command: CoreAgentCommand::ReplaceContextEntries {
+                        expected_revision: Some(loaded.state.context.revision),
+                        entries: pending.clone(),
+                    },
+                    correlation_token: Some(correlation_token.clone()),
+                }],
+            )
+            .await?;
+            let (revision, failure) = self
+                .wait_for_context_entries_replaced(&session_id, &expected, &correlation_token)
+                .await?;
+            context_revision = revision;
+            // The command is atomic: a refusal fails every entry it carried.
+            if let Some(failure) = failure {
+                let failure = input_admission_failure_from_workflow(&failure);
+                for (entry_id, _, outcome) in &mut outcomes {
+                    if pending.contains_key(entry_id) {
+                        *outcome = (ContextReplaceStatus::Failed, Some(failure.clone()));
+                    }
+                }
+            }
+        }
+        let results = outcomes
+            .into_iter()
+            .map(|(_, entry_id, (status, failure))| ContextReplaceResult {
+                entry_id,
+                status,
+                failure,
+            })
+            .collect();
+        Ok(AgentApiOutcome::new(ContextReplaceResponse {
+            context_revision,
+            results,
         }))
     }
 

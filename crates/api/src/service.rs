@@ -162,6 +162,11 @@ pub trait AgentApiService: Send + Sync {
         params: ContextRemoveParams,
     ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError>;
 
+    async fn replace_context(
+        &self,
+        params: ContextReplaceParams,
+    ) -> Result<AgentApiOutcome<ContextReplaceResponse>, AgentApiError>;
+
     async fn start_run(
         &self,
         params: RunStartParams,

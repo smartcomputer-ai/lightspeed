@@ -21,6 +21,7 @@ export const METHODS = [
   "session/events/read",
   "session/context/append",
   "session/context/remove",
+  "session/context/replace",
   "session/context/compact",
   "session/runs/start",
   "session/runs/list",
@@ -240,6 +241,12 @@ export const METHOD_INFO = {
     access: {"action":"control_session","kind":"universe"},
     summary: "Remove keyed session context",
     description: "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
+  },
+  "session/context/replace": {
+    scope: "universe",
+    access: {"action":"control_session","kind":"universe"},
+    summary: "Replace session context entries",
+    description: "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
   },
   "session/context/compact": {
     scope: "universe",
@@ -1125,6 +1132,15 @@ export interface MethodMap {
   "session/context/remove": {
     params: Api.ContextRemoveParams;
     result: Api.AgentApiOutcomeOfContextRemoveResponse;
+  };
+  /**
+   * Replace session context entries
+   *
+   * Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
+   */
+  "session/context/replace": {
+    params: Api.ContextReplaceParams;
+    result: Api.AgentApiOutcomeOfContextReplaceResponse;
   };
   /**
    * Compact session context
@@ -2352,6 +2368,14 @@ export const rpc = {
    */
   sessionContextRemove(client: RpcCaller, params: Api.ContextRemoveParams): Promise<Api.AgentApiOutcomeOfContextRemoveResponse> {
     return client.call("session/context/remove", params);
+  },
+  /**
+   * Replace session context entries
+   *
+   * Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
+   */
+  sessionContextReplace(client: RpcCaller, params: Api.ContextReplaceParams): Promise<Api.AgentApiOutcomeOfContextReplaceResponse> {
+    return client.call("session/context/replace", params);
   },
   /**
    * Compact session context

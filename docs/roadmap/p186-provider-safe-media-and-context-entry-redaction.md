@@ -1,7 +1,7 @@
 # P186 — Provider-safe media and context entry redaction
 
-**Status:** Slices 1 and 2 implemented and live-verified, 2026-10-01;
-slices 3 and 4 proposed. Revises the request-time media rules of
+**Status:** Slices 1–3 implemented and live-verified, 2026-10-01; slice 4
+proposed. Revises the request-time media rules of
 [tool result media](p171-tool-result-media.md).
 
 ## Outcome
@@ -22,10 +22,10 @@ Five changes deliver this, with provider-specific lowering and continuation:
    budget, omitting the oldest media when it would not fit.
 3. A provider rejecting a request is reported as a distinct run failure,
    `RequestRejected`, carrying the provider's message word for word.
-4. `session/context/redact` replaces the content of chosen entries with a
-   fixed placeholder, in place, so an operator can neutralize the entry that
-   causes a rejection. `session/context/read` lists active context so the
-   operator can find that entry.
+4. `session/context/replace` replaces the text of chosen entries in place,
+   by entry ID, so an operator can neutralize the entry that causes a
+   rejection. `session/read` already lists active context with entry
+   IDs, so the operator can find that entry.
 5. A repair that invalidates preserved thinking uses the provider's supported
    continuation policy, so incompatible past reasoning does not itself prevent
    the session from continuing.
@@ -95,9 +95,9 @@ one entry it no longer accepts, and the runtime has no supported way out.
   increasing `entry_id`, and a keyed upsert removes the old entry and appends
   its replacement at the tail. External context commands (`UpsertContext`,
   `ReplaceContextPrefix`, `RemoveContext`) address entries only by key.
-  Run-appended entries have no key and are unreachable. No public method
-  reads active context: an operator can only reconstruct it by folding
-  `session/events/read`, and the CLI is a plain API client.
+  Run-appended entries have no key and are unreachable. A keyed replace also
+  moves the entry to the tail. `session/read` returns the active context
+  (`activeContext`) with entry IDs, kinds, and previews.
 - Tool calls and tool results are separate entries (`ToolCall`, `ToolResult`),
   one per call. Tool-produced media are further separate user-role entries
   that follow the result.
@@ -241,25 +241,46 @@ provider error stays `ModelFailure`.
 - The public run failure view gains the new kind; the API contract and the
   TypeScript consumers are regenerated.
 
-### 4. Redact context entries in place
+### 4. Replace context entries in place
 
-`session/context/redact { sessionId, entryIds }` replaces the content of each
-named entry with a fixed placeholder chosen by the engine. The engine gains a
-`RedactContextEntries { expected_revision, entry_ids }` command and an
-`EntriesRedacted { base_revision, entry_ids, reason }` context event.
+`session/context/replace { sessionId, entries: [{ entryId, item }] }` replaces
+active entries by entry ID. Its shape follows `session/context/append`: each
+entry carries an `InputItem` converted by the same path, and results report
+`replaced`, `unchanged`, `absent`, or `failed` with an admission failure per
+entry. It mirrors `ReplaceContextPrefix` with entry IDs instead of a key
+prefix, reusing the existing structures: a
+`ReplaceContextEntries { expected_revision, entries }` command of
+`ContextEntryInput`s and an `EntriesReplaced { base_revision, entries }` event
+of `ContextEntry`s, projected as `contextEntriesReplaced` with entry views.
 
-**In place, not removal.** A redacted entry keeps its entry ID, position, kind,
-role, and `call_id`. Removing a tool result would leave its call unanswered,
-which every provider rejects; removing the call as well breaks reasoning and
-thinking that providers bind to it. Swapping content under the same entry ID
-keeps both the ordering invariant and call/result pairing. A keyed upsert
-cannot do this, because it appends a new entry at the tail.
-Pairing alone does not preserve thinking bound to the earlier content;
-Decision 5 supplies the continuation policy after that content changes.
+**In place, not removal.** A replaced entry keeps its entry ID, position, key,
+source, and kind, including role and `call_id`. Removing a tool result would
+leave its call unanswered, which every provider rejects; removing the call as
+well breaks reasoning and thinking that providers bind to it. Replacing under
+the same entry ID keeps both the ordering invariant and call/result pairing.
+A keyed upsert cannot do this, because it appends a new entry at the tail,
+and run-appended entries have no key. Pairing alone does not preserve
+thinking bound to the earlier content; Decision 5 supplies the continuation
+policy after that content changes.
 
-**The engine chooses the placeholder.** Clients name entries; they never supply
-replacement content, so this is a repair operation, not a general
-context-editing API.
+**The engine guards kind, not content.** A replacement must keep the entry's
+kind, key, and source, and only tool results and user messages qualify: tool
+calls, assistant output, reasoning, and provider-opaque entries carry content
+the provider signed or shaped. A tool result takes only text; a user message
+takes text or media, so an image can also be replaced by a smaller copy.
+Adapters lower the new content like any other tool result or user message,
+and an image replaced by text is no longer media anywhere.
+
+A kind that cannot be replaced, or media for a tool result, fails that entry;
+other entries in the request still apply. A run in progress or a closed
+session rejects the whole request, and the engine also refuses while
+compaction is pending or for unconsumed run input or steering. An ID no
+longer in active context reports `absent`, and an identical replacement
+reports `unchanged`, so retries are idempotent. The engine command is atomic:
+a refusal by the workflow fails every entry it carried.
+
+**Redaction is a client convention.** The CLI's `session context redact`
+replaces entries with standard placeholders:
 
 | Entry | Placeholder |
 | --- | --- |
@@ -267,31 +288,17 @@ context-editing API.
 | Media (image or document) | `[image · media:3f9a2c1d4e7b · removed by operator]` |
 | User message (run input, steering, context edit) | `[message removed by operator]` |
 
-Rejected, request-level:
-
-- tool calls, assistant output, reasoning, and provider-opaque entries, whose
-  content is provider-signed or provider-shaped;
-- any redaction while a run is active, or while compaction is pending;
-- unconsumed run input or steering, by the existing guard.
-
-An ID that is not in active context, or is already redacted, reports `absent`,
-so retries are idempotent. The response reports a result per ID.
-
 The original content stays in the event log. The web transcript resolves
-`media:` handles from transcript history, so a redacted image still renders
-there, beside the redaction event. A sub-agent hand-off resolves links against
-the child's active context, so a redacted image no longer travels with it.
-
-Redaction is available through the API and the runtime CLI. There is no web
+`media:` handles from transcript history, so a replaced image still renders
+there. A sub-agent hand-off resolves links against the child's active
+context, so a replaced image no longer travels with it. There is no web
 affordance and no automatic redaction.
 
-**Finding the entry.** `session/context/read { sessionId }` returns the
-active context revision and its entries in context order, as the existing
-`ContextEntryView` (entry ID, key, kind, content reference, preview, token
-estimate), with media dimensions and byte size added. It is read-only, has
-viewer access, and gives the operator the IDs that redaction needs. The CLI lists it as a table. Together with the adapter's
-position log from Decision 3, an operator can go from a provider message that
-cites a request position to the entry ID to redact.
+**Finding the entry.** `session/read` returns the active context in context
+order, with each entry's ID, kind, preview, and media handle; the CLI lists
+it as a table (`lightspeed session context list`). Together with the
+adapter's position log from Decision 3, an operator can go from a provider
+message that cites a request position to the entry ID to replace.
 
 ### 5. Continue after a repair invalidates preserved thinking
 
@@ -388,12 +395,12 @@ every rejection is caused by content it can repair.
    `InvalidRequest` and a `ContextLength` error fail the run as
    `RequestRejected` with the provider message intact; other terminal errors
    stay `ModelFailure`.
-3. **Redaction.** The redaction command, event, and placeholders;
-   `session/context/redact` and `session/context/read`; CLI support; contract
-   regeneration; replay vectors for redaction, its rejections, and a redacted
-   tool result lowering as its placeholder with pairing intact on every
-   adapter. Tests: a redacted history continues with prefix enforcement
-   enabled.
+3. **Replacement.** The entry-replacement command and event,
+   `session/context/replace`, CLI `context list`, `replace`, and `redact`,
+   contract regeneration, and replay coverage for replacement and its
+   rejections.
+   Tests: a redacted history continues with prefix enforcement enabled, and a
+   session whose request the provider rejects runs again after redaction.
 4. **Media budget.** The budget constants, oldest-first omission rounded to a
    fixed chunk, in all three adapters and the compaction request path. Tests:
    omission order; an eight-image result over the budget keeps its newest
@@ -431,6 +438,11 @@ provider cannot decode and checks the kind and the unwrapped provider message.
 Only HTTP rejections are classified: an OpenAI Responses response that reports
 `status: failed` in-band, and a rejected compaction request, still fail as
 before.
+
+Slice 3 is implemented as entry replacement (Decision 4). The hosted live
+test continues past the rejection: it replaces the undecodable image with a
+placeholder through `session/context/replace`, checks that the entry keeps
+its id and is no longer media, and runs the same session again successfully.
 
 ## Non-goals
 

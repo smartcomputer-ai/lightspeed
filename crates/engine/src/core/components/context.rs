@@ -80,6 +80,13 @@ pub enum Event {
         entries: Vec<ContextEntry>,
         reason: ContextRewriteReason,
     },
+    /// Replaces active entries in place, by id. Each replacement keeps the
+    /// entry's id, position, key, source, and kind (so tool-call pairing
+    /// holds); the replaced content stays in the event log.
+    EntriesReplaced {
+        base_revision: u64,
+        entries: Vec<ContextEntry>,
+    },
     CompactionRequested {
         base_revision: u64,
         trigger: ContextCompactionTrigger,
@@ -977,7 +984,10 @@ fn has_active_nonterminal_tool_batch(state: &CoreAgentState) -> bool {
     })
 }
 
-fn entry_by_id(state: &CoreAgentState, entry_id: ContextEntryId) -> Option<&ContextEntry> {
+pub(crate) fn entry_by_id(
+    state: &CoreAgentState,
+    entry_id: ContextEntryId,
+) -> Option<&ContextEntry> {
     state
         .context
         .entries
@@ -1112,6 +1122,38 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
         } => {
             validate_base_revision(state, *base_revision)?;
             replace_context_state(state, entries, reason)?;
+            bump_context_revision(state)?;
+            Ok(())
+        }
+        Event::EntriesReplaced {
+            base_revision,
+            entries,
+        } => {
+            validate_base_revision(state, *base_revision)?;
+            if entries.is_empty() {
+                return Err(DomainError::InvariantViolation(
+                    "context entry replacement event must contain at least one entry".into(),
+                ));
+            }
+            let mut seen = BTreeSet::new();
+            for entry in entries {
+                if !seen.insert(entry.entry_id) {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "duplicate context entry replacement {}",
+                        entry.entry_id
+                    )));
+                }
+                validate_entry_replacement(state, entry)?;
+            }
+            for entry in entries {
+                let active = state
+                    .context
+                    .entries
+                    .iter_mut()
+                    .find(|active| active.entry_id == entry.entry_id)
+                    .expect("validated active entry");
+                *active = entry.clone();
+            }
             bump_context_revision(state)?;
             Ok(())
         }
@@ -1431,6 +1473,51 @@ fn validate_entry_matches_input(
         )));
     }
     Ok(())
+}
+
+/// `input` as the in-place replacement of active entry `entry_id`, keeping
+/// the entry's id, key, and source. `None` when the entry is not active.
+pub fn replacement_entry(
+    state: &CoreAgentState,
+    entry_id: ContextEntryId,
+    input: ContextEntryInput,
+) -> Option<ContextEntry> {
+    let active = entry_by_id(state, entry_id)?;
+    Some(input.commit(entry_id, active.key.clone(), active.source.clone(), None))
+}
+
+/// A replacement may change only content: the kind (role, call id) must stay
+/// the same, so a tool call keeps its answer. Only tool results and user
+/// messages qualify; tool calls, assistant output, reasoning, and
+/// provider-opaque entries carry content the provider signed or shaped.
+pub fn validate_entry_replacement(
+    state: &CoreAgentState,
+    entry: &ContextEntry,
+) -> Result<(), DomainError> {
+    let entry_id = entry.entry_id;
+    let Some(active) = entry_by_id(state, entry_id) else {
+        return Err(DomainError::InvariantViolation(format!(
+            "cannot replace unknown context entry {entry_id}"
+        )));
+    };
+    let replaceable = matches!(
+        active.kind,
+        ContextEntryKind::ToolResult { .. }
+            | ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+    );
+    if !replaceable {
+        return Err(DomainError::InvariantViolation(format!(
+            "context entry {entry_id} cannot be replaced: only tool results and user messages can"
+        )));
+    }
+    if entry.kind != active.kind || entry.key != active.key || entry.source != active.source {
+        return Err(DomainError::InvariantViolation(format!(
+            "replacement of context entry {entry_id} must keep its kind, key, and source"
+        )));
+    }
+    validate_entry_is_not_unconsumed_active_run_input(state, entry_id)
 }
 
 fn validate_removal_reason(reason: &ContextRemovalReason) -> Result<(), DomainError> {

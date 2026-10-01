@@ -120,8 +120,8 @@ async fn temporal_live_session_start_then_run_start_completes_openai_run() -> an
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
-async fn temporal_live_provider_rejection_fails_the_run_as_request_rejected() -> anyhow::Result<()>
-{
+async fn temporal_live_provider_rejection_then_redaction_lets_the_session_continue()
+-> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
@@ -1751,5 +1751,63 @@ async fn run_provider_rejection_live_client(
         !message.contains("core agent") && !message.contains("provider call failed"),
         "the provider's message is kept without runtime wrapping: {message}"
     );
+
+    // Every later run resends the image and fails the same way. Replacing it
+    // in place with a placeholder lets the session continue.
+    let image = read_session_view(&api, &session_id)
+        .await?
+        .active_context
+        .entries
+        .into_iter()
+        .find(|entry| entry.content.media_handle.is_some())
+        .expect("image entry in active context");
+    let placeholder = format!(
+        "[image · {} · removed by operator]",
+        image.content.media_handle.as_deref().unwrap_or_default()
+    );
+    let replace = api::ContextReplaceParams {
+        session_id: session_id.as_str().to_owned(),
+        entries: vec![api::ContextReplaceEntry {
+            entry_id: image.id.clone(),
+            item: InputItem::Text {
+                provenance_ref: None,
+                origin: None,
+                text: placeholder.clone(),
+            },
+        }],
+    };
+    let replaced = api.replace_context(replace.clone()).await?.result;
+    assert_eq!(
+        replaced.results,
+        vec![api::ContextReplaceResult {
+            entry_id: image.id.clone(),
+            status: api::ContextReplaceStatus::Replaced,
+            failure: None,
+        }]
+    );
+    let entry = read_session_view(&api, &session_id)
+        .await?
+        .active_context
+        .entries
+        .into_iter()
+        .find(|entry| entry.id == image.id)
+        .expect("replaced entry keeps its id");
+    assert_eq!(entry.content.media_handle, None);
+    assert_eq!(entry.text.as_deref(), Some(placeholder.as_str()));
+    let retried = api.replace_context(replace).await?.result;
+    assert_eq!(
+        retried.results[0].status,
+        api::ContextReplaceStatus::Unchanged
+    );
+    assert_eq!(retried.context_revision, replaced.context_revision);
+
+    let next = start_text_run(
+        &api,
+        &session_id,
+        "The image was removed. Reply with the single word: continued",
+    )
+    .await?;
+    let next = wait_for_terminal_run(&api, &session_id, next.id.as_str()).await?;
+    assert_eq!(next.status, api::RunStatus::Completed, "{next:?}");
     Ok(())
 }

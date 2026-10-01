@@ -32,6 +32,7 @@ pub const METHOD_SESSION_SHARE: &str = "session/share";
 pub const METHOD_SESSION_EVENTS_READ: &str = "session/events/read";
 pub const METHOD_SESSION_CONTEXT_APPEND: &str = "session/context/append";
 pub const METHOD_SESSION_CONTEXT_REMOVE: &str = "session/context/remove";
+pub const METHOD_SESSION_CONTEXT_REPLACE: &str = "session/context/replace";
 pub const METHOD_SESSION_CONTEXT_COMPACT: &str = "session/context/compact";
 pub const METHOD_SESSION_RUNS_START: &str = "session/runs/start";
 pub const METHOD_SESSION_RUNS_LIST: &str = "session/runs/list";

@@ -982,6 +982,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfContextReplaceResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/ContextReplaceResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfDeploymentApiKeyCreateResponse": {
       "properties": {
         "notifications": {
@@ -7998,6 +8015,106 @@
       ],
       "type": "string"
     },
+    "ContextReplaceEntry": {
+      "properties": {
+        "entryId": {
+          "description": "The active entry to replace, by the `id` that `session/read` lists in\n`activeContext`. Only tool results and user messages can be replaced,\nand the entry keeps its kind: a tool result takes only text.",
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/definitions/InputItem"
+        }
+      },
+      "required": [
+        "entryId",
+        "item"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceParams": {
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/ContextReplaceEntry"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceResponse": {
+      "properties": {
+        "contextRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/ContextReplaceResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contextRevision",
+        "results"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceResult": {
+      "properties": {
+        "entryId": {
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InputAdmissionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/ContextReplaceStatus"
+        }
+      },
+      "required": [
+        "entryId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceStatus": {
+      "oneOf": [
+        {
+          "enum": [
+            "replaced",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The entry already holds this content.",
+          "type": "string"
+        },
+        {
+          "const": "absent",
+          "description": "Not in active context, so retries after a removal are no-ops.",
+          "type": "string"
+        }
+      ]
+    },
     "ContextView": {
       "properties": {
         "entries": {
@@ -14624,6 +14741,38 @@
             "revision",
             "entryIds",
             "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Active entries replaced in place by id (`session/context/replace`).\nEach keeps its id, position, and kind; the replaced content stays in\nthe event history.",
+          "properties": {
+            "baseRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "entries": {
+              "items": {
+                "$ref": "#/definitions/ContextEntryView"
+              },
+              "type": "array"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "contextEntriesReplaced",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "baseRevision",
+            "revision",
+            "entries"
           ],
           "type": "object"
         },

@@ -72,6 +72,14 @@ pub enum CoreAgentCommand {
         expected_revision: Option<u64>,
         key: ContextEntryKey,
     },
+    /// Replace active entries in place by id, for example to withdraw content
+    /// the provider rejects. Ids no longer active, and identical
+    /// replacements, are skipped, so retries are no-ops.
+    ReplaceContextEntries {
+        #[serde(default)]
+        expected_revision: Option<u64>,
+        entries: BTreeMap<crate::ContextEntryId, ContextEntryInput>,
+    },
     CompactContext,
     RequestRun(RunRequestCommand),
     RequestRunSteering {

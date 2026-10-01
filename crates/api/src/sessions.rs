@@ -903,6 +903,50 @@ pub enum ContextRemoveStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ContextReplaceParams {
+    pub session_id: SessionId,
+    pub entries: Vec<ContextReplaceEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReplaceEntry {
+    /// The active entry to replace, by the `id` that `session/read` lists in
+    /// `activeContext`. Only tool results and user messages can be replaced,
+    /// and the entry keeps its kind: a tool result takes only text.
+    pub entry_id: ItemId,
+    pub item: InputItem,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReplaceResponse {
+    pub context_revision: u64,
+    pub results: Vec<ContextReplaceResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReplaceResult {
+    pub entry_id: ItemId,
+    pub status: ContextReplaceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<InputAdmissionFailureView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextReplaceStatus {
+    Replaced,
+    /// The entry already holds this content.
+    Unchanged,
+    /// Not in active context, so retries after a removal are no-ops.
+    Absent,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionReadParams {
     pub session_id: SessionId,
     /// Newest run summaries to include. Values above the server maximum are
@@ -1477,6 +1521,14 @@ pub enum SessionEventKindView {
         revision: u64,
         entry_ids: Vec<ItemId>,
         reason: String,
+    },
+    /// Active entries replaced in place by id (`session/context/replace`).
+    /// Each keeps its id, position, and kind; the replaced content stays in
+    /// the event history.
+    ContextEntriesReplaced {
+        base_revision: u64,
+        revision: u64,
+        entries: Vec<ContextEntryView>,
     },
     ContextKeysRemoved {
         base_revision: u64,

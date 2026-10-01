@@ -5699,6 +5699,230 @@ mod tests {
         ));
     }
 
+    fn text_input(kind: ContextEntryKind, text: &[u8]) -> ContextEntryInput {
+        ContextEntryInput {
+            kind,
+            content: crate::ContentRef::text(BlobRef::from_bytes(text)),
+            preview: Some(String::from_utf8_lossy(text).into_owned()),
+            origin: None,
+            provenance_ref: None,
+            token_estimate: None,
+        }
+    }
+
+    fn replace_entries(
+        drive: &mut CoreAgentDrive,
+        entries: Vec<(ContextEntryId, ContextEntryInput)>,
+        now: u64,
+    ) -> Result<CoreAgentAction, CoreAgentDriveError> {
+        drive.admit_command(
+            CoreAgentCommand::ReplaceContextEntries {
+                expected_revision: None,
+                entries: entries.into_iter().collect(),
+            },
+            now,
+        )
+    }
+
+    /// One completed run: user input, then an assistant answer.
+    fn drive_with_completed_run(session_id: SessionId) -> (CoreAgentDrive, Vec<CoreAgentEntry>) {
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut entries = Vec::new();
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        entries.extend(commit_action(&mut drive, open));
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        entries.extend(commit_action(&mut drive, request));
+        let llm_request = loop {
+            let action = drive.next_action(21, 8).expect("next");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        };
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![message_input(
+                        ContextMessageRole::Assistant,
+                        BlobRef::from_bytes(b"answer"),
+                    )],
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: None,
+                        finish: LlmFinish::Stop,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume generation");
+        entries.extend(commit_action(&mut drive, resumed));
+        loop {
+            let action = drive.next_action(31, 8).expect("next");
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        }
+        assert!(drive.state().runs.active.is_none());
+        (drive, entries)
+    }
+
+    #[test]
+    fn entry_replacement_swaps_content_in_place_and_replays() {
+        let session_id = SessionId::new("session-replace");
+        let (mut drive, mut entries) = drive_with_completed_run(session_id.clone());
+        let before = drive.state().context.entries.clone();
+        let user = ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        };
+        let input = before
+            .iter()
+            .find(|entry| entry.kind == user)
+            .expect("user input entry")
+            .clone();
+        let revision = drive.state().context.revision;
+        let replacement = text_input(user, b"[message removed by operator]");
+
+        let action = replace_entries(&mut drive, vec![(input.entry_id, replacement.clone())], 40)
+            .expect("replace");
+        entries.extend(commit_action(&mut drive, action));
+
+        let after = &drive.state().context.entries;
+        assert_eq!(
+            after.iter().map(|entry| entry.entry_id).collect::<Vec<_>>(),
+            before
+                .iter()
+                .map(|entry| entry.entry_id)
+                .collect::<Vec<_>>(),
+            "ids and order are unchanged"
+        );
+        let replaced = after
+            .iter()
+            .find(|entry| entry.entry_id == input.entry_id)
+            .expect("replaced entry");
+        assert_eq!(replaced.content, replacement.content);
+        assert_eq!(replaced.preview, replacement.preview);
+        assert_eq!(replaced.source, input.source);
+        assert_eq!(drive.state().context.revision, revision + 1);
+
+        // A retry, and an entry no longer active, are no-ops.
+        let retry = replace_entries(
+            &mut drive,
+            vec![
+                (input.entry_id, replacement),
+                (ContextEntryId::new(999), text_input(input.kind, b"[gone]")),
+            ],
+            50,
+        )
+        .expect("retry");
+        assert!(
+            !matches!(retry, CoreAgentAction::AppendEvents { .. }),
+            "{retry:?}"
+        );
+
+        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .expect("replay");
+        assert_eq!(replayed.state(), drive.state());
+    }
+
+    #[test]
+    fn entry_replacement_rejects_assistant_output_and_changed_kinds() {
+        let (mut drive, _) = drive_with_completed_run(SessionId::new("session-replace-reject"));
+        let assistant_kind = ContextEntryKind::Message {
+            role: ContextMessageRole::Assistant,
+        };
+        let assistant = drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .find(|entry| entry.kind == assistant_kind)
+            .expect("assistant entry")
+            .entry_id;
+        let user = drive.state().context.entries[0].entry_id;
+
+        for (entry_id, input) in [
+            (assistant, text_input(assistant_kind.clone(), b"[forged]")),
+            (
+                user,
+                text_input(assistant_kind, b"[now an assistant message]"),
+            ),
+        ] {
+            let error = replace_entries(&mut drive, vec![(entry_id, input)], 40)
+                .expect_err("replacement must be rejected");
+            let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error
+            else {
+                panic!("expected rejected command");
+            };
+            assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        }
+    }
+
+    #[test]
+    fn entry_replacement_is_refused_while_a_run_is_active() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-active"),
+            CoreAgentState::new(),
+            None,
+        );
+        open_session(&mut drive);
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        commit_action(&mut drive, request);
+        while drive.state().runs.active.is_none() {
+            let action = drive.next_action(21, 1).expect("start run");
+            commit_action(&mut drive, action);
+        }
+
+        let user = ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        };
+        let error = replace_entries(
+            &mut drive,
+            vec![(ContextEntryId::new(1), text_input(user, b"[x]"))],
+            21,
+        )
+        .expect_err("active run blocks replacement");
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::ActiveWork);
+    }
+
     #[test]
     fn rejected_generation_fails_run_as_request_rejected_and_replays() {
         let session_id = SessionId::new("session-rejected");

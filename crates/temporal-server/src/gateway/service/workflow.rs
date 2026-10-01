@@ -250,6 +250,54 @@ impl GatewayAgentApi {
         }
     }
 
+    /// Wait until every entry holds its replacement content, or the workflow
+    /// reports the command's admission failure.
+    pub(super) async fn wait_for_context_entries_replaced(
+        &self,
+        session_id: &SessionId,
+        expected: &[(engine::ContextEntryId, engine::ContentRef)],
+        correlation_token: &str,
+    ) -> Result<(u64, Option<AgentAdmissionFailure>), AgentApiError> {
+        let started = Instant::now();
+        loop {
+            if started.elapsed() > self.operation_timeout {
+                return Err(AgentApiError::internal(format!(
+                    "timed out waiting for context entries to be replaced: {session_id}"
+                )));
+            }
+            if let Some(status) = self.query_status_optional(session_id).await? {
+                if let Some(failure) = status
+                    .admission_failures
+                    .iter()
+                    .find(|failure| failure.correlation_token.as_deref() == Some(correlation_token))
+                {
+                    let failure = failure.clone();
+                    let loaded = self.load_session_state(session_id).await?;
+                    return Ok((loaded.state.context.revision, Some(failure)));
+                }
+                if let Some(error) = status.last_error {
+                    return Err(AgentApiError::internal(format!(
+                        "agent workflow reported error: {error}"
+                    )));
+                }
+            }
+            let loaded = self.load_session_state(session_id).await?;
+            let applied = expected.iter().all(|(entry_id, content)| {
+                loaded
+                    .state
+                    .context
+                    .entries
+                    .iter()
+                    .find(|entry| entry.entry_id == *entry_id)
+                    .is_none_or(|entry| entry.content == *content)
+            });
+            if applied {
+                return Ok((loaded.state.context.revision, None));
+            }
+            tokio::time::sleep(self.poll_interval).await;
+        }
+    }
+
     pub(super) async fn wait_for_context_compaction_complete(
         &self,
         session_id: &SessionId,

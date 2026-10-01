@@ -5,6 +5,86 @@ use tools::prompts::active_prompt_instruction_entries as active_prompt_context_e
 use tools::skills::SkillLocation;
 use vfs::VfsPath;
 
+fn active_entry(kind: ContextEntryKind) -> engine::ContextEntry {
+    engine::ContextEntry {
+        origin: Some("user:ada".to_owned()),
+        entry_id: engine::ContextEntryId::new(3),
+        key: None,
+        kind,
+        source: engine::ContextEntrySource::RunInput {
+            run_id: engine::RunId::new(1),
+            input_index: 0,
+        },
+        content: engine::ContentRef::text(BlobRef::from_bytes(b"original")),
+        preview: None,
+        provenance_ref: None,
+        token_estimate: Some(engine::TokenEstimate {
+            tokens: 900,
+            quality: engine::TokenEstimateQuality::ProviderCounted,
+        }),
+        supersedes: None,
+    }
+}
+
+fn text_item(text: &str) -> InputItem {
+    InputItem::Text {
+        origin: None,
+        provenance_ref: None,
+        text: text.to_owned(),
+    }
+}
+
+#[test]
+fn replacements_keep_the_entry_kind_and_origin() {
+    let tool_result = ContextEntryKind::ToolResult {
+        call_id: engine::ToolCallId::try_new("call_1").expect("call id"),
+        is_error: false,
+    };
+    let active = active_entry(tool_result.clone());
+    let item = text_item("[tool result removed by operator]");
+    let input = replacement_input(
+        &active,
+        input::user_message_input(BlobRef::from_bytes(b"placeholder")),
+        &item,
+    )
+    .expect("tool result takes text");
+    assert_eq!(input.kind, tool_result);
+    assert_eq!(input.origin.as_deref(), Some("user:ada"));
+    assert_eq!(
+        input.token_estimate,
+        Some(engine::TokenEstimate {
+            tokens: 9,
+            quality: engine::TokenEstimateQuality::Estimated,
+        })
+    );
+
+    let media = InputItem::Media {
+        origin: None,
+        blob_ref: BlobRef::from_bytes(b"png").as_str().to_owned(),
+        mime: "image/png".to_owned(),
+        kind: api::MediaKind::Image,
+        name: None,
+    };
+    let failure = replacement_input(
+        &active,
+        input::user_message_input(BlobRef::from_bytes(b"png")),
+        &media,
+    )
+    .expect_err("tool result refuses media");
+    assert_eq!(failure.kind, InputAdmissionFailureKind::AdmissionRejected);
+
+    let assistant = active_entry(ContextEntryKind::Message {
+        role: ContextMessageRole::Assistant,
+    });
+    let failure = replacement_input(
+        &assistant,
+        input::user_message_input(BlobRef::from_bytes(b"x")),
+        &item,
+    )
+    .expect_err("assistant output is not replaceable");
+    assert_eq!(failure.kind, InputAdmissionFailureKind::AdmissionRejected);
+}
+
 #[test]
 fn admission_failure_mapping_uses_gateway_error_kinds() {
     assert_eq!(

@@ -220,6 +220,19 @@ Removes active entries by stable key with per-key results. Missing keys are idem
 - Params: `ContextRemoveParams`
 - Result: `AgentApiOutcome<ContextRemoveResponse>`
 
+### `session/context/replace`
+
+**Replace session context entries**
+
+Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
+
+- Access: `{"kind":"universe","action":"control_session"}`
+- Group: `session`
+- Role: `contributor`
+- Target: `sessionId`
+- Params: `ContextReplaceParams`
+- Result: `AgentApiOutcome<ContextReplaceResponse>`
+
 ### `session/context/compact`
 
 **Compact session context**

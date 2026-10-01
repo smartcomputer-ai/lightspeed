@@ -46,6 +46,8 @@ enum SessionCommand {
     List(ListArgs),
     /// Replace a session's metadata map.
     Metadata(MetadataCommandArgs),
+    /// List active context entries, or replace ones the provider rejects.
+    Context(ContextCommandArgs),
     /// Set or clear automatic deletion for a retention root.
     Retention(RetentionArgs),
     /// Close one session by id, or every open session matching a filter.
@@ -147,6 +149,51 @@ struct MetadataPutArgs {
 }
 
 #[derive(Args, Debug, Clone)]
+struct ContextCommandArgs {
+    #[command(subcommand)]
+    command: ContextCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ContextCommand {
+    /// List the active context in model order: what each request sends.
+    List(ContextListArgs),
+    /// Replace the text of a tool result or user message in place.
+    Replace(ContextReplaceArgs),
+    /// Replace tool results or user messages with a standard "removed by
+    /// operator" placeholder, so a session the provider rejects can continue.
+    Redact(ContextRedactArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct ContextReplaceArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    session_id: String,
+    /// Entry id as `session context list` shows it (`item_12`).
+    entry_id: String,
+    /// The entry's new text.
+    text: String,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ContextListArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    session_id: String,
+}
+
+#[derive(Args, Debug, Clone)]
+struct ContextRedactArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    session_id: String,
+    /// Entry ids as `session context list` shows them (`item_12`).
+    #[arg(required = true)]
+    entry_ids: Vec<String>,
+}
+
+#[derive(Args, Debug, Clone)]
 struct RetentionArgs {
     #[command(flatten)]
     common: CommonArgs,
@@ -200,6 +247,11 @@ pub(crate) async fn handle(args: SessionArgs) -> Result<()> {
         SessionCommand::List(args) => list(args).await,
         SessionCommand::Metadata(args) => match args.command {
             MetadataCommand::Put(args) => put_metadata(args).await,
+        },
+        SessionCommand::Context(args) => match args.command {
+            ContextCommand::List(args) => list_context(args).await,
+            ContextCommand::Replace(args) => replace_context(args).await,
+            ContextCommand::Redact(args) => redact_context(args).await,
         },
         SessionCommand::Retention(args) => put_retention(args).await,
         SessionCommand::Close(args) => close(args).await,
@@ -273,6 +325,163 @@ async fn put_metadata(args: MetadataPutArgs) -> Result<()> {
         .result;
     print_json_or(args.common.json, &response, || {
         println!("{}", session_line(&response.session));
+    })
+}
+
+async fn list_context(args: ContextListArgs) -> Result<()> {
+    let session = HttpAgentApi::new(args.common.api_url)
+        .read_session(api::SessionReadParams {
+            session_id: args.session_id,
+            run_limit: Some(1),
+        })
+        .await
+        .map_err(api_error)?
+        .result
+        .session;
+    let context = session.active_context;
+    print_json_or(args.common.json, &context, || {
+        println!("revision {}", context.revision);
+        println!("ID  KIND  PREVIEW");
+        for entry in &context.entries {
+            println!("{}", context_line(entry));
+        }
+    })
+}
+
+/// `item_12  tool_result call_1 (redacted)  [tool result removed by operator]`
+fn context_line(entry: &api::ContextEntryView) -> String {
+    let kind = match &entry.kind {
+        api::ContextEntryKindView::Message { role } => match role {
+            api::ContextMessageRoleView::User => "user".to_owned(),
+            api::ContextMessageRoleView::Assistant => "assistant".to_owned(),
+        },
+        api::ContextEntryKindView::ToolCall { call_id, name } => {
+            format!("tool_call {name} {call_id}")
+        }
+        api::ContextEntryKindView::ToolResult { call_id, .. } => format!("tool_result {call_id}"),
+        other => serde_json::to_value(other)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("type")
+                    .and_then(|kind| kind.as_str().map(str::to_owned))
+            })
+            .unwrap_or_else(|| "entry".to_owned()),
+    };
+    let media = entry
+        .content
+        .media_handle
+        .as_deref()
+        .map(|handle| format!(" {handle}"))
+        .unwrap_or_default();
+    let preview = entry
+        .preview
+        .as_deref()
+        .or(entry.text.as_deref())
+        .unwrap_or_default()
+        .replace('\n', " ");
+    let preview: String = preview.chars().take(80).collect();
+    format!("{}  {kind}{media}  {preview}", entry.id)
+}
+
+async fn replace_context(args: ContextReplaceArgs) -> Result<()> {
+    let entries = vec![text_replacement(args.entry_id, args.text)];
+    send_replacements(args.common, args.session_id, entries).await
+}
+
+async fn redact_context(args: ContextRedactArgs) -> Result<()> {
+    let api = HttpAgentApi::new(args.common.api_url.clone());
+    let context = api
+        .read_session(api::SessionReadParams {
+            session_id: args.session_id.clone(),
+            run_limit: Some(1),
+        })
+        .await
+        .map_err(api_error)?
+        .result
+        .session
+        .active_context;
+    let mut entries = Vec::with_capacity(args.entry_ids.len());
+    for entry_id in args.entry_ids {
+        let Some(entry) = context.entries.iter().find(|entry| entry.id == entry_id) else {
+            // Absent ids pass through; the server reports them as absent.
+            entries.push(text_replacement(
+                entry_id,
+                "[message removed by operator]".to_owned(),
+            ));
+            continue;
+        };
+        let Some(text) = redaction_placeholder(entry) else {
+            bail!("{entry_id} cannot be redacted: only tool results and user messages can");
+        };
+        entries.push(text_replacement(entry_id, text));
+    }
+    send_replacements(args.common, args.session_id, entries).await
+}
+
+fn text_replacement(entry_id: String, text: String) -> api::ContextReplaceEntry {
+    api::ContextReplaceEntry {
+        entry_id,
+        item: api::InputItem::Text {
+            origin: None,
+            provenance_ref: None,
+            text,
+        },
+    }
+}
+
+/// The standard placeholder for a redacted entry. Media keeps its handle so
+/// the model can still tell what was removed.
+fn redaction_placeholder(entry: &api::ContextEntryView) -> Option<String> {
+    match &entry.kind {
+        api::ContextEntryKindView::ToolResult { .. } => {
+            Some("[tool result removed by operator]".to_owned())
+        }
+        api::ContextEntryKindView::Message {
+            role: api::ContextMessageRoleView::User,
+        } => Some(match entry.content.media_handle.as_deref() {
+            Some(handle) => {
+                let head = entry
+                    .preview
+                    .as_deref()
+                    .and_then(|preview| preview.strip_prefix('['))
+                    .and_then(|preview| preview.strip_suffix(']'))
+                    .unwrap_or("media");
+                format!("[{head} · {handle} · removed by operator]")
+            }
+            None => "[message removed by operator]".to_owned(),
+        }),
+        _ => None,
+    }
+}
+
+async fn send_replacements(
+    common: CommonArgs,
+    session_id: String,
+    entries: Vec<api::ContextReplaceEntry>,
+) -> Result<()> {
+    let response = HttpAgentApi::new(common.api_url)
+        .replace_context(api::ContextReplaceParams {
+            session_id,
+            entries,
+        })
+        .await
+        .map_err(api_error)?
+        .result;
+    print_json_or(common.json, &response, || {
+        for result in &response.results {
+            let status = match result.status {
+                api::ContextReplaceStatus::Replaced => "replaced",
+                api::ContextReplaceStatus::Unchanged => "unchanged",
+                api::ContextReplaceStatus::Absent => "absent",
+                api::ContextReplaceStatus::Failed => "failed",
+            };
+            match &result.failure {
+                Some(failure) => println!("{}  {status}: {}", result.entry_id, failure.message),
+                None => println!("{}  {status}", result.entry_id),
+            }
+        }
+        println!("context revision {}", response.context_revision);
     })
 }
 
@@ -521,6 +730,70 @@ fn session_line(session: &api::SessionSummaryView) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redaction_placeholders_name_what_was_removed() {
+        let entry = |kind: serde_json::Value, media_handle: Option<&str>, preview: &str| {
+            serde_json::from_value::<api::ContextEntryView>(serde_json::json!({
+                "id": "item_1",
+                "kind": kind,
+                "content": {
+                    "contentRef": "sha256:00",
+                    "mediaType": "image/png",
+                    "providerKind": null,
+                    "mediaHandle": media_handle,
+                },
+                "preview": preview,
+            }))
+            .expect("entry view")
+        };
+        let user = serde_json::json!({ "type": "message", "role": "user" });
+        assert_eq!(
+            redaction_placeholder(&entry(
+                user.clone(),
+                Some("media:3f9a2c1d4e7b"),
+                "[image: chart.png]"
+            ))
+            .as_deref(),
+            Some("[image: chart.png · media:3f9a2c1d4e7b · removed by operator]")
+        );
+        assert_eq!(
+            redaction_placeholder(&entry(user, None, "hello")).as_deref(),
+            Some("[message removed by operator]")
+        );
+        assert_eq!(
+            redaction_placeholder(&entry(
+                serde_json::json!({ "type": "toolResult", "callId": "call_1", "isError": false }),
+                None,
+                "output"
+            ))
+            .as_deref(),
+            Some("[tool result removed by operator]")
+        );
+        assert_eq!(
+            redaction_placeholder(&entry(
+                serde_json::json!({ "type": "message", "role": "assistant" }),
+                None,
+                "answer"
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn context_lines_name_the_entry_kind_and_preview() {
+        let entry: api::ContextEntryView = serde_json::from_value(serde_json::json!({
+            "id": "item_12",
+            "kind": { "type": "toolResult", "callId": "call_1", "isError": false },
+            "content": { "contentRef": "sha256:00", "mediaType": "text/plain", "providerKind": null },
+            "preview": "[tool result removed by\noperator]",
+        }))
+        .expect("entry view");
+        assert_eq!(
+            context_line(&entry),
+            "item_12  tool_result call_1  [tool result removed by operator]"
+        );
+    }
 
     #[test]
     fn metadata_pairs_parse_and_collect() {

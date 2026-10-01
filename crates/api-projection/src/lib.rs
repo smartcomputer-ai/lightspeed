@@ -959,6 +959,17 @@ impl<'a> CoreAgentProjector<'a> {
                         .collect(),
                     reason: context_removal_reason_to_api(reason).to_owned(),
                 }),
+                ContextEvent::EntriesReplaced {
+                    base_revision,
+                    entries,
+                } => {
+                    let projected = self.project_context_event_entries(entries).await?;
+                    Ok(SessionEventKindView::ContextEntriesReplaced {
+                        base_revision: *base_revision,
+                        revision: context_event_revision(*base_revision)?,
+                        entries: projected,
+                    })
+                }
                 ContextEvent::KeysRemoved {
                     base_revision,
                     keys,
@@ -1919,6 +1930,17 @@ pub fn parse_api_run_id(value: &str) -> Result<RunId, AgentApiError> {
     raw.parse::<u64>()
         .map(RunId::new)
         .map_err(|error| AgentApiError::invalid_request(format!("invalid run id {value}: {error}")))
+}
+
+pub fn parse_api_item_id(value: &str) -> Result<ContextEntryId, AgentApiError> {
+    let raw = value.strip_prefix("item_").ok_or_else(|| {
+        AgentApiError::invalid_request(format!("item id must use item_<number> form: {value}"))
+    })?;
+    raw.parse::<u64>()
+        .map(ContextEntryId::new)
+        .map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid item id {value}: {error}"))
+        })
 }
 
 pub fn api_turn_id(turn_id: TurnId) -> String {

@@ -364,6 +364,8 @@ api_methods! {
         ["Append keyed session context", "Admits a batch of context entries with per-entry results. Stable keys make same-content retries no-ops; invalid input can fail one entry without discarding successful entries."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_REMOVE => remove_context(ContextRemoveParams) -> ContextRemoveResponse =>
         ["Remove keyed session context", "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+    METHOD_SESSION_CONTEXT_REPLACE => replace_context(ContextReplaceParams) -> ContextReplaceResponse =>
+        ["Replace session context entries", "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse =>
         ["Compact session context", "Runs the configured compaction policy on an open idle session and waits for the resulting context revision."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RUNS_START => start_run(RunStartParams) -> RunStartResponse =>

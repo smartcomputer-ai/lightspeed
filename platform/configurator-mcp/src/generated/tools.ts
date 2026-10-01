@@ -2557,6 +2557,184 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_session_context_replace",
+    "method": "session/context/replace",
+    "group": "session",
+    "summary": "Replace session context entries",
+    "description": "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
+    "paramsType": "ContextReplaceParams",
+    "resultType": "AgentApiOutcome<ContextReplaceResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/ContextReplaceEntry"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "entries"
+      ],
+      "type": "object",
+      "definitions": {
+        "ContextReplaceEntry": {
+          "properties": {
+            "entryId": {
+              "description": "The active entry to replace, by the `id` that `session/read` lists in\n`activeContext`. Only tool results and user messages can be replaced,\nand the entry keeps its kind: a tool result takes only text.",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/definitions/InputItem"
+            }
+          },
+          "required": [
+            "entryId",
+            "item"
+          ],
+          "type": "object"
+        },
+        "InputItem": {
+          "oneOf": [
+            {
+              "properties": {
+                "origin": {
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "provenanceRef": {
+                  "description": "Optional source blob in this universe, retained with the session.\nProvenance is metadata, not model input or an authorization identity.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "text",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "text"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "blobRef": {
+                  "type": "string"
+                },
+                "origin": {
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "provenanceRef": {
+                  "description": "Optional source blob in this universe, retained with the session.\nProvenance is metadata, not model input or an authorization identity.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "textRef",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "blobRef"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "blobRef": {
+                  "type": "string"
+                },
+                "kind": {
+                  "$ref": "#/definitions/MediaKind"
+                },
+                "mime": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "origin": {
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "media",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "blobRef",
+                "mime",
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "A client-owned catalog document: what the model may pick from (a\ndirectory, a roster, a menu), rendered by the client as text. Accepted\nonly by `session/context/append` under a client key; run input rejects\nit. A changed catalog supersedes the earlier version instead of\nreplacing it, so the earlier version stays rendered and the provider\nprefix cache holds; superseded versions are dropped at the next\ncontext rewrite or beyond a per-key cap.",
+              "properties": {
+                "text": {
+                  "description": "The catalog body, plain text or Markdown.",
+                  "type": "string"
+                },
+                "title": {
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "type": "string"
+                },
+                "type": {
+                  "const": "catalog",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "title",
+                "text"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "MediaKind": {
+          "enum": [
+            "image",
+            "audio",
+            "document"
+          ],
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
     "name": "lightspeed_session_context_compact",
     "method": "session/context/compact",
     "group": "session",

@@ -697,6 +697,12 @@ export type SessionEventKindView =
     }
   | {
       baseRevision: number;
+      entries: ContextEntryView[];
+      revision: number;
+      type: "contextEntriesReplaced";
+    }
+  | {
+      baseRevision: number;
       keys: string[];
       revision: number;
       type: "contextKeysRemoved";
@@ -1300,6 +1306,11 @@ export type ContextAppendStatus = "applied" | "unchanged" | "failed";
  * via the `definition` "ContextRemoveStatus".
  */
 export type ContextRemoveStatus = "removed" | "absent" | "failed";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceStatus".
+ */
+export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
 /**
  * The methods a key may call, by group. Every public method but
  * `initialize` belongs to exactly one group, derived from its name, so a
@@ -4375,6 +4386,31 @@ export interface ContextRemoveResult {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfContextReplaceResponse".
+ */
+export interface AgentApiOutcomeOfContextReplaceResponse {
+  notifications?: AgentNotification[];
+  result: ContextReplaceResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceResponse".
+ */
+export interface ContextReplaceResponse {
+  contextRevision: number;
+  results: ContextReplaceResult[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceResult".
+ */
+export interface ContextReplaceResult {
+  entryId: string;
+  failure?: InputAdmissionFailureView | null;
+  status: ContextReplaceStatus;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfDeploymentApiKeyCreateResponse".
  */
 export interface AgentApiOutcomeOfDeploymentApiKeyCreateResponse {
@@ -7057,6 +7093,27 @@ export interface ContextRemoveParams {
    * request-level.
    */
   keys: string[];
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceEntry".
+ */
+export interface ContextReplaceEntry {
+  /**
+   * The active entry to replace, by the `id` that `session/read` lists in
+   * `activeContext`. Only tool results and user messages can be replaced,
+   * and the entry keeps its kind: a tool result takes only text.
+   */
+  entryId: string;
+  item: InputItem;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceParams".
+ */
+export interface ContextReplaceParams {
+  entries: ContextReplaceEntry[];
   sessionId: string;
 }
 /**

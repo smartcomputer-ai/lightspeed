@@ -982,6 +982,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfContextReplaceResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ContextReplaceResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfDeploymentApiKeyCreateResponse": {
         "properties": {
           "notifications": {
@@ -7998,6 +8015,106 @@
         ],
         "type": "string"
       },
+      "ContextReplaceEntry": {
+        "properties": {
+          "entryId": {
+            "description": "The active entry to replace, by the `id` that `session/read` lists in\n`activeContext`. Only tool results and user messages can be replaced,\nand the entry keeps its kind: a tool result takes only text.",
+            "type": "string"
+          },
+          "item": {
+            "$ref": "#/components/schemas/InputItem"
+          }
+        },
+        "required": [
+          "entryId",
+          "item"
+        ],
+        "type": "object"
+      },
+      "ContextReplaceParams": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ContextReplaceEntry"
+            },
+            "type": "array"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "ContextReplaceResponse": {
+        "properties": {
+          "contextRevision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ContextReplaceResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contextRevision",
+          "results"
+        ],
+        "type": "object"
+      },
+      "ContextReplaceResult": {
+        "properties": {
+          "entryId": {
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputAdmissionFailureView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ContextReplaceStatus"
+          }
+        },
+        "required": [
+          "entryId",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ContextReplaceStatus": {
+        "oneOf": [
+          {
+            "enum": [
+              "replaced",
+              "failed"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "unchanged",
+            "description": "The entry already holds this content.",
+            "type": "string"
+          },
+          {
+            "const": "absent",
+            "description": "Not in active context, so retries after a removal are no-ops.",
+            "type": "string"
+          }
+        ]
+      },
       "ContextView": {
         "properties": {
           "entries": {
@@ -14628,6 +14745,38 @@
             "type": "object"
           },
           {
+            "description": "Active entries replaced in place by id (`session/context/replace`).\nEach keeps its id, position, and kind; the replaced content stays in\nthe event history.",
+            "properties": {
+              "baseRevision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "entries": {
+                "items": {
+                  "$ref": "#/components/schemas/ContextEntryView"
+                },
+                "type": "array"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "const": "contextEntriesReplaced",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "baseRevision",
+              "revision",
+              "entries"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "baseRevision": {
                 "format": "uint64",
@@ -18703,6 +18852,34 @@
         }
       },
       "summary": "Remove keyed session context",
+      "x-lightspeed-access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "x-lightspeed-group": "session",
+      "x-lightspeed-role": "contributor",
+      "x-lightspeed-target": "sessionId"
+    },
+    {
+      "description": "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
+      "name": "session/context/replace",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ContextReplaceParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AgentApiOutcomeOfContextReplaceResponse"
+        }
+      },
+      "summary": "Replace session context entries",
       "x-lightspeed-access": {
         "action": "control_session",
         "kind": "universe"
