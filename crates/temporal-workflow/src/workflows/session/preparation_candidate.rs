@@ -220,6 +220,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn newly_configured_default_is_selected_before_context_discovery() {
+        let mut live = live();
+        let mut candidate = PreparationCandidate::new(&live);
+        let mut config = live.state().lifecycle.config.clone().unwrap();
+        let mut environment = attachment("new-default");
+        environment.default = true;
+        config.features.environments = Some(engine::EnvironmentsFeature {
+            environments: vec![environment],
+            ..Default::default()
+        });
+        candidate
+            .push(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: Some(live.state().lifecycle.config_revision),
+                    config,
+                },
+                2,
+            )
+            .unwrap();
+        let projection =
+            admissions::runtime_projection_request(live.session_id(), candidate.state());
+        assert_eq!(
+            projection.active_environment_id,
+            Some(engine::EnvironmentId::new("new-default"))
+        );
+        assert!(live.state().environment.active_environment_id.is_none());
+        let batch = candidate.finish(&live).unwrap();
+        commit(&mut live, batch);
+        assert_eq!(
+            live.state().environment.active_environment_id,
+            projection.active_environment_id
+        );
+    }
+
     fn proposed(live: &CoreAgentDrive) -> PreparationCandidate {
         let mut candidate = PreparationCandidate::new(live);
         let tool = engine::ToolSpec {

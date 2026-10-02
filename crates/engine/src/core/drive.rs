@@ -2639,6 +2639,126 @@ mod tests {
     }
 
     #[test]
+    fn configuring_a_new_default_activates_an_unselected_session_and_replays() {
+        for initially_attached in [false, true] {
+            let mut drive = CoreAgentDrive::from_replayed(
+                SessionId::new("session-default"),
+                CoreAgentState::new(),
+                None,
+            );
+            let attachment = |id: &str, default| crate::EnvironmentAttachment {
+                environment_id: id.to_owned(),
+                default,
+                access: crate::EnvironmentAccess::Read,
+                working_directory: None,
+            };
+            let mut initial = config();
+            if initially_attached {
+                initial.features.environments = Some(crate::EnvironmentsFeature {
+                    environments: vec![attachment("environment-a", false)],
+                    ..Default::default()
+                });
+            }
+            open_session_with_config(&mut drive, initial);
+            let checkpoint = drive.state().clone();
+            let mut log = Vec::new();
+            let mut updated = drive.state().lifecycle.config.clone().unwrap();
+            updated.features.environments = Some(crate::EnvironmentsFeature {
+                environments: vec![attachment("environment-a", true)],
+                ..Default::default()
+            });
+            let action = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: Some(drive.state().lifecycle.config_revision),
+                        config: updated.clone(),
+                    },
+                    20,
+                )
+                .unwrap();
+            log.extend(commit_action(&mut drive, action));
+            assert_eq!(
+                drive
+                    .state()
+                    .environment
+                    .active_environment_id
+                    .as_ref()
+                    .map(|id| id.as_str()),
+                Some("environment-a")
+            );
+
+            // Clearing is intentional: an unchanged default must not reactivate
+            // during retries or unrelated attachment changes.
+            let clear = drive
+                .admit_command(CoreAgentCommand::ClearActiveEnvironment, 21)
+                .unwrap();
+            log.extend(commit_action(&mut drive, clear));
+            let retry = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: None,
+                        config: updated.clone(),
+                    },
+                    22,
+                )
+                .unwrap();
+            assert!(matches!(retry, CoreAgentAction::Idle));
+            updated
+                .features
+                .environments
+                .as_mut()
+                .unwrap()
+                .environments
+                .push(attachment("environment-b", false));
+            let unrelated = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: None,
+                        config: updated.clone(),
+                    },
+                    23,
+                )
+                .unwrap();
+            log.extend(commit_action(&mut drive, unrelated));
+            assert_eq!(drive.state().environment.active_environment_id, None);
+
+            let attachments = &mut updated.features.environments.as_mut().unwrap().environments;
+            attachments[0].default = false;
+            attachments[1].default = true;
+            let changed_default = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: None,
+                        config: updated,
+                    },
+                    24,
+                )
+                .unwrap();
+            log.extend(commit_action(&mut drive, changed_default));
+            assert_eq!(
+                drive
+                    .state()
+                    .environment
+                    .active_environment_id
+                    .as_ref()
+                    .map(|id| id.as_str()),
+                Some("environment-b")
+            );
+
+            let mut replayed = checkpoint;
+            for entry in log {
+                let stored = CoreAgentCodec.encode_entry(&entry).unwrap();
+                crate::apply_event(
+                    &mut replayed,
+                    &CoreAgentCodec.decode_entry(&stored).unwrap(),
+                )
+                .unwrap();
+            }
+            assert_eq!(&replayed, drive.state());
+        }
+    }
+
+    #[test]
     fn config_replace_clears_an_active_environment_that_is_no_longer_attached() {
         let session_id = SessionId::new("session-environment-detach");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);

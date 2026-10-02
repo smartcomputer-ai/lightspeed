@@ -161,8 +161,24 @@ pub fn admit_command(
             // The attachment list is the allowed set: an active environment
             // the new document no longer attaches is cleared in the same
             // batch so no batch runs against an unlisted machine. The
-            // pointer is never filled here; defaults apply at profile
-            // application only.
+            // pointer is filled when an empty session gains a new default.
+            // An unchanged default does not undo an explicit deactivation
+            // during an unrelated configuration edit.
+            let default_id = |config: &crate::SessionConfig| {
+                config
+                    .features
+                    .environments
+                    .as_ref()
+                    .and_then(|environments| environments.default_attachment())
+                    .map(|attachment| attachment.environment_id.clone())
+            };
+            let activates_default = if state.environment.active_environment_id.is_none()
+                && default_id(&config) != default_id(current)
+            {
+                default_id(&config).map(crate::EnvironmentId::new)
+            } else {
+                None
+            };
             let clears_active = state
                 .environment
                 .active_environment_id
@@ -185,6 +201,13 @@ pub fn admit_command(
                 proposals.push(CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
                     CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
+                ));
+            } else if let Some(environment_id) = activates_default {
+                proposals.push(CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentSet {
+                        environment_id,
+                    }),
                 ));
             }
             Ok(proposals)

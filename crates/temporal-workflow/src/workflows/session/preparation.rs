@@ -522,12 +522,13 @@ async fn apply_profile(
             .active_environment_id
             .is_none()
     {
-        summary.active_environment_changed = true;
         candidate.push(
             CoreAgentCommand::SetActiveEnvironment { environment_id },
             workflow_time_ms(ctx),
         )?;
     }
+    summary.active_environment_changed = drive.state().environment.active_environment_id
+        != candidate.state().environment.active_environment_id;
     let mut desired = admissions::active_instruction_inputs(candidate.state());
     desired.retain(|key, _| {
         key.as_str() != "instructions.050.profile"

@@ -456,8 +456,8 @@ impl EnvironmentsFeature {
         self.attachment(environment_id).is_some()
     }
 
-    /// The attachment activated when a profile is applied and nothing is
-    /// active; validation admits at most one.
+    /// The attachment selected when introducing a default to an unselected
+    /// session or applying a profile; validation admits at most one.
     pub fn default_attachment(&self) -> Option<&EnvironmentAttachment> {
         self.environments
             .iter()
