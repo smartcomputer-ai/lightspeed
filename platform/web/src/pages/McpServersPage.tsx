@@ -143,12 +143,14 @@ function ServerList({ universeId }: { universeId: string }) {
         description="Connect remote tools once, then make them available to profiles and sessions."
         actions={writable && (
           <>
-            <Button variant="outline" onClick={() => {
-              setCreatePreset(PARALLEL_SEARCH_PRESET);
-              setCreateOpen(true);
-            }}>
-              Add Parallel Search
-            </Button>
+            {servers.data && !rows.some((server) => server.serverId === PARALLEL_SEARCH_PRESET.serverId) && (
+              <Button variant="outline" disabled={servers.isFetching} onClick={() => {
+                setCreatePreset(PARALLEL_SEARCH_PRESET);
+                setCreateOpen(true);
+              }}>
+                Add Parallel Search
+              </Button>
+            )}
             <Button onClick={() => {
               setCreatePreset(undefined);
               setCreateOpen(true);

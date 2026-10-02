@@ -112,7 +112,8 @@ Choose **MCP servers → Add Parallel Search** to prefill a connection to
 `https://search.parallel.ai/mcp`. The preset uses **Lightspeed connects**,
 **Show tools to the model up front**, and **No authentication**. Review the
 name and URL, choose **Continue**, then **Add server**. Registration happens
-only after you save.
+only after you save. If the `parallel-search` server is already registered,
+the shortcut is hidden; use its existing row to edit the connection.
 
 [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
 provides free web search and page extraction without an API key, subject to

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator", servers: [] as unknown[] }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
@@ -47,11 +47,12 @@ let container: HTMLDivElement;
 let client: QueryClient;
 beforeEach(() => {
   mocks.role = "operator";
+  mocks.servers = [saved];
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (method === "GET" && path.endsWith("/mcp-servers")) return [saved];
+    if (method === "GET" && path.endsWith("/mcp-servers")) return mocks.servers;
     if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/discover-auth")) return { oauth: null };
     if (path.endsWith("/tools/discover")) return { status: "success", tools: [] };
@@ -115,6 +116,29 @@ it("offers neither registration action to a viewer", async () => {
   await show();
   expect(button("Add Parallel Search")).toBeUndefined();
   expect(button("Add server")).toBeUndefined();
+});
+
+it("keeps an existing Parallel server's saved settings instead of offering to replace it", async () => {
+  mocks.servers = [{
+    ...saved,
+    serverId: "parallel-search",
+    displayName: "Team research",
+    serverUrl: "https://search.parallel.ai/mcp?mode=fast",
+    authPolicy: { type: "requiredBearer" },
+    credential: { type: "authGrant", grantId: "team-credential" },
+    approval: "always",
+    allowedTools: ["web_search"],
+  }];
+  await show();
+  expect(button("Add Parallel Search")).toBeUndefined();
+  expect(button("Add server")).toBeDefined();
+  await click(container.querySelector<HTMLButtonElement>('[aria-label="Edit parallel-search"]'));
+  expect((field("#mcp-name") as HTMLInputElement).value).toBe("Team research");
+  expect((field("#mcp-url") as HTMLInputElement).value).toBe("https://search.parallel.ai/mcp?mode=fast");
+  expect(dialog().textContent).toContain("Disabled. It stays configured");
+  expect(summary()).toContain("approval: always ask");
+  expect(mocks.api.mock.calls.some(([method, path]) => method === "PUT"
+    || (method === "POST" && (path as string).endsWith("/mcp-servers")))).toBe(false);
 });
 
 it("registers Parallel through the ordinary server flow with native keyless settings", async () => {
