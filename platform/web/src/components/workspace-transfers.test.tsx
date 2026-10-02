@@ -91,6 +91,10 @@ vi.mock("@/components/ui/dropdown-menu", async () => {
 let root: Root;
 let container: HTMLDivElement;
 let entries: Record<string, VfsTreeEntry>;
+const originalPdfSupport = Object.getOwnPropertyDescriptor(
+  navigator,
+  "pdfViewerEnabled",
+);
 const file: VfsTreeEntry = {
   kind: "file",
   blob_ref: "old",
@@ -118,6 +122,9 @@ afterEach(async () => {
   container.remove();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  if (originalPdfSupport)
+    Object.defineProperty(navigator, "pdfViewerEnabled", originalPdfSupport);
+  else Reflect.deleteProperty(navigator, "pdfViewerEnabled");
 });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
 async function render(withTree = false) {
@@ -1013,6 +1020,61 @@ it.each(["metaKey", "ctrlKey"] as const)(
       "/api/v1/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
       { contentText: "edited", expectedRevision: 3, mediaType: "text/plain" },
     );
+  },
+);
+
+it.each([
+  ["report.PDF", undefined, "PDF payload"],
+  ["document", "Application/PDF; version=1.7", "PDF payload"],
+  ["document.bin", "application/octet-stream", "%PDF-1.7\n"],
+])(
+  "opens %s as a PDF instead of editable text",
+  async (name, mediaType, content) => {
+    Object.defineProperty(navigator, "pdfViewerEnabled", {
+      configurable: true,
+      value: true,
+    });
+    URL.createObjectURL = vi.fn(() => "blob:workspace-pdf");
+    URL.revokeObjectURL = vi.fn();
+    entries = {
+      [name]: { ...file, ...(mediaType ? { media_type: mediaType } : {}) },
+    };
+    const workspace = { workspaceId: "ws", revision: 3, files: 1 };
+    mocks.api.mockImplementation(async (_method: string, path: string) => {
+      if (path.endsWith("/workspaces")) return [workspace];
+      if (path.endsWith("/tree")) return { ...tree(), workspace };
+      if (path.includes("/files/"))
+        return { bytesBase64: btoa(content), bytes: content.length };
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    await act(async () =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter
+            initialEntries={[`/u/test/workspaces/ws/files/${name}`]}
+          >
+            <Routes>
+              <Route
+                path="/u/:slug/workspaces/:workspaceId/files/*"
+                element={<WorkspacesPage admin={false} />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      ),
+    );
+    await vi.waitFor(async () => {
+      await act(settle);
+      expect(container.querySelector("iframe")?.getAttribute("src")).toBe(
+        "blob:workspace-pdf",
+      );
+    });
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(button("Save")).toBeUndefined();
+    expect(button("Saved")).toBeUndefined();
   },
 );
 

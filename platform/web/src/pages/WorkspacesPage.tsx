@@ -43,6 +43,7 @@ import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { ListPane } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
+import { PdfPreview } from "@/components/pdf-preview";
 import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
@@ -545,6 +546,9 @@ function FileDetail({
             />
           </div>
         )}
+        {decoded?.kind === "pdf" && (
+          <PdfPreview bytes={decoded.bytes} name={filePath} />
+        )}
         {decoded?.kind === "binary" && (
           <p className="p-4 text-sm text-muted-foreground">
             Binary file ({formatBytes(file?.size_bytes ?? 0)}) — no preview.
@@ -800,6 +804,7 @@ const TEXT_EXTENSIONS: Record<string, string> = {
 
 function mediaTypeFor(path: string): string | undefined {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") return "application/pdf";
   return TEXT_EXTENSIONS[ext] ?? IMAGE_EXTENSIONS[ext];
 }
 
@@ -807,7 +812,12 @@ function classify(
   path: string,
   mediaType: string | undefined,
   bytes: Uint8Array,
-): "text" | "image" | "binary" {
+): "text" | "image" | "pdf" | "binary" {
+  const mime = mediaType?.split(";")[0]?.trim().toLowerCase();
+  if (mime === "application/pdf" || /\.pdf$/i.test(path) ||
+    [0x25, 0x50, 0x44, 0x46, 0x2d].every((byte, index) => bytes[index] === byte)) {
+    return "pdf";
+  }
   const effective = mediaType ?? mediaTypeFor(path);
   if (effective?.startsWith("image/")) {
     return "image";
