@@ -7,9 +7,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
@@ -46,6 +46,7 @@ let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
 beforeEach(() => {
+  mocks.role = "operator";
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
@@ -108,6 +109,60 @@ async function choose(label: string, value: string) {
 }
 const summary = () =>
   [...dialog().querySelectorAll('[data-slot="settings-disclosure"]')].at(-1)!.querySelector("p")!.textContent;
+
+it("offers neither registration action to a viewer", async () => {
+  mocks.role = "viewer";
+  await show();
+  expect(button("Add Parallel Search")).toBeUndefined();
+  expect(button("Add server")).toBeUndefined();
+});
+
+it("registers Parallel through the ordinary server flow with native keyless settings", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  expect((field("#mcp-name") as HTMLInputElement).value).toBe("Parallel Search");
+  expect((field("#mcp-url") as HTMLInputElement).value).toBe("https://search.parallel.ai/mcp");
+  expect(mocks.api.mock.calls.filter(([method]) => method === "POST")).toHaveLength(0);
+  await click(button("Continue"));
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/universe/mcp-servers/discover-auth", {
+    serverUrl: "https://search.parallel.ai/mcp",
+  });
+  expect((field('select[aria-label="Authentication"]') as HTMLSelectElement).value).toBe("none");
+  expect(summary()).toBe("Lightspeed connects · tools shown up front · no approval·Customize");
+  await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
+  const create = mocks.api.mock.calls.find(([method, path]) => method === "POST" && (path as string).endsWith("/mcp-servers"))?.[2];
+  expect(create).toEqual({
+    serverId: "parallel-search",
+    serverUrl: "https://search.parallel.ai/mcp",
+    defaultServerLabel: "parallel-search",
+    execution: "native",
+    exposure: "inject",
+    approval: "never",
+    allowPrivateNetwork: false,
+    authPolicy: { type: "none" },
+    credential: null,
+    status: "active",
+    displayName: "Parallel Search",
+    description: "Free web search and page extraction, with no API key required.",
+    allowedTools: null,
+  });
+});
+
+it("keeps the preset editable and resets to custom defaults after closing it", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  await type("#mcp-name", "Team research");
+  await type("#mcp-url", "https://example.test/mcp");
+  expect(dialog().textContent).toContain("team-research");
+  await click(button("Cancel"));
+  await click(button("Add server"));
+  expect((field("#mcp-name") as HTMLInputElement).value).toBe("");
+  expect((field("#mcp-url") as HTMLInputElement).value).toBe("");
+  await type("#mcp-name", "Custom");
+  await type("#mcp-url", "https://example.test/mcp");
+  await click(button("Continue"));
+  expect(summary()).toBe("Model provider connects · no approval·Customize");
+});
 
 it("names the server first, then confirms the connection with everything else behind one summary", async () => {
   await show();

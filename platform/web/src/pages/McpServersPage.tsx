@@ -87,6 +87,16 @@ export function McpServersPage({ admin: _admin }: { admin: boolean }) {
 
 const APPROVALS = ["always", "never"] as const;
 
+const PARALLEL_SEARCH_PRESET = {
+  displayName: "Parallel Search",
+  serverId: "parallel-search",
+  serverUrl: "https://search.parallel.ai/mcp",
+  description: "Free web search and page extraction, with no API key required.",
+  execution: "native" as const,
+};
+
+type ServerPreset = typeof PARALLEL_SEARCH_PRESET;
+
 function ServerList({ universeId }: { universeId: string }) {
   // Adding servers and changing credentials are universe configuration;
   // everything else on a row is decided for that server.
@@ -105,6 +115,7 @@ function ServerList({ universeId }: { universeId: string }) {
     queryClient.invalidateQueries({ queryKey: ["mcp-servers", universeId] });
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [createPreset, setCreatePreset] = useState<ServerPreset | undefined>();
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [oauthServer, setOAuthServer] = useState<McpServer | null>(null);
 
@@ -131,10 +142,21 @@ function ServerList({ universeId }: { universeId: string }) {
         title="MCP servers"
         description="Connect remote tools once, then make them available to profiles and sessions."
         actions={writable && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus data-icon="inline-start" />
-            Add server
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => {
+              setCreatePreset(PARALLEL_SEARCH_PRESET);
+              setCreateOpen(true);
+            }}>
+              Add Parallel Search
+            </Button>
+            <Button onClick={() => {
+              setCreatePreset(undefined);
+              setCreateOpen(true);
+            }}>
+              <Plus data-icon="inline-start" />
+              Add server
+            </Button>
+          </>
         )}
       />
       {servers.isLoading && <LoadingNote />}
@@ -271,10 +293,11 @@ function ServerList({ universeId }: { universeId: string }) {
       </p>
       {writable && (
         <ServerDialog
-          key={createOpen ? "create-open" : "create-closed"}
+          key={createOpen ? `create-open-${createPreset?.serverId ?? "custom"}` : "create-closed"}
           universeId={universeId}
           open={createOpen}
           server={null}
+          preset={createPreset}
           authGrants={authGrants.data ?? []}
           authGrantsLoading={authGrants.isLoading}
           onOpenChange={setCreateOpen}
@@ -360,6 +383,7 @@ function ServerDialog({
   universeId,
   open,
   server,
+  preset,
   authGrants,
   authGrantsLoading,
   onOpenChange,
@@ -368,6 +392,7 @@ function ServerDialog({
   universeId: string;
   open: boolean;
   server: McpServer | null;
+  preset?: ServerPreset;
   authGrants: AuthGrantOption[];
   authGrantsLoading: boolean;
   onOpenChange: (open: boolean) => void;
@@ -375,12 +400,12 @@ function ServerDialog({
 }) {
   const editing = server !== null;
   const [step, setStep] = useState<1 | 2>(editing ? 2 : 1);
-  const [displayName, setDisplayName] = useState(server?.displayName ?? "");
-  const [serverId, setServerId] = useState(server?.serverId ?? "");
+  const [displayName, setDisplayName] = useState(server?.displayName ?? preset?.displayName ?? "");
+  const [serverId, setServerId] = useState(server?.serverId ?? preset?.serverId ?? "");
   const [idTouched, setIdTouched] = useState(false);
-  const [serverUrl, setServerUrl] = useState(server?.serverUrl ?? "");
+  const [serverUrl, setServerUrl] = useState(server?.serverUrl ?? preset?.serverUrl ?? "");
   const [execution, setExecution] = useState<McpServer["execution"]>(
-    server?.execution ?? "provider",
+    server?.execution ?? preset?.execution ?? "provider",
   );
   const [exposure, setExposure] = useState<McpServer["exposure"]>(
     server?.exposure ?? "inject",
@@ -393,9 +418,9 @@ function ServerDialog({
   );
   const [allowedTools, setAllowedTools] = useState<string[] | undefined>(server?.allowedTools ?? undefined);
   const toolDiscoverySource = useMcpToolDiscoverySource(universeId);
-  const [description, setDescription] = useState(server?.description ?? "");
+  const [description, setDescription] = useState(server?.description ?? preset?.description ?? "");
   const [authPolicy, setAuthPolicy] = useState<string>(server?.authPolicy.type ?? "none");
-  const [authTouched, setAuthTouched] = useState(Boolean(server));
+  const [authTouched, setAuthTouched] = useState(Boolean(server || preset));
   const [oauthResource, setOAuthResource] = useState(
     oauthPolicyString(server?.authPolicy, "resource"),
   );
