@@ -9,6 +9,7 @@ import {
   File,
   FolderGit2,
   Plus,
+  ExternalLink,
 } from "lucide-react";
 import {
   api,
@@ -41,6 +42,7 @@ import { DetailPrompt, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
+import { appHref, blobHref } from "@/lib/blob-view";
 import { ListPane } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
@@ -458,6 +460,12 @@ function FileDetail({
   const value = editor.draft ?? text ?? "";
   const dirty =
     editor.draft !== null && editor.draft !== (editor.saved?.text ?? text);
+  const blobLink = file ? blobHref(slug, file.blob_ref, {
+    name: filePath.split("/").at(-1),
+    type: file.media_type ?? mediaTypeFor(filePath),
+    workspace: workspaceId,
+    path: filePath,
+  }) : null;
   const saveCurrent = () =>
     save.mutate({
       contentText: value,
@@ -497,6 +505,18 @@ function FileDetail({
           {file ? formatBytes(file.size_bytes) : ""}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {blobLink && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              nativeButton={false}
+              render={<a href={appHref(blobLink)} target="_blank" rel="noopener noreferrer" />}
+              aria-label="Open in blob viewer (new tab)"
+              title={dirty ? "Open saved version in blob viewer (new tab)" : "Open in blob viewer (new tab)"}
+            >
+              <ExternalLink />
+            </Button>
+          )}
           {canEditFiles && decoded?.kind === "text" && (
             <Button
               size="sm"
