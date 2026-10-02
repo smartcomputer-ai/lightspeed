@@ -6,7 +6,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { MAX_WORKSPACE_UPLOAD_BODY_BYTES, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed/platform-shared";
-import { workspaceEntryRenameSchema, renameWorkspaceEntry } from "@lightspeed/platform-shared";
+import { workspaceEntryRenameSchema, renameWorkspaceEntry, workspaceRenameSchema } from "@lightspeed/platform-shared";
 import type { VfsDirEntry, VfsFileEntry, VfsTreeEntry, WorkspaceRow, WorkspaceTree } from "@/api";
 import { base64ToBytes, type DemoStore, type WorkspaceRecord } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
@@ -59,6 +59,25 @@ export function workspaceRoutes(store: DemoStore): Hono {
     };
     universe.workspaces.set(workspaceId, { row, manifest: emptyManifest() });
     return c.json(row, 201);
+  });
+
+  app.patch("/:id/workspaces/:workspaceId", async (c) => {
+    const record = universeFor(store, c)?.workspaces.get(c.req.param("workspaceId"));
+    if (!record) return notFound(c);
+    const body = workspaceRenameSchema.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return badRequest(c, "A workspace name and expectedRevision are required");
+    if (record.row.revision !== body.data.expectedRevision)
+      return conflict(c, "Workspace changed. Close this dialog and try again.");
+    record.row = { ...record.row, displayName: body.data.displayName, revision: record.row.revision + 1, updatedAtMs: Date.now() };
+    return c.json({ workspace: record.row });
+  });
+
+  app.delete("/:id/workspaces/:workspaceId", (c) => {
+    const universe = universeFor(store, c);
+    const record = universe?.workspaces.get(c.req.param("workspaceId"));
+    if (!universe || !record) return notFound(c);
+    universe.workspaces.delete(record.row.workspaceId);
+    return c.json({ workspace: record.row });
   });
 
   app.get("/:id/workspaces/:workspaceId/tree", (c) => {

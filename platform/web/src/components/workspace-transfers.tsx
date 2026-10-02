@@ -23,8 +23,9 @@ import {
   validWorkspaceTransferPath,
   workspaceUploadConflicts,
   renameWorkspaceEntry,
+  workspaceRenameSchema,
 } from "@lightspeed/platform-shared";
-import { api, ApiError, type WorkspaceTree } from "@/api";
+import { api, ApiError, type WorkspaceTree, type WorkspaceRow } from "@/api";
 import { useActionPermissions } from "@/lib/permissions";
 import {
   directoryEntries,
@@ -71,6 +72,9 @@ const Transfers = createContext<{
   choose: (folder: boolean, target: string, replacement?: boolean) => void;
   download: (path: string, directory: boolean) => void;
   remove: (path: string, directory: boolean) => void;
+  removeWorkspace: () => void;
+  renameWorkspace: () => void;
+  canConfigureWorkspace: boolean;
   newFolder: (parent: string) => void;
   newFile: (parent: string) => void;
   rename: (path: string, directory: boolean) => void;
@@ -87,6 +91,7 @@ export function WorkspaceTransfers({
   onRemoved,
   onRenamed,
   onNewFile,
+  onWorkspaceRemoved,
   children,
 }: {
   universeId: string;
@@ -94,6 +99,7 @@ export function WorkspaceTransfers({
   onRemoved?: (path: string) => void;
   onRenamed?: (from: string, to: string) => void;
   onNewFile?: (parent: string, revision: number) => void;
+  onWorkspaceRemoved?: () => void;
   children: ReactNode;
 }) {
   const permissions = useActionPermissions(universeId);
@@ -107,6 +113,8 @@ export function WorkspaceTransfers({
   });
   const canUpload =
     !!workspaceId && !!tree.data && permissions.can("use_resource");
+  const canConfigureWorkspace =
+    !!workspaceId && !!tree.data && permissions.can("configure_resource");
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const replacementInput = useRef<HTMLInputElement>(null);
@@ -116,6 +124,16 @@ export function WorkspaceTransfers({
   const [dragTarget, setDragTarget] = useState<string | null>(null);
   const [review, setReview] = useState<UploadReview | null>(null);
   const [deletion, setDeletion] = useState<DeleteReview | null>(null);
+  const [workspaceDeletion, setWorkspaceDeletion] = useState<{
+    name: string;
+    error?: string;
+  } | null>(null);
+  const [workspaceRenaming, setWorkspaceRenaming] = useState<{
+    name: string;
+    originalName: string;
+    revision: number;
+    error?: string;
+  } | null>(null);
   const [renaming, setRenaming] = useState<{
     path: string;
     directory: boolean;
@@ -240,7 +258,9 @@ export function WorkspaceTransfers({
       review ||
       deletion ||
       folder ||
-      renaming
+      renaming ||
+      workspaceDeletion ||
+      workspaceRenaming
     )
       return;
     const path = dropTarget(event);
@@ -264,6 +284,86 @@ export function WorkspaceTransfers({
       setDeletion({ ...deletion, error: (error as Error).message });
     } finally {
       await invalidate();
+      uploadLock.current = false;
+      setBusy(false);
+    }
+  };
+  const confirmDeleteWorkspace = async () => {
+    if (!workspaceDeletion || !canConfigureWorkspace || uploadLock.current)
+      return;
+    uploadLock.current = true;
+    setBusy(true);
+    setProgress("Deleting workspace…");
+    try {
+      await api("DELETE", baseUrl);
+      queryClient.setQueryData<WorkspaceRow[]>(
+        ["workspaces", universeId],
+        (rows) => rows?.filter((row) => row.workspaceId !== workspaceId),
+      );
+      setWorkspaceDeletion(null);
+      onWorkspaceRemoved?.();
+      await queryClient.invalidateQueries({
+        queryKey: ["workspaces", universeId],
+      });
+    } catch (error) {
+      setWorkspaceDeletion({
+        ...workspaceDeletion,
+        error: (error as Error).message,
+      });
+    } finally {
+      uploadLock.current = false;
+      setBusy(false);
+    }
+  };
+  const confirmRenameWorkspace = async () => {
+    if (!workspaceRenaming || !canConfigureWorkspace || uploadLock.current)
+      return;
+    const body = workspaceRenameSchema.safeParse({
+      displayName: workspaceRenaming.name,
+      expectedRevision: workspaceRenaming.revision,
+    });
+    if (!body.success) {
+      setWorkspaceRenaming({
+        ...workspaceRenaming,
+        error: "Enter a workspace name between 1 and 100 characters.",
+      });
+      return;
+    }
+    uploadLock.current = true;
+    setBusy(true);
+    setProgress("Renaming workspace…");
+    try {
+      const { workspace } = await api<Pick<WorkspaceTree, "workspace">>(
+        "PATCH",
+        baseUrl,
+        body.data,
+      );
+      queryClient.setQueryData<WorkspaceTree>(treeKey, (current) =>
+        current && current.workspace.revision <= workspace.revision
+          ? { ...current, workspace }
+          : current,
+      );
+      queryClient.setQueryData<WorkspaceRow[]>(
+        ["workspaces", universeId],
+        (rows) =>
+          rows?.map((row) =>
+            row.workspaceId === workspaceId &&
+            row.revision <= workspace.revision
+              ? workspace
+              : row,
+          ),
+      );
+      setWorkspaceRenaming(null);
+    } catch (error) {
+      setWorkspaceRenaming({
+        ...workspaceRenaming,
+        error: (error as Error).message,
+      });
+    } finally {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: treeKey }),
+        queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] }),
+      ]);
       uploadLock.current = false;
       setBusy(false);
     }
@@ -430,6 +530,23 @@ export function WorkspaceTransfers({
             });
         },
         canUpload,
+        canConfigureWorkspace,
+        renameWorkspace: () => {
+          if (canConfigureWorkspace && !busy && tree.data) {
+            const name = tree.data.workspace.displayName || workspaceId!;
+            setWorkspaceRenaming({
+              name,
+              originalName: name,
+              revision: tree.data.workspace.revision,
+            });
+          }
+        },
+        removeWorkspace: () => {
+          if (canConfigureWorkspace && !busy)
+            setWorkspaceDeletion({
+              name: tree.data!.workspace.displayName || workspaceId!,
+            });
+        },
         busy,
         downloading,
         activity: busy ? progress : downloading ? "Preparing download…" : null,
@@ -457,7 +574,9 @@ export function WorkspaceTransfers({
               !review &&
               !deletion &&
               !folder &&
-              !renaming
+              !renaming &&
+              !workspaceDeletion &&
+              !workspaceRenaming
             )
               setDragTarget(dropTarget(event));
           }
@@ -471,7 +590,9 @@ export function WorkspaceTransfers({
               !review &&
               !deletion &&
               !folder &&
-              !renaming;
+              !renaming &&
+              !workspaceDeletion &&
+              !workspaceRenaming;
             event.dataTransfer.dropEffect = allowed ? "copy" : "none";
             setDragTarget(allowed ? dropTarget(event) : null);
           }
@@ -763,6 +884,113 @@ export function WorkspaceTransfers({
           </DialogContent>
         </Dialog>
         <Dialog
+          open={!!workspaceRenaming}
+          onOpenChange={(open) => {
+            if (!open && !busy) setWorkspaceRenaming(null);
+          }}
+        >
+          <DialogContent>
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void confirmRenameWorkspace();
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>Rename workspace</DialogTitle>
+                <DialogDescription>
+                  Choose a new display name. Connected sessions keep using this
+                  workspace.
+                </DialogDescription>
+              </DialogHeader>
+              <label className="grid gap-2 text-sm">
+                Workspace name
+                <Input
+                  autoFocus
+                  required
+                  maxLength={100}
+                  disabled={busy}
+                  value={workspaceRenaming?.name ?? ""}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onChange={(event) => {
+                    if (workspaceRenaming)
+                      setWorkspaceRenaming({
+                        ...workspaceRenaming,
+                        name: event.target.value,
+                        error: undefined,
+                      });
+                  }}
+                />
+              </label>
+              {workspaceRenaming?.error && (
+                <p role="alert" className="text-sm text-destructive">
+                  {workspaceRenaming.error}
+                </p>
+              )}
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setWorkspaceRenaming(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={
+                    busy ||
+                    !canConfigureWorkspace ||
+                    !workspaceRenaming?.name.trim() ||
+                    workspaceRenaming.name.trim() ===
+                      workspaceRenaming.originalName
+                  }
+                >
+                  {busy ? "Renaming…" : "Rename"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={!!workspaceDeletion}
+          onOpenChange={(open) => {
+            if (!open && !busy) setWorkspaceDeletion(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete workspace?</DialogTitle>
+              <DialogDescription>
+                “{workspaceDeletion?.name}” will be removed from your workspace
+                list. Previously stored file versions will be retained.
+              </DialogDescription>
+            </DialogHeader>
+            {workspaceDeletion?.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {workspaceDeletion.error}
+              </p>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => setWorkspaceDeletion(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy || !canConfigureWorkspace}
+                onClick={() => void confirmDeleteWorkspace()}
+              >
+                {busy ? "Deleting…" : "Delete workspace"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog
           open={!!deletion}
           onOpenChange={(open) => {
             if (!open && !busy) setDeletion(null);
@@ -958,6 +1186,26 @@ export function WorkspaceActionsMenu({
             >
               <Trash2 />
               {directory ? "Delete folder…" : "Delete file…"}
+            </DropdownMenuItem>
+          </>
+        )}
+        {kind === "workspace" && transfers.canConfigureWorkspace && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={transfers.busy || disabled}
+              onClick={transfers.renameWorkspace}
+            >
+              <Pencil />
+              Rename workspace…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={transfers.busy || disabled}
+              onClick={transfers.removeWorkspace}
+            >
+              <Trash2 />
+              Delete workspace…
             </DropdownMenuItem>
           </>
         )}

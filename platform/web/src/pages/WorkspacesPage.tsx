@@ -90,6 +90,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   return (
     <WorkspaceTransfers key={`${universe.id}:${workspaceId}`} universeId={universe.id} workspaceId={workspaceId}
       onNewFile={(parent, revision) => setNewFile({ parent, revision })}
+      onWorkspaceRemoved={() => navigate(`/u/${slug}/workspaces`, { replace: true })}
       onRenamed={(from, to) => {
         if (filePath && (filePath === from || filePath.startsWith(`${from}/`))) {
           const path = to + filePath.slice(from.length);

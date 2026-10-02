@@ -66,6 +66,11 @@ export const workspaceCreateSchema = z.object({
 });
 export type WorkspaceCreateInput = z.infer<typeof workspaceCreateSchema>;
 
+export const workspaceRenameSchema = z.object({
+  displayName: z.string().trim().min(1).max(100),
+  expectedRevision: z.number().int().nonnegative(),
+});
+
 
 export function slugify(name: string): string {
   return (

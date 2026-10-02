@@ -29,6 +29,8 @@ let calls: string[];
 let blobs: Map<string, string>;
 let failBlob: boolean;
 let race: boolean;
+let workspaceDeleted: boolean;
+let displayName: string | undefined;
 it("deletes a folder recursively in one revision and leaves siblings intact", async () => {
   await upload({}, [
     ...entries,
@@ -123,6 +125,8 @@ beforeEach(() => {
   blobs = new Map();
   failBlob = false;
   race = false;
+  workspaceDeleted = false;
+  displayName = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: unknown, init: RequestInit) => {
@@ -133,12 +137,33 @@ beforeEach(() => {
       );
       let result: unknown;
       switch (rpc.method) {
+        case "vfs/workspaces/delete":
+          expect(rpc.params).toEqual({ workspaceId: "docs" });
+          if (workspaceDeleted)
+            return Response.json({
+              id: rpc.id,
+              error: {
+                code: -32004,
+                message: "workspace not found",
+                data: { kind: "not_found" },
+              },
+            });
+          workspaceDeleted = true;
+          result = {
+            workspace: {
+              workspaceId: "docs",
+              revision,
+              headSnapshotRef: "snapshot",
+            },
+          };
+          break;
         case "vfs/workspaces/read":
           result = {
             workspace: {
               workspaceId: "docs",
               revision,
               headSnapshotRef: "snapshot",
+              displayName,
             },
           };
           break;
@@ -180,10 +205,23 @@ beforeEach(() => {
                 data: { kind: "conflict" },
               },
             });
-          if (!committedManifest) throw new Error("Expected a committed snapshot");
-          manifest = committedManifest;
+          if (rpc.params.displayName !== undefined) {
+            expect(rpc.params.snapshotRef).toBe("snapshot");
+            displayName = rpc.params.displayName;
+          } else {
+            if (!committedManifest)
+              throw new Error("Expected a committed snapshot");
+            manifest = committedManifest;
+          }
           revision++;
-          result = { workspace: { workspaceId: "docs", revision } };
+          result = {
+            workspace: {
+              workspaceId: "docs",
+              revision,
+              displayName,
+              headSnapshotRef: "snapshot",
+            },
+          };
           break;
         case "blobs/read":
           result = { bytesBase64: blobs.get(rpc.params.blobRef) };
@@ -239,6 +277,44 @@ async function upload(extra = {}, items = entries) {
   });
 }
 
+it.each(["viewer", "contributor"])(
+  "refuses workspace deletion by a %s before contacting the engine",
+  async (role) => {
+    identity.role = role;
+    const response = await app().request("/u/workspaces/docs", {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(403);
+    expect(calls).toEqual([]);
+    expect(workspaceDeleted).toBe(false);
+  },
+);
+
+it.each(["operator", "admin"])(
+  "deletes a workspace as %s without deleting its snapshots or blobs",
+  async (role) => {
+    await upload();
+    const original = structuredClone(manifest);
+    const originalBlobs = new Map(blobs);
+    calls = [];
+    identity.role = role;
+    const response = await app().request("/u/workspaces/docs", {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      workspace: { workspaceId: "docs" },
+    });
+    expect(workspaceDeleted).toBe(true);
+    expect(calls).toEqual(["vfs/workspaces/delete"]);
+    expect(manifest).toEqual(original);
+    expect(blobs).toEqual(originalBlobs);
+    expect(
+      (await app().request("/u/workspaces/docs", { method: "DELETE" })).status,
+    ).toBe(404);
+  },
+);
+
 async function rename(path: string, name: string, expectedRevision = revision) {
   return app().request("/u/workspaces/docs/rename", {
     method: "POST",
@@ -246,6 +322,57 @@ async function rename(path: string, name: string, expectedRevision = revision) {
     body: JSON.stringify({ path, name, expectedRevision }),
   });
 }
+
+async function renameWorkspace(name: string, expectedRevision = revision) {
+  return app().request("/u/workspaces/docs", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ displayName: name, expectedRevision }),
+  });
+}
+it.each(["operator", "admin"])(
+  "renames a workspace as %s without changing its ID or snapshot",
+  async (role) => {
+    await upload();
+    const original = structuredClone(manifest);
+    const originalBlobs = new Map(blobs);
+    calls = [];
+    identity.role = role;
+    const response = await renameWorkspace("  Project notes 🗒  ");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      workspace: {
+        workspaceId: "docs",
+        displayName: "Project notes 🗒",
+        headSnapshotRef: "snapshot",
+        revision: 2,
+      },
+    });
+    expect(calls).toEqual(["vfs/workspaces/read", "vfs/workspaces/update"]);
+    expect(manifest).toEqual(original);
+    expect(blobs).toEqual(originalBlobs);
+  },
+);
+it.each(["viewer", "contributor"])(
+  "refuses workspace renaming by a %s",
+  async (role) => {
+    identity.role = role;
+    expect((await renameWorkspace("New name")).status).toBe(403);
+    expect(calls).toEqual([]);
+  },
+);
+it("validates workspace names and rejects stale or racing renames", async () => {
+  identity.role = "operator";
+  for (const name of ["", "   ", "x".repeat(101)])
+    expect((await renameWorkspace(name)).status).toBe(400);
+  expect(calls).toEqual([]);
+  expect((await renameWorkspace("New", 1)).status).toBe(409);
+  expect(calls).not.toContain("vfs/workspaces/update");
+  race = true;
+  expect((await renameWorkspace("New")).status).toBe(409);
+  expect(revision).toBe(0);
+  expect(displayName).toBeUndefined();
+});
 
 it("renames files and folders atomically while preserving content, metadata and empty folders", async () => {
   await upload();

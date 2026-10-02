@@ -4,6 +4,54 @@ import { createDemoStore } from "./fixtures";
 import { createDemoRouter } from "./router";
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 
+it("removes a workspace from the demo list and refuses further workspace reads", async () => {
+  const store = createDemoStore();
+  const app = createDemoRouter(store);
+  const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
+  const created = await app.request(base, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId: "delete-test" }),
+  });
+  expect(created.status).toBe(201);
+  const original = await created.json();
+  const rename = (displayName: string, expectedRevision: number) =>
+    app.request(`${base}/delete-test`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ displayName, expectedRevision }),
+    });
+  const renamed = await rename("  Renamed workspace  ", 0);
+  expect(renamed.status).toBe(200);
+  expect(await renamed.json()).toMatchObject({
+    workspace: {
+      workspaceId: "delete-test",
+      displayName: "Renamed workspace",
+      headSnapshotRef: original.headSnapshotRef,
+      revision: 1,
+    },
+  });
+  expect((await rename("Stale", 0)).status).toBe(409);
+  expect((await rename(" ", 1)).status).toBe(400);
+  const deleted = await app.request(`${base}/delete-test`, {
+    method: "DELETE",
+  });
+  expect(deleted.status).toBe(200);
+  expect(await deleted.json()).toMatchObject({
+    workspace: { workspaceId: "delete-test" },
+  });
+  const rows = await (await app.request(base)).json();
+  expect(
+    rows.some(
+      (row: { workspaceId: string }) => row.workspaceId === "delete-test",
+    ),
+  ).toBe(false);
+  expect((await app.request(`${base}/delete-test/tree`)).status).toBe(404);
+  expect(
+    (await app.request(`${base}/delete-test`, { method: "DELETE" })).status,
+  ).toBe(404);
+});
+
 it("round-trips uploaded folders and binary files through the demo routes", async () => {
   const app = createDemoRouter(createDemoStore());
   const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;

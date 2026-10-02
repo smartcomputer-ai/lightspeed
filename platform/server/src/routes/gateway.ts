@@ -40,6 +40,7 @@ import {
   transcriptionStartSchema,
   transcriptionUploadSchema,
   workspaceCreateSchema,
+  workspaceRenameSchema,
   MAX_WORKSPACE_UPLOAD_BODY_BYTES,
   workspaceUploadSchema,
   prepareWorkspaceUpload,
@@ -1906,6 +1907,42 @@ export function gatewayRoutes(ctx: AppContext) {
       return c.json(response.result.environment);
     });
   });
+
+  app.patch("/:id/workspaces/:workspaceId", (c) =>
+    withGateway(c, async () => {
+      const access = await universeForSession(ctx, c, c.req.param("id"));
+      if (!access) return c.json({ error: "not found" }, 404);
+      if (!roleAtLeast(access.role, "operator"))
+        throw new GateRefusal(403, "operator role required");
+      const body = await parseBody(c, workspaceRenameSchema);
+      if (!body.ok) return body.response;
+      const client = engineClientFor(ctx, access);
+      const workspaceId = c.req.param("workspaceId");
+      const { workspace } = (await client.call("vfs/workspaces/read", { workspaceId })).result;
+      if (workspace.revision !== body.data.expectedRevision)
+        return c.json({ error: "Workspace changed. Close this dialog and try again." }, 409);
+      const response = await client.call("vfs/workspaces/update", {
+        workspaceId,
+        expectedRevision: body.data.expectedRevision,
+        snapshotRef: workspace.headSnapshotRef,
+        displayName: body.data.displayName,
+      });
+      return c.json(response.result);
+    }),
+  );
+
+  app.delete("/:id/workspaces/:workspaceId", (c) =>
+    withGateway(c, async () => {
+      const access = await universeForSession(ctx, c, c.req.param("id"));
+      if (!access) return c.json({ error: "not found" }, 404);
+      if (!roleAtLeast(access.role, "operator"))
+        throw new GateRefusal(403, "operator role required");
+      const response = await engineClientFor(ctx, access).call("vfs/workspaces/delete", {
+        workspaceId: c.req.param("workspaceId"),
+      });
+      return c.json(response.result);
+    }),
+  );
 
   /// Workspace head + full manifest in one roundtrip (the explorer tree).
   app.get("/:id/workspaces/:workspaceId/tree", async (c) => {

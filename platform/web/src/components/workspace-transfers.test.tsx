@@ -2,7 +2,7 @@
 import { act, type ReactNode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, type VfsTreeEntry } from "@/api";
@@ -16,6 +16,8 @@ import { WorkspaceFileTree } from "./workspace-file-tree";
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   editable: true,
+  configurable: true,
+  workspaceRemoved: vi.fn(),
   removed: vi.fn(),
   renamed: vi.fn(),
   newFile: vi.fn(),
@@ -25,7 +27,10 @@ vi.mock("@/api", async (original) => ({
   api: mocks.api,
 }));
 vi.mock("@/lib/permissions", () => ({
-  useActionPermissions: () => ({ can: () => mocks.editable }),
+  useActionPermissions: () => ({
+    can: (action: string) =>
+      mocks.editable && (action !== "configure_resource" || mocks.configurable),
+  }),
 }));
 vi.mock("@/lib/universes", () => ({
   useActiveUniverse: () => ({
@@ -108,6 +113,8 @@ const tree = (revision = 3) => ({
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.editable = true;
+  mocks.configurable = true;
+  mocks.workspaceRemoved.mockReset();
   mocks.removed.mockReset();
   mocks.renamed.mockReset();
   mocks.newFile.mockReset();
@@ -140,6 +147,7 @@ async function render(withTree = false) {
           onRemoved={mocks.removed}
           onRenamed={mocks.renamed}
           onNewFile={mocks.newFile}
+          onWorkspaceRemoved={mocks.workspaceRemoved}
         >
           <WorkspaceActionsMenu kind="workspace" />
           {withTree ? (
@@ -310,6 +318,259 @@ async function folderName(name: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+
+it("requires confirmation to delete a workspace and allows cancellation", async () => {
+  await render();
+  await menu("Workspace actions");
+  await click(item("Delete workspace…"));
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+    "Previously stored file versions will be retained",
+  );
+  expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(
+    false,
+  );
+  await click(button("Cancel"));
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(mocks.workspaceRemoved).not.toHaveBeenCalled();
+  await menu("Workspace actions");
+  await click(item("Delete workspace…"));
+  await click(button("Delete workspace"));
+  expect(mocks.api).toHaveBeenCalledWith(
+    "DELETE",
+    "/api/v1/universes/u/workspaces/ws",
+  );
+  expect(mocks.workspaceRemoved).toHaveBeenCalledOnce();
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it("retains the workspace and reports deletion errors in the confirmation dialog", async () => {
+  await render();
+  mocks.api.mockImplementation(async (method) => {
+    if (method === "DELETE")
+      throw new ApiError(500, { error: "Could not delete workspace" });
+    return tree();
+  });
+  await menu("Workspace actions");
+  await click(item("Delete workspace…"));
+  await click(button("Delete workspace"));
+  expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+    "Could not delete workspace",
+  );
+  expect(mocks.workspaceRemoved).not.toHaveBeenCalled();
+  expect(
+    container.querySelector('[aria-label="File actions: docs/a #?.txt"]'),
+  ).not.toBeNull();
+});
+
+it.each([true, false])(
+  "hides workspace deletion without configuration permission (can edit: %s)",
+  async (editable) => {
+    mocks.editable = editable;
+    mocks.configurable = false;
+    await render();
+    await menu("Workspace actions");
+    expect(item("Delete workspace…")).toBeUndefined();
+    expect(item("Rename workspace…")).toBeUndefined();
+    expect(item("Download as ZIP")).toBeDefined();
+    if (editable) expect(item("New file")).toBeDefined();
+  },
+);
+
+function WorkspaceLocation() {
+  return <output data-location>{useLocation().pathname}</output>;
+}
+
+it("renames a workspace in the picker while keeping the open file and unsaved edits", async () => {
+  let workspace = {
+    workspaceId: "ws",
+    displayName: "Documents",
+    revision: 3,
+    files: 1,
+  };
+  mocks.api.mockImplementation(
+    async (method: string, path: string, body?: { displayName: string }) => {
+      if (method === "PATCH") {
+        workspace = {
+          ...workspace,
+          displayName: body!.displayName,
+          revision: 4,
+        };
+        return { workspace };
+      }
+      if (path.endsWith("/workspaces")) return [workspace];
+      if (path.endsWith("/tree")) return { ...tree(), workspace };
+      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+      throw new Error(`Unexpected request: ${path}`);
+    },
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  await act(async () =>
+    root.render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter
+          initialEntries={["/u/test/workspaces/ws/files/docs/a%20%23%3F.txt"]}
+        >
+          <WorkspaceLocation />
+          <Routes>
+            <Route
+              path="/u/:slug/workspaces/:workspaceId/files/*"
+              element={<WorkspacesPage admin={false} />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  );
+  await act(settle);
+  const editor = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )!.set!.call(editor, "unsaved edit");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await menu("Workspace actions");
+  await click(item("Rename workspace…"));
+  expect(
+    document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value,
+  ).toBe("Documents");
+  expect((button("Rename") as HTMLButtonElement).disabled).toBe(true);
+  await folderName("  Project notes  ");
+  await click(button("Rename"));
+  expect(mocks.api).toHaveBeenCalledWith(
+    "PATCH",
+    "/api/v1/universes/u/workspaces/ws",
+    { displayName: "Project notes", expectedRevision: 3 },
+  );
+  expect(
+    container.querySelector('[aria-label="Workspace"]')?.textContent,
+  ).toContain("Project notes");
+  expect(container.querySelector("[data-location]")?.textContent).toBe(
+    "/u/test/workspaces/ws/files/docs/a%20%23%3F.txt",
+  );
+  expect(container.querySelector("textarea")).toBe(editor);
+  expect(editor.value).toBe("unsaved edit");
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+});
+
+it("allows workspace rename cancellation and keeps the name when the server refuses it", async () => {
+  await render();
+  await menu("Workspace actions");
+  await click(item("Rename workspace…"));
+  expect(
+    document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value,
+  ).toBe("ws");
+  await click(button("Cancel"));
+  expect(mocks.api.mock.calls.some(([method]) => method === "PATCH")).toBe(
+    false,
+  );
+  await menu("Workspace actions");
+  await click(item("Rename workspace…"));
+  await folderName("   ");
+  expect((button("Rename") as HTMLButtonElement).disabled).toBe(true);
+  await folderName("New name");
+  mocks.api.mockImplementation(async (method) => {
+    if (method === "PATCH")
+      throw new ApiError(409, {
+        error: "Workspace changed. Close this dialog and try again.",
+      });
+    return tree(4);
+  });
+  await click(button("Rename"));
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+    "Workspace changed",
+  );
+  expect(
+    document.querySelector<HTMLInputElement>('[role="dialog"] input')?.value,
+  ).toBe("New name");
+});
+
+it.each([true, false])(
+  "leaves a deleted workspace and refreshes the picker (another workspace: %s)",
+  async (hasOther) => {
+    const workspace = {
+      workspaceId: "ws",
+      displayName: "Documents",
+      revision: 3,
+      files: 1,
+    };
+    const other = {
+      ...workspace,
+      workspaceId: "other",
+      displayName: "Other workspace",
+      files: 0,
+    };
+    let deleted = false;
+    mocks.api.mockImplementation(async (method: string, path: string) => {
+      if (method === "DELETE") {
+        deleted = true;
+        return { workspace };
+      }
+      if (path.endsWith("/workspaces"))
+        return [...(deleted ? [] : [workspace]), ...(hasOther ? [other] : [])];
+      if (path.endsWith("/tree")) {
+        if (path.includes("/other/"))
+          return {
+            workspace: other,
+            manifest: { root: { entries: {} }, totals: { files: 0, bytes: 0 } },
+          };
+        if (deleted) throw new ApiError(404, { error: "Workspace deleted" });
+        return { ...tree(), workspace };
+      }
+      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    await act(async () =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter
+            initialEntries={["/u/test/workspaces/ws/files/docs/a%20%23%3F.txt"]}
+          >
+            <WorkspaceLocation />
+            <Routes>
+              <Route
+                path="/u/:slug/workspaces/:workspaceId/files/*"
+                element={<WorkspacesPage admin={false} />}
+              />
+              <Route
+                path="/u/:slug/workspaces/:workspaceId?"
+                element={<WorkspacesPage admin={false} />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      ),
+    );
+    await act(settle);
+    await menu("Workspace actions");
+    await click(item("Delete workspace…"));
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+      "Documents",
+    );
+    await click(button("Delete workspace"));
+    await vi.waitFor(async () => {
+      await act(settle);
+      expect(container.querySelector("[data-location]")?.textContent).toBe(
+        `/u/test/workspaces${hasOther ? "/other" : ""}`,
+      );
+    });
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.textContent).not.toContain("Documents");
+    expect(container.textContent).not.toContain("Workspace deleted");
+    if (!hasOther) expect(container.textContent).toContain("No workspaces yet");
+    expect(
+      client
+        .getQueryData<{ workspaceId: string }[]>(["workspaces", "u"])
+        ?.some((row) => row.workspaceId === "ws"),
+    ).toBe(false);
+  },
+);
 
 it.each([
   ["Folder actions: docs", "docs", "renamed"],
