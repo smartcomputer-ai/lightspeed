@@ -9,7 +9,7 @@
 import type { Environment, GitHubApp, SecretGrant, SessionOrigin, UniverseSetup } from "@/api";
 import type { BotEventOutcome, ModelConfig, SessionSummaryView } from "@lightspeed-ai/agent-client";
 import { groupsFor } from "@/lib/method-groups";
-import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
+import { appendExchange, appendScriptedRun, closeSession, newSession, refreshDemoCompactionView } from "../engine";
 import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
@@ -2825,6 +2825,12 @@ function seedImplementer(store: DemoStore, universe: UniverseState): void {
   const thread = (id: string, task: Task, environmentId: string, createdAtMs: number): SessionRecord =>
     managedSession(store, universe, { id, botId: BOT.implementer, displayName: `Implementer · ${task.id}`, profile: IMPLEMENTER_PROFILE, tools: profileTools, createdAtMs, environmentId });
   const taskA = thread(SESSION.taskA, TASK.a, ENV.taskA, p(2.1));
+  taskA.view.config = {
+    ...taskA.view.config,
+    model: { ...OPUS, model: "claude-opus-5-5" },
+    context: { inputLimitTokens: 10_000 },
+  };
+  refreshDemoCompactionView(taskA);
   const taskB = thread(SESSION.taskB, TASK.b, ENV.taskB, p(2.1) + 1_000);
   const taskC = thread(SESSION.taskC, TASK.c, ENV.taskC, p(2.1) + 2_000);
   const refA = { sessionId: SESSION.taskA, label: TASK.a.id };
@@ -2954,6 +2960,10 @@ function seedImplementer(store: DemoStore, universe: UniverseState): void {
         ],
       },
       {
+        compaction: {
+          mode: "standalone",
+          summary: "LIN-1421 task a: implement per-caller TokenBuckets on branch " + TASK.a.branch + ". The old #472 limiter has no imports. Refill credits whole elapsed intervals and keeps creditedAt on the interval boundary, preventing the #482 hot-caller regression. The last two tool exchanges retain the bucket implementation, completed test-writer promise, and five passing tests. Next: commit and open the PR, then notify pr-reviewer.",
+        },
         tools: [
           commit(TASK.a.branch, TASK.a.head, TASK.a.prTitle, "2 files changed, 118 insertions(+)"),
           github(

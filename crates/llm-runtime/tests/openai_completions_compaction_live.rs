@@ -144,6 +144,9 @@ async fn standalone_compaction_preserves_facts(
         })
     });
     let task = ContextCompactionTask {
+        covered_entry_ids: Vec::new(),
+        tools: Vec::new(),
+        input_limit_tokens: None,
         model,
         request_fingerprint: "openai-completions-live-compact".to_owned(),
         context: conversation(&blobs).await,
@@ -203,6 +206,9 @@ async fn compacted_summary_continues_conversation(
         model.provider_id, model.model
     );
     let task = ContextCompactionTask {
+        covered_entry_ids: Vec::new(),
+        tools: Vec::new(),
+        input_limit_tokens: None,
         model: model.clone(),
         request_fingerprint: "openai-completions-live-compact-continue".to_owned(),
         context: conversation(&blobs).await,

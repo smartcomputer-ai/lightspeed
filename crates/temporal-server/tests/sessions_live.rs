@@ -30,6 +30,248 @@ use temporalio_client::{
 };
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal + Postgres + object store and OPENAI_API_KEY (costs real money)"]
+async fn temporal_live_openai_standalone_compaction_and_continuation() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    require_openai_live_env()?;
+    let model = openai_live_model();
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, |client, queue, session| {
+        run_compaction_live_client(client, queue, session, model)
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal + Postgres + object store and ANTHROPIC_API_KEY (costs real money)"]
+async fn temporal_live_anthropic_standalone_compaction_and_continuation() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    anyhow::ensure!(
+        std::env::var("ANTHROPIC_API_KEY").is_ok_and(|key| !key.trim().is_empty()),
+        "ANTHROPIC_API_KEY must be set"
+    );
+    let model = engine::ModelSelection {
+        provider_id: "anthropic".into(),
+        api_kind: engine::ProviderApiKind::AnthropicMessages,
+        model: "claude-opus-5-5".into(),
+    };
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, |client, queue, session| {
+        run_compaction_live_client(client, queue, session, model)
+    })
+    .await
+}
+
+async fn run_compaction_live_client(
+    client: Client,
+    queue: String,
+    session_id: SessionId,
+    model: engine::ModelSelection,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(queue)
+        .build();
+    let mut config = SessionConfig {
+        model: Some(model_to_api(&model)),
+        generation: Some(api::GenerationConfig {
+            max_output_tokens: Some(2048),
+            ..Default::default()
+        }),
+        context: Some(api::ContextConfig {
+            compaction: Some(api::CompactionPolicy::Disabled),
+            input_limit_tokens: None,
+        }),
+        ..Default::default()
+    };
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.to_string()),
+        display_name: None,
+        config: Some(config.clone()),
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+    api.append_context(ContextAppendParams {
+        session_id: session_id.to_string(),
+        entries: vec![ContextAppendEntry { key: "client.compaction.history".into(), item: InputItem::Text {
+            provenance_ref: None, origin: None,
+            text: "The user's release codename is ZEPHYR-42. The release uses Postgres for session logs and content-addressed blobs. Preserve that exact codename for later questions.".into(),
+        } }],
+    }).await?;
+    api.compact_context(api::ContextCompactParams {
+        session_id: session_id.to_string(),
+    })
+    .await?;
+    let view = read_session_view(&api, &session_id).await?;
+    assert_eq!(
+        view.config
+            .as_ref()
+            .unwrap()
+            .context
+            .as_ref()
+            .unwrap()
+            .compaction,
+        Some(api::CompactionPolicy::Disabled)
+    );
+    let provider_kind = if model.api_kind == engine::ProviderApiKind::AnthropicMessages {
+        engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
+    } else {
+        engine::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND
+    };
+    assert!(
+        view.active_context
+            .entries
+            .iter()
+            .any(
+                |entry| entry.content.provider_kind.as_deref() == Some(provider_kind)
+                    && entry.kind == ContextEntryKindView::ProviderOpaque
+            )
+    );
+    assert_eq!(
+        view.active_context
+            .compaction
+            .as_ref()
+            .unwrap()
+            .effective_mode,
+        "disabled"
+    );
+    let run = start_text_run(
+        &api,
+        &session_id,
+        "What is the user's release codename? Reply with just that codename.",
+    )
+    .await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.id).await?;
+    assert_eq!(run.status, api::RunStatus::Completed);
+    assert!(
+        final_assistant_text(&run)
+            .unwrap_or_default()
+            .contains("ZEPHYR-42")
+    );
+
+    // Proactive compaction uses the same hosted activity after token usage is observed.
+    config.context.as_mut().unwrap().compaction = Some(api::CompactionPolicy::ProviderStandalone {
+        compact_threshold_tokens: Some(500),
+        target_tokens: None,
+    });
+    let view = read_session_view(&api, &session_id).await?;
+    api.put_session_config(SessionConfigPutParams {
+        session_id: session_id.to_string(),
+        config,
+        expected_config_revision: Some(view.config_revision),
+    })
+    .await?;
+    api.append_context(ContextAppendParams { session_id: session_id.to_string(), entries: vec![ContextAppendEntry {
+        key: "client.compaction.reference".into(), item: InputItem::Text { provenance_ref: None, origin: None,
+            text: "Routine reference: the release has completed its documentation review and awaits approval. ".repeat(100),
+        }
+    }] }).await?;
+    let run = start_text_run(
+        &api,
+        &session_id,
+        "Recall the release codename again. Reply with just the codename.",
+    )
+    .await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.id).await?;
+    assert_eq!(run.status, api::RunStatus::Completed);
+    assert!(
+        final_assistant_text(&run)
+            .unwrap_or_default()
+            .contains("ZEPHYR-42")
+    );
+    support::live::wait_until(
+        "hosted proactive compaction to finish",
+        std::time::Duration::from_secs(60),
+        async || {
+            let view = read_session_view(&api, &session_id).await?;
+            let events = api
+                .read_session_events(SessionEventsReadParams {
+                    session_id: session_id.to_string(),
+                    direction: Default::default(),
+                    before: None,
+                    after: None,
+                    limit: Some(500),
+                    wait_ms: None,
+                })
+                .await?
+                .result
+                .events;
+            Ok(!view.active_context.compaction.as_ref().unwrap().pending
+                && events
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event.kind,
+                            api::SessionEventKindView::ContextCompactionFinished { .. }
+                        )
+                    })
+                    .count()
+                    >= 2)
+        },
+    )
+    .await?;
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            session_id: session_id.to_string(),
+            direction: Default::default(),
+            before: None,
+            after: None,
+            limit: Some(500),
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    assert!(events.iter().any(|event| matches!(&event.kind, api::SessionEventKindView::ContextCompactionRequested { trigger, .. } if trigger == "highWatermark")));
+    let finished: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            api::SessionEventKindView::ContextCompactionFinished {
+                status,
+                calls,
+                usage,
+                ..
+            } => Some((status, calls, usage)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        finished.len() >= 2,
+        "manual and proactive compaction must both finish"
+    );
+    for (status, calls, usage) in finished {
+        assert_eq!(status, "succeeded");
+        assert!(*calls >= 1);
+        assert!(
+            usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens)
+                .is_some()
+        );
+    }
+    assert!(
+        run.usage
+            .as_ref()
+            .and_then(|usage| usage.input_tokens)
+            .is_some()
+    );
+    api.close_session(api::SessionCloseParams {
+        session_id: session_id.to_string(),
+        force: false,
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;

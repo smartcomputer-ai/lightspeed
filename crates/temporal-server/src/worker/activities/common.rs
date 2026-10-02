@@ -102,8 +102,11 @@ pub(super) async fn failed_generation_result_from_error(
 ) -> Result<LlmGenerationResult, BlobStoreError> {
     // A rejection keeps the provider's message word for word: it is what the
     // run failure shows, and the operator's starting point for a repair.
+    let context_limit = matches!(error, CoreAgentIoError::ContextLimit { .. });
     let (status, text) = match error {
-        CoreAgentIoError::Rejected { message } => (LlmGenerationStatus::Rejected, message),
+        CoreAgentIoError::Rejected { message } | CoreAgentIoError::ContextLimit { message } => {
+            (LlmGenerationStatus::Rejected, message)
+        }
         error => (
             LlmGenerationStatus::Failed,
             format!(
@@ -122,7 +125,11 @@ pub(super) async fn failed_generation_result_from_error(
         facts: LlmGenerationFacts {
             duration_ms: None,
             provider_response_id: None,
-            finish: LlmFinish::Failed,
+            finish: if context_limit {
+                LlmFinish::ContextLimit
+            } else {
+                LlmFinish::Failed
+            },
             usage: None,
             tool_calls: Vec::new(),
             approval_requests: Vec::new(),
@@ -146,6 +153,8 @@ pub(super) async fn failed_context_compaction_result_from_error(
     )
     .await?;
     Ok(ContextCompactionResult {
+        usage: None,
+        calls: 0,
         session_id: request.session_id,
         context_revision,
         status: ContextCompactionStatus::Failed,

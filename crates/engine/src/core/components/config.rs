@@ -49,6 +49,7 @@ pub(crate) fn validate_config_update_for_state(
     validate_session_is_idle_for_config_update(state)?;
     config.validate()?;
     validate_session_provider_is_pinned(&current.model, &config.model)?;
+    validate_retained_native_model(state, &config.model)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
     validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
     Ok(())
@@ -111,8 +112,13 @@ impl LimitsConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
+    /// Provider-reported capacity resolved at admission, independent of the user override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
 }
 
 impl ContextConfig {
@@ -604,6 +610,9 @@ pub enum CompactionPolicy {
 /// this is the runs/start escape hatch, including raw provider params.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
+    /// Input capacity resolved outside the reducer for this run’s effective model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -662,8 +671,17 @@ pub(crate) fn validate_run_config_for_state(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
+    if run_config.input_limit_tokens == Some(0) {
+        return Err(DomainError::ProviderCompatibility(
+            "input_limit_tokens must be positive".into(),
+        ));
+    }
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
+    validate_retained_native_model(
+        state,
+        run_config.model_override.as_ref().unwrap_or(&config.model),
+    )?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
     validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
     Ok(())
@@ -1084,6 +1102,11 @@ fn validate_context_config(
     context: &ContextConfig,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
+    if context.input_limit_tokens == Some(0) || context.reported_input_limit_tokens == Some(0) {
+        return Err(DomainError::ProviderCompatibility(
+            "input_limit_tokens must be positive".into(),
+        ));
+    }
     match (&context.compaction, api_kind) {
         (None | Some(CompactionPolicy::Disabled), _) => Ok(()),
         (
@@ -1198,6 +1221,28 @@ fn validate_session_provider_is_pinned(
     Ok(())
 }
 
+fn validate_retained_native_model(
+    state: &CoreAgentState,
+    model: &ModelSelection,
+) -> Result<(), DomainError> {
+    let current = state
+        .context
+        .last_generation_model()
+        .or_else(|| state.lifecycle.config.as_ref().map(|config| &config.model));
+    if current.is_some_and(|current| current != model)
+        && state.context.entries.iter().any(|entry| {
+            matches!(entry.kind, crate::ContextEntryKind::ReasoningState)
+                || entry.content.provider_kind.as_deref().is_some_and(|kind| {
+                    kind == crate::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND
+                        || kind == crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
+                })
+        })
+    {
+        return Err(DomainError::ProviderCompatibility("model cannot change while native compaction or reasoning state is retained; use a new session".into()));
+    }
+    Ok(())
+}
+
 fn validate_active_context_api_kind(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
@@ -1219,7 +1264,11 @@ mod tests {
             },
             generation: GenerationConfig::default(),
             limits: LimitsConfig::default(),
-            context: ContextConfig { compaction },
+            context: ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
+                compaction,
+            },
             features: FeaturesConfig::default(),
         }
     }
@@ -1303,6 +1352,7 @@ mod tests {
                     validate_run_config_for_state(
                         pinned_state,
                         &RunConfig {
+                            input_limit_tokens: None,
                             model_override: Some(changed),
                             ..Default::default()
                         }
@@ -1332,6 +1382,7 @@ mod tests {
                 validate_run_config_for_state(
                     pinned_state,
                     &RunConfig {
+                        input_limit_tokens: None,
                         model_override: Some(ModelSelection {
                             model: model.into(),
                             ..original.model.clone()

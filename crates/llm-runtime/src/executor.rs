@@ -21,6 +21,9 @@ pub trait LlmGenerationAdapter: Send + Sync {
 
 #[async_trait]
 pub trait LlmCompactionAdapter: Send + Sync {
+    fn blobs(&self) -> Option<&dyn engine::storage::BlobStore> {
+        None
+    }
     async fn compact_context(
         &self,
         request: ContextCompactionRequest,
@@ -136,10 +139,15 @@ impl LlmRuntime {
             });
         };
 
-        adapter
-            .compact_context(request)
-            .await
-            .map_err(io_error_from_adapter_error)
+        tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            crate::compaction::compact(adapter.as_ref(), request),
+        )
+        .await
+        .map_err(|_| CoreAgentIoError::Failed {
+            message: "compaction exceeded its ten-minute operation budget".into(),
+        })?
+        .map_err(io_error_from_adapter_error)
     }
 }
 
@@ -150,11 +158,21 @@ impl LlmRuntime {
 /// other adapter error stays terminal.
 fn io_error_from_adapter_error(error: LlmAdapterError) -> CoreAgentIoError {
     match &error {
+        LlmAdapterError::ContextLimit { message } => CoreAgentIoError::ContextLimit {
+            message: message.clone(),
+        },
         LlmAdapterError::Provider { source } if source.retryable() => CoreAgentIoError::Retryable {
             retry_after: source.retry_after(),
             message: error.to_string(),
         },
         LlmAdapterError::Provider { source } => match source.request_rejection() {
+            Some(rejection)
+                if rejection.kind == llm_clients::ProviderFailureKind::ContextLength =>
+            {
+                CoreAgentIoError::ContextLimit {
+                    message: rejection.message.clone(),
+                }
+            }
             Some(rejection) => CoreAgentIoError::Rejected {
                 message: rejection.message.clone(),
             },
@@ -289,7 +307,7 @@ mod tests {
         .await;
         assert_eq!(
             error,
-            CoreAgentIoError::Rejected {
+            CoreAgentIoError::ContextLimit {
                 message: context.to_owned()
             }
         );

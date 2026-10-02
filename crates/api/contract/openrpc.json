@@ -7465,6 +7465,69 @@
         ],
         "type": "object"
       },
+      "ContextCompactionView": {
+        "description": "Resolved automatic policy and the currently pending standalone operation.",
+        "properties": {
+          "compactThresholdTokens": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "effectiveMode": {
+            "type": "string"
+          },
+          "effectiveStrategy": {
+            "description": "Native APIs are preferred where supported; summaries use the same model route.",
+            "type": "string"
+          },
+          "inputLimitTokens": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "observedTokens": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pending": {
+            "type": "boolean"
+          },
+          "queued": {
+            "type": "boolean"
+          },
+          "recoveryAttempts": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requestedMode": {
+            "type": "string"
+          },
+          "thresholdSource": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestedMode",
+          "effectiveMode",
+          "effectiveStrategy",
+          "thresholdSource",
+          "pending",
+          "queued",
+          "recoveryAttempts"
+        ],
+        "type": "object"
+      },
       "ContextConfig": {
         "additionalProperties": false,
         "properties": {
@@ -7476,6 +7539,16 @@
               {
                 "type": "null"
               }
+            ],
+            "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+          },
+          "inputLimitTokens": {
+            "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
             ]
           }
         },
@@ -8117,6 +8190,16 @@
       },
       "ContextView": {
         "properties": {
+          "compaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextCompactionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "entries": {
             "default": [],
             "items": {
@@ -10967,7 +11050,7 @@
         "type": "object"
       },
       "LlmUsageView": {
-        "description": "Provider-reported token usage for one generation or a sum of them. Every\nfield is optional because providers report different subsets; counts\nthat a provider reports separately (Anthropic's cache read/write) are\nfolded into `input_tokens` so the field always means \"prompt tokens\nbilled on this request, cached or not\".",
+        "description": "Provider-reported token usage for generations and compactions, or their sum. Every\nfield is optional because providers report different subsets; counts\nthat a provider reports separately (Anthropic's cache read/write) are\nfolded into `input_tokens` so the field always means \"prompt tokens\nbilled on this request, cached or not\".",
         "properties": {
           "cacheWriteInputTokens": {
             "description": "Prompt tokens written into the provider's prompt cache (Anthropic).",
@@ -13553,7 +13636,7 @@
                 "type": "null"
               }
             ],
-            "description": "Provider token usage summed over the run's completed generations;\nabsent until the first generation reports usage. The cached share\n(`cachedInputTokens / inputTokens`) is the prompt-cache hit rate."
+            "description": "Provider token usage summed over the run's completed generations and standalone compactions;\nabsent until the first operation reports usage. The cached share\n(`cachedInputTokens / inputTokens`) is the prompt-cache hit rate."
           }
         },
         "required": [
@@ -14912,6 +14995,12 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "calls": {
+                "default": 0,
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
               "failureRef": {
                 "type": [
                   "string",
@@ -14929,6 +15018,16 @@
               "type": {
                 "const": "contextCompactionFinished",
                 "type": "string"
+              },
+              "usage": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LlmUsageView"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -18889,7 +18988,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
+      "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
       "name": "session/context/compact",
       "paramStructure": "by-name",
       "params": [

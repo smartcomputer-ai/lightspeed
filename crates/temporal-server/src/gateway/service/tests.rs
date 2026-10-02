@@ -965,6 +965,7 @@ fn session_start_config_maps_provider_triggered_compaction() {
     let config = engine_session_config_from_api(
         api::SessionConfig {
             context: Some(api::ContextConfig {
+                input_limit_tokens: None,
                 compaction: Some(api::CompactionPolicy::ProviderTriggered {
                     compact_threshold_tokens: Some(120_000),
                 }),
@@ -988,6 +989,7 @@ fn session_start_config_maps_provider_standalone_compaction() {
     let config = engine_session_config_from_api(
         api::SessionConfig {
             context: Some(api::ContextConfig {
+                input_limit_tokens: None,
                 compaction: Some(api::CompactionPolicy::ProviderStandalone {
                     compact_threshold_tokens: Some(120_000),
                     target_tokens: Some(80_000),

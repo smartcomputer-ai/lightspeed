@@ -13,7 +13,8 @@ impl GatewayAgentApi {
                 .map_err(model_defaults::map_store_error)
         })
         .await?;
-        let config = engine_session_config_from_api(api_config, model)?;
+        let mut config = engine_session_config_from_api(api_config, model)?;
+        self.resolve_context_capacity(&mut config).await;
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
@@ -22,6 +23,13 @@ impl GatewayAgentApi {
             .await?;
         self.validate_subagent_agents(&config.features).await?;
         Ok(config)
+    }
+
+    pub(super) async fn resolve_context_capacity(&self, config: &mut SessionConfig) {
+        if config.context.input_limit_tokens.is_none() {
+            config.context.reported_input_limit_tokens =
+                self.model_discovery.input_limit(&config.model).await;
+        }
     }
 
     /// Every allowlisted sub-agent profile must exist when the grant is
@@ -94,6 +102,11 @@ pub(super) fn engine_session_config_from_api(
             })
             .unwrap_or_default(),
         context: engine::ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: api_config
+                .context
+                .as_ref()
+                .and_then(|context| context.input_limit_tokens),
             compaction: api_config
                 .context
                 .and_then(|context| context.compaction)

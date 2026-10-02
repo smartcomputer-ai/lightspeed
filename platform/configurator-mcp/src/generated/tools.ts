@@ -207,6 +207,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
+              ],
+              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+            },
+            "inputLimitTokens": {
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
               ]
             }
           },
@@ -1338,6 +1348,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
+              ],
+              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+            },
+            "inputLimitTokens": {
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
               ]
             }
           },
@@ -2739,7 +2759,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/context/compact",
     "group": "session",
     "summary": "Compact session context",
-    "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
+    "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
     "paramsType": "ContextCompactParams",
     "resultType": "AgentApiOutcome<ContextCompactResponse>",
     "inputSchema": {
@@ -3626,6 +3646,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
+              ],
+              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+            },
+            "inputLimitTokens": {
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
               ]
             }
           },
@@ -5662,6 +5692,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
+              ],
+              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+            },
+            "inputLimitTokens": {
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
               ]
             }
           },
@@ -6680,6 +6720,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                 {
                   "type": "null"
                 }
+              ],
+              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+            },
+            "inputLimitTokens": {
+              "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
               ]
             }
           },

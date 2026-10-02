@@ -445,3 +445,16 @@ describe("attachment validation and source discovery", () => {
     expect(mcpAttachmentError({ features: { mcp: { servers: [{ serverId: "catalog", tools: ["delete"] }] } } }, [{ serverId: "catalog", allowedTools: ["search"] }])).toContain("not allowed");
   });
 });
+
+
+describe("compaction capacity", () => {
+  it("preserves the capacity override when the mode is default or disabled", () => {
+    for (const mode of ["default", "disabled"]) {
+      const context = { inputLimitTokens: 128000, compaction: { mode } };
+      expect(normalizeSessionConfig({ context })).toEqual({ context: mode === "default" ? { inputLimitTokens: 128000 } : context });
+    }
+  });
+  it.each([0, -1, 1.5])("rejects invalid input capacity %s", (inputLimitTokens) => {
+    expect(configError({ context: { inputLimitTokens } })).toContain("positive integer");
+  });
+});

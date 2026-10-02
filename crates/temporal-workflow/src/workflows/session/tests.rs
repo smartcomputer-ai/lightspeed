@@ -533,6 +533,7 @@ fn workflow_with_parked_tool_batch(spec: engine::AwaitSpec) -> AgentSessionWorkf
         },
     );
     workflow.core_state.runs.active = Some(engine::ActiveRun {
+        context_recovery: Default::default(),
         run_id,
         status: RunStatus::Parked,
         submission_id: None,

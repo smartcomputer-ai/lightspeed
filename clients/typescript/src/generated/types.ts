@@ -729,10 +729,12 @@ export type SessionEventKindView =
     }
   | {
       baseRevision: number;
+      calls?: number;
       failureRef?: string | null;
       revision: number;
       status: string;
       type: "contextCompactionFinished";
+      usage?: LlmUsageView | null;
     }
   | {
       catalogRef?: string | null;
@@ -1987,8 +1989,30 @@ export interface ResourceAccessSummary {
  * via the `definition` "ContextView".
  */
 export interface ContextView {
+  compaction?: ContextCompactionView | null;
   entries?: ContextEntryView[];
   revision: number;
+}
+/**
+ * Resolved automatic policy and the currently pending standalone operation.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextCompactionView".
+ */
+export interface ContextCompactionView {
+  compactThresholdTokens?: number | null;
+  effectiveMode: string;
+  /**
+   * Native APIs are preferred where supported; summaries use the same model route.
+   */
+  effectiveStrategy: string;
+  inputLimitTokens?: number | null;
+  observedTokens?: number | null;
+  pending: boolean;
+  queued: boolean;
+  recoveryAttempts: number;
+  requestedMode: string;
+  thresholdSource: string;
 }
 /**
  * A session context entry, faithful to the stored engine entry: keyed,
@@ -2144,7 +2168,7 @@ export interface PendingApprovalView {
   subject: ApprovalSubjectView;
 }
 /**
- * Provider-reported token usage for one generation or a sum of them. Every
+ * Provider-reported token usage for generations and compactions, or their sum. Every
  * field is optional because providers report different subsets; counts
  * that a provider reports separately (Anthropic's cache read/write) are
  * folded into `input_tokens` so the field always means "prompt tokens
@@ -2197,7 +2221,14 @@ export interface SessionConfig {
  * via the `definition` "ContextConfig".
  */
 export interface ContextConfig {
+  /**
+   * Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
+   */
   compaction?: CompactionPolicy | null;
+  /**
+   * Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+   */
+  inputLimitTokens?: number | null;
 }
 /**
  * Capability grants. An absent feature is not granted; `{}` grants it with
@@ -2765,8 +2796,8 @@ export interface RunView {
   status: RunStatus;
   toolBatches?: ToolBatchView[];
   /**
-   * Provider token usage summed over the run's completed generations;
-   * absent until the first generation reports usage. The cached share
+   * Provider token usage summed over the run's completed generations and standalone compactions;
+   * absent until the first operation reports usage. The cached share
    * (`cachedInputTokens / inputTokens`) is the prompt-cache hit rate.
    */
   usage?: LlmUsageView | null;

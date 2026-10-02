@@ -1,4 +1,4 @@
-import type { ToolItemStatus } from "@lightspeed-ai/agent-client";
+import type { LlmUsageView, ToolItemStatus } from "@lightspeed-ai/agent-client";
 import type { SessionEvent, SessionItem, SessionRunView, ToolCallDisplay } from "@/api";
 
 /// Folded chat model for a session. The event log is the source of truth;
@@ -163,10 +163,12 @@ export interface TranscriptState {
   activeRun: ActiveRun | null;
   /// Runs accepted behind the active run, in start order.
   queuedRuns: QueuedRun[];
-  /// Bumped on every run lifecycle change so the page can refresh the
-  /// authoritative session view (queued-run text, terminal statuses).
+  /// Bumped on run and compaction lifecycle changes so the page can refresh
+  /// the authoritative session view (queued runs, outcomes, compaction status).
   runRevision: number;
   closed: boolean;
+  /// One standalone operation, whose marker evolves from queued to finished.
+  compaction: { markerKey: string; phase: "queued" | "pending"; runId?: string } | null;
   /// Entry ids already folded (context events repeat entries on replace).
   seenItems: Set<string>;
   seenEvents: Set<number>;
@@ -179,7 +181,7 @@ export interface TranscriptState {
   /// These indexes merge them into one stable group in the transcript.
   toolCallByCallId: Map<string, ToolCallLocation>;
   toolGroupByBatchId: Map<string, number>;
-  /// Provider-reported tokens per run, summed over its generations, with the
+  /// Provider-reported tokens per run, summed over generation and compaction, with the
   /// share served from prompt cache — surfaced when the run finishes.
   runUsage: Map<string, RunUsage>;
   /// Input to each run's last generation, never the cumulative usage.
@@ -193,7 +195,7 @@ export interface TranscriptState {
 }
 
 export interface RunUsage {
-  /// Undefined when any generation omitted this count.
+  /// Undefined when any model operation omitted this count.
   inputTokens?: number;
   cachedInputTokens?: number;
   outputTokens?: number;
@@ -207,6 +209,7 @@ export function emptyTranscript(): TranscriptState {
     queuedRuns: [],
     runRevision: 0,
     closed: false,
+    compaction: null,
     seenItems: new Set(),
     seenEvents: new Set(),
     runPhases: new Map(),
@@ -260,6 +263,7 @@ export function applyEvents(
     queuedRuns: state.queuedRuns,
     runRevision: state.runRevision,
     closed: state.closed,
+    compaction: state.compaction,
     seenItems: state.seenItems,
     seenEvents: state.seenEvents,
     runPhases: state.runPhases,
@@ -323,15 +327,7 @@ export function applyEvents(
         break;
       case "turnGenerationCompleted": {
         const runId = String(kind.runId);
-        const current = next.runUsage.get(runId);
-        const sum = (previous: number | undefined, value: number | null | undefined) =>
-          value == null || (current && previous === undefined) ? undefined : (previous ?? 0) + value;
-        next.runUsage.set(runId, {
-          inputTokens: sum(current?.inputTokens, kind.usage?.inputTokens),
-          outputTokens: sum(current?.outputTokens, kind.usage?.outputTokens),
-          cachedInputTokens: sum(current?.cachedInputTokens, kind.usage?.cachedInputTokens),
-          modelCalls: (current?.modelCalls ?? 0) + 1,
-        });
+        recordModelUsage(next, runId, kind.usage, 1);
         if (kind.usage?.inputTokens != null) {
           next.runContextTokens.set(runId, kind.usage.inputTokens);
         } else {
@@ -414,15 +410,36 @@ export function applyEvents(
         } : runSummary(next, event, runId, "cancelled"));
         break;
       }
-      case "contextCompactionFinished":
-        next.entries.push({
-          kind: "marker",
-          key: `evt-${event.cursor.seq}`,
-          text: "context compacted",
-          tone: "muted",
-        });
+      case "contextCompactionRequested": {
+        const runId = compactionRunId(next, event);
+        const queued = kind.trigger === "manualQueued";
+        const markerKey = next.compaction?.markerKey ?? `evt-${event.cursor.seq}`;
+        next.compaction = { markerKey, phase: queued ? "queued" : "pending", ...(runId ? { runId } : {}) };
+        setCompactionMarker(next, markerKey, queued ? "context compaction queued" : "compacting context", "muted");
+        if (!queued && runId === next.activeRun?.runId) setRunLabel(next, "compacting context");
+        next.runRevision += 1;
         break;
+      }
+      case "contextCompactionFinished": {
+        const runId = event.joins.runId != null ? String(event.joins.runId)
+          : next.compaction?.runId ?? compactionRunId(next, event);
+        const calls = kind.calls ?? 0;
+        if (runId && (calls > 0 || kind.usage != null)) {
+          recordModelUsage(next, runId, kind.usage, calls);
+        }
+        setCompactionMarker(next, next.compaction?.markerKey ?? `evt-${event.cursor.seq}`,
+          kind.status === "succeeded" ? "context compacted" : "context compaction failed",
+          kind.status === "succeeded" ? "muted" : "error");
+        next.compaction = null;
+        if (next.activeRun?.label === "compacting context") setRunLabel(next, "working");
+        next.runRevision += 1;
+        break;
+      }
       case "sessionClosed":
+        if (next.compaction) {
+          setCompactionMarker(next, next.compaction.markerKey, "context compaction interrupted", "muted");
+          next.compaction = null;
+        }
         next.activeRun = null;
         next.queuedRuns = [];
         next.runRevision += 1;
@@ -459,6 +476,33 @@ function runSummary(
     toolCalls: usageComplete ? (state.runToolCalls.get(runId)?.size ?? 0) : undefined,
     durationMs: runDurationMs(state, runId, event.observedAtMs),
   };
+}
+
+function recordModelUsage(state: TranscriptState, runId: string, usage: LlmUsageView | null | undefined, calls: number) {
+  const current = state.runUsage.get(runId);
+  const sum = (previous: number | undefined, value: number | null | undefined) =>
+    value == null || (current && previous === undefined) ? undefined : (previous ?? 0) + value;
+  state.runUsage.set(runId, {
+    inputTokens: sum(current?.inputTokens, usage?.inputTokens),
+    outputTokens: sum(current?.outputTokens, usage?.outputTokens),
+    cachedInputTokens: sum(current?.cachedInputTokens, usage?.cachedInputTokens),
+    modelCalls: (current?.modelCalls ?? 0) + calls,
+  });
+}
+
+function compactionRunId(state: TranscriptState, event: SessionEvent): string | undefined {
+  if (event.joins.runId != null) return String(event.joins.runId);
+  // A reconciled snapshot may describe a run that started after this event.
+  // Only loaded run-start history proves attribution for unjoined events.
+  const runId = state.activeRun?.runId;
+  return runId && state.completeUsageRuns.has(runId) ? runId : undefined;
+}
+
+function setCompactionMarker(state: TranscriptState, key: string, text: string, tone: "muted" | "error") {
+  const marker: TranscriptEntry = { kind: "marker", key, text, tone };
+  const index = state.entries.findIndex((entry) => entry.key === key);
+  if (index < 0) state.entries.push(marker);
+  else state.entries[index] = marker;
 }
 
 function setRunLabel(state: TranscriptState, label: string) {
@@ -606,6 +650,9 @@ function applyItems(state: TranscriptState, items: SessionItem[]) {
     state.seenItems.add(item.id);
     const kind = item.kind;
     const source = item.source;
+    // Replacement context is model input, not newly spoken conversation.
+    // Its standalone lifecycle event owns the single visible marker.
+    if (source?.type === "runtime" && ["standalone_compaction_prefix", "provider_standalone_compaction"].includes(source.label)) continue;
     const runId = source && "runId" in source ? String(source.runId) : undefined;
 
     if (kind.type === "message" && kind.role === "user" && (item.content.mediaHandle || isAttachedTextDocument(item))) {

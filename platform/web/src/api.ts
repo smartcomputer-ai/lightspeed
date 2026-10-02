@@ -5,6 +5,7 @@ import type {
   ResourceAccessSummary,
   SessionActivity,
   ContextEntryView,
+  ContextCompactionView,
   RunSummaryView,
   RunStatus,
   EnvironmentCredentialSourceView,
@@ -486,6 +487,7 @@ export interface SessionView {
   activeEnvironmentId?: string | null;
   config?: Record<string, unknown> | null;
   configRevision: number;
+  activeContext?: { compaction?: ContextCompactionView | null };
   management?: SessionManagement | null;
   origin?: SessionOrigin | null;
   /// Bounded newest-first run summary page. Authoritative for recent run

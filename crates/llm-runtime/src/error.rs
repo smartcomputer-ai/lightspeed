@@ -5,6 +5,8 @@ pub type LlmAdapterResult<T> = Result<T, LlmAdapterError>;
 
 #[derive(Debug, Error)]
 pub enum LlmAdapterError {
+    #[error("context limit exceeded: {message}")]
+    ContextLimit { message: String },
     #[error("unsupported LLM provider API kind: {api_kind:?}")]
     UnsupportedApiKind { api_kind: ProviderApiKind },
 

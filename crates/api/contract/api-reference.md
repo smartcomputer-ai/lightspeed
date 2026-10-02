@@ -237,7 +237,7 @@ Replaces active tool results and user messages in place by entry id, with per-en
 
 **Compact session context**
 
-Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
 
 - Access: `{"kind":"universe","action":"control_session"}`
 - Group: `session`

@@ -33,6 +33,7 @@ pub const ANTHROPIC_MCP_BETA: &str = "mcp-client-2025-11-20";
 /// is rejected without it, so requests carrying it always send the header.
 pub const ANTHROPIC_THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
 pub const ANTHROPIC_COMPACTION_BETA: &str = "compact-2026-01-12";
+pub const ANTHROPIC_ON_DEMAND_COMPACTION_BETA: &str = "compact-2026-09-04";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -476,7 +477,14 @@ impl CreateMessageRequest {
                 matches!(block, ContentBlockParam::Raw(raw) if raw["type"] == "compaction")
             }))
         });
-        if compaction_enabled || replays_compaction {
+        let signed_compaction = self.messages.iter().any(|message| {
+            matches!(&message.content, MessageParamContent::Blocks(blocks) if blocks.iter().any(|block| {
+                matches!(block, ContentBlockParam::Raw(raw) if raw["type"] == "compaction" && raw.get("signature").is_some_and(|s| s.is_string()))
+            }))
+        });
+        if self.extra.contains_key("compaction") || (signed_compaction && !compaction_enabled) {
+            betas.push(ANTHROPIC_ON_DEMAND_COMPACTION_BETA);
+        } else if compaction_enabled || replays_compaction {
             betas.push(ANTHROPIC_COMPACTION_BETA);
         }
         if self
@@ -997,6 +1005,7 @@ pub enum StopReason {
     ToolUse,
     PauseTurn,
     Refusal,
+    #[serde(alias = "model_context_window_exceeded")]
     ModelContextWindow,
     #[serde(other)]
     Unknown,

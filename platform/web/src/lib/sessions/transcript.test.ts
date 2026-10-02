@@ -855,6 +855,200 @@ describe("session transcript run control", () => {
   });
 });
 
+describe("standalone compaction", () => {
+  it("preserves the live marker and hydrates its run when pagination reveals an earlier queued request", () => {
+    const window = new TranscriptWindow();
+    window.append([event(5, { type: "contextCompactionRequested", trigger: "manual" })]);
+    window.prepend([
+      event(1, { type: "runStarted" }),
+      event(2, { type: "turnGenerationCompleted", usage: { inputTokens: 100, outputTokens: 10 } }),
+      event(3, { type: "contextCompactionRequested", trigger: "manualQueued" }),
+    ]);
+    expect(window.state.compaction).toMatchObject({ markerKey: "evt-5", phase: "pending", runId: "run-test" });
+    expect(window.state.entries).toEqual([{ kind: "marker", key: "evt-5", text: "compacting context", tone: "muted" }]);
+    // Older lifecycle events never resurrect the live controls.
+    expect(window.state.activeRun).toBeNull();
+    window.append([
+      event(6, { type: "contextCompactionFinished", status: "succeeded", calls: 2, usage: { inputTokens: 200, outputTokens: 20 } }),
+      event(7, { type: "runCompleted" }),
+    ]);
+    expect(window.state.entries.filter((entry) => entry.kind === "marker")).toEqual([
+      { kind: "marker", key: "evt-5", text: "context compacted", tone: "muted" },
+    ]);
+    expect(window.state.entries.at(-1)).toMatchObject({ usage: { inputTokens: 300, outputTokens: 30, modelCalls: 3 } });
+  });
+
+  it("updates one queued marker through execution and completion without pausing in-flight tools", () => {
+    let state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "toolBatchStarted", calls: [] }),
+      event(3, { type: "contextCompactionRequested", trigger: "manualQueued" }),
+    ]);
+    expect(state.activeRun?.label).toBe("running tools");
+    expect(state.entries.at(-1)).toMatchObject({ kind: "marker", key: "evt-3", text: "context compaction queued" });
+    state = applyEvents(state, [event(4, { type: "contextCompactionRequested", trigger: "manual" })]);
+    expect(state.activeRun?.label).toBe("compacting context");
+    expect(state.entries.filter((entry) => entry.kind === "marker")).toEqual([
+      { kind: "marker", key: "evt-3", text: "compacting context", tone: "muted" },
+    ]);
+    state = applyEvents(state, [event(5, { type: "contextCompactionFinished", status: "succeeded" })]);
+    expect(state.activeRun?.label).toBe("working");
+    expect(state.compaction).toBeNull();
+    expect(state.entries.filter((entry) => entry.kind === "marker")).toEqual([
+      { kind: "marker", key: "evt-3", text: "context compacted", tone: "muted" },
+    ]);
+    state = applyEvents(state, [event(6, { type: "turnGenerationRequested" })]);
+    expect(state.activeRun?.label).toBe("thinking");
+  });
+
+  it("shows idle progress and failure without inventing a run", () => {
+    let state = applyEvents(emptyTranscript(), [event(1, { type: "contextCompactionRequested", trigger: "manual" })]);
+    expect(state.activeRun).toBeNull();
+    expect(state.entries).toEqual([{ kind: "marker", key: "evt-1", text: "compacting context", tone: "muted" }]);
+    state = applyEvents(state, [event(2, { type: "contextCompactionFinished", status: "failed", failureRef: "sha256:failure" })]);
+    expect(state.entries).toEqual([{ kind: "marker", key: "evt-1", text: "context compaction failed", tone: "error" }]);
+    expect(state.runUsage.size).toBe(0);
+    expect(state.compaction).toBeNull();
+  });
+
+  it("shows failure when the request is outside the loaded window", () => {
+    const state = applyEvents(emptyTranscript(), [event(2, { type: "contextCompactionFinished", status: "failed" })]);
+    expect(state.entries).toEqual([{ kind: "marker", key: "evt-2", text: "context compaction failed", tone: "error" }]);
+  });
+
+  it("clears unfinished compaction when the session closes", () => {
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "contextCompactionRequested", trigger: "manual" }),
+      event(2, { type: "sessionClosed" }),
+    ]);
+    expect(state.compaction).toBeNull();
+    expect(state.closed).toBe(true);
+    expect(state.entries).toMatchObject([
+      { kind: "marker", text: "context compaction interrupted" },
+      { kind: "marker", text: "session closed" },
+    ]);
+  });
+
+  it("keeps cancellation status throughout an abandoned compaction", () => {
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "contextCompactionRequested", trigger: "contextLimit" }),
+      event(3, { type: "runCancellationRequested" }),
+      event(4, { type: "contextCompactionFinished", status: "failed", calls: 0 }),
+    ]);
+    expect(state.activeRun).toMatchObject({ label: "cancelling", cancelling: true });
+    expect(state.compaction).toBeNull();
+  });
+
+  it.each(["openai.responses.compaction", "anthropic.messages.compaction", "openai.completions.compaction", "openai.responses.compaction_summary_text"])(
+    "hides %s replacement contents while preserving historical conversation", (providerKind) => {
+      const source = { type: "runtime" as const, label: "standalone_compaction_prefix" };
+      const events = [
+        event(1, { type: "contextEntriesApplied", entries: [
+          item("original-input", { type: "message", role: "user" }, { text: "Original input" }),
+          item("original-output", { type: "message", role: "assistant" }, { text: "Original answer" }),
+        ] }),
+        event(2, { type: "contextCompactionRequested", trigger: "manual" }),
+        event(3, { type: "contextEntriesRemoved", entryIds: ["original-input", "original-output"], reason: "providerCompacted" }),
+        event(4, { type: "contextEntriesApplied", entries: [
+          item("replacement-native", { type: "providerOpaque" }, { source, content: { contentRef: "sha256:replacement", providerKind }, text: "Hidden native bytes" }),
+          item("replacement-user", { type: "message", role: "user" }, { source, text: "Synthetic summary" }),
+          item("replacement-assistant", { type: "message", role: "assistant" }, { source, text: "Copied old assistant reply" }),
+          item("replacement-tool", { type: "toolCall", callId: "old-call", name: "exec" }, { source }),
+          item("replacement-reasoning", { type: "reasoningState" }, { source, text: "Copied old reasoning" }),
+        ] }),
+        event(5, { type: "contextCompactionFinished", status: "succeeded" }),
+      ];
+      const state = events.reduce((state, event) => applyEvents(state, [event]), emptyTranscript());
+      expect(state.entries).toMatchObject([
+        { kind: "message", text: "Original input" },
+        { kind: "message", text: "Original answer" },
+        { kind: "marker", text: "context compacted" },
+      ]);
+      expect(state.entries).toHaveLength(3);
+      const window = new TranscriptWindow();
+      window.append(events.slice(3));
+      window.prepend(events.slice(0, 3));
+      expect(window.state.entries).toEqual(state.entries);
+      expect(window.state.compaction).toBeNull();
+      window.append(events);
+      expect(window.state.entries).toEqual(state.entries);
+    },
+  );
+
+  it("accounts for repeated chunked operations without changing the last generation context", () => {
+    const initial = [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "turnGenerationCompleted", usage: { inputTokens: 1000, outputTokens: 100, cachedInputTokens: 800 } }),
+      event(3, { type: "contextCompactionRequested", trigger: "contextLimit" }),
+      event(4, { type: "contextCompactionFinished", status: "succeeded", calls: 3,
+        usage: { inputTokens: 200, outputTokens: 40, cachedInputTokens: 0 } }),
+    ];
+    const state = applyEvents(emptyTranscript(), initial);
+    expect(state.runContextTokens.get("run-test")).toBe(1000);
+    const rest = [
+      event(5, { type: "turnGenerationCompleted", usage: { inputTokens: 500, outputTokens: 20, cachedInputTokens: 100 } }),
+      event(6, { type: "contextCompactionRequested", trigger: "highWatermark" }),
+      event(7, { type: "contextCompactionFinished", status: "succeeded", calls: 2,
+        usage: { inputTokens: 150, outputTokens: 10, cachedInputTokens: 0 } }),
+      event(8, { type: "runCompleted" }),
+    ];
+    const finished = applyEvents(state, rest);
+    expect(finished.entries.at(-1)).toMatchObject({
+      kind: "run-summary", contextTokens: 500, usageComplete: true,
+      usage: { inputTokens: 1850, outputTokens: 170, cachedInputTokens: 900, modelCalls: 7 },
+    });
+    expect(finished.entries.filter((entry) => entry.kind === "marker")).toHaveLength(2);
+    expect(applyEvents(finished, [...initial, ...rest]).entries).toEqual(finished.entries);
+    const window = new TranscriptWindow();
+    window.append([...initial.slice(3), ...rest]);
+    expect(window.state.entries.at(-1)).toMatchObject({ usageComplete: false, usage: undefined });
+    window.prepend(initial.slice(0, 3));
+    expect(window.state.entries).toEqual(finished.entries);
+    expect(window.state.compaction).toBeNull();
+  });
+
+  it("does not charge idle compaction to a subsequently reconciled run", () => {
+    let state = reconcileRuns(emptyTranscript(), [runView("run-test", "running")]);
+    state = applyEvents(state, [
+      event(1, { type: "contextCompactionFinished", status: "succeeded", calls: 2, usage: { inputTokens: 900, outputTokens: 90 } }),
+      event(2, { type: "runStarted" }),
+      event(3, { type: "turnGenerationCompleted", usage: { inputTokens: 100, outputTokens: 10 } }),
+      event(4, { type: "runCompleted" }),
+    ]);
+    expect(state.entries.at(-1)).toMatchObject({ usage: { inputTokens: 100, outputTokens: 10, modelCalls: 1 } });
+  });
+
+  it("uses explicit run joins when the run start is outside the loaded window", () => {
+    const completed = event(1, { type: "contextCompactionFinished", status: "succeeded", calls: 2,
+      usage: { inputTokens: 200, outputTokens: 20 } });
+    completed.joins = { runId: "joined-run" };
+    const state = applyEvents(emptyTranscript(), [completed]);
+    expect(state.runUsage.get("joined-run")).toMatchObject({ inputTokens: 200, outputTokens: 20, modelCalls: 2 });
+    expect(state.runUsage.has("run-test")).toBe(false);
+  });
+
+  it("does not erase known usage for a cancelled operation that made no calls", () => {
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "turnGenerationCompleted", usage: { inputTokens: 100, outputTokens: 10 } }),
+      event(3, { type: "contextCompactionFinished", status: "failed", calls: 0 }),
+      event(4, { type: "runCancelled" }),
+    ]);
+    expect(state.entries.at(-1)).toMatchObject({ usage: { inputTokens: 100, outputTokens: 10, modelCalls: 1 } });
+  });
+
+  it("keeps unreported compaction usage unknown rather than displaying partial totals", () => {
+    const state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted" }),
+      event(2, { type: "turnGenerationCompleted", usage: { inputTokens: 100, outputTokens: 10 } }),
+      event(3, { type: "contextCompactionFinished", status: "succeeded", calls: 1 }),
+      event(4, { type: "runCompleted" }),
+    ]);
+    expect(state.entries.at(-1)).toMatchObject({ usage: { inputTokens: undefined, outputTokens: undefined, modelCalls: 2 } });
+  });
+});
+
 describe("run statistics", () => {
   it("includes provider-native tools once while excluding compaction entries", () => {
     const source = { type: "assistantOutput" as const, runId: "run-test", turnId: "turn-test" };

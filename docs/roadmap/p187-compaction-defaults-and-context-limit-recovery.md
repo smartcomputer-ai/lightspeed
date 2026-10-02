@@ -1,8 +1,6 @@
 # P187 — Compaction defaults and context-limit recovery
 
-**Status:** Proposed, 2026-10-01. Existing compaction paths have been reviewed
-and live-tested; the defaults, native Anthropic standalone path, and recovery
-behavior below remain to be implemented.
+**Status:** Implemented, 2026-10-01. Final validation results are recorded below.
 
 Builds on [provider-native compaction](archive/p64-provider-native-compaction.md)
 and [provider-safe context repair](p186-provider-safe-media-and-context-entry-redaction.md).
@@ -35,9 +33,9 @@ otherwise the Lightspeed summarizer. It does not change the configured policy.
 Compaction changes active context through ordinary events; durable history and
 original content remain subject to their existing retention policies.
 
-## Current implementation and verification
+## Baseline implementation and verification
 
-The repository currently provides:
+Before this change, the repository provided:
 
 - `ContextConfig.compaction: Option<CompactionPolicy>` with Disabled,
   ProviderTriggered, and ProviderStandalone modes. Omission currently disables
@@ -370,6 +368,62 @@ at deterministic boundaries; replay must not consult today's model catalog.
 Do not silently reinterpret old omitted settings as permission for new paid
 summary calls. Explicit Disabled remains authoritative in every version.
 
+## Implementation progress
+
+The engine now resolves omitted policies to standalone on new session and
+configuration admissions. Historical omitted policies keep their original
+Disabled replay behavior; replacing configuration opts that session into the
+new resolution. Explicit Disabled remains unchanged. No historical events are
+rewritten.
+
+The shared standalone lifecycle runs between generations, including multiple
+operations within one run. It freezes the covered prefix and revision, replaces
+that prefix atomically on success, and keeps the two newest settled generation
+exchanges and their immediately preceding user input where older history exists.
+With no older prefix, explicit compaction can cover the settled window. A second
+consecutive context-length failure expands coverage to the whole settled window;
+unconsumed current input and unanswered tool exchanges cannot be discarded.
+Recovery allows two attempts per consecutive overflow sequence, resets after a
+successful generation or a new run, and preserves the exact terminal provider
+error when its budget is exhausted. Partial rejected generation output is not
+committed or executed. Manual requests queue without moving an in-flight
+request's revision; cancellation can abandon a pending compaction.
+
+The runtime rolls bounded complete chunks into one replacement window. Defaults
+are 32 calls, 2,000,000 cumulative input tokens, and a 600-second operation
+deadline. Typed context-length rejection shrinks a chunk at a safe boundary;
+ordinary invalid requests, authentication failures, and refusals abort. A
+smallest atomic exchange that cannot fit fails clearly and leaves source context
+intact. Previous native compacted windows remain indivisible. Tool-result
+clearing, chunk telemetry events, and learned thresholds are deferred.
+
+Capacity is resolved outside the reducer and recorded separately from the
+user's optional `context.inputLimitTokens` override. Anthropic model discovery
+supplies reported input capacity. OpenAI and custom routes whose discovery does
+not supply it remain unknown; they use error-driven recovery unless an override
+is supplied. The default proactive threshold is 80% of known usable input
+capacity. Run overrides use their own resolved capacity, and never inherit a
+limit from a different model. Retained signed, encrypted, or reasoning state
+prevents incompatible model changes.
+
+OpenAI standalone retains every item in the returned window, in order. Supported
+Anthropic models use native on-demand compaction, retain its exact signed block,
+and select the on-demand beta on replay. A retained signed standalone artifact
+suppresses Anthropic threshold compaction while preserving the requested policy.
+Older Messages models and all Chat Completions routes use ordinary summary
+generations. Explicitly unavailable native endpoints (unsupported operation or
+HTTP 404/405/501) fall back to a summary call on the same route. Generic HTTP 400
+errors do not authorize a fallback. Native requests retain current tool/catalog
+configuration, and Anthropic provider-hosted MCP auth is resolved at send time.
+
+API projections expose requested/effective mode, strategy, threshold/source,
+capacity, observed token usage when current, pending/queued state, recovery
+attempts, and finished-call usage/counts. Session settings show effective mode,
+threshold source, pending/queued status, attempts, and the Anthropic transition.
+Public contracts and TypeScript consumers have been regenerated. Fine-grained
+per-chunk progress and provider-reported thinking-loss telemetry remain follow-up
+observability work; the engine never rewrites the preserved tail's raw entries.
+
 ## Architecture and implementation sequence
 
 The deterministic engine owns policy facts, protected ranges, safe boundaries,
@@ -384,23 +438,112 @@ boundaries rather than adding a separate orchestration framework.
 
 - [x] Review existing implementation and provider contracts.
 - [x] Live-verify existing triggered and standalone paths as recorded above.
-- [ ] Define capability resolution, Engine default upgrade semantics, and
+- [x] Define capability resolution, Engine default upgrade semantics, and
   requested/effective policy facts; implement validation and projections.
-- [ ] Preserve typed context-length failures and add a replayable recovery
+- [x] Preserve typed context-length failures and add a replayable recovery
   lifecycle without terminalizing the run before recovery is considered.
-- [ ] Preserve the full OpenAI standalone output; implement native Anthropic
+- [x] Preserve the full OpenAI standalone output; implement native Anthropic
   on-demand requests, signed-block replay, and effective strategy transitions.
-- [ ] Add protected-tail selection within active runs, bounded rolling chunks,
+- [x] Add protected-tail selection within active runs, bounded rolling chunks,
   repeated compaction, and summary validation. Defer tool-result clearing.
-- [ ] Retain full OpenAI/Anthropic provider-triggered lowering, capture, pruning,
+- [x] Retain full OpenAI/Anthropic provider-triggered lowering, capture, pruning,
   continuation, and usage support alongside standalone defaults and recovery.
-- [ ] Add model-aware standalone thresholds and safe pre-generation triggers,
+- [x] Add model-aware standalone thresholds and safe pre-generation triggers,
   including active runs and model overrides.
-- [ ] Allow manual compaction in all modes with safe scheduling and revision
+- [x] Allow manual compaction in all modes with safe scheduling and revision
   guards; expose policy, recovery, and usage in API/UI/CLI projections.
-- [ ] Regenerate public contracts and workflow consumers when their boundaries
-  change; update user documentation with user review.
-- [ ] Run replay, integration, and authorized live validation for the new paths.
+- [x] Regenerate public contracts and workflow consumers; record implementation
+  and validation here. Broader user-guide changes remain subject to user review.
+- [x] Run replay, integration, and authorized live validation for the new paths.
+- [x] Group context bookkeeping by ownership: compaction phase and completion
+  markers, retained generation metadata, revision-bound usage observations, and
+  run-owned overflow recovery.
+
+The state refactor on 2026-10-02 retains the Requested, Queued, and Finished
+events. `ContextState` now has five fields: revision, entries, compaction,
+last generation metadata, and an optional usage observation. Compaction uses
+Idle, QueuedManual, or Pending with a required frozen plan; requests also require
+that plan, without an older planless-request compatibility path. Model and input
+capacity remain available after a run ends, while token observations are usable
+only at their recorded context revision. Recovery attempts and the recovered
+turn belong to the active run, so a subsequent run starts with a fresh budget.
+Queued and pending snapshot restoration, observation replay and invalidation,
+and a new run after exhausted recovery are covered by deterministic checks.
+
+The frontend transcript retains original conversation history while suppressing
+standalone replacement entries, including native messages, tool copies, and
+text summaries. A single operation marker progresses through queued, compacting,
+and succeeded or failed states; provider-triggered compaction retains its native
+marker. Run statistics include reported standalone usage and call counts while
+keeping the last generation's context measurement separate. Older-page loading
+preserves a live marker's identity and recovers its run attribution without
+replaying old lifecycle events into live controls. Session closure interrupts
+unfinished progress. Validation on 2026-10-02 passed all 688 frontend tests,
+TypeScript checking, and the production frontend build.
+
+Two seeded demo conversations now exercise the transcript and settings on
+2026-10-02. Software Factory's LIN-1421 implementation thread uses Engine
+default standalone with a 10,000-token input override and the derived 8,000-token
+threshold. It compacts inside one run before opening the PR, keeps the last two
+completed tool exchanges unchanged, and includes the compaction call in run
+usage. Personal Assistant's Ada Telegram thread uses provider-triggered
+compaction with an explicit 50,000-token threshold; its native artifact appears
+inside an ordinary generation and later work retains the promised cohort cut,
+references, and send-approval requirement. Both examples use Opus 5.5 and keep
+the original transcript history. Demo policy edits refresh the settings
+projection. These are simulated provider artifacts, not additional live-provider
+evidence. All 691 frontend tests, TypeScript checking, and the demo build passed.
+
+## Implementation validation
+
+State-refactor checks on 2026-10-02 passed: 788 scoped library tests across the
+engine, API projection, workflow, hosted server, and in-process runner; the exact
+workspace/all-targets Clippy gate with warnings denied; and all 14 rerun live
+cases. The live checks comprise the 12 dedicated OpenAI Responses, Anthropic
+Opus 5.5, and OpenAI/DeepSeek Chat Completions compaction tests plus the two
+serialized hosted standalone-compaction and continuation tests.
+
+Completed checks on 2026-10-01:
+
+- Cross-crate engine, runtime, provider client, API projection, workflow, and
+  in-process runner tests, including replay, protected tool exchanges, unknown
+  capacity recovery, partial-output discard, cancellation, manual queueing,
+  exact full native windows, same-route fallback, and capability selection.
+- Hosted runtime library tests: 359 passed, one unrelated credentialed test
+  ignored. Additional projection and runtime budget tests passed.
+- Exact workspace gate: `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+- TypeScript typecheck, consumer suites, all 672 web tests, and production/demo
+  builds. Regenerated artifacts were checked for repeatable output.
+- OpenAI Responses live suite: four passed, covering triggered capture/pruning
+  and continuation, omitted threshold, manual native standalone, and proactive
+  standalone.
+- Anthropic Messages live suite using `claude-opus-5-5`: four passed, covering
+  native on-demand manual/proactive compaction, rolling chunks with unchanged
+  native recent turns and a triggered-to-standalone transition, and native
+  triggered capture/pruning/continuation.
+- OpenAI GPT-5.5 and DeepSeek V4 Pro Chat Completions live compaction: four passed
+  across summary fact retention and continuation.
+
+A subsequent authorized rerun passed all 18 selected live tests: the 12 dedicated
+provider compaction cases, four direct adapter/compatibility checks, and two new
+provider-backed hosted tests through local Temporal, PostgreSQL, and the object
+store. The hosted cases cover manual compaction in Disabled, proactive
+standalone, retained native artifacts, continuation with exact fact recall, and
+finished-call usage. They wait for compaction's own completion independently of
+run completion. Opus uses 5.5, including the shared live fixture default.
+
+The rerun corrected older Anthropic fixtures that expected a plain-text summary
+and a binding rejection during native whole-window compaction. The updated
+checks verify exact signed output and successful strict continuation from the
+replacement; strict rejection of edited preserved thinking during ordinary
+generation remains covered. Native capability selection also includes the
+currently documented Sonnet 5.5, Fable 5.1, and Mythos 5.1 model identifiers.
+
+Rare overflow and refusal outcomes use deterministic/synthetic fixtures. These
+passes do not claim live verification of every compatible custom endpoint or
+the complete credentialed Temporal test matrix. Unknown capacity remains deliberately
+reactive, and an oversized indivisible exchange fails without silently dropping
+history.
 
 ## Validation and acceptance
 
@@ -463,9 +606,8 @@ Provider documentation reviewed during the design discussion on 2026-10-01:
 - [OpenAI session memory examples](https://developers.openai.com/cookbook/examples/agents_sdk/session_memory):
   complete-turn trimming and older-history summarization with a recent tail.
 
-Remaining implementation choices are numeric threshold/tail/summary budgets,
-recovery attempt limits, the initial supported capability table and discovery
-fallback, and the exact public projection shape. Measure compaction quality,
+Initial numeric budgets, capacity discovery, native capability selection, and
+public projections are recorded in Implementation progress. Measure compaction quality,
 fact retention, latency, cost, and cache effects before tuning those defaults.
 The policy matrix, engine-managed standalone defaults, full provider-triggered
 support, Disabled semantics, manual override, native operation preference,

@@ -574,6 +574,8 @@ pub enum CoreAgentIoError {
     /// runtime records the rejection instead of retrying.
     #[error("provider rejected the request: {message}")]
     Rejected { message: String },
+    #[error("provider context limit exceeded: {message}")]
+    ContextLimit { message: String },
 }
 
 #[cfg(test)]

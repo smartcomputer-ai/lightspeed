@@ -2741,7 +2741,11 @@ mod tests {
             },
             generation: Default::default(),
             limits: Default::default(),
-            context: ContextConfig { compaction: None },
+            context: ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
+                compaction: None,
+            },
             features: Default::default(),
         }
     }

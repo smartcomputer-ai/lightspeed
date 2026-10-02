@@ -367,7 +367,7 @@ api_methods! {
     METHOD_SESSION_CONTEXT_REPLACE => replace_context(ContextReplaceParams) -> ContextReplaceResponse =>
         ["Replace session context entries", "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_CONTEXT_COMPACT => compact_context(ContextCompactParams) -> ContextCompactResponse =>
-        ["Compact session context", "Runs the configured compaction policy on an open idle session and waits for the resulting context revision."], access: MethodAccess::Universe(UniverseAction::ControlSession),
+        ["Compact session context", "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RUNS_START => start_run(RunStartParams) -> RunStartResponse =>
         ["Start an agent run", "Accepts input or existing context keys and returns once the run is accepted — queued behind an active run, or running — not when it finishes. Supply submissionId for retry safety, then follow session events or reread the session."], access: MethodAccess::Universe(UniverseAction::ControlSession),
     METHOD_SESSION_RUNS_LIST => list_runs(RunListParams) -> RunListResponse =>

@@ -26,8 +26,7 @@ pub(super) enum Raced<T> {
 /// (`TryCancel`: the future resolves at once, the worker learns through its
 /// heartbeat) and `Preempted` is returned.
 ///
-/// Standalone compaction is never raced (see
-/// `admissions::drain_pending_admissions`); callers simply await it.
+/// During compaction, only cancellation admissions can pass its frozen revision.
 pub(super) async fn race_activity_with_admissions<T, F>(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,

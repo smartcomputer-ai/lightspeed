@@ -159,8 +159,14 @@ pub(super) async fn drive_until_idle(
                 };
             }
             CoreAgentAction::CompactContext { request } => {
-                let result = call_context_compact(ctx, request).await?;
-                action = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
+                action = match call_context_compact(ctx, drive, request).await? {
+                    control::Raced::Completed(result) => {
+                        drive.resume_context_compaction(result, workflow_time_ms(ctx))?
+                    }
+                    control::Raced::Preempted => {
+                        drive.next_action_unbounded(workflow_time_ms(ctx))?
+                    }
+                };
             }
             CoreAgentAction::InvokeTools { request } => {
                 let request = match request.promise_control_argument_request() {
@@ -324,7 +330,7 @@ pub(super) fn should_close_on_terminal(args: &AgentSessionArgs, state: &CoreAgen
         && !state.runs.completed.is_empty()
         && state.runs.active.is_none()
         && state.runs.queued.is_empty()
-        && !state.context.pending_compaction
+        && !state.context.compaction.is_pending()
         && !state
             .promises
             .pending()

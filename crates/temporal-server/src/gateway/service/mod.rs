@@ -940,7 +940,10 @@ impl GatewayAgentApi {
         let session_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
             AgentApiError::invalid_request(format!("session is not open: {session_id}"))
         })?;
-        let run_config = api_config::run_config_for_start(session_config, config)?;
+        let mut run_config = api_config::run_config_for_start(session_config, config)?;
+        if let Some(model) = run_config.model_override.as_ref() {
+            run_config.input_limit_tokens = self.model_discovery.input_limit(model).await;
+        }
         let RunStartSource::Input { items } = source;
         let input = run_input_from_api(self.store.as_ref(), &items).await?;
         let source = engine::RunRequestSource::Input { input };
@@ -2269,10 +2272,11 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        let config = engine_session_config_from_api(
+        let mut config = engine_session_config_from_api(
             params.config,
             model_defaults::current_session_model(&loaded.state)?,
         )?;
+        self.resolve_context_capacity(&mut config).await;
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
@@ -2696,7 +2700,11 @@ impl AgentApiService for GatewayAgentApi {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
         let loaded = self.load_session_state(&session_id).await?;
-        self.require_open_idle_session(&session_id, &loaded, "context compaction")?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
         let baseline_revision = loaded.state.context.revision;
         let baseline_failures = self
             .query_status_optional(&session_id)

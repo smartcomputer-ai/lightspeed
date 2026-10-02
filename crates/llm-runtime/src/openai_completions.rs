@@ -249,6 +249,10 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
 
 #[async_trait]
 impl LlmCompactionAdapter for OpenAiCompletionsLlmAdapter {
+    fn blobs(&self) -> Option<&dyn BlobStore> {
+        Some(self.blobs.as_ref())
+    }
+
     async fn compact_context(
         &self,
         request: ContextCompactionRequest,
@@ -1235,6 +1239,21 @@ pub async fn result_from_compact_response(
     request: &ContextCompactionRequest,
     response: &ApiResponse<oai_c::Completion>,
 ) -> LlmAdapterResult<ContextCompactionResult> {
+    reject_failure_finish(response)?;
+    if response.parsed.choices.iter().any(|choice| {
+        finish_reason(choice.finish_reason.as_deref(), false) == LlmFinish::ContextLimit
+    }) {
+        return Err(LlmAdapterError::ContextLimit {
+            message: "compaction input exceeds the model context window".into(),
+        });
+    }
+    if response.parsed.choices.len() != 1
+        || response.parsed.choices[0].finish_reason.as_deref() != Some("stop")
+    {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: "Chat Completions compaction did not finish with a complete summary".into(),
+        });
+    }
     let summary = response.parsed.output_text();
     let summary = summary.trim();
     if summary.is_empty() {
@@ -1247,6 +1266,8 @@ pub async fn result_from_compact_response(
     }
     let content_ref = put_text(blobs, summary).await?;
     Ok(ContextCompactionResult {
+        usage: response.parsed.usage.as_ref().map(llm_usage),
+        calls: 1,
         session_id: request.session_id.clone(),
         context_revision: request.request.context.context_revision,
         status: ContextCompactionStatus::Succeeded,
@@ -1406,6 +1427,9 @@ fn finish_reason(reason: Option<&str>, has_tool_calls: bool) -> LlmFinish {
         Some("stop") => LlmFinish::Stop,
         Some("length") => LlmFinish::Length,
         Some("content_filter") => LlmFinish::ContentFilter,
+        Some("context_length_exceeded" | "max_input_tokens" | "max_prompt_tokens") => {
+            LlmFinish::ContextLimit
+        }
         Some(_) => LlmFinish::Unknown,
         None if has_tool_calls => LlmFinish::ToolCalls,
         None => LlmFinish::Unknown,
@@ -1798,6 +1822,9 @@ mod tests {
         assert_eq!(materialized.extra["thinking"], json!({"type":"enabled"}));
 
         let task = ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
             model: deepseek_request.model,
             request_fingerprint: "sha256:deepseek-compact".to_owned(),
             context: deepseek_request.context,
@@ -2628,6 +2655,9 @@ mod tests {
         let blobs = InMemoryBlobStore::new();
         let user_ref = blobs.insert_text("Long conversation").await;
         let task = ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
             model: model(),
             request_fingerprint: "sha256:compact".to_owned(),
             context: request(vec![entry(

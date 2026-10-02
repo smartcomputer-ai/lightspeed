@@ -275,14 +275,18 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
   const context = record(source.context);
   const compaction = record(context.compaction);
   const mode = string(compaction.mode);
+  const contextResult: RecordValue = {};
+  const inputLimit = parseNumber(numberString(context.inputLimitTokens));
+  if (inputLimit !== undefined) contextResult.inputLimitTokens = inputLimit;
   if (mode && mode !== "default") {
     const compactResult: RecordValue = { mode };
     for (const key of ["compactThresholdTokens", "targetTokens"] as const) {
       const number = parseNumber(numberString(compaction[key]));
       if (number !== undefined) compactResult[key] = number;
     }
-    result.context = { compaction: compactResult };
+    contextResult.compaction = compactResult;
   }
+  if (Object.keys(contextResult).length) result.context = contextResult;
 
   const sourceFeatures = record(source.features);
   const features: RecordValue = {};
@@ -388,6 +392,8 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
   if (toolChoice.type === "specific" && !string(toolChoice.toolId)) {
     return "A specific tool choice needs a tool id.";
   }
+  const inputLimit = record(config.context).inputLimitTokens;
+  if (typeof inputLimit === "number" && (!Number.isInteger(inputLimit) || inputLimit < 1)) return "Input limit tokens must be a positive integer.";
   const compaction = record(record(config.context).compaction);
   const apiKind = pinnedApiKind ?? string(model.apiKind);
   if (compaction.mode === "providerTriggered") {
@@ -1219,7 +1225,8 @@ function LimitsFields({ config, change }: { config: RecordValue; change: (fn: (n
 }
 
 function ContextFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
-  const compaction = record(record(config.context).compaction);
+  const context = record(config.context);
+  const compaction = record(context.compaction);
   const mode = string(compaction.mode) || "default";
   const update = (key: string, value: unknown) => change((next) => {
     const context = record(next.context);
@@ -1229,7 +1236,7 @@ function ContextFields({ config, change }: { config: RecordValue; change: (fn: (
     if (Object.keys(compact).length) context.compaction = compact; else delete context.compaction;
     if (Object.keys(context).length) next.context = context; else delete next.context;
   });
-  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Mode</FieldLabel><Select value={mode} onValueChange={(value) => update("mode", value === "default" ? undefined : value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">Engine default</SelectItem><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="providerTriggered">Provider triggered</SelectItem><SelectItem value="providerStandalone">Provider standalone</SelectItem></SelectContent></Select></Field>{mode === "providerTriggered" || mode === "providerStandalone" ? <Field><FieldLabel>Compact threshold tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.compactThresholdTokens)} onChange={(e) => update("compactThresholdTokens", parseNumber(e.target.value))} /></Field> : null}{mode === "providerStandalone" ? <Field><FieldLabel>Target tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.targetTokens)} onChange={(e) => update("targetTokens", parseNumber(e.target.value))} /></Field> : null}</div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Mode</FieldLabel><Select value={mode} onValueChange={(value) => update("mode", value === "default" ? undefined : value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">Engine default</SelectItem><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="providerTriggered">Provider triggered</SelectItem><SelectItem value="providerStandalone">Engine managed standalone</SelectItem></SelectContent></Select><FieldDescription>Engine default uses standalone compaction. Unknown context limits recover when the provider reports a full context window.</FieldDescription></Field><Field><FieldLabel>Input limit tokens</FieldLabel><Input type="number" min="1" value={numberString(context.inputLimitTokens)} onChange={(e) => change((next) => { const updated = record(next.context); const value = parseNumber(e.target.value); if (value === undefined) delete updated.inputLimitTokens; else updated.inputLimitTokens = value; if (Object.keys(updated).length) next.context = updated; else delete next.context; })} /><FieldDescription>Override the usable input capacity. Leave blank to use reported capacity or error-driven recovery.</FieldDescription></Field>{mode === "providerTriggered" || mode === "providerStandalone" ? <Field><FieldLabel>Compact threshold tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.compactThresholdTokens)} onChange={(e) => update("compactThresholdTokens", parseNumber(e.target.value))} /></Field> : null}{mode === "providerStandalone" ? <Field><FieldLabel>Target tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.targetTokens)} onChange={(e) => update("targetTokens", parseNumber(e.target.value))} /></Field> : null}</div>;
 }
 
 function FeaturePanel({

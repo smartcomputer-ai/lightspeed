@@ -307,6 +307,7 @@ mod tests {
         let mut state = CoreAgentState::new();
         state.lifecycle.status = CoreAgentStatus::Open;
         state.runs.active = Some(crate::ActiveRun {
+            context_recovery: Default::default(),
             run_id: RunId::new(1),
             status: RunStatus::Active,
             submission_id: None,

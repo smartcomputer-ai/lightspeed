@@ -52,6 +52,9 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         return Ok(Vec::new());
     }
 
+    if state.context.compaction.is_pending() {
+        return Ok(Vec::new());
+    }
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
@@ -65,7 +68,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     if active_run.status != RunStatus::Active {
         return Ok(Vec::new());
     }
-    if crate::core::components::run::latest_turn_is_terminal_run_outcome(active_run)? {
+    if crate::core::components::run::latest_turn_is_terminal_run_outcome(state, active_run)? {
         return Ok(Vec::new());
     }
 
@@ -216,6 +219,9 @@ pub enum TurnOutcome {
     },
     ToolCallsQueued,
     ContextUpdateRequired,
+    ContextLimit {
+        failure_ref: Option<BlobRef>,
+    },
     ApprovalsRequested,
     Failed {
         failure_ref: Option<BlobRef>,
@@ -416,6 +422,42 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 active_turn.facts = Some(facts.clone());
                 active_turn.status = TurnStatus::GenerationSettled;
             }
+            if *status == LlmGenerationStatus::Succeeded && facts.finish != LlmFinish::ContextLimit
+            {
+                state
+                    .runs
+                    .active
+                    .as_mut()
+                    .expect("validated active run")
+                    .context_recovery
+                    .attempts = 0;
+            }
+            if *status == LlmGenerationStatus::Succeeded {
+                let config = state.lifecycle.config.as_ref().expect("open config");
+                let run = state.runs.active.as_ref().expect("validated active run");
+                let model = run
+                    .run_config
+                    .model_override
+                    .clone()
+                    .unwrap_or_else(|| config.model.clone());
+                state.context.last_generation = Some(crate::ContextGenerationMetadata {
+                    model,
+                    input_limit_tokens: crate::compaction_input_limit_tokens(state),
+                });
+                state.context.usage_observation =
+                    facts.context_token_estimate.as_ref().map(|estimate| {
+                        crate::ContextUsageObservation {
+                            context_revision: state.context.revision,
+                            tokens: estimate.tokens.saturating_add(
+                                facts
+                                    .usage
+                                    .as_ref()
+                                    .and_then(|usage| usage.output_tokens)
+                                    .unwrap_or(0),
+                            ),
+                        }
+                    });
+            }
             if let Some(usage) = facts.usage.as_ref() {
                 let run = crate::core::components::run::active_run_mut(state, *run_id)?;
                 accumulate_usage(&mut run.usage, usage);
@@ -458,6 +500,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 TurnOutcome::FinalOutput { .. }
                 | TurnOutcome::ToolCallsQueued
                 | TurnOutcome::ContextUpdateRequired
+                | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested => TurnStatus::Completed,
                 TurnOutcome::Failed { .. } | TurnOutcome::Rejected { .. } => TurnStatus::Failed,
                 TurnOutcome::Cancelled => TurnStatus::Cancelled,
@@ -496,7 +539,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
     }
 }
 
-fn accumulate_usage(total: &mut Option<LlmUsage>, usage: &LlmUsage) {
+pub(crate) fn accumulate_usage(total: &mut Option<LlmUsage>, usage: &LlmUsage) {
     fn add(target: &mut Option<u32>, value: Option<u32>) {
         if let Some(value) = value {
             *target = Some(target.unwrap_or(0).saturating_add(value));
@@ -550,10 +593,17 @@ fn validate_outcome_for_generation(
     let valid = match status {
         LlmGenerationStatus::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
         LlmGenerationStatus::Failed => matches!(outcome, TurnOutcome::Failed { .. }),
+        LlmGenerationStatus::Rejected if facts.finish == LlmFinish::ContextLimit => matches!(
+            outcome,
+            TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }
+        ),
         LlmGenerationStatus::Rejected => matches!(outcome, TurnOutcome::Rejected { .. }),
         LlmGenerationStatus::Succeeded => match facts.finish {
             LlmFinish::ToolCalls => matches!(outcome, TurnOutcome::ToolCallsQueued),
-            LlmFinish::ContextLimit => matches!(outcome, TurnOutcome::ContextUpdateRequired),
+            LlmFinish::ContextLimit => matches!(
+                outcome,
+                TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }
+            ),
             LlmFinish::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
             LlmFinish::Failed | LlmFinish::ContentFilter | LlmFinish::Length => {
                 matches!(outcome, TurnOutcome::Failed { .. })

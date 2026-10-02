@@ -466,6 +466,8 @@ fn standalone_session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
                 target_tokens: Some(256),
@@ -477,6 +479,7 @@ fn standalone_session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
+        input_limit_tokens: None,
         max_turns: Some(4),
         reasoning_effort: None,
         parallel_tool_use: None,
@@ -639,4 +642,164 @@ async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState)
         .read_text(message_ref)
         .await
         .unwrap_or_else(|error| format!("failed to read failure message: {error}"))
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY and native on-demand compaction (costs real money)"]
+async fn anthropic_messages_live_chunked_compaction_keeps_tail_and_transitions_triggered_policy() {
+    let session_id = SessionId::new("anthropic-chunked-tail");
+    let (runner, blobs) = live_runner(&session_id).await;
+    let mut config = standalone_session_config(live_model_selection(), None);
+    config.context.compaction = Some(CompactionPolicy::ProviderTriggered {
+        compact_threshold_tokens: None,
+    });
+    config.context.input_limit_tokens = Some(6_000);
+    config.generation.reasoning_effort = Some("low".into());
+    let opened = runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 10,
+            command: CoreAgentCommand::OpenSession { config },
+            max_steps: Some(64),
+        })
+        .await
+        .unwrap();
+    assert!(opened.accepted);
+    for index in 0..8 {
+        let text = format!(
+            "Preserve the exact identifier {LIVE_MARKER}. Reference note {index}. {}",
+            "Routine inspection complete; the cartons are ready for dispatch. ".repeat(50)
+        );
+        let content_ref = blobs.put_bytes(text.into_bytes()).await.unwrap();
+        let seeded = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 20 + index,
+                max_steps: Some(64),
+                command: CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new(format!("client.reference.{index}")),
+                    entry: ContextEntryInput {
+                        kind: ContextEntryKind::Message {
+                            role: ContextMessageRole::User,
+                        },
+                        content: engine::ContentRef::text(content_ref),
+                        preview: None,
+                        origin: None,
+                        provenance_ref: None,
+                        token_estimate: None,
+                    },
+                },
+            })
+            .await
+            .unwrap();
+        assert!(seeded.accepted);
+    }
+    let mut state = None;
+    for index in 0..2 {
+        let input = blobs
+            .put_bytes(
+                b"Remember the identifier from the reference notes. Reply only READY.".to_vec(),
+            )
+            .await
+            .unwrap();
+        let completed = runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 40 + index,
+                max_steps: Some(64),
+                command: provider_compaction_run(input),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            completed.state.runs.completed.last().unwrap().status,
+            RunStatus::Completed,
+            "{}",
+            run_failure_text(blobs.as_ref(), &completed.state).await
+        );
+        state = Some(completed.state);
+    }
+    let tail: Vec<_> = state
+        .unwrap()
+        .context
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry.source,
+                engine::ContextEntrySource::AssistantOutput { .. }
+                    | engine::ContextEntrySource::Reasoning { .. }
+            )
+        })
+        .collect();
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 50,
+            max_steps: Some(128),
+            command: CoreAgentCommand::CompactContext,
+        })
+        .await
+        .unwrap();
+    assert!(
+        has_compaction_finished(
+            &compacted.emitted_entries,
+            ContextCompactionStatus::Succeeded
+        ),
+        "{}",
+        compaction_failure_text(blobs.as_ref(), &compacted.emitted_entries).await
+    );
+    for entry in tail {
+        assert!(
+            compacted.state.context.entries.contains(&entry),
+            "protected native tail entry changed"
+        );
+    }
+    let calls = compacted
+        .emitted_entries
+        .iter()
+        .find_map(|entry| match entry.event {
+            CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished { calls, .. }) => {
+                Some(calls)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(calls > 1, "fixture must exercise rolling chunks");
+    assert!(
+        matches!(
+            compacted
+                .state
+                .lifecycle
+                .config
+                .as_ref()
+                .unwrap()
+                .context
+                .compaction,
+            Some(CompactionPolicy::ProviderTriggered { .. })
+        ),
+        "requested policy stays unchanged"
+    );
+    let input = blobs.put_bytes(b"What is the exact identifier from the reference notes? Reply with only that identifier.".to_vec()).await.unwrap();
+    let recalled = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 60,
+            max_steps: Some(128),
+            command: provider_compaction_run(input),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        recalled.state.runs.completed.last().unwrap().status,
+        RunStatus::Completed,
+        "{}",
+        run_failure_text(blobs.as_ref(), &recalled.state).await
+    );
+    assert!(
+        assistant_text(blobs.as_ref(), &recalled.emitted_entries)
+            .await
+            .contains(LIVE_MARKER)
+    );
 }

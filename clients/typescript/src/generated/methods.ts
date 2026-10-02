@@ -252,7 +252,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"control_session","kind":"universe"},
     summary: "Compact session context",
-    description: "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
+    description: "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
   },
   "session/runs/start": {
     scope: "universe",
@@ -1145,7 +1145,7 @@ export interface MethodMap {
   /**
    * Compact session context
    *
-   * Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
    */
   "session/context/compact": {
     params: Api.ContextCompactParams;
@@ -2380,7 +2380,7 @@ export const rpc = {
   /**
    * Compact session context
    *
-   * Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
    */
   sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("session/context/compact", params);

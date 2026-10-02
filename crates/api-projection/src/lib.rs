@@ -127,9 +127,16 @@ impl<'a> CoreAgentProjector<'a> {
             updated_at_ms: params.record.updated_at_ms,
             runs,
             active_run,
-            active_context: self
-                .project_context_state(params.state.context.revision, &params.state.context.entries)
-                .await?,
+            active_context: {
+                let mut context = self
+                    .project_context_state(
+                        params.state.context.revision,
+                        &params.state.context.entries,
+                    )
+                    .await?;
+                context.compaction = context_compaction_to_api(params.state);
+                context
+            },
             active_tools: active_tools_to_api(
                 params.state.tooling.revision,
                 &params.state.tooling.tools,
@@ -406,6 +413,7 @@ impl<'a> CoreAgentProjector<'a> {
         entries: &[ContextEntry],
     ) -> Result<ContextView, AgentApiError> {
         Ok(ContextView {
+            compaction: None,
             revision,
             entries: self
                 .project_context_entries(&entries.iter().collect::<Vec<_>>())
@@ -1007,16 +1015,28 @@ impl<'a> CoreAgentProjector<'a> {
                 ContextEvent::CompactionRequested {
                     base_revision,
                     trigger,
+                    ..
                 } => Ok(SessionEventKindView::ContextCompactionRequested {
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
                     trigger: context_compaction_trigger_to_api(*trigger).to_owned(),
                 }),
+                ContextEvent::CompactionQueued { base_revision } => {
+                    Ok(SessionEventKindView::ContextCompactionRequested {
+                        base_revision: *base_revision,
+                        revision: *base_revision,
+                        trigger: "manualQueued".into(),
+                    })
+                }
                 ContextEvent::CompactionFinished {
+                    usage,
+                    calls,
                     base_revision,
                     status,
                     failure_ref,
                 } => Ok(SessionEventKindView::ContextCompactionFinished {
+                    usage: usage.as_ref().map(llm_usage_to_api),
+                    calls: *calls,
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
                     status: context_compaction_status_to_api(*status).to_owned(),
@@ -1978,10 +1998,81 @@ fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str 
     }
 }
 
+fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompactionView> {
+    let config = state.lifecycle.config.as_ref()?;
+    let policy = config.context.compaction.as_ref();
+    let requested = match policy {
+        Some(CompactionPolicy::ProviderTriggered { .. }) => "providerTriggered",
+        Some(CompactionPolicy::ProviderStandalone { .. }) => "providerStandalone",
+        _ => "disabled",
+    };
+    let signed_window = state.context.entries.iter().any(|entry| entry.content.provider_kind.as_deref() == Some(engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
+        && matches!(entry.kind, ContextEntryKind::ProviderOpaque) && matches!(&entry.source, ContextEntrySource::Runtime { label } if label == engine::STANDALONE_COMPACTION_SOURCE));
+    let effective = if requested == "providerTriggered" && signed_window {
+        "providerStandalone"
+    } else {
+        requested
+    };
+    let model = state
+        .runs
+        .active
+        .as_ref()
+        .and_then(|run| run.run_config.model_override.as_ref())
+        .or(state.context.last_generation_model())
+        .unwrap_or(&config.model);
+    let strategy = match (effective, &model.api_kind) {
+        ("disabled", _) => "disabled",
+        ("providerTriggered", _) => "providerTriggered",
+        (_, ProviderApiKind::OpenAiCompletions) => "modelSummary",
+        _ => "nativePreferred",
+    };
+    let input_limit_tokens = engine::compaction_input_limit_tokens(state);
+    let override_threshold = match policy {
+        Some(
+            CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens,
+            }
+            | CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens,
+                ..
+            },
+        ) => *compact_threshold_tokens,
+        _ => None,
+    };
+    let (compact_threshold_tokens, source) = if effective == "disabled" {
+        (None, "disabled")
+    } else if let Some(threshold) = override_threshold {
+        (Some(threshold), "override")
+    } else if effective == "providerTriggered" {
+        (None, "providerDefault")
+    } else if let Some(limit) = input_limit_tokens {
+        (Some(limit.saturating_mul(4) / 5), "inputCapacity")
+    } else {
+        (None, "contextLengthError")
+    };
+    Some(api::ContextCompactionView {
+        requested_mode: requested.into(),
+        effective_mode: effective.into(),
+        effective_strategy: strategy.into(),
+        compact_threshold_tokens,
+        threshold_source: source.into(),
+        input_limit_tokens,
+        observed_tokens: state.context.observed_tokens(),
+        pending: state.context.compaction.is_pending(),
+        queued: state.context.compaction.is_queued(),
+        recovery_attempts: state
+            .runs
+            .active
+            .as_ref()
+            .map_or(0, |run| run.context_recovery.attempts),
+    })
+}
+
 fn context_compaction_trigger_to_api(trigger: ContextCompactionTrigger) -> &'static str {
     match trigger {
         ContextCompactionTrigger::Manual => "manual",
         ContextCompactionTrigger::HighWatermark => "highWatermark",
+        ContextCompactionTrigger::ContextLimit => "contextLimit",
     }
 }
 
@@ -2113,6 +2204,7 @@ pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfi
             max_tool_rounds: config.limits.max_tool_rounds,
         }),
         context: (!config.context.is_default()).then(|| api::ContextConfig {
+            input_limit_tokens: config.context.input_limit_tokens,
             compaction: config
                 .context
                 .compaction
@@ -3194,6 +3286,55 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn compaction_projection_preserves_requested_policy_and_reports_signed_transition() {
+        let mut state = CoreAgentState::new();
+        state.lifecycle.config = Some(SessionConfig {
+            model: ModelSelection {
+                provider_id: "anthropic".into(),
+                api_kind: ProviderApiKind::AnthropicMessages,
+                model: "claude-opus-5-5".into(),
+            },
+            generation: Default::default(),
+            limits: Default::default(),
+            features: Default::default(),
+            context: engine::ContextConfig {
+                compaction: Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: None,
+                }),
+                input_limit_tokens: Some(100_000),
+                reported_input_limit_tokens: None,
+            },
+        });
+        let view = context_compaction_to_api(&state).unwrap();
+        assert_eq!(view.threshold_source, "providerDefault");
+        let mut retained = context_entry(
+            1,
+            ContextEntrySource::Runtime {
+                label: engine::STANDALONE_COMPACTION_SOURCE.into(),
+            },
+        );
+        retained.content.provider_kind =
+            Some(engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.into());
+        state.context.entries.push(retained);
+        assert_eq!(
+            context_compaction_to_api(&state).unwrap().effective_mode,
+            "providerTriggered",
+            "plain legacy summaries do not force a native transition"
+        );
+        state.context.entries[0].kind = ContextEntryKind::ProviderOpaque;
+        let view = context_compaction_to_api(&state).unwrap();
+        assert_eq!(view.requested_mode, "providerTriggered");
+        assert_eq!(view.effective_mode, "providerStandalone");
+        assert_eq!(view.compact_threshold_tokens, Some(80_000));
+        assert_eq!(view.threshold_source, "inputCapacity");
+        state.lifecycle.config.as_mut().unwrap().context.compaction =
+            Some(CompactionPolicy::Disabled);
+        let view = context_compaction_to_api(&state).unwrap();
+        assert_eq!(view.effective_mode, "disabled");
+        assert_eq!(view.compact_threshold_tokens, None);
+    }
 
     fn tool_call_with_status(status: ToolItemStatus) -> ToolCallView {
         ToolCallView {
@@ -4401,6 +4542,8 @@ mod tests {
                 max_tool_rounds: Some(3),
             },
             context: engine::ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
                 compaction: Some(engine::CompactionPolicy::ProviderStandalone {
                     compact_threshold_tokens: Some(20_000),
                     target_tokens: Some(8_000),
@@ -4488,6 +4631,7 @@ mod tests {
                     max_tool_rounds: Some(3),
                 }),
                 context: Some(api::ContextConfig {
+                    input_limit_tokens: None,
                     compaction: Some(api::CompactionPolicy::ProviderStandalone {
                         compact_threshold_tokens: Some(20_000),
                         target_tokens: Some(8_000),

@@ -79,7 +79,11 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
                     },
                     generation: Default::default(),
                     limits: Default::default(),
-                    context: engine::ContextConfig { compaction: None },
+                    context: engine::ContextConfig {
+                        reported_input_limit_tokens: None,
+                        input_limit_tokens: None,
+                        compaction: None,
+                    },
                     features: Default::default(),
                 },
             },

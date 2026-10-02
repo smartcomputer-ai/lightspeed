@@ -7,6 +7,7 @@
 pub mod anthropic_messages;
 pub mod blob_io;
 mod catalog_prompts;
+mod compaction;
 pub mod error;
 pub mod executor;
 pub mod mcp;

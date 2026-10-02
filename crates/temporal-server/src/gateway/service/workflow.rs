@@ -324,8 +324,14 @@ impl GatewayAgentApi {
                 }
             }
             let loaded = self.load_session_state(session_id).await?;
-            if loaded.state.context.revision > baseline_revision
-                && !loaded.state.context.pending_compaction
+            if loaded
+                .state
+                .context
+                .compaction
+                .last_manual_finished_revision
+                .is_some_and(|revision| revision > baseline_revision)
+                && !loaded.state.context.compaction.is_pending()
+                && !loaded.state.context.compaction.is_queued()
             {
                 return self.project_session_by_id(session_id).await;
             }

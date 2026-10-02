@@ -340,6 +340,10 @@ pub struct LimitsConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextConfig {
+    /// Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
+    /// Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
 }
@@ -1553,6 +1557,10 @@ pub enum SessionEventKindView {
         trigger: String,
     },
     ContextCompactionFinished {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<LlmUsageView>,
+        #[serde(default)]
+        calls: u32,
         base_revision: u64,
         revision: u64,
         status: String,

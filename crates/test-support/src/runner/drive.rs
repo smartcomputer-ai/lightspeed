@@ -711,8 +711,11 @@ async fn failed_generation_result_from_error(
 ) -> Result<LlmGenerationResult, engine::storage::BlobStoreError> {
     // Mirrors the hosted activity: a rejection keeps the provider's message
     // word for word.
+    let context_limit = matches!(error, CoreAgentIoError::ContextLimit { .. });
     let (status, text) = match error {
-        CoreAgentIoError::Rejected { message } => (LlmGenerationStatus::Rejected, message),
+        CoreAgentIoError::Rejected { message } | CoreAgentIoError::ContextLimit { message } => {
+            (LlmGenerationStatus::Rejected, message)
+        }
         error => (
             LlmGenerationStatus::Failed,
             format!(
@@ -731,7 +734,11 @@ async fn failed_generation_result_from_error(
         facts: LlmGenerationFacts {
             duration_ms: None,
             provider_response_id: None,
-            finish: LlmFinish::Failed,
+            finish: if context_limit {
+                LlmFinish::ContextLimit
+            } else {
+                LlmFinish::Failed
+            },
             usage: None,
             tool_calls: Vec::new(),
             approval_requests: Vec::new(),
@@ -755,6 +762,8 @@ async fn failed_context_compaction_result_from_error(
     )
     .await?;
     Ok(ContextCompactionResult {
+        usage: None,
+        calls: 0,
         session_id: request.session_id,
         context_revision,
         status: ContextCompactionStatus::Failed,
@@ -1218,7 +1227,11 @@ mod tests {
             },
             generation: Default::default(),
             limits: Default::default(),
-            context: ContextConfig { compaction: None },
+            context: ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
+                compaction: None,
+            },
             features: Default::default(),
         }
     }
@@ -1276,6 +1289,7 @@ mod tests {
 
     fn run_config() -> RunConfig {
         RunConfig {
+            input_limit_tokens: None,
             max_turns: None,
             max_tool_rounds: None,
             model_override: None,
@@ -1375,7 +1389,7 @@ mod tests {
             .expect("compact context");
 
         assert!(outcome.accepted);
-        assert!(!outcome.state.context.pending_compaction);
+        assert!(!outcome.state.context.compaction.is_pending());
         assert!(outcome.emitted_entries.iter().any(|entry| matches!(
             &entry.event,
             CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
@@ -1536,7 +1550,21 @@ mod tests {
             .expect("run child");
 
         assert!(outcome.accepted);
-        assert_eq!(outcome.state.lifecycle.config, Some(session_config));
+        assert_eq!(
+            outcome.state.lifecycle.config,
+            source_state.lifecycle.config
+        );
+        assert!(matches!(
+            outcome
+                .state
+                .lifecycle
+                .config
+                .as_ref()
+                .unwrap()
+                .context
+                .compaction,
+            Some(engine::CompactionPolicy::ProviderStandalone { .. })
+        ));
         assert!(outcome.state.runs.active.is_none());
         assert_eq!(outcome.state.runs.completed.len(), 1);
         assert!(!outcome.state.context.entries.iter().any(|entry| {

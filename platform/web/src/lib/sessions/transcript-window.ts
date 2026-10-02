@@ -35,6 +35,16 @@ export class TranscriptWindow {
       used.add(key);
       return { ...entry, key };
     });
+    // An older page can reveal a queued request before the loaded start.
+    // Keep the mounted progress marker's key and hydrate its run attribution.
+    const compaction = live.compaction && rebuilt.compaction
+      ? { ...live.compaction, runId: live.compaction.runId ?? rebuilt.compaction.runId }
+      : live.compaction;
+    if (compaction && rebuilt.compaction) {
+      const rebuiltKey = rebuilt.compaction.markerKey;
+      rebuilt.entries = rebuilt.entries.map((entry) => entry.key === rebuiltKey
+        ? { ...entry, key: compaction.markerKey } : entry);
+    }
     this.state = {
       ...rebuilt,
       activeRun: live.activeRun,
@@ -43,6 +53,7 @@ export class TranscriptWindow {
       runBySubmission: live.runBySubmission,
       runRevision: live.runRevision,
       closed: live.closed,
+      compaction,
     };
   }
 

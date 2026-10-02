@@ -1226,7 +1226,24 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_refusal() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
-async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
+async fn anthropic_messages_live_adapter_native_context_compaction() {
+    check_adapter_context_compaction(model_selection(), true).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY and Claude Sonnet 4.5 (costs real money)"]
+async fn anthropic_messages_live_adapter_legacy_context_compaction() {
+    check_adapter_context_compaction(
+        ModelSelection {
+            model: "claude-sonnet-4-5".into(),
+            ..model_selection()
+        },
+        false,
+    )
+    .await;
+}
+
+async fn check_adapter_context_compaction(model: ModelSelection, native: bool) {
     let blobs = Arc::new(InMemoryBlobStore::new());
     let first_ref = text_blob(
         &blobs,
@@ -1247,7 +1264,10 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
     let request = ContextCompactionRequest {
         session_id: SessionId::new("session-live-anthropic-compaction"),
         request: ContextCompactionTask {
-            model: model_selection(),
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
+            model,
             request_fingerprint: "live-anthropic-messages-compaction".to_string(),
             context: ContextSnapshot {
                 api_kind: ProviderApiKind::AnthropicMessages,
@@ -1269,12 +1289,16 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
     assert_eq!(result.context_revision, 7);
     assert_eq!(result.context_entries.len(), 1);
     let entry = &result.context_entries[0];
-    assert!(matches!(
-        entry.kind,
-        ContextEntryKind::Message {
-            role: ContextMessageRole::User
-        }
-    ));
+    if native {
+        assert_eq!(entry.kind, ContextEntryKind::ProviderOpaque);
+    } else {
+        assert!(matches!(
+            entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        ));
+    }
     assert_eq!(
         entry.content.provider_kind.as_deref(),
         Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
@@ -1283,6 +1307,17 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
         .read_text(&entry.content.content_ref)
         .await
         .expect("summary text");
+    let summary = if native {
+        let block: Value = serde_json::from_str(&summary).expect("native compaction block");
+        assert_eq!(block["type"], "compaction");
+        assert!(block["signature"].as_str().is_some_and(|s| !s.is_empty()));
+        block["content"]
+            .as_str()
+            .expect("native summary content")
+            .to_owned()
+    } else {
+        summary
+    };
     assert!(
         summary.to_uppercase().contains("ZEPHYR"),
         "expected the summary to retain the codename, got {summary:?}"
@@ -1558,11 +1593,14 @@ async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
     let answer = support::content_text(blobs.as_ref(), &answer).await;
     assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
 
-    // Compaction summarizes the same edited history, replayed thinking
-    // included, and is bound by the same policy.
+    // Native compaction replaces this whole window. Binding checks apply
+    // when kept thinking is replayed after the swap, not to this summary call.
     let compaction = |entries: Vec<ContextEntry>| ContextCompactionRequest {
         session_id: SessionId::new("session-live-anthropic-edit"),
         request: ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
             model: model.clone(),
             request_fingerprint: "live-anthropic-edit-compaction".to_string(),
             context: ContextSnapshot {
@@ -1575,15 +1613,38 @@ async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
             params: None,
         },
     };
-    let error = strict
+    let strict_compacted = strict
         .compact_context(compaction(edited_history.clone()))
         .await
-        .expect_err("strict compaction rejects thinking bound to the edited prefix");
-    assert!(is_http_status(&error, 400), "expected a 400, got {error:?}");
+        .expect("native whole-window compaction accepts the edited history");
+    assert_eq!(strict_compacted.status, ContextCompactionStatus::Succeeded);
+    let mut replay = vec![retained_context_entry(
+        0,
+        &strict_compacted.context_entries[0],
+    )];
+    replay.push(user_entry(
+        2,
+        text_blob(
+            &blobs,
+            "Answer the pending arithmetic question. Reply with just the number.",
+        )
+        .await,
+    ));
+    let after_compaction = strict
+        .generate(generation_request(
+            5,
+            request("live-anthropic-edited-compacted", replay),
+        ))
+        .await
+        .expect("strict replay of the replacement succeeds without invalid old thinking");
+    assert_eq!(
+        after_compaction.result.status,
+        LlmGenerationStatus::Succeeded
+    );
     let compacted = lenient
         .compact_context(compaction(edited_history))
         .await
-        .expect("drop_block compaction continues after the edit");
+        .expect("native compaction also accepts the edited history with drop_block");
     assert_eq!(compacted.status, ContextCompactionStatus::Succeeded);
 }
 

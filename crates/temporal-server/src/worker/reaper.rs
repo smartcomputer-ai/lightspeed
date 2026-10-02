@@ -1206,6 +1206,7 @@ mod tests {
 
     fn active_run(run_id: RunId) -> ActiveRun {
         ActiveRun {
+            context_recovery: Default::default(),
             run_id,
             status: RunStatus::Active,
             submission_id: None,

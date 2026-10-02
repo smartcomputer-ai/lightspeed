@@ -7,6 +7,7 @@ import type {
   ContextEntrySourceView,
   EventJoinsView,
   ModelConfig,
+  LlmUsageView,
   RunAcceptedSourceView,
   ResourceAccessSummary,
   RunSummaryView,
@@ -200,6 +201,7 @@ export function applyEntries(
   const revision = baseRevision + 1;
   session.activeContext.revision = revision;
   session.activeContext.entries.push(...entries);
+  refreshDemoCompactionView(session);
   const run = joins.runId ? session.runs.get(joins.runId) : undefined;
   if (run) run.entries = [...(run.entries ?? []), ...entries];
   return pushEvent(session, { type: "contextEntriesApplied", baseRevision, revision, entries }, joins, at);
@@ -843,6 +845,8 @@ export function appendExchange(
 /// batch, and the reply — which an intermediate step leaves out so the run
 /// continues into the next generation.
 export interface ScriptedStep {
+  /// Standalone runs before this step; triggered runs inside its first generation.
+  compaction?: { mode: "standalone" | "providerTriggered"; summary: string };
   thinking?: string;
   tools?: DemoToolCall[];
   text?: string;
@@ -861,6 +865,85 @@ export interface ScriptedRun {
 
 function entryChars(entries: ContextEntryView[]): number {
   return entries.reduce((sum, entry) => sum + (entry.text?.length ?? entry.preview?.length ?? 0), 0);
+}
+
+/// Reflect seeded compaction policy and observations in the settings view.
+export function refreshDemoCompactionView(session: SessionRecord, observedTokens: number | null = null): void {
+  const context = session.view.config?.context as {
+    inputLimitTokens?: number;
+    compaction?: { mode?: string; compactThresholdTokens?: number };
+  } | undefined;
+  if (!context && !session.view.activeContext?.compaction) return;
+  const policy = context?.compaction;
+  const requestedMode = policy?.mode === "disabled" ? "disabled" : policy?.mode === "providerTriggered" ? "providerTriggered" : "providerStandalone";
+  const inputLimitTokens = context?.inputLimitTokens ?? null;
+  const compactThresholdTokens = requestedMode === "disabled" ? null : policy?.compactThresholdTokens
+    ?? (requestedMode === "providerStandalone" && inputLimitTokens ? Math.floor(inputLimitTokens * 0.8) : null);
+  session.view.activeContext = {
+    compaction: {
+      requestedMode, effectiveMode: requestedMode,
+      effectiveStrategy: requestedMode === "disabled" ? "disabled" : requestedMode === "providerTriggered" ? "providerTriggered"
+        : modelOf(session.view.config)?.apiKind === "openai:completions" ? "modelSummary" : "nativePreferred",
+      inputLimitTokens, compactThresholdTokens, observedTokens,
+      thresholdSource: requestedMode === "disabled" ? "disabled" : policy?.compactThresholdTokens != null ? "override"
+        : requestedMode === "providerTriggered" ? "providerDefault" : inputLimitTokens ? "inputCapacity" : "contextLengthError",
+      pending: false, queued: false, recoveryAttempts: 0,
+    },
+  };
+}
+
+function nativeCompactionEntry(store: DemoStore, session: SessionRecord, summary: string, source: ContextEntrySourceView): ContextEntryView {
+  const apiKind = modelOf(session.view.config)?.apiKind;
+  if (apiKind !== "openai:responses" && apiKind !== "anthropic:messages") {
+    throw new Error("Native demo compaction requires Responses or Messages");
+  }
+  const providerKind = apiKind === "openai:responses"
+    ? "openai.responses.compaction" : "anthropic.messages.compaction";
+  // The opaque artifact is simulated; the fixture's facts stay available in CAS.
+  const payload = JSON.stringify({ type: "compaction", content: summary, signature: "demo-compaction-signature" });
+  return {
+    id: store.nextId("compaction"), kind: { type: "providerOpaque" }, source,
+    content: { contentRef: store.putText(payload), mediaType: "application/json", providerKind },
+    preview: "Native compaction state",
+  };
+}
+
+function removeCompactedEntries(session: SessionRecord, entryIds: string[], joins: EventJoinsView, at: number): void {
+  const covered = new Set(entryIds);
+  const baseRevision = session.activeContext.revision++;
+  session.activeContext.entries = session.activeContext.entries.filter((entry) => !covered.has(entry.id));
+  refreshDemoCompactionView(session);
+  pushEvent(session, {
+    type: "contextEntriesRemoved", baseRevision, revision: session.activeContext.revision,
+    entryIds, reason: "providerCompacted",
+  }, joins, at);
+}
+
+function appendStandaloneCompaction(store: DemoStore, session: SessionRecord, runId: string, summary: string, at: number): void {
+  const eligible = session.activeContext.entries.filter((entry) => entry.kind.type !== "instructions" && entry.kind.type !== "catalog");
+  const turns = [...new Set(eligible.flatMap((entry) => entry.source && "turnId" in entry.source ? [entry.source.turnId] : []))];
+  const retained = new Set(turns.slice(-2));
+  const cut = eligible.findIndex((entry) => entry.source && "turnId" in entry.source && retained.has(entry.source.turnId));
+  if (cut <= 0) throw new Error("Standalone demo compaction needs older context and two completed tail turns");
+  const covered = eligible.slice(0, cut);
+  const joins = { runId };
+  const baseRevision = session.activeContext.revision++;
+  pushEvent(session, {
+    type: "contextCompactionRequested", baseRevision, revision: session.activeContext.revision,
+    trigger: "highWatermark",
+  }, joins, at);
+  removeCompactedEntries(session, covered.map((entry) => entry.id), joins, at + 2_000);
+  applyEntries(session, [nativeCompactionEntry(store, session, summary,
+    { type: "runtime", label: "standalone_compaction_prefix" })], joins, at + 2_000);
+  const usage: LlmUsageView = {
+    inputTokens: Math.max(1_600, Math.ceil(entryChars(covered) / 4)), outputTokens: 180, cachedInputTokens: 0,
+  };
+  const finishedBase = session.activeContext.revision++;
+  pushEvent(session, {
+    type: "contextCompactionFinished", baseRevision: finishedBase, revision: session.activeContext.revision,
+    status: "succeeded", usage, calls: 1,
+  }, joins, at + 2_000);
+  refreshDemoCompactionView(session);
 }
 
 /// Appends a finished run written step by step, where `appendExchange`'s
@@ -903,14 +986,21 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
   );
 
   let generation = 0;
-  const generate = (turnId: string, joins: EventJoinsView, entries: ContextEntryView[], thinkMs: number) => {
+  let compacted = session.activeContext.entries.some((entry) => entry.kind.type === "providerOpaque"
+    && entry.content?.providerKind?.endsWith(".compaction"));
+  const generate = (turnId: string, joins: EventJoinsView, entries: ContextEntryView[], thinkMs: number, triggeredSummary?: string) => {
     generation += 1;
     pushEvent(session, { type: "turnStarted", runId: run.id, turnId }, joins, clock);
     pushEvent(session, { type: "turnPlanned", runId: run.id, turnId }, joins, clock);
     pushEvent(session, { type: "turnGenerationRequested", runId: run.id, turnId }, joins, clock);
     clock += thinkMs;
+    const covered = triggeredSummary ? session.activeContext.entries.filter((entry) => entry.kind.type !== "instructions" && entry.kind.type !== "catalog").map((entry) => entry.id) : [];
+    if (triggeredSummary) entries = [nativeCompactionEntry(store, session, triggeredSummary,
+      { type: "assistantOutput", runId: run.id, turnId }), ...entries];
+    const ordinaryInput = compacted ? 2_000 + Math.ceil(entryChars(session.activeContext.entries) / 4)
+      : 5_200 + 640 * generation + 900 * session.turns;
+    const inputTokens = triggeredSummary ? Math.max(ordinaryInput, (session.view.activeContext?.compaction?.compactThresholdTokens ?? 50_000) + 2_000) : ordinaryInput;
     applyEntries(session, entries, joins, clock);
-    const inputTokens = 5_200 + 640 * generation + 900 * session.turns;
     const cachedInputTokens = Math.round(inputTokens * (generation === 1 ? 0.71 : 0.94));
     const outputTokens = Math.max(40, Math.round(entryChars(entries) / 4));
     pushEvent(
@@ -926,11 +1016,23 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
       clock,
     );
     pushEvent(session, { type: "turnCompleted", turnId }, joins, clock);
+    refreshDemoCompactionView(session, inputTokens + outputTokens);
+    if (triggeredSummary) {
+      removeCompactedEntries(session, covered, joins, clock);
+      compacted = true;
+    }
   };
 
   let turn = 0;
   script.steps.forEach((step, index) => {
     const tools = step.tools ?? [];
+    if (step.compaction?.mode === "standalone") {
+      clock += 700;
+      appendStandaloneCompaction(store, session, run.id, step.compaction.summary, clock);
+      clock += 2_000;
+      compacted = true;
+    }
+    const triggeredSummary = step.compaction?.mode === "providerTriggered" ? step.compaction.summary : undefined;
     turn += 1;
     let turnId = `${run.id}-turn-${turn}`;
     const joins = (extra: EventJoinsView = {}): EventJoinsView => ({ runId: run.id, turnId, ...extra });
@@ -942,7 +1044,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
       for (const call of calls) {
         requested.push(contextToolCall(store.nextId("entry"), call.callId, call.toolName));
       }
-      generate(turnId, joins(), requested, step.thinking ? 4_000 : 2_200);
+      generate(turnId, joins(), requested, step.thinking ? 4_000 : 2_200, triggeredSummary);
       const batchId = store.nextId("batch");
       pushEvent(
         session,
@@ -995,7 +1097,7 @@ export function appendScriptedRun(store: DemoStore, session: SessionRecord, scri
       const entries: ContextEntryView[] = [];
       if (step.thinking) entries.push(contextReasoning(store.nextId("entry"), step.thinking));
       entries.push(contextMessage(store.nextId("entry"), "assistant", step.text ?? ""));
-      generate(turnId, joins(), entries, step.thinking ? 5_000 : 2_400);
+      generate(turnId, joins(), entries, step.thinking ? 5_000 : 2_400, triggeredSummary);
     }
     if (script.steer && script.steer.afterStep === index + 1) {
       const steeringId = store.nextId("steer");

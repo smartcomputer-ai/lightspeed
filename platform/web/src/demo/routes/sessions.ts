@@ -16,6 +16,7 @@ import {
 import type { Environment, ModelConfig, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
 import type { ProfileInstructions } from "@lightspeed-ai/agent-client";
 import {
+  refreshDemoCompactionView,
   PROFILE_INSTRUCTIONS_KEY,
   cancelRun,
   closeSession,
@@ -295,6 +296,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     const config = sessionConfig(body.config, modelOf(session.view.config));
     if (!config) return badRequest(c, "Session has no model.");
     session.view.config = config;
+    refreshDemoCompactionView(session);
     if (session.view.activeEnvironmentId && !isEnvironmentAttached(config, session.view.activeEnvironmentId)) session.view.activeEnvironmentId = null;
     session.view.configRevision += 1;
     pushEvent(session, {

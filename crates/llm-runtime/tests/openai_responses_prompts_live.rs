@@ -307,7 +307,11 @@ fn session_config(
             processing_tier: None,
         },
         limits: Default::default(),
-        context: ContextConfig { compaction: None },
+        context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
+            compaction: None,
+        },
         features: engine::FeaturesConfig {
             vfs: Some(engine::VfsFeature {
                 workspaces: workspace_attachments,
@@ -321,6 +325,7 @@ fn session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
+        input_limit_tokens: None,
         max_turns: Some(2),
         reasoning_effort: None,
         parallel_tool_use: None,
