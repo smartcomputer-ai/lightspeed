@@ -141,6 +141,39 @@ it("keeps an existing Parallel server's saved settings instead of offering to re
     || (method === "POST" && (path as string).endsWith("/mcp-servers")))).toBe(false);
 });
 
+it("refuses to replace a server discovered while the preset dialog is open", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  await click(button("Continue"));
+  mocks.servers = [saved, { ...saved, serverId: "parallel-search" }];
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["mcp-servers", "universe"] });
+  });
+  await settle();
+  await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
+  expect(dialog().textContent).toContain("A server with this ID is already registered.");
+  expect(mocks.api.mock.calls.some(([method, path]) => method === "PUT"
+    || (method === "POST" && (path as string).endsWith("/mcp-servers")))).toBe(false);
+});
+
+it("waits for an in-flight registry refresh before submitting a preset", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  await click(button("Continue"));
+  let release!: (servers: unknown[]) => void;
+  const refresh = new Promise<unknown[]>((resolve) => { release = resolve; });
+  mocks.api.mockImplementationOnce(() => refresh);
+  await act(async () => {
+    void client.invalidateQueries({ queryKey: ["mcp-servers", "universe"] });
+  });
+  await settle();
+  await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
+  expect(dialog().textContent).toContain("Wait for the server list to finish refreshing");
+  expect(mocks.api.mock.calls.some(([method]) => method === "PUT")).toBe(false);
+  await act(async () => { release(mocks.servers); });
+  await settle();
+});
+
 it("registers Parallel through the ordinary server flow with native keyless settings", async () => {
   await show();
   await click(button("Add Parallel Search"));
@@ -154,7 +187,8 @@ it("registers Parallel through the ordinary server flow with native keyless sett
   expect((field('select[aria-label="Authentication"]') as HTMLSelectElement).value).toBe("none");
   expect(summary()).toBe("Lightspeed connects · tools shown up front · no approval·Customize");
   await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
-  const create = mocks.api.mock.calls.find(([method, path]) => method === "POST" && (path as string).endsWith("/mcp-servers"))?.[2];
+  const create = mocks.api.mock.calls.find(([method, path]) => method === "PUT"
+    && path === "/api/v1/universes/universe/mcp-servers/parallel-search")?.[2];
   expect(create).toEqual({
     serverId: "parallel-search",
     serverUrl: "https://search.parallel.ai/mcp",
@@ -169,6 +203,7 @@ it("registers Parallel through the ordinary server flow with native keyless sett
     displayName: "Parallel Search",
     description: "Free web search and page extraction, with no API key required.",
     allowedTools: null,
+    revision: 0,
   });
 });
 

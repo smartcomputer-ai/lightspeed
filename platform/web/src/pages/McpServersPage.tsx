@@ -300,6 +300,8 @@ function ServerList({ universeId }: { universeId: string }) {
           open={createOpen}
           server={null}
           preset={createPreset}
+          registeredServerIds={rows.map((server) => server.serverId)}
+          registryReady={Boolean(servers.data) && !servers.isFetching && !servers.error}
           authGrants={authGrants.data ?? []}
           authGrantsLoading={authGrants.isLoading}
           onOpenChange={setCreateOpen}
@@ -386,6 +388,8 @@ function ServerDialog({
   open,
   server,
   preset,
+  registeredServerIds = [],
+  registryReady = true,
   authGrants,
   authGrantsLoading,
   onOpenChange,
@@ -395,6 +399,8 @@ function ServerDialog({
   open: boolean;
   server: McpServer | null;
   preset?: ServerPreset;
+  registeredServerIds?: string[];
+  registryReady?: boolean;
   authGrants: AuthGrantOption[];
   authGrantsLoading: boolean;
   onOpenChange: (open: boolean) => void;
@@ -517,7 +523,10 @@ function ServerDialog({
         authorizationServer: oauthAuthorizationServer,
       });
       if (!editing) {
-        return api<McpServer>("POST", `/api/v1/universes/${universeId}/mcp-servers`, {
+        // Revision zero creates a new record but cannot replace a saved one,
+        // including a concurrent registration not yet visible in the UI.
+        return api<McpServer>(preset ? "PUT" : "POST",
+          `/api/v1/universes/${universeId}/mcp-servers${preset ? `/${encodeURIComponent(serverId)}` : ""}`, {
           serverId,
           serverUrl,
           defaultServerLabel: serverId,
@@ -531,6 +540,7 @@ function ServerDialog({
           displayName: displayName.trim(),
           ...(description.trim() ? { description: description.trim() } : {}),
           allowedTools: null,
+          ...(preset ? { revision: 0 } : {}),
         });
       }
       return api<McpServer>(
@@ -587,6 +597,16 @@ function ServerDialog({
     if (!editing && step === 1) {
       void continueToConnection();
       return;
+    }
+    if (!editing && preset) {
+      if (!registryReady) {
+        setError("Wait for the server list to finish refreshing, then try again.");
+        return;
+      }
+      if (registeredServerIds.includes(serverId.trim())) {
+        setError("A server with this ID is already registered. Edit its existing row, or choose a different ID.");
+        return;
+      }
     }
     const credentialError = mcpServerCredentialError(authPolicy, credentialGrantId);
     if (credentialError) {
