@@ -40,6 +40,15 @@ import {
   transcriptionStartSchema,
   transcriptionUploadSchema,
   workspaceCreateSchema,
+  MAX_WORKSPACE_UPLOAD_BODY_BYTES,
+  workspaceUploadSchema,
+  prepareWorkspaceUpload,
+  workspaceDownload,
+  WorkspaceTransferError,
+  workspaceEntryDeleteSchema,
+  workspaceEntryRenameSchema,
+  renameWorkspaceEntry,
+  removeWorkspaceEntry,
 } from "@lightspeed/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
 import { parseBody } from "../http.js";
@@ -1919,6 +1928,166 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  app.post(
+    "/:id/workspaces/:workspaceId/upload",
+    bodyLimit({
+      maxSize: MAX_WORKSPACE_UPLOAD_BODY_BYTES,
+      onError: (c) =>
+        c.json(
+          {
+            error: "Upload request is too large. Select fewer files or folders.",
+          },
+          413,
+        ),
+    }),
+    (c) =>
+      withGateway(c, async () => {
+        const access = await universeForSession(ctx, c, c.req.param("id"));
+        if (!access) return c.json({ error: "not found" }, 404);
+        if (!roleAtLeast(access.role, "contributor"))
+          throw new GateRefusal(403, "contributor role required");
+        const body = await parseBody(c, workspaceUploadSchema);
+        if (!body.ok) return body.response;
+        const client = engineClientFor(ctx, access);
+        const workspaceId = c.req.param("workspaceId");
+        const { workspace } = (
+          await client.call("vfs/workspaces/read", { workspaceId })
+        ).result;
+        if (workspace.revision !== body.data.expectedRevision) {
+          return c.json(
+            { error: "Workspace changed since it was loaded — reload and retry" },
+            409,
+          );
+        }
+        const snapshot = await client.call("vfs/snapshots/read", {
+          snapshotRef: workspace.headSnapshotRef,
+        });
+        const { manifest, files } = prepareWorkspaceUpload(
+          asManifest(snapshot.result.manifest),
+          body.data,
+        );
+        for (const { input, entry } of files) {
+          const stored = (
+            await client.call("blobs/put", {
+              blobs: [{ bytesBase64: input.contentBase64 }],
+            })
+          ).result.blobs?.[0];
+          if (!stored) throw new Error("Blob upload returned nothing");
+          entry.blob_ref = stored.blobRef;
+        }
+        return c.json(
+          await commitHead(
+            client,
+            workspaceId,
+            manifest,
+            body.data.expectedRevision,
+          ),
+        );
+      }),
+  );
+
+  app.post("/:id/workspaces/:workspaceId/rename", (c) =>
+    withGateway(c, async () => {
+      const access = await universeForSession(ctx, c, c.req.param("id"));
+      if (!access) return c.json({ error: "not found" }, 404);
+      if (!roleAtLeast(access.role, "contributor"))
+        throw new GateRefusal(403, "contributor role required");
+      const body = await parseBody(c, workspaceEntryRenameSchema);
+      if (!body.ok) return body.response;
+      const client = engineClientFor(ctx, access);
+      const workspaceId = c.req.param("workspaceId");
+      const { workspace } = (
+        await client.call("vfs/workspaces/read", { workspaceId })
+      ).result;
+      if (workspace.revision !== body.data.expectedRevision)
+        return c.json(
+          { error: "Workspace changed. Close this dialog and try again." },
+          409,
+        );
+      const snapshot = await client.call("vfs/snapshots/read", {
+        snapshotRef: workspace.headSnapshotRef,
+      });
+      const manifest = renameWorkspaceEntry(
+        asManifest(snapshot.result.manifest), body.data.path, body.data.name,
+      );
+      return c.json(
+        await commitHead(client, workspaceId, manifest, body.data.expectedRevision),
+      );
+    }),
+  );
+
+  app.delete("/:id/workspaces/:workspaceId/entries", (c) =>
+    withGateway(c, async () => {
+      const access = await universeForSession(ctx, c, c.req.param("id"));
+      if (!access) return c.json({ error: "not found" }, 404);
+      if (!roleAtLeast(access.role, "contributor"))
+        throw new GateRefusal(403, "contributor role required");
+      const parsed = workspaceEntryDeleteSchema.safeParse({
+        path: c.req.query("path"),
+        expectedRevision: c.req.query("expectedRevision")
+          ? Number(c.req.query("expectedRevision"))
+          : undefined,
+      });
+      if (!parsed.success)
+        return c.json(
+          { error: "A valid path and expectedRevision are required" },
+          400,
+        );
+      const client = engineClientFor(ctx, access);
+      const workspaceId = c.req.param("workspaceId");
+      const { workspace } = (
+        await client.call("vfs/workspaces/read", { workspaceId })
+      ).result;
+      if (workspace.revision !== parsed.data.expectedRevision)
+        return c.json(
+          {
+            error: "Workspace changed. Review the folder or file and try again.",
+          },
+          409,
+        );
+      const snapshot = await client.call("vfs/snapshots/read", {
+        snapshotRef: workspace.headSnapshotRef,
+      });
+      const manifest = removeWorkspaceEntry(
+        asManifest(snapshot.result.manifest),
+        parsed.data.path,
+      );
+      return c.json(
+        await commitHead(
+          client,
+          workspaceId,
+          manifest,
+          parsed.data.expectedRevision,
+        ),
+      );
+    }),
+  );
+
+  app.get("/:id/workspaces/:workspaceId/download", (c) =>
+    withGateway(c, async () => {
+      const access = await universeForSession(ctx, c, c.req.param("id"));
+      if (!access) return c.json({ error: "not found" }, 404);
+      const client = engineClientFor(ctx, access);
+      const { workspace } = (
+        await client.call("vfs/workspaces/read", {
+          workspaceId: c.req.param("workspaceId"),
+        })
+      ).result;
+      const snapshot = await client.call("vfs/snapshots/read", {
+        snapshotRef: workspace.headSnapshotRef,
+      });
+      return workspaceDownload(
+        asManifest(snapshot.result.manifest),
+        c.req.query("path") ?? "",
+        workspace.workspaceId,
+        async (blobRef) => {
+          const blob = await client.call("blobs/read", { blobRef });
+          return new Uint8Array(Buffer.from(blob.result.bytesBase64, "base64"));
+        },
+      );
+    }),
+  );
+
   app.get("/:id/workspaces/:workspaceId/files/:path{.+}", (c) => withGateway(c, async () => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) return c.json({ error: "not found" }, 404);
@@ -2172,6 +2341,7 @@ export async function withGateway(
   try {
     return await fn();
   } catch (error) {
+    if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
     if (error instanceof UniverseSlugCacheConflict) return c.json({ error: error.message }, 409);
     if (error instanceof GatewayUnconfigured) {
       return c.json({ error: error.message }, 501);

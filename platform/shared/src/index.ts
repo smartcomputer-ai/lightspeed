@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { universeIconSchema, universeIconColorSchema } from "./universe-appearance.js";
 export * from "./universe-appearance.js";
+export * from "./workspace-transfers.js";
 
 /// Input shapes shared by the API (validation) and the CLI (request typing).
 

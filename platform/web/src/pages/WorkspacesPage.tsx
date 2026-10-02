@@ -3,15 +3,12 @@ import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
-import { slugify, workspaceCreateSchema } from "@lightspeed/platform-shared";
+import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed/platform-shared";
 import {
   ChevronRight,
   File,
-  FilePlus,
   FolderGit2,
-  FolderOpen,
   Plus,
-  Trash2,
 } from "lucide-react";
 import {
   api,
@@ -21,17 +18,6 @@ import {
   type WorkspaceRow,
   type WorkspaceTree,
 } from "@/api";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -56,6 +42,8 @@ import { useCreateParam } from "@/lib/create-param";
 import { useActiveUniverse } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import { ListPane } from "@/components/list-pane";
+import { WorkspaceFileTree } from "@/components/workspace-file-tree";
+import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
 /// file tree of the head snapshot; detail = file editor (text), preview
@@ -64,10 +52,27 @@ import { ListPane } from "@/components/list-pane";
 /// workspace revision the tree was loaded at.
 export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
+  const navigate = useNavigate();
   const permissions = useActionPermissions(universe?.id);
   const params = useParams<{ workspaceId: string; "*": string }>();
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
+  const [newFile, setNewFile] = useState<{ parent: string; revision: number } | null>(null);
+  const [editor, setEditor] = useState({ workspaceId, path: filePath, identity: 0 });
+  const [pendingRename, setPendingRename] = useState<{
+    from: string;
+    to: string;
+  } | null>(null);
+  // A rename preserves the editor; ordinary navigation starts a new one.
+  if (editor.workspaceId !== workspaceId || editor.path !== filePath) {
+    if (editor.workspaceId !== workspaceId) setNewFile(null);
+    const renamed = editor.workspaceId === workspaceId &&
+      pendingRename?.from === editor.path && pendingRename?.to === filePath;
+    setEditor({
+      workspaceId, path: filePath, identity: editor.identity + (renamed ? 0 : 1),
+    });
+    setPendingRename(null);
+  }
   const [, setCreateOpen] = useCreateParam("workspace");
 
   if (isLoading) {
@@ -82,6 +87,18 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   }
 
   return (
+    <WorkspaceTransfers key={`${universe.id}:${workspaceId}`} universeId={universe.id} workspaceId={workspaceId}
+      onNewFile={(parent, revision) => setNewFile({ parent, revision })}
+      onRenamed={(from, to) => {
+        if (filePath && (filePath === from || filePath.startsWith(`${from}/`))) {
+          const path = to + filePath.slice(from.length);
+          setPendingRename({ from: filePath, to: path });
+          navigate(`/u/${slug}/workspaces/${workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`, { replace: true });
+        }
+      }}
+      onRemoved={(path) => {
+        if (filePath === path || filePath?.startsWith(`${path}/`)) navigate(`/u/${slug}/workspaces/${workspaceId}`);
+      }}>
     <div className="flex min-h-0 flex-1">
       <ListPane detailOpen={Boolean(filePath)}>
         <WorkspacePane
@@ -100,11 +117,12 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
             slug={slug!}
             workspaceId={workspaceId}
             filePath={filePath}
+            fileIdentity={editor.identity}
           />
         ) : (
           workspaceId ? (
             <DetailPrompt icon={<File className="size-10 text-muted-foreground/60" />}>
-              Pick a file.
+              {permissions.can("use_resource") ? "Pick a file, or drop files and folders into this workspace." : "Pick a file."}
             </DetailPrompt>
           ) : (
             <DetailPrompt
@@ -117,6 +135,19 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
         )}
       </section>
     </div>
+    {newFile && workspaceId && permissions.can("use_resource") && (
+      <NewFileDialog
+        key={`${workspaceId}:${newFile.parent}`}
+        universeId={universe.id}
+        slug={slug!}
+        workspaceId={workspaceId}
+        revision={newFile.revision}
+        parent={newFile.parent}
+        open
+        onOpenChange={(open) => { if (!open) setNewFile(null); }}
+      />
+    )}
+    </WorkspaceTransfers>
   );
 }
 
@@ -134,8 +165,6 @@ function WorkspacePane({
   const navigate = useNavigate();
   const permissions = useActionPermissions(universeId);
   const canCreate = permissions.can("create_workspace");
-  // Editing files is using the workspace; configuring it is not needed.
-  const canEditFiles = !!workspaceId && permissions.can("use_resource");
   const workspaces = useQuery({
     queryKey: ["workspaces", universeId],
     queryFn: () =>
@@ -151,7 +180,6 @@ function WorkspacePane({
     enabled: workspaceId !== undefined,
   });
   const [createOpen, setCreateOpen] = useCreateParam("workspace");
-  const [newFileOpen, setNewFileOpen] = useState(false);
 
   // Auto-select the first workspace when landing on bare /workspaces.
   useEffect(() => {
@@ -178,7 +206,8 @@ function WorkspacePane({
           </Button>
         )}
       </div>
-      <div className="grid gap-2 border-b p-3">
+      <div className="flex min-w-0 items-center gap-2 border-b p-3">
+        <div className="min-w-0 flex-1">
         {workspaces.data && workspaces.data.length > 0 ? (
           <Select
             value={workspaceId ?? ""}
@@ -207,38 +236,10 @@ function WorkspacePane({
             {workspaces.isLoading ? "Loading…" : "No workspaces yet."}
           </p>
         )}
-        {tree.data && (
-          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            {/* The id is what profile workspace attachments reference — keep it in sight. */}
-            <code
-              className="min-w-0 cursor-pointer truncate rounded bg-muted px-1.5 py-0.5 font-mono hover:bg-accent"
-              title={`${tree.data.workspace.workspaceId} (used by profile workspace attachments) — click to copy`}
-              onClick={() =>
-                void navigator.clipboard.writeText(tree.data.workspace.workspaceId)
-              }
-            >
-              {tree.data.workspace.workspaceId}
-            </code>
-            <span className="shrink-0 whitespace-nowrap">
-              {tree.data.workspace.files} file{tree.data.workspace.files === 1 ? "" : "s"} ·
-              r{tree.data.workspace.revision}
-            </span>
-            <div className="ml-auto flex shrink-0 items-center gap-1">
-              {canEditFiles && (
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setNewFileOpen(true)}
-                >
-                  <FilePlus data-icon="inline-start" />
-                  New file
-                </Button>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
+        {tree.data && <WorkspaceActionsMenu kind="workspace" fileCount={tree.data.workspace.files} />}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <WorkspaceDropArea className="min-h-0 min-w-0 flex-1 overflow-y-auto p-2">
         {tree.error && (
           <ReadError error={tree.error} loading={!tree.data} className="p-2" />
         )}
@@ -248,15 +249,14 @@ function WorkspacePane({
           </p>
         )}
         {tree.data && (
-          <DirectoryEntries
+          <WorkspaceFileTree
             entries={tree.data.manifest.root.entries}
-            basePath=""
             slug={slug}
             workspaceId={workspaceId!}
             activePath={filePath}
           />
         )}
-      </div>
+      </WorkspaceDropArea>
       {canCreate && (
         <NewWorkspaceDialog
           universeId={universeId}
@@ -265,119 +265,7 @@ function WorkspacePane({
           onOpenChange={setCreateOpen}
         />
       )}
-      {canEditFiles && workspaceId && tree.data && (
-        <NewFileDialog
-          universeId={universeId}
-          slug={slug}
-          workspaceId={workspaceId}
-          revision={tree.data.workspace.revision}
-          open={newFileOpen}
-          onOpenChange={setNewFileOpen}
-        />
-      )}
     </>
-  );
-}
-
-function DirectoryEntries({
-  entries,
-  basePath,
-  slug,
-  workspaceId,
-  activePath,
-}: {
-  entries: Record<string, VfsTreeEntry>;
-  basePath: string;
-  slug: string;
-  workspaceId: string;
-  activePath: string | undefined;
-}) {
-  const names = Object.keys(entries).sort((a, b) => {
-    const aDir = entries[a]!.kind === "directory";
-    const bDir = entries[b]!.kind === "directory";
-    if (aDir !== bDir) {
-      return aDir ? -1 : 1;
-    }
-    return a.localeCompare(b);
-  });
-  return (
-    <ul className="grid gap-0.5">
-      {names.map((name) => {
-        const entry = entries[name]!;
-        const path = basePath ? `${basePath}/${name}` : name;
-        return entry.kind === "directory" ? (
-          <DirectoryNode
-            key={path}
-            name={name}
-            entry={entry}
-            path={path}
-            slug={slug}
-            workspaceId={workspaceId}
-            activePath={activePath}
-          />
-        ) : (
-          <li key={path}>
-            {/* The size is on hover and in the open file's header; a column of
-                bare numbers crowds the names in a narrow pane. */}
-            <NavLink
-              to={`/u/${slug}/workspaces/${workspaceId}/files/${path}`}
-              title={`${name} · ${formatBytes(entry.size_bytes)}`}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-muted/50",
-                activePath === path && "bg-muted font-medium",
-              )}
-            >
-              <File className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="truncate">{name}</span>
-            </NavLink>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-function DirectoryNode({
-  name,
-  entry,
-  path,
-  slug,
-  workspaceId,
-  activePath,
-}: {
-  name: string;
-  entry: { kind: "directory"; entries: Record<string, VfsTreeEntry> };
-  path: string;
-  slug: string;
-  workspaceId: string;
-  activePath: string | undefined;
-}) {
-  const [open, setOpen] = useState(true);
-  return (
-    <li>
-      <button
-        type="button"
-        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm hover:bg-muted/50"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <ChevronRight
-          className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
-        />
-        <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{name}</span>
-      </button>
-      {open && (
-        <div className="pl-4">
-          <DirectoryEntries
-            entries={entry.entries}
-            basePath={path}
-            slug={slug}
-            workspaceId={workspaceId}
-            activePath={activePath}
-          />
-        </div>
-      )}
-    </li>
   );
 }
 
@@ -408,14 +296,15 @@ function FileDetail({
   slug,
   workspaceId,
   filePath,
+  fileIdentity,
 }: {
   universeId: string;
   slug: string;
   workspaceId: string;
   filePath: string;
+  fileIdentity: number;
 }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const permissions = useActionPermissions(universeId);
   const canEditFiles = permissions.can("use_resource");
   const tree = useQuery({
@@ -426,68 +315,131 @@ function FileDetail({
         `/api/v1/universes/${universeId}/workspaces/${workspaceId}/tree`,
       ),
   });
-  const file = tree.data ? findFile(tree.data.manifest.root.entries, filePath) : null;
+  const file = tree.data
+    ? findFile(tree.data.manifest.root.entries, filePath)
+    : null;
   const blob = useQuery({
-    queryKey: ["workspace-file", universeId, workspaceId, filePath, file?.blob_ref],
+    queryKey: [
+      "workspace-file",
+      universeId,
+      workspaceId,
+      filePath,
+      file?.blob_ref,
+    ],
     queryFn: () =>
       api<BlobContent>(
         "GET",
         `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/files/${filePath.split("/").map(encodeURIComponent).join("/")}`,
       ),
     enabled: !!file,
+    placeholderData: (previous, query) =>
+      query?.queryKey[1] === universeId &&
+      query.queryKey[2] === workspaceId &&
+      query.queryKey[3] === filePath
+        ? previous
+        : undefined,
   });
 
   const decoded = useMemo(() => {
     if (!blob.data) {
       return null;
     }
-    const bytes = Uint8Array.from(atob(blob.data.bytesBase64), (c) => c.charCodeAt(0));
+    const bytes = Uint8Array.from(atob(blob.data.bytesBase64), (c) =>
+      c.charCodeAt(0),
+    );
     return { bytes, kind: classify(filePath, file?.media_type, bytes) };
   }, [blob.data, file?.media_type, filePath]);
 
-  const [draft, setDraft] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // Reset editor state when switching files or after a reload.
+  const text =
+    decoded?.kind === "text" ? new TextDecoder().decode(decoded.bytes) : null;
+  const [editor, setEditor] = useState<{
+    identity: number;
+    draft: string | null;
+    saved: { text: string; previousBlob: string } | null;
+    error: string | null;
+  }>({ identity: fileIdentity, draft: null, saved: null, error: null });
+  if (editor.identity !== fileIdentity) {
+    setEditor({
+      identity: fileIdentity,
+      draft: null,
+      saved: null,
+      error: null,
+    });
+  }
+  // A successful save becomes the baseline immediately. Keep its draft until
+  // the refreshed blob is ready, and preserve anything typed during the save.
   useEffect(() => {
-    setDraft(null);
-    setError(null);
-  }, [filePath, file?.blob_ref]);
+    if (blob.isPlaceholderData || text === null || !file) return;
+    setEditor((current) => {
+      if (
+        current.identity !== fileIdentity ||
+        !current.saved ||
+        (file.blob_ref === current.saved.previousBlob &&
+          text !== current.saved.text)
+      )
+        return current;
+      return {
+        ...current,
+        draft: current.draft === current.saved.text ? null : current.draft,
+        saved: null,
+      };
+    });
+  }, [
+    fileIdentity,
+    file?.blob_ref,
+    text,
+    blob.isPlaceholderData,
+    editor.saved,
+  ]);
 
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["workspace-tree", universeId, workspaceId] });
-    void queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] });
-  };
+  const invalidate = () =>
+    Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["workspace-tree", universeId, workspaceId],
+      }),
+      queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] }),
+    ]);
 
   const save = useMutation({
-    mutationFn: (contentText: string) =>
+    mutationFn: (submission: {
+      contentText: string;
+      path: string;
+      revision: number;
+      identity: number;
+      previousBlob: string;
+    }) =>
       api(
         "PUT",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${filePath}`,
+        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${submission.path.split("/").map(encodeURIComponent).join("/")}`,
         {
-          contentText,
-          expectedRevision: tree.data!.workspace.revision,
-          ...(mediaTypeFor(filePath) ? { mediaType: mediaTypeFor(filePath) } : {}),
+          contentText: submission.contentText,
+          expectedRevision: submission.revision,
+          ...(mediaTypeFor(submission.path)
+            ? { mediaType: mediaTypeFor(submission.path) }
+            : {}),
         },
       ),
-    onSuccess: () => {
-      setDraft(null);
-      setError(null);
-      invalidate();
+    onSuccess: async (_result, submission) => {
+      setEditor((current) =>
+        current.identity === submission.identity
+          ? {
+              ...current,
+              error: null,
+              saved: {
+                text: submission.contentText,
+                previousBlob: submission.previousBlob,
+              },
+            }
+          : current,
+      );
+      await invalidate();
     },
-    onError: (err) => setError(err.message),
-  });
-
-  const remove = useMutation({
-    mutationFn: () =>
-      api(
-        "DELETE",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${filePath}?expectedRevision=${tree.data!.workspace.revision}`,
+    onError: (err, submission) =>
+      setEditor((current) =>
+        current.identity === submission.identity
+          ? { ...current, error: err.message }
+          : current,
       ),
-    onSuccess: () => {
-      invalidate();
-      navigate(`/u/${slug}/workspaces/${workspaceId}`);
-    },
-    onError: (err) => setError(err.message),
   });
 
   if (tree.isLoading) {
@@ -501,15 +453,41 @@ function FileDetail({
     );
   }
 
-  const text =
-    decoded?.kind === "text" ? new TextDecoder().decode(decoded.bytes) : null;
-  const value = draft ?? text ?? "";
-  const dirty = draft !== null && draft !== text;
+  const value = editor.draft ?? text ?? "";
+  const dirty =
+    editor.draft !== null && editor.draft !== (editor.saved?.text ?? text);
+  const saveCurrent = () =>
+    save.mutate({
+      contentText: value,
+      path: filePath,
+      revision: tree.data!.workspace.revision,
+      identity: fileIdentity,
+      previousBlob: file!.blob_ref,
+    });
 
   return (
-    <>
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onKeyDown={(event) => {
+        if (
+          !canEditFiles ||
+          decoded?.kind !== "text" ||
+          event.nativeEvent.isComposing ||
+          !(event.metaKey || event.ctrlKey) ||
+          event.altKey ||
+          event.shiftKey ||
+          event.key.toLowerCase() !== "s"
+        )
+          return;
+        event.preventDefault();
+        if (dirty && !save.isPending && !event.repeat) saveCurrent();
+      }}
+    >
       <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
-        <NavLink to={`/u/${slug}/workspaces/${workspaceId}`} className="md:hidden">
+        <NavLink
+          to={`/u/${slug}/workspaces/${workspaceId}`}
+          className="md:hidden"
+        >
           <ChevronRight className="size-4 rotate-180" />
         </NavLink>
         <h1 className="truncate font-mono text-sm">{filePath}</h1>
@@ -520,50 +498,27 @@ function FileDetail({
           {canEditFiles && decoded?.kind === "text" && (
             <Button
               size="sm"
+              aria-keyshortcuts="Meta+S Control+S"
+              title="Save (⌘S / Ctrl+S)"
               disabled={!dirty || save.isPending}
-              onClick={() => save.mutate(value)}
+              onClick={saveCurrent}
             >
               {save.isPending ? "Saving…" : dirty ? "Save" : "Saved"}
             </Button>
           )}
-          {canEditFiles && (
-            <AlertDialog>
-              <AlertDialogTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="text-destructive"
-                    aria-label="Delete file"
-                  />
-                }
-              >
-                <Trash2 />
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete {filePath}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Commits a new snapshot without this file. Earlier snapshots keep it.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-destructive text-white hover:bg-destructive/90"
-                    onClick={() => remove.mutate()}
-                  >
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
         </div>
       </header>
-      {error && <p className="border-b px-4 py-2 text-sm text-destructive">{error}</p>}
+      {editor.error && (
+        <p className="border-b px-4 py-2 text-sm text-destructive">
+          {editor.error}
+        </p>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {blob.isLoading && <div className="p-4"><LoadingNote /></div>}
+        {blob.isLoading && (
+          <div className="p-4">
+            <LoadingNote />
+          </div>
+        )}
         {blob.error && (
           <p className="p-4 text-sm text-destructive">{blob.error.message}</p>
         )}
@@ -571,10 +526,14 @@ function FileDetail({
           <textarea
             className="h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
             value={value}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) =>
+              setEditor((current) => ({ ...current, draft: e.target.value }))
+            }
             spellCheck={false}
             readOnly={!canEditFiles}
-            aria-label={canEditFiles ? "File contents" : "File contents (read only)"}
+            aria-label={
+              canEditFiles ? "File contents" : "File contents (read only)"
+            }
           />
         )}
         {decoded?.kind === "image" && (
@@ -592,7 +551,7 @@ function FileDetail({
           </p>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -721,6 +680,7 @@ function NewFileDialog({
   slug,
   workspaceId,
   revision,
+  parent,
   open,
   onOpenChange,
 }: {
@@ -728,6 +688,7 @@ function NewFileDialog({
   slug: string;
   workspaceId: string;
   revision: number;
+  parent: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -737,39 +698,41 @@ function NewFileDialog({
   const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (target: string) =>
       api(
-        "PUT",
-        `/api/v1/universes/${universeId}/workspaces/${workspaceId}/files/${path}`,
+        "POST",
+        `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/upload`,
         {
-          contentText: "",
           expectedRevision: revision,
-          ...(mediaTypeFor(path) ? { mediaType: mediaTypeFor(path) } : {}),
+          replace: false,
+          entries: [{
+            kind: "file", path: target, contentBase64: "",
+            ...(mediaTypeFor(target) ? { mediaType: mediaTypeFor(target) } : {}),
+          }],
         },
       ),
-    onSuccess: async () => {
+    onSuccess: async (_data, target) => {
       await queryClient.invalidateQueries({
         queryKey: ["workspace-tree", universeId, workspaceId],
       });
       await queryClient.invalidateQueries({ queryKey: ["workspaces", universeId] });
       onOpenChange(false);
-      const target = path;
       setPath("");
       setError(null);
-      navigate(`/u/${slug}/workspaces/${workspaceId}/files/${target}`);
+      navigate(`/u/${slug}/workspaces/${workspaceId}/files/${target.split("/").map(encodeURIComponent).join("/")}`);
     },
     onError: (err) => setError(err.message),
   });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const trimmed = path.replace(/^\/+|\/+$/g, "");
-    if (!trimmed) {
-      setError("path is required");
+    const trimmed = path.trim();
+    if (create.isPending) return;
+    if (!validWorkspaceTransferPath(trimmed)) {
+      setError("Enter a valid relative file path.");
       return;
     }
-    setPath(trimmed);
-    create.mutate();
+    create.mutate(parent ? `${parent}/${trimmed}` : trimmed);
   };
 
   return (
@@ -778,6 +741,7 @@ function NewFileDialog({
         <DialogHeader>
           <DialogTitle>New file</DialogTitle>
           <DialogDescription>
+            Create a file in {parent || "the workspace root"}.
             Directories in the path are created as needed.
           </DialogDescription>
         </DialogHeader>
@@ -787,7 +751,8 @@ function NewFileDialog({
             <Input
               id="new-file-path"
               value={path}
-              onChange={(e) => setPath(e.target.value)}
+              disabled={create.isPending}
+              onChange={(e) => { setPath(e.target.value); setError(null); }}
               placeholder="notes/todo.md"
               className="font-mono"
               autoFocus

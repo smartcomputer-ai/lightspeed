@@ -4,6 +4,9 @@
 /// every change). A "commit" here is a fresh snapshot ref plus a revision
 /// bump on the workspace row; the head manifest lives on the record.
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { MAX_WORKSPACE_UPLOAD_BODY_BYTES, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed/platform-shared";
+import { workspaceEntryRenameSchema, renameWorkspaceEntry } from "@lightspeed/platform-shared";
 import type { VfsDirEntry, VfsFileEntry, VfsTreeEntry, WorkspaceRow, WorkspaceTree } from "@/api";
 import { base64ToBytes, type DemoStore, type WorkspaceRecord } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
@@ -64,6 +67,118 @@ export function workspaceRoutes(store: DemoStore): Hono {
     if (!record) return notFound(c, "not found in engine");
     const tree: WorkspaceTree = { workspace: record.row, manifest: record.manifest };
     return c.json(tree);
+  });
+
+  app.post(
+    "/:id/workspaces/:workspaceId/upload",
+    bodyLimit({
+      maxSize: MAX_WORKSPACE_UPLOAD_BODY_BYTES,
+      onError: (c) =>
+        c.json(
+          {
+            error: "Upload request is too large. Select fewer files or folders.",
+          },
+          413,
+        ),
+    }),
+    async (c) => {
+      const record = universeFor(store, c)?.workspaces.get(
+        c.req.param("workspaceId"),
+      );
+      if (!record) return notFound(c);
+      const parsed = workspaceUploadSchema.safeParse(await readBody(c));
+      if (!parsed.success)
+        return badRequest(c, parsed.error.issues[0]?.message ?? "Invalid upload");
+      if (record.row.revision !== parsed.data.expectedRevision)
+        return conflict(
+          c,
+          "Workspace changed since it was loaded — reload and retry",
+        );
+      try {
+        const { manifest, files } = prepareWorkspaceUpload(
+          record.manifest,
+          parsed.data,
+        );
+        for (const { input, entry } of files)
+          entry.blob_ref = store.putBytes(base64ToBytes(input.contentBase64));
+        return c.json({ workspace: commitHead(store, record, manifest) });
+      } catch (error) {
+        if (error instanceof WorkspaceTransferError)
+          return c.json({ error: error.message }, error.status);
+        throw error;
+      }
+    },
+  );
+
+  app.post("/:id/workspaces/:workspaceId/rename", async (c) => {
+    const record = universeFor(store, c)?.workspaces.get(c.req.param("workspaceId"));
+    if (!record) return notFound(c);
+    const parsed = workspaceEntryRenameSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return badRequest(c, "Enter a valid path, name and expectedRevision");
+    if (record.row.revision !== parsed.data.expectedRevision)
+      return conflict(c, "Workspace changed. Close this dialog and try again.");
+    try {
+      return c.json({ workspace: commitHead(store, record, renameWorkspaceEntry(record.manifest, parsed.data.path, parsed.data.name)) });
+    } catch (error) {
+      if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
+  app.delete("/:id/workspaces/:workspaceId/entries", (c) => {
+    const record = universeFor(store, c)?.workspaces.get(
+      c.req.param("workspaceId"),
+    );
+    if (!record) return notFound(c);
+    const parsed = workspaceEntryDeleteSchema.safeParse({
+      path: c.req.query("path"),
+      expectedRevision: c.req.query("expectedRevision")
+        ? Number(c.req.query("expectedRevision"))
+        : undefined,
+    });
+    if (!parsed.success)
+      return badRequest(c, "A valid path and expectedRevision are required");
+    if (record.row.revision !== parsed.data.expectedRevision)
+      return conflict(
+        c,
+        "Workspace changed. Review the folder or file and try again.",
+      );
+    try {
+      return c.json({
+        workspace: commitHead(
+          store,
+          record,
+          removeWorkspaceEntry(record.manifest, parsed.data.path),
+        ),
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceTransferError)
+        return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
+  app.get("/:id/workspaces/:workspaceId/download", async (c) => {
+    const record = universeFor(store, c)?.workspaces.get(
+      c.req.param("workspaceId"),
+    );
+    if (!record) return notFound(c);
+    try {
+      return await workspaceDownload(
+        record.manifest,
+        c.req.query("path") ?? "",
+        record.row.workspaceId,
+        async (ref) => {
+          const blob = store.blobs.get(ref);
+          if (!blob) throw new Error("Blob not found");
+          return new Uint8Array(base64ToBytes(blob.bytesBase64));
+        },
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceTransferError)
+        return c.json({ error: error.message }, error.status);
+      throw error;
+    }
   });
 
   /// Write a file: store the blob, graft it into a copy of the head
