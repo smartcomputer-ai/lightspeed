@@ -13,6 +13,7 @@ use crate::{
 pub mod attachments;
 pub(crate) mod catalog_text;
 pub mod control;
+pub mod handles;
 pub mod jobs;
 pub mod process;
 pub mod projection;

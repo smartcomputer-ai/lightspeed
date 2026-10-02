@@ -121,16 +121,13 @@ pub(super) async fn refresh_context(
     }
 
     // Environment catalog: the attachment list with this session's access on
-    // each machine, joined with registry names and status. Built from the
+    // each machine, joined with registry names. Built from the
     // grant and records only; it never connects to or wakes a machine.
     match request.environments.as_ref() {
         Some(environments) => {
-            let snapshot = environment_catalog_snapshot(
-                deps.environment_resolver.as_ref(),
-                environments,
-                request.active_environment_id.as_ref(),
-            )
-            .await;
+            let snapshot =
+                environment_catalog_snapshot(deps.environment_resolver.as_ref(), environments)
+                    .await;
             if let Some(command) =
                 tools::environment::attachments::prepare_environment_catalog_publication(
                     deps.blobs.as_ref(),
@@ -308,13 +305,10 @@ fn append_optional(
     commands
 }
 
-/// Join the grant's allowlist with the current profile records. A missing
-/// profile keeps its id in the menu with no revision, so the model learns
-/// it is unavailable instead of silently losing the option.
+/// Join stable attachment details with registry display names, without live status.
 pub async fn environment_catalog_snapshot(
     resolver: Option<&crate::environments::resolver::EnvironmentResolver>,
     environments: &engine::EnvironmentsFeature,
-    active_environment_id: Option<&engine::EnvironmentId>,
 ) -> tools::environment::attachments::EnvironmentCatalogSnapshot {
     use tools::environment::attachments::{EnvironmentCatalogRecord, EnvironmentCatalogSnapshot};
     let mut records: std::collections::BTreeMap<String, EnvironmentCatalogRecord> =
@@ -331,19 +325,17 @@ pub async fn environment_catalog_snapshot(
                     attachment.environment_id.clone(),
                     EnvironmentCatalogRecord {
                         display_name: record.display_name.clone(),
-                        status: Some(format!("{:?}", record.status).to_lowercase()),
                     },
                 );
             }
         }
     }
-    EnvironmentCatalogSnapshot::new(
-        environments,
-        active_environment_id.map(|id| id.as_str()),
-        |id| records.get(id).cloned().unwrap_or_default(),
-    )
+    EnvironmentCatalogSnapshot::new(environments, |id| {
+        records.get(id).cloned().unwrap_or_default()
+    })
 }
 
+/// A missing profile keeps its ID in the menu with no revision.
 pub async fn subagent_catalog_snapshot(
     profiles: Option<&dyn ::profiles::ProfileStore>,
     subagents: &engine::SubagentsFeature,

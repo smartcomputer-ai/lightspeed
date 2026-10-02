@@ -420,11 +420,11 @@ mod tests {
             expected_revision: None,
             key: catalog_key.clone(),
             entry: ContextEntryInput {
-                origin: Some("runtime.environments:old".into()),
+                origin: Some("runtime.environments".into()),
                 kind: ContextEntryKind::Catalog {
                     title: "Environments".into(),
                 },
-                ..instructions("old selection")
+                ..instructions("attachment directory")
             },
         };
         initial.push(old_catalog.clone(), 2).unwrap();
@@ -459,15 +459,12 @@ mod tests {
         );
         assert!(drive::invalid_environment_prompt_command(candidate.state()).is_none());
         let batch = candidate.finish(&live).unwrap();
-        assert_eq!(batch.events.len(), 3);
+        assert_eq!(batch.events.len(), 2);
         commit(&mut live, batch);
         assert!(drive::invalid_environment_prompt_command(live.state()).is_none());
-        assert!(engine::current_context_entry(live.state(), &catalog_key).is_none());
+        assert!(engine::current_context_entry(live.state(), &catalog_key).is_some());
         let mut candidate = PreparationCandidate::new(&live);
-        assert_eq!(
-            candidate.push(old_catalog, 4).unwrap_err().kind,
-            api::AgentApiErrorKind::Conflict
-        );
+        candidate.push(old_catalog, 4).unwrap();
         let error = candidate
             .push(
                 CoreAgentCommand::ReplaceContextPrefix {

@@ -51,7 +51,7 @@ pub fn environment_control_tool_definitions(
 ) -> ToolResult<Vec<crate::runtime::FunctionDefinition>> {
     let mut tools = vec![(
         ENVIRONMENT_READ_TOOL_NAME,
-        "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide the id of another environment attached to this session to inspect it.",
+        "Read live details and this session's access for an environment. Omit environment_id to inspect the active environment; provide an attached environment reference (short handle or full ID) to inspect another environment.",
         optional_environment_id_schema(),
     )];
     if selection {
@@ -63,7 +63,7 @@ pub fn environment_control_tool_definitions(
             ),
             (
                 ENVIRONMENT_ACTIVATE_TOOL_NAME,
-                "Select one attached environment as this session's active environment. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
+                "Select one attached environment as this session's active environment using its short handle or full ID. The tool surface does not change; calls outside the active environment's access are rejected. Environment-dependent tools must be called in a later turn.",
                 required_environment_id_schema(),
             ),
             (

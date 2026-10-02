@@ -36,6 +36,9 @@ pub struct EnvironmentSkillCatalog {
     pub skills: Vec<EnvironmentSkill>,
     /// Stable per-file parsing diagnostics; scan accounting is kept outside this snapshot.
     pub warnings: Vec<String>,
+    /// Configured discovery scope, used only to validate last-observation fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_scope: Option<String>,
 }
 impl EnvironmentSkillCatalog {
     pub fn unavailable(environment_id: &str) -> Self {
@@ -45,6 +48,7 @@ impl EnvironmentSkillCatalog {
             availability: EnvironmentSkillAvailability::Unavailable,
             skills: vec![],
             warnings: vec![],
+            discovery_scope: None,
         }
     }
 }
@@ -129,20 +133,18 @@ pub async fn publish_environment_skill_catalog(
         .put_bytes(serde_json::to_vec(catalog).expect("serialize catalog"))
         .await?;
     let mut text = format!(
-        "Environment skills on {} ({:?}). Read SKILL.md with environment file tools; run bundled scripts with process tools on this environment.\n",
-        catalog.environment_id, catalog.availability
+        "Skills discovered on {}. Read SKILL.md with environment file tools; run bundled scripts with process tools on this environment. Paths reflect the last discovery; file tools read their current contents.\n",
+        crate::environment::handles::environment_handle(&catalog.environment_id)
     );
-    if catalog.availability != EnvironmentSkillAvailability::Available {
-        text.push_str("Discovery is unavailable. Listed paths are the last observation for this environment and may be stale.\n");
+    if catalog.skills.is_empty() {
+        text.push_str("No skills have been discovered.\n");
     }
-    for skill in &catalog.skills {
+    let mut skills: Vec<_> = catalog.skills.iter().collect();
+    skills.sort_by_key(|skill| &skill.skill_doc_path);
+    for skill in skills {
         text.push_str(&format!(
-            "\n- {} ({})\n  description: {}\n  skill_doc_path: {}\n  skill_dir_path: {}\n",
-            skill.name,
-            skill.skill_id,
-            skill.description,
-            skill.skill_doc_path,
-            skill.skill_dir_path
+            "\n- {}\n  description: {}\n  path: {}\n",
+            skill.name, skill.description, skill.skill_doc_path,
         ));
     }
     let mut entry =

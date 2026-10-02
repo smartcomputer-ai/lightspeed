@@ -892,7 +892,7 @@ mod tests {
         );
         assert_eq!(
             blobs.read_bytes(&entry.content.content_ref).await.unwrap(),
-            format!("When a skill is relevant, read its SKILL.md through the appropriate VFS file tool before following it. VFS skill paths are not environment paths.\n\n- review ({})\n  description: Use when reviewing.\n  skill_doc_path: /skills/review/SKILL.md\n  skill_dir_path: /skills/review\n", publication.build.catalog.skills[0].skill_id).into_bytes()
+            b"When a skill is relevant, read its SKILL.md through the appropriate VFS file tool before following it. VFS skill paths are not environment paths.\n\n- review\n  description: Use when reviewing.\n  path: /skills/review/SKILL.md\n".to_vec()
         );
         assert_eq!(
             serde_json::from_slice::<SkillCatalogSnapshot>(

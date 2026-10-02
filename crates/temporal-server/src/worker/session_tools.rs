@@ -437,7 +437,7 @@ impl SessionTools {
     ) -> Result<EnvironmentJobRead, CoreAgentIoError> {
         let mut entries = Vec::with_capacity(handles.len());
         for handle in handles {
-            let resolved = match resolve_job_handle_arg(active_environment_id, handle) {
+            let resolved = match resolve_job_handle_arg(active_environment_id, policy, handle) {
                 Ok(handle) => handle,
                 Err(error) => {
                     entries.push(model_job_error(None, error));
@@ -894,7 +894,12 @@ impl SessionTools {
                             .await;
                         }
                     };
-                    environments.push(environment_model_view(attachment, record.as_ref(), active));
+                    environments.push(environment_model_view(
+                        attachment,
+                        record.as_ref(),
+                        active,
+                        policy,
+                    ));
                 }
                 let output = serde_json::json!({ "environments": environments });
                 self.succeeded_tool_result(
@@ -906,7 +911,7 @@ impl SessionTools {
             }
             Some("environment.read") => {
                 let args: EnvironmentReadArgs = self.read_tool_args(call).await?;
-                let environment_id = match environment_read_target(args, active) {
+                let environment_id = match environment_read_target(args, active, Some(policy)) {
                     Ok(environment_id) => environment_id,
                     Err(EnvironmentReadTargetError::NoActiveEnvironment) => {
                         return failed_structured_result(
@@ -941,7 +946,8 @@ impl SessionTools {
                         .await;
                     }
                 };
-                let mut output = environment_model_view(attachment, Some(&environment), active);
+                let mut output =
+                    environment_model_view(attachment, Some(&environment), active, policy);
                 if crate::environments::resolver::wake_on_use_applies(&environment) {
                     output["status_message"] = serde_json::json!(format!(
                         "Environment is {}. Tools that use this environment will automatically wake it and wait until it is ready. You can proceed normally.",
@@ -957,17 +963,18 @@ impl SessionTools {
             }
             Some("environment.activate") => {
                 let args: EnvironmentActivateArgs = self.read_tool_args(call).await?;
-                let environment_id = match EnvironmentId::try_new(args.environment_id) {
-                    Ok(id) => id,
-                    Err(error) => {
-                        return failed_result(
-                            self.blobs.as_ref(),
-                            call.call_id.clone(),
-                            error.to_string(),
-                        )
-                        .await;
-                    }
-                };
+                let environment_id =
+                    match resolve_attached_environment(&args.environment_id, Some(policy)) {
+                        Ok(id) => id,
+                        Err(error) => {
+                            return failed_result(
+                                self.blobs.as_ref(),
+                                call.call_id.clone(),
+                                error.to_string(),
+                            )
+                            .await;
+                        }
+                    };
                 let Some(attachment) = policy.attachment(environment_id.as_str()) else {
                     return failed_result(
                         self.blobs.as_ref(),
@@ -988,8 +995,15 @@ impl SessionTools {
                     }
                 };
                 let ready = environment.status == environments::EnvironmentStatus::Ready;
+                let reference = tools::environment::handles::environment_reference(
+                    environment.environment_id.as_str(),
+                    policy
+                        .environments
+                        .iter()
+                        .map(|attachment| attachment.environment_id.as_str()),
+                );
                 let output = serde_json::json!({
-                    "environment_id": environment.environment_id.as_str(),
+                    "environment_id": reference,
                     "active": true,
                     "ready": ready,
                     "status": format!("{:?}", environment.status).to_lowercase(),
@@ -999,13 +1013,13 @@ impl SessionTools {
                 let summary = if ready {
                     format!(
                         "Active environment set to {} (access: {}).",
-                        environment.environment_id,
+                        reference,
                         attachment.access.describe()
                     )
                 } else {
                     format!(
                         "Active environment set to {} (access: {}; currently {}; availability is checked when an environment tool uses it).",
-                        environment.environment_id,
+                        reference,
                         attachment.access.describe(),
                         format!("{:?}", environment.status).to_lowercase()
                     )
@@ -1261,9 +1275,10 @@ fn environment_model_view(
     attachment: &engine::EnvironmentAttachment,
     environment: Option<&EnvironmentRecord>,
     active: Option<&EnvironmentId>,
+    policy: &engine::EnvironmentsFeature,
 ) -> serde_json::Value {
     serde_json::json!({
-        "environment_id": attachment.environment_id,
+        "environment_id": tools::environment::handles::environment_reference(&attachment.environment_id, policy.environments.iter().map(|attachment| attachment.environment_id.as_str())),
         "provider_id": environment.and_then(|environment| environment.provider_id().map(|id| id.as_str())),
         "display_name": environment.and_then(|environment| environment.display_name.clone()),
         "status": environment.map(|environment| format!("{:?}", environment.status).to_lowercase()),
@@ -1302,13 +1317,28 @@ enum EnvironmentReadTargetError {
     InvalidEnvironmentId(String),
 }
 
+fn resolve_attached_environment(
+    reference: &str,
+    policy: Option<&engine::EnvironmentsFeature>,
+) -> Result<EnvironmentId, String> {
+    tools::environment::handles::resolve_environment_reference(
+        reference,
+        policy
+            .into_iter()
+            .flat_map(|policy| policy.environments.iter())
+            .map(|attachment| attachment.environment_id.as_str()),
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn environment_read_target(
     args: EnvironmentReadArgs,
     active: Option<&EnvironmentId>,
+    policy: Option<&engine::EnvironmentsFeature>,
 ) -> Result<EnvironmentId, EnvironmentReadTargetError> {
     match args.environment_id {
-        Some(environment_id) => EnvironmentId::try_new(environment_id)
-            .map_err(|error| EnvironmentReadTargetError::InvalidEnvironmentId(error.to_string())),
+        Some(environment_id) => resolve_attached_environment(&environment_id, policy)
+            .map_err(EnvironmentReadTargetError::InvalidEnvironmentId),
         None => active
             .cloned()
             .ok_or(EnvironmentReadTargetError::NoActiveEnvironment),
@@ -1395,7 +1425,11 @@ async fn job_read_entry_from_response(
 
 fn model_job_error(handle: Option<JobHandle>, error: String) -> ModelJobResult {
     ModelJobResult {
-        handle,
+        handle: handle.map(|mut handle| {
+            handle.environment_id =
+                tools::environment::handles::environment_handle(&handle.environment_id);
+            handle
+        }),
         summary: None,
         output: Vec::new(),
         output_next_seq: 0,
@@ -1903,11 +1937,11 @@ impl SessionTools {
 /// so the common read needs just the job id.
 fn resolve_job_handle_arg(
     active_environment_id: Option<&EnvironmentId>,
+    policy: Option<&engine::EnvironmentsFeature>,
     handle: JobHandleArg,
 ) -> Result<JobHandle, String> {
     let environment_id = match handle.environment_id {
-        Some(environment_id) => EnvironmentId::try_new(environment_id)
-            .map_err(|error| format!("invalid job handle environment_id: {error}"))?,
+        Some(environment_id) => resolve_attached_environment(&environment_id, policy)?,
         None => active_environment_id.cloned().ok_or_else(|| {
             "job handle omits environment_id and the session has no active environment".to_owned()
         })?,
@@ -2378,7 +2412,7 @@ mod tests {
     fn environment_read_defaults_to_active_and_accepts_an_explicit_id() {
         let active = EnvironmentId::new("environment_active");
         assert_eq!(
-            environment_read_target(EnvironmentReadArgs::default(), Some(&active)),
+            environment_read_target(EnvironmentReadArgs::default(), Some(&active), None),
             Ok(active.clone())
         );
         assert_eq!(
@@ -2387,11 +2421,12 @@ mod tests {
                     environment_id: Some("environment_other".to_owned()),
                 },
                 Some(&active),
+                Some(&test_environment_policy(&["environment_other"])),
             ),
             Ok(EnvironmentId::new("environment_other"))
         );
         assert_eq!(
-            environment_read_target(EnvironmentReadArgs::default(), None),
+            environment_read_target(EnvironmentReadArgs::default(), None, None),
             Err(EnvironmentReadTargetError::NoActiveEnvironment)
         );
     }
@@ -3835,6 +3870,77 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn short_environment_references_route_controls_to_canonical_ids() {
+        let id = "environment_9288e327bf634829b5127c7a14809ce9";
+        let handle = "env:9288e327bf63";
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
+        register_test_environment_provider(registry.as_ref(), "allowed").await;
+        observe_test_environment(registry.as_ref(), id, "allowed", 10).await;
+        let resolver =
+            crate::environments::resolver::EnvironmentResolver::new(registry.clone(), registry);
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .with_environment_resolver(resolver);
+        let policy = test_environment_policy(&[id]);
+        for tool_name in ["environment_read", "environment_activate"] {
+            for reference in [handle, id] {
+                let args =
+                    serde_json::to_vec(&serde_json::json!({"environment_id": reference})).unwrap();
+                let mut request = per_call_request(tool_name, &args, &[]);
+                request.environment_policy = Some(policy.clone());
+                request.call.arguments_ref = blobs.put_bytes(args).await.unwrap();
+                let result = tools.invoke_call(request).await.unwrap();
+                assert_eq!(result.status, ToolCallStatus::Succeeded);
+                let output: serde_json::Value = serde_json::from_slice(
+                    &blobs
+                        .read_bytes(result.output_ref.as_ref().unwrap())
+                        .await
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(output["environment_id"], handle);
+                if tool_name == "environment_activate" {
+                    assert_eq!(
+                        result.effects,
+                        vec![engine::environment_activate_effect(&EnvironmentId::new(id))]
+                    );
+                }
+            }
+        }
+        let job = resolve_job_handle_arg(
+            None,
+            Some(&policy),
+            JobHandleArg {
+                environment_id: Some(handle.into()),
+                job_id: environment_protocol::shared::JobId::new("build"),
+            },
+        )
+        .unwrap();
+        assert_eq!(job.environment_id, id);
+        let result = normalize_job_result(
+            blobs.as_ref(),
+            NormalizeJobResultInput {
+                handle: Some(job),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.handle.unwrap().environment_id, handle);
+        assert!(
+            resolve_job_handle_arg(
+                None,
+                Some(&test_environment_policy(&["other"])),
+                JobHandleArg {
+                    environment_id: Some(handle.into()),
+                    job_id: environment_protocol::shared::JobId::new("build"),
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn invoke_call_executes_one_environment_control_call() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
@@ -4803,6 +4909,10 @@ mod tests {
         let active = EnvironmentId::new("environment_active");
         let resolved = resolve_job_handle_arg(
             Some(&active),
+            Some(&test_environment_policy(&[
+                "environment_active",
+                "environment_other",
+            ])),
             JobHandleArg {
                 environment_id: None,
                 job_id: environment_protocol::shared::JobId::new("build"),
@@ -4814,6 +4924,10 @@ mod tests {
 
         let explicit = resolve_job_handle_arg(
             Some(&active),
+            Some(&test_environment_policy(&[
+                "environment_active",
+                "environment_other",
+            ])),
             JobHandleArg {
                 environment_id: Some("environment_other".to_owned()),
                 job_id: environment_protocol::shared::JobId::new("build"),
@@ -4824,6 +4938,7 @@ mod tests {
 
         assert!(
             resolve_job_handle_arg(
+                None,
                 None,
                 JobHandleArg {
                     environment_id: None,

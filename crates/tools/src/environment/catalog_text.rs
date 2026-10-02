@@ -35,12 +35,8 @@ fn route_access(access: FsRouteAccess) -> &'static str {
 
 fn route_source(source: &FsRouteSource) -> String {
     match source {
-        FsRouteSource::VfsSnapshot { snapshot_ref } => {
-            format!("VFS snapshot {snapshot_ref}")
-        }
-        FsRouteSource::VfsWorkspace { workspace_id } => {
-            format!("VFS workspace {workspace_id}")
-        }
+        FsRouteSource::VfsSnapshot { .. } => "VFS snapshot".to_owned(),
+        FsRouteSource::VfsWorkspace { .. } => "VFS workspace".to_owned(),
     }
 }
 
@@ -72,5 +68,15 @@ mod tests {
         assert!(text.contains("/workspace"));
         assert!(text.contains("Use vfs_* tools"));
         assert!(text.contains("not visible to environment file tools"));
+        assert!(!text.contains("workspace_1"));
+        let mut first = catalog.clone();
+        first.routes[0].source = FsRouteSource::VfsSnapshot {
+            snapshot_ref: engine::BlobRef::from_bytes(b"first snapshot"),
+        };
+        let mut second = first.clone();
+        second.routes[0].source = FsRouteSource::VfsSnapshot {
+            snapshot_ref: engine::BlobRef::from_bytes(b"second snapshot"),
+        };
+        assert_eq!(vfs_catalog_text(&first), vfs_catalog_text(&second));
     }
 }

@@ -3277,6 +3277,81 @@ mod tests {
     }
 
     #[test]
+    fn catalog_metadata_refresh_keeps_position_supersession_and_replays() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("metadata"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        upsert(
+            &mut drive,
+            TEST_CATALOG_KEY,
+            catalog_input(BlobRef::from_bytes(b"v1")),
+            20,
+        );
+        let mut input = catalog_input(BlobRef::from_bytes(b"v2"));
+        upsert(&mut drive, TEST_CATALOG_KEY, input.clone(), 21);
+        let checkpoint = drive.state().clone();
+        let previous = checkpoint.context.entries.last().unwrap().clone();
+        input.provenance_ref = Some(BlobRef::from_bytes(b"updated diagnostics"));
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new(TEST_CATALOG_KEY),
+                    entry: input.clone(),
+                },
+                22,
+            )
+            .unwrap();
+        let log = commit_action(&mut drive, action);
+        assert_eq!(entry_ids(&drive), vec![1, 2]);
+        let updated = drive.state().context.entries.last().unwrap();
+        assert_eq!(updated.entry_id, previous.entry_id);
+        assert_eq!(updated.content, previous.content);
+        assert_eq!(updated.supersedes, previous.supersedes);
+        assert_eq!(updated.provenance_ref, input.provenance_ref);
+        // The metadata path must not become an in-place rewrite of model text
+        // or of the update marker, nor edit a superseded version.
+        let mut changed_text = updated.clone();
+        changed_text.content.content_ref = BlobRef::from_bytes(b"forged text");
+        let mut changed_link = updated.clone();
+        changed_link.supersedes = None;
+        for invalid in [
+            changed_text,
+            changed_link,
+            drive.state().context.entries[0].clone(),
+        ] {
+            assert!(matches!(
+                crate::core::components::context::validate_entry_replacement(
+                    drive.state(),
+                    &invalid
+                ),
+                Err(DomainError::InvariantViolation(_))
+            ));
+        }
+        let mut replayed = checkpoint;
+        for event in &log {
+            let stored = CoreAgentCodec.encode_entry(event).unwrap();
+            crate::apply_event(
+                &mut replayed,
+                &CoreAgentCodec.decode_entry(&stored).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(&replayed, drive.state());
+        let noop = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new(TEST_CATALOG_KEY),
+                    entry: input,
+                },
+                23,
+            )
+            .unwrap();
+        assert!(matches!(noop, CoreAgentAction::Idle));
+    }
+
+    #[test]
     fn catalog_keys_supersede_independently_and_replay_text_and_provenance() {
         let mut drive =
             CoreAgentDrive::from_replayed(SessionId::new("catalogs"), CoreAgentState::new(), None);

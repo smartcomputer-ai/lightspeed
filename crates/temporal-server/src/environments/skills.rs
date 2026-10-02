@@ -47,6 +47,13 @@ pub(crate) async fn refresh(
             ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY,
         ));
     };
+    let scope = serde_json::to_string(&(
+        config,
+        feature
+            .attachment(environment_id.as_str())
+            .map(|attachment| (attachment.working_directory.as_deref(), attachment.access)),
+    ))
+    .expect("serialize discovery scope");
     let attempt = async {
         let connection = discovery.connection().await?;
         let mut query = environment_skill_scan_query(
@@ -104,18 +111,116 @@ pub(crate) async fn refresh(
         }
         Ok(catalog)
     };
-    let catalog = match tokio::time::timeout(Duration::from_secs(4), attempt).await {
+    let mut catalog = match tokio::time::timeout(Duration::from_secs(4), attempt).await {
         Ok(Ok(catalog)) => catalog,
         failure => {
             discovery.discard_connection();
             tracing::debug!(?failure, %environment_id, "environment skill discovery unavailable");
-            let mut catalog = EnvironmentSkillCatalog::unavailable(environment_id.as_str());
-            catalog.warnings.push(format!(
-                "Environment skill discovery unavailable: {failure:?}"
-            ));
-            catalog
+            unavailable_observation(blobs, current, environment_id.as_str(), &scope).await?
         }
     };
+    catalog.discovery_scope = Some(scope);
     let _timer = PhaseTimer::new("skills_publication");
     publish_environment_skill_catalog(blobs, current, &catalog).await
+}
+
+async fn unavailable_observation(
+    blobs: &dyn BlobStore,
+    current: Option<&ContextEntryInput>,
+    environment_id: &str,
+    scope: &str,
+) -> Result<EnvironmentSkillCatalog, BlobStoreError> {
+    let previous = match current.and_then(|entry| entry.provenance_ref.as_ref()) {
+        Some(reference) => {
+            serde_json::from_slice::<EnvironmentSkillCatalog>(&blobs.read_bytes(reference).await?)
+                .ok()
+        }
+        None => None,
+    };
+    let mut catalog = previous
+        .filter(|catalog| {
+            catalog.environment_id == environment_id
+                && catalog.discovery_scope.as_deref() == Some(scope)
+                && catalog.availability != EnvironmentSkillAvailability::Unavailable
+        })
+        .unwrap_or_else(|| EnvironmentSkillCatalog::unavailable(environment_id));
+    if catalog.availability != EnvironmentSkillAvailability::Unavailable {
+        catalog.availability = EnvironmentSkillAvailability::Stale;
+    }
+    let warning = "Environment skill discovery unavailable; retry discovery when the environment is reachable.".to_owned();
+    if !catalog.warnings.contains(&warning) {
+        catalog.warnings.push(warning);
+    }
+    Ok(catalog)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine::storage::InMemoryBlobStore;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn failed_discovery_preserves_only_the_same_persisted_scope() {
+        let blobs = InMemoryBlobStore::new();
+        let mut catalog = EnvironmentSkillCatalog::unavailable("machine");
+        catalog.availability = EnvironmentSkillAvailability::Available;
+        catalog.discovery_scope = Some("configured roots".into());
+        catalog.skills.push(EnvironmentSkill {
+            skill_id: tools::skills::SkillId::new("internal-id"),
+            name: "review".into(),
+            description: "Review changes".into(),
+            short_description: None,
+            skill_dir_path: "/skills/review".into(),
+            skill_doc_path: "/skills/review/SKILL.md".into(),
+        });
+        let Some(CoreAgentCommand::UpsertContext { entry, .. }) =
+            publish_environment_skill_catalog(&blobs, None, &catalog)
+                .await
+                .unwrap()
+        else {
+            panic!("initial publication")
+        };
+        // Reads durable provenance, without requiring the process-local scan cache.
+        let stale = unavailable_observation(&blobs, Some(&entry), "machine", "configured roots")
+            .await
+            .unwrap();
+        assert_eq!(stale.availability, EnvironmentSkillAvailability::Stale);
+        assert_eq!(stale.skills, catalog.skills);
+        let Some(CoreAgentCommand::UpsertContext { entry: updated, .. }) =
+            publish_environment_skill_catalog(&blobs, Some(&entry), &stale)
+                .await
+                .unwrap()
+        else {
+            panic!("diagnostics update")
+        };
+        assert_eq!(entry.content, updated.content);
+        let repeated =
+            unavailable_observation(&blobs, Some(&updated), "machine", "configured roots")
+                .await
+                .unwrap();
+        assert_eq!(repeated, stale);
+        assert!(
+            publish_environment_skill_catalog(&blobs, Some(&updated), &repeated)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for (environment, scope) in [
+            ("other", "configured roots"),
+            ("machine", "different roots"),
+        ] {
+            let unavailable = unavailable_observation(&blobs, Some(&entry), environment, scope)
+                .await
+                .unwrap();
+            assert_eq!(
+                unavailable.availability,
+                EnvironmentSkillAvailability::Unavailable
+            );
+            assert!(unavailable.skills.is_empty());
+        }
+        let text = blobs.read_text(&entry.content.content_ref).await.unwrap();
+        assert!(!text.contains("internal-id"));
+        assert!(!text.contains("skill_dir_path"));
+        assert!(text.contains("path: /skills/review/SKILL.md"));
+    }
 }

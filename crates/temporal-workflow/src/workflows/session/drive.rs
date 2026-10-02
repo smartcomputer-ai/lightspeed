@@ -690,18 +690,11 @@ fn environment_attachment_catalog_matches(state: &CoreAgentState, origin: Option
         .config
         .as_ref()
         .is_some_and(|config| config.features.environments.is_some())
-        && origin.and_then(|origin| origin.strip_prefix("runtime.environments:"))
-            == Some(
-                state
-                    .environment
-                    .active_environment_id
-                    .as_ref()
-                    .map_or("", |id| id.as_str()),
-            )
+        && origin == Some("runtime.environments")
 }
 
-/// Drop the attachment catalog as soon as its recorded selection is stale.
-/// A later runtime projection rebuilds it; switching performs no discovery.
+/// The directory belongs to the attachment feature, independently of selection.
+/// Legacy selection-bound directories are removed until the next refresh.
 pub(super) fn invalid_environment_attachment_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {

@@ -11,7 +11,9 @@ pub(crate) fn subagent_catalog_text(catalog: &SubagentCatalogSnapshot) -> String
     text.push_str(&format!(
         "You may delegate work to these agents with {AGENT_RUN_TOOL_NAME} (waits and returns the result inline; several calls in one turn run concurrently and return together) or {AGENT_SPAWN_TOOL_NAME} (returns a promise to await later). Pass the profile id as `agent`. A sub-agent sees only your brief plus its own instructions, so make each brief complete and self-contained.\n\n",
     ));
-    for agent in &catalog.agents {
+    let mut agents: Vec<_> = catalog.agents.iter().collect();
+    agents.sort_by_key(|agent| &agent.profile_id);
+    for agent in agents {
         let name = agent
             .display_name
             .as_deref()
@@ -73,5 +75,9 @@ mod tests {
         assert!(text.contains("currently missing"));
         assert!(text.contains("depth 2, 16 descendants"));
         assert!(text.contains(AGENT_RUN_TOOL_NAME));
+        let mut changed = catalog.clone();
+        changed.agents[0].revision = Some(99);
+        changed.agents.reverse();
+        assert_eq!(subagent_catalog_text(&changed), text);
     }
 }

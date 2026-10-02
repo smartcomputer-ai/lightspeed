@@ -410,7 +410,10 @@ pub async fn normalize_job_result(
         }
     }
     Ok(ModelJobResult {
-        handle,
+        handle: handle.map(|mut handle| {
+            handle.environment_id = super::handles::environment_handle(&handle.environment_id);
+            handle
+        }),
         summary,
         output,
         output_next_seq,

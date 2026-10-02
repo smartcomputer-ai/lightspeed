@@ -1535,7 +1535,7 @@ fn closed_quiescent_workflow_can_complete() {
 }
 
 #[test]
-fn attachment_catalog_invalidation_tracks_selection_and_replays() {
+fn attachment_catalog_survives_selection_changes_and_replays() {
     fn append(
         state: &mut CoreAgentState,
         log: &mut Vec<CoreAgentEntry>,
@@ -1601,18 +1601,10 @@ fn attachment_catalog_invalidation_tracks_selection_and_replays() {
     let tools = state.tooling.clone();
     let key = ContextEntryKey::new("runtime.catalog.environments");
     for next in [Some("first"), Some("second"), None] {
-        let current = state
-            .environment
-            .active_environment_id
-            .as_ref()
-            .map_or("", |id| id.as_str());
-        let observed = publication(
-            key.as_str(),
-            Some(format!("runtime.environments:{current}")),
-        );
+        let observed = publication(key.as_str(), Some("runtime.environments".into()));
         assert!(!drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
         append(&mut state, &mut log, observed.clone());
-        assert!(drive::invalid_environment_attachment_catalog_command(&state).is_none());
+        let before = engine::current_context_entry(&state, &key).unwrap().clone();
         let command = match next {
             Some(id) => CoreAgentCommand::SetActiveEnvironment {
                 environment_id: engine::EnvironmentId::new(id),
@@ -1620,18 +1612,16 @@ fn attachment_catalog_invalidation_tracks_selection_and_replays() {
             None => CoreAgentCommand::ClearActiveEnvironment,
         };
         append(&mut state, &mut log, command);
-        assert!(drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
-        let removal = drive::invalid_environment_attachment_catalog_command(&state).unwrap();
-        append(&mut state, &mut log, removal);
-        assert!(engine::current_context_entry(&state, &key).is_none());
+        assert!(!drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
+        assert!(drive::invalid_environment_attachment_catalog_command(&state).is_none());
+        assert_eq!(engine::current_context_entry(&state, &key), Some(&before));
         assert_eq!(
             engine::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs")),
             Some(&vfs)
         );
         assert_eq!(state.tooling, tools);
     }
-    let unselected = publication(key.as_str(), Some("runtime.environments:".into()));
-    append(&mut state, &mut log, unselected.clone());
+    let unselected = publication(key.as_str(), Some("runtime.environments".into()));
     let mut config = state.lifecycle.config.clone().unwrap();
     config.features.environments = None;
     append(

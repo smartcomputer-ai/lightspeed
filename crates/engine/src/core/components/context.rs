@@ -1825,13 +1825,35 @@ pub fn replacement_entry(
     input: ContextEntryInput,
 ) -> Option<ContextEntry> {
     let active = entry_by_id(state, entry_id)?;
-    Some(input.commit(entry_id, active.key.clone(), active.source.clone(), None))
+    Some(input.commit(
+        entry_id,
+        active.key.clone(),
+        active.source.clone(),
+        active.supersedes,
+    ))
+}
+
+/// Refresh discovery metadata without changing a catalog's rendered message.
+pub(crate) fn catalog_metadata_replacement(
+    state: &CoreAgentState,
+    key: &ContextEntryKey,
+    input: &ContextEntryInput,
+) -> Option<ContextEntry> {
+    let current = current_key_entry(state, key)?;
+    if !is_supersedable_catalog_kind(&current.kind)
+        || current.kind != input.kind
+        || current.content != input.content
+    {
+        return None;
+    }
+    replacement_entry(state, current.entry_id, input.clone())
 }
 
 /// A replacement may change only content: the kind (role, call id) must stay
 /// the same, so a tool call keeps its answer. Only tool results and user
-/// messages qualify; tool calls, assistant output, reasoning, and
-/// provider-opaque entries carry content the provider signed or shaped.
+/// messages qualify for content edits. Current keyed catalogs permit metadata
+/// edits only, preserving content and supersession. Tool calls, assistant output,
+/// reasoning, and provider-opaque entries carry provider-shaped content.
 pub fn validate_entry_replacement(
     state: &CoreAgentState,
     entry: &ContextEntry,
@@ -1842,16 +1864,23 @@ pub fn validate_entry_replacement(
             "cannot replace unknown context entry {entry_id}"
         )));
     };
-    let replaceable = matches!(
-        active.kind,
-        ContextEntryKind::ToolResult { .. }
-            | ContextEntryKind::Message {
-                role: ContextMessageRole::User
-            }
-    );
+    let catalog_metadata_only = is_supersedable_catalog_kind(&active.kind)
+        && active.content == entry.content
+        && active.supersedes == entry.supersedes
+        && active.key.as_ref().is_some_and(|key| {
+            current_key_entry(state, key).is_some_and(|current| current.entry_id == entry_id)
+        });
+    let replaceable = catalog_metadata_only
+        || matches!(
+            active.kind,
+            ContextEntryKind::ToolResult { .. }
+                | ContextEntryKind::Message {
+                    role: ContextMessageRole::User
+                }
+        );
     if !replaceable {
         return Err(DomainError::InvariantViolation(format!(
-            "context entry {entry_id} cannot be replaced: only tool results and user messages can"
+            "context entry {entry_id} cannot be replaced: only tool results, user messages, and current catalog metadata can"
         )));
     }
     if entry.kind != active.kind || entry.key != active.key || entry.source != active.source {

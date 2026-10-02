@@ -275,6 +275,17 @@ pub fn admit_command(
             if crate::core::components::context::context_upsert_is_noop(state, &key, &entry) {
                 return Ok(Vec::new());
             }
+            if let Some(replacement) =
+                crate::core::components::context::catalog_metadata_replacement(state, &key, &entry)
+            {
+                return Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Context(ContextEvent::EntriesReplaced {
+                        base_revision: state.context.revision,
+                        entries: vec![replacement],
+                    }),
+                )]);
+            }
             let entries = crate::core::components::context::context_entries_from_inputs(
                 state,
                 vec![(Some(key), ContextEntrySource::ContextEdit, entry)],
