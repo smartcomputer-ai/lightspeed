@@ -58,7 +58,7 @@ export function RunSectionView({
       ) : section.summary ? (
         <RunOutcomeLine summary={section.summary} showStatistics={showRunStatistics} />
       ) : null}
-      {section.reply && <TranscriptEntryView entry={section.reply} loadFullText={loadFullText} />}
+      {section.reply && <TranscriptEntryView entry={section.reply} loadFullText={loadFullText} copyable />}
     </div>
   );
 }

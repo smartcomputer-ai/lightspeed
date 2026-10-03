@@ -30,15 +30,15 @@ function MarkdownLink({ href, children, showImage = false, ...rest }: ReferenceP
   if (typeof href === "string" && href.startsWith("file:")) {
     const file = isFileHandle(href) ? links.filesByHandle?.get(href) ?? undefined : undefined;
     if (isFileHandle(href) && links.fileReferenceSource) {
-      return <HistoricalFileLink href={href} showImage={showImage} {...rest}>{children}</HistoricalFileLink>;
+      return <HistoricalFileLink href={href} showImage={showImage} {...rest} data-attachment-reference={href}>{children}</HistoricalFileLink>;
     }
-    return <FileLink file={file} showImage={showImage} {...rest}>{children}</FileLink>;
+    return <FileLink file={file} showImage={showImage} {...rest} data-attachment-reference={href}>{children}</FileLink>;
   }
   if (typeof href === "string" && href.startsWith(MEDIA_SCHEME)) {
     const media = links.mediaByHandle?.get(href);
     if (media) {
       const target = links.blobHref?.(media.blobRef, { name: media.name, type: media.mime });
-      return <AttachmentContent source={media} href={target ?? undefined} showImage={showImage && media.kind === "image"} {...rest}>{children}</AttachmentContent>;
+      return <AttachmentContent source={media} href={target ?? undefined} showImage={showImage && media.kind === "image"} {...rest} data-attachment-reference={href}>{children}</AttachmentContent>;
     }
     return (
       <span className="rounded border border-dashed px-1 text-xs text-muted-foreground" title="This media is not part of the session">
