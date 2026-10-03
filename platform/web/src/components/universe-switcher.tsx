@@ -1,4 +1,4 @@
-import { slugify, universeSlugSchema } from "@lightspeed/platform-shared";
+import { slugify, universeSlugSchema } from "@lightspeed-ai/platform-shared";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";

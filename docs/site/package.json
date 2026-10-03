@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/docs",
+  "name": "@lightspeed-ai/docs",
   "private": true,
   "type": "module",
   "scripts": {

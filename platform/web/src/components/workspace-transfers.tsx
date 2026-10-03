@@ -24,7 +24,7 @@ import {
   workspaceUploadConflicts,
   renameWorkspaceEntry,
   workspaceRenameSchema,
-} from "@lightspeed/platform-shared";
+} from "@lightspeed-ai/platform-shared";
 import { api, ApiError, type WorkspaceTree, type WorkspaceRow } from "@/api";
 import { useActionPermissions } from "@/lib/permissions";
 import {

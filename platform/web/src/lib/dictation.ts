@@ -1,5 +1,5 @@
-import type { BlobPutResponse, TranscriptionView } from "@lightspeed-ai/agent-client";
-import { MAX_DICTATION_AUDIO_BYTES } from "@lightspeed/platform-shared";
+import type { BlobPutResponse, TranscriptionView } from "@lightspeed-ai/client";
+import { MAX_DICTATION_AUDIO_BYTES } from "@lightspeed-ai/platform-shared";
 import { api } from "@/api";
 import { blobBase64 } from "@/lib/blob-base64";
 

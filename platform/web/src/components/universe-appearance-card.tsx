@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { UNIVERSE_ICONS, UNIVERSE_ICON_COLORS, type UniverseIconName, type UniverseIconColor } from "@lightspeed/platform-shared";
+import { UNIVERSE_ICONS, UNIVERSE_ICON_COLORS, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

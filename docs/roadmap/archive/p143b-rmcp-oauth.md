@@ -35,7 +35,7 @@ The implementation landed as the greenfield breaking refactor described here:
 - MCP discovery maps SDK-parsed `invalid_token` and `insufficient_scope`
   challenges to `grantNeedsReauth` and `additionalConsentRequired`; suggested
   scopes are diagnostics and never mutate authored consent.
-- The generated API/TypeScript contracts and the Platform server editor expose
+- The generated API/TypeScript contracts and the Platform backend editor expose
   current advertised scopes and typed additional-consent diagnostics. Manual
   preregistration remains available through the API and CLI.
 

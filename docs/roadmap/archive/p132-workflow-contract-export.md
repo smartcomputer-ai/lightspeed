@@ -4,7 +4,7 @@
 
 - Implemented 2026-08-25. Rust now exports and staleness-checks the schema,
   manifest/vectors, and integrator reference; the TypeScript client ships the
-  pure `@lightspeed-ai/agent-client/workflow` subpath; Bots and Channels consume
+  pure `@lightspeed-ai/client/workflow` subpath; Bots and Channels consume
   it and their handwritten emission contracts and workflow-id ports are gone.
   The client vector suite, both platform unit suites, and the Bots/Channels
   Temporal integration suites pass after cutover.
@@ -112,7 +112,7 @@ stale, exactly as `cargo test -p api` does for the API contract.
 
 `clients/typescript/scripts/generate.mjs` additionally compiles
 `workflow.schema.json` into `src/generated/workflow-types.ts`, and the
-client ships a `./workflow` subpath (`@lightspeed-ai/agent-client/workflow`):
+client ships a `./workflow` subpath (`@lightspeed-ai/client/workflow`):
 
 - the generated types;
 - `DELIVER_EMISSION_SIGNAL`, `WORKFLOW_TOOL_RECOVERY_QUERY`, recipe

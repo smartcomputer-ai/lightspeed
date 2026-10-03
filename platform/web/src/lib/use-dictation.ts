@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_DICTATION_SECONDS } from "@lightspeed/platform-shared";
+import { MAX_DICTATION_SECONDS } from "@lightspeed-ai/platform-shared";
 import { useModelDefaults, useModelDiscovery } from "./model-defaults";
 import { summarizeProviderReadiness } from "./provider-readiness";
 import { audioCaptureUnavailableReason, startAudioCapture, type AudioCapture } from "./audio-capture";

@@ -331,7 +331,7 @@ changed (paused VMs still count as running instances there).
 `crates/temporal-workflow`: no changes; the existing `await_environment_ready`
 path covers wake.
 
-Consumers: TypeScript client and Configurator regenerated; Platform server
+Consumers: TypeScript client and Configurator regenerated; Platform backend
 routes `PUT /environments/:id/power` and `/idle-policy`; environments page
 shows power/idle policy details and offers Resume/Pause/Suspend/Stop for the
 states the provider reported; profile editor gains idle-policy stages under

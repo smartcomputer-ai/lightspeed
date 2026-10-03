@@ -1,6 +1,6 @@
 /// In-memory state behind the browser demo. Fixtures fill it at boot, the
 /// stub routes read and mutate it, and nothing survives a reload.
-import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed/platform-shared";
+import { effectiveFeatures, type FeatureOverrides, type MessageAttachment, type UniverseRole, type UniverseIconName, type UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import type {
   BlobContent,
   ChannelsStatus,
@@ -40,7 +40,7 @@ import type {
   SessionEventView,
   SessionSummaryView,
   ToolCallDisplayView,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 
 /// better-auth user shape as the client sees it (`admin` plugin fields
 /// included); everything the demo user is.

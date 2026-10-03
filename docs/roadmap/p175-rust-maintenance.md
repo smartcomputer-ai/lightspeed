@@ -148,3 +148,32 @@ Validation:
   `lightspeed-runtime` in its version and help output.
 - Regenerated API and workflow schemas retain the same structure outside
   descriptions; the Cargo lockfile changes only package and dependency names.
+
+## JavaScript package and backend naming
+
+Implemented 2026-10-03:
+
+- [x] Standardize JavaScript workspace packages on `@lightspeed-ai`, name the
+  public SDK `@lightspeed-ai/client`, and retain private publication settings
+  on internal packages.
+- [x] Rename the Platform backend package and directory to
+  `@lightspeed-ai/platform-backend` and `platform/backend`.
+- [x] Align imports, generated policy imports, workspace commands, npm
+  lockfiles, local startup, release staging/publication, and documentation.
+
+Validation:
+
+- `npm test`: 1,170 workspace tests passed.
+- `npm run build`, `npm run typecheck`, `npm run check:dev`,
+  `npm run check:identity`, `npm run test:build`, and `npm run check:docs`
+  passed. The build includes the public client, Configurator, live web UI,
+  and demo UI.
+- Generated client/schema, Configurator, policy, and profile-reference files
+  regenerate without further changes.
+- Built a staged `@lightspeed-ai/client` tarball, installed it into the
+  staged Configurator with its standalone lockfile, and verified imports.
+  Staged both runtime bundles and verified backend and connector imports
+  from their extracted artifacts. No packages were published.
+- Registry dependency versions and integrity hashes remain unchanged;
+  internal packages retain `private: true`. Obsolete workspace lock entries
+  were removed. Shell syntax and `git diff --check` passed.

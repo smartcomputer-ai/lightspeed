@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/platform-shared",
+  "name": "@lightspeed-ai/platform-shared",
   "private": true,
   "type": "module",
   "exports": {

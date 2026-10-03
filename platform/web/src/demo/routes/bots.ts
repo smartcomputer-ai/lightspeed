@@ -1,6 +1,6 @@
 /// Bots: durable event routers over managed sessions, with a small in-page
 /// controller standing in for the Temporal one. The routes mirror the
-/// platform server's passthroughs to the core `bots/*` API: the
+/// platform backend's passthroughs to the core `bots/*` API: the
 /// same paths, envelopes, and status codes, over the core wire shapes.
 /// Every event — manual, webhook, replay, fixture — goes through
 /// `admitBotEvent`: numbered, routed by its trigger's policy to one of the
@@ -24,7 +24,7 @@ import type {
   RunView,
   SessionSummaryView,
   WebhookPreset,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 import type { ProfileDocument } from "@/api";
 import {
   EVENT_ORIGIN,

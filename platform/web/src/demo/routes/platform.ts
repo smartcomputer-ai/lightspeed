@@ -2,8 +2,8 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema, universeSlugSchema, universeUpdateSchema } from "@lightspeed/platform-shared";
-import type { MethodGroup } from "@lightspeed-ai/agent-client";
+import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema, universeSlugSchema, universeUpdateSchema } from "@lightspeed-ai/platform-shared";
+import type { MethodGroup } from "@lightspeed-ai/client";
 import type { EngineUniverse, Member, Universe } from "@/api";
 import { universeApiKey, type DemoStore, type UniverseState } from "../store";
 import { conflict, badRequest, notFound, nowIso, readBody, universeFor } from "./common";

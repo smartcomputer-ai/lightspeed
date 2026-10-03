@@ -37,8 +37,8 @@ development, build it from the repository root with Node.js 24 or newer:
 
 ```bash
 npm install
-npm run build --workspace @lightspeed-ai/agent-client
-npm run build --workspace @lightspeed/configurator-mcp
+npm run build --workspace @lightspeed-ai/client
+npm run build --workspace @lightspeed-ai/configurator-mcp
 ```
 
 For a local Configurator connected to your existing API-key gateway, set

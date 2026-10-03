@@ -19,7 +19,7 @@ original manual and included references; edits update the preview. Ctrl-C or
 
 For a standalone preview alongside another launcher profile, `npm run dev:docs`
 still invokes Astro directly. Astro can run that server in the background when
-it detects an agent; `npm exec --workspace @lightspeed/docs -- astro dev stop`
+it detects an agent; `npm exec --workspace @lightspeed-ai/docs -- astro dev stop`
 stops it. Search is indexed during the production build, so use `preview:docs`
 when checking search behavior.
 
@@ -70,7 +70,7 @@ credentials.
 For a loopback-only demo server, use:
 
 ```bash
-npm run dev:demo --workspace @lightspeed/platform-web -- --host 127.0.0.1
+npm run dev:demo --workspace @lightspeed-ai/platform-web -- --host 127.0.0.1
 ```
 
 | Image | Demo view and state |

@@ -16,7 +16,7 @@ roles when you need to scale or operate them independently.
 | `lightspeed-runtime` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
-| Platform server and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
+| Platform backend and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
 | Platform PostgreSQL database | Accounts, memberships, roles, and universe display/routing records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
 | Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
@@ -30,7 +30,7 @@ persistence requirements, managed as part of the Temporal deployment.
 ```mermaid
 flowchart TD
   Browser[Browser] --> Edge[HTTPS reverse proxy]
-  Edge --> Platform[Platform server and web app]
+  Edge --> Platform[Platform backend and web app]
   Platform --> PlatformDB[(Platform PostgreSQL)]
   Platform --> Runtime[Private Lightspeed runtime]
   Runtime <--> Temporal[Temporal service]

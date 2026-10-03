@@ -125,7 +125,7 @@ jobs:
           node-version: 24.13.0
           cache: npm
           cache-dependency-path: package-lock.json
-      - run: npm ci --workspace @lightspeed/docs --include-workspace-root
+      - run: npm ci --workspace @lightspeed-ai/docs --include-workspace-root
       - run: npm run check:docs
 
   required:

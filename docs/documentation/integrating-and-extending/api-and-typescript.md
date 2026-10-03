@@ -32,12 +32,12 @@ Create the `release-editor` profile and `release-notes` workspace from
 to prepare the Acorn 1.2 notes from an application.
 
 Use Node.js 24 or newer and a client version corresponding to your deployed
-Lightspeed release. Tagged releases publish `@lightspeed-ai/agent-client`;
+Lightspeed release. Tagged releases publish `@lightspeed-ai/client`;
 pin the release's package version in your application. Inside this repository,
 the package is also available as a workspace dependency.
 
 ```bash
-npm install --save-exact "@lightspeed-ai/agent-client@<release-version>"
+npm install --save-exact "@lightspeed-ai/client@<release-version>"
 ```
 
 Replace `<release-version>` with the actual package version before running the
@@ -52,7 +52,7 @@ Save this as `release-notes.mts`. The session and submission IDs
 allow the same script to find the same work after a network failure:
 
 ```ts
-import { LightspeedClient } from "@lightspeed-ai/agent-client";
+import { LightspeedClient } from "@lightspeed-ai/client";
 
 function required(name: string): string {
   const value = process.env[name];

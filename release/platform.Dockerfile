@@ -12,4 +12,4 @@ WORKDIR /app
 ADD --chown=node:node dist/runtime/platform.tar.gz /app/
 USER node
 EXPOSE 3000
-CMD ["node", "--import", "tsx", "platform/server/src/main.ts"]
+CMD ["node", "--import", "tsx", "platform/backend/src/main.ts"]

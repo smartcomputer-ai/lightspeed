@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView } from "@lightspeed-ai/agent-client";
+import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView } from "@lightspeed-ai/client";
 import { api } from "@/api";
 import { ApiKeySecret } from "./secret-once";
 import { Button } from "@/components/ui/button";

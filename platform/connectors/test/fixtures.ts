@@ -1,4 +1,4 @@
-import type { DeploymentChannelAccountView } from "@lightspeed-ai/agent-client";
+import type { DeploymentChannelAccountView } from "@lightspeed-ai/client";
 
 export const UNIVERSE_A = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";
 export const UNIVERSE_B = "00000000-0000-0000-0000-000000000001";

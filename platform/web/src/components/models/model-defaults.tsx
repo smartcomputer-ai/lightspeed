@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AGENT_MODEL_API_KINDS, modelDefaultsPutSchema } from "@lightspeed/platform-shared";
+import { AGENT_MODEL_API_KINDS, modelDefaultsPutSchema } from "@lightspeed-ai/platform-shared";
 import { api, ApiError, type ModelConfig, type ModelDefaults, type ModelDefaultsPutParams } from "@/api";
 import { modelDefaultsKey, modelLabel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
 import { summarizeProviderReadiness } from "@/lib/provider-readiness";

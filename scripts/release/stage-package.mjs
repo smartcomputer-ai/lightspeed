@@ -21,7 +21,7 @@ if (kind === "client") {
   );
 } else if (kind === "configurator") {
   manifest.private = true;
-  manifest.dependencies["@lightspeed-ai/agent-client"] = "file:./agent-client.tgz";
+  manifest.dependencies["@lightspeed-ai/client"] = "file:./client.tgz";
   delete manifest.scripts?.prepare;
 } else {
   throw new Error(`unknown package kind: ${kind}`);
@@ -42,11 +42,11 @@ lock.packages[""].version = version;
 if (kind === "configurator") {
   lock.packages[""].dependencies = manifest.dependencies;
   for (const [location, item] of Object.entries(lock.packages)) {
-    if (location && item?.name === "@lightspeed-ai/agent-client") {
+    if (location && item?.name === "@lightspeed-ai/client") {
       delete lock.packages[location];
     }
   }
-  const clientTarball = path.join(directory, "agent-client.tgz");
+  const clientTarball = path.join(directory, "client.tgz");
   if (!fs.existsSync(clientTarball)) {
     throw new Error(`${clientTarball}: staged client tarball is missing`);
   }
@@ -54,9 +54,9 @@ if (kind === "configurator") {
     .createHash("sha512")
     .update(fs.readFileSync(clientTarball))
     .digest("base64");
-  lock.packages["node_modules/@lightspeed-ai/agent-client"] = {
+  lock.packages["node_modules/@lightspeed-ai/client"] = {
     version,
-    resolved: "file:agent-client.tgz",
+    resolved: "file:client.tgz",
     integrity: `sha512-${integrity}`,
     engines: { node: ">=24" },
   };

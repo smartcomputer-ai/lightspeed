@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { LoaderCircle, Mic, MicOff, RotateCw, Square, X } from "lucide-react";
-import { MAX_DICTATION_SECONDS } from "@lightspeed/platform-shared";
+import { MAX_DICTATION_SECONDS } from "@lightspeed-ai/platform-shared";
 import type { useDictation } from "@/lib/use-dictation";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";

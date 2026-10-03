@@ -209,7 +209,7 @@ user-authorized MCP access are deferred.
 
 ## Configuration
 
-Implemented settings; the [environment reference](../documentation/reference/environment-variables.md#platform-server) gives defaults and validation:
+Implemented settings; the [environment reference](../documentation/reference/environment-variables.md#platform-backend) gives defaults and validation:
 
 ```text
 LIGHTSPEED_PLATFORM_OIDC_ISSUER
@@ -324,9 +324,9 @@ that provider's behavior.
 
 ## Current seams
 
-- [Better Auth setup](../../platform/server/src/auth.ts),
-  [Platform settings](../../platform/server/src/env.ts),
-  [universes routes](../../platform/server/src/routes/universes.ts),
-  [bootstrap](../../platform/server/src/bootstrap.ts).
+- [Better Auth setup](../../platform/backend/src/auth.ts),
+  [Platform settings](../../platform/backend/src/env.ts),
+  [universes routes](../../platform/backend/src/routes/universes.ts),
+  [bootstrap](../../platform/backend/src/bootstrap.ts).
 - [Platform schema](../../platform/db/src/schema/auth.ts),
   [Members page](../../platform/web/src/pages/MembersPage.tsx).

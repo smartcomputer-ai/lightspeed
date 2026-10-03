@@ -1,7 +1,7 @@
 import {
   LightspeedRpcError,
   LightspeedTransportError,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 // Exactly one representation of every result: the JSON text block that all

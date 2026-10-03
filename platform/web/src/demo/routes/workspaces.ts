@@ -5,8 +5,8 @@
 /// bump on the workspace row; the head manifest lives on the record.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { MAX_WORKSPACE_UPLOAD_BODY_BYTES, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed/platform-shared";
-import { workspaceEntryRenameSchema, renameWorkspaceEntry, workspaceRenameSchema } from "@lightspeed/platform-shared";
+import { MAX_WORKSPACE_UPLOAD_BODY_BYTES, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed-ai/platform-shared";
+import { workspaceEntryRenameSchema, renameWorkspaceEntry, workspaceRenameSchema } from "@lightspeed-ai/platform-shared";
 import type { VfsDirEntry, VfsFileEntry, VfsTreeEntry, WorkspaceRow, WorkspaceTree } from "@/api";
 import { base64ToBytes, type DemoStore, type WorkspaceRecord } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
@@ -297,7 +297,7 @@ export function workspaceRoutes(store: DemoStore): Hono {
 }
 
 // ---------------------------------------------------------------------------
-// Manifest surgery (port of platform/server/src/vfs.ts)
+// Manifest surgery (port of platform/backend/src/vfs.ts)
 // ---------------------------------------------------------------------------
 
 export function emptyManifest(): Manifest {

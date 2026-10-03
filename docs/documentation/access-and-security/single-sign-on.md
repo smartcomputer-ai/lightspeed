@@ -18,7 +18,7 @@ uses the same flow in both cases; those requirements belong to provider policy.
 This guide covers deployment setup, emergency access and acceptance checks.
 For a runnable development provider, use
 [local Keycloak](../development/local-development.md#company-sign-in-with-local-keycloak).
-The [environment-variable reference](../reference/environment-variables.md#platform-server)
+The [environment-variable reference](../reference/environment-variables.md#platform-backend)
 is the complete settings reference.
 
 ## Configure the provider and Platform
@@ -88,7 +88,7 @@ scopes such as `allatclaims` or a target `RESOURCE` parameter. If entitlements
 are supplied only in a JWT access token, set `CLAIMS_TOKEN=access` and the
 expected resource `AUDIENCE`. Resource selection and audience verification are
 separate settings. All these names use the `LIGHTSPEED_PLATFORM_OIDC_` prefix;
-see the [complete variable reference](../reference/environment-variables.md#platform-server).
+see the [complete variable reference](../reference/environment-variables.md#platform-backend).
 UserInfo alone is insufficient, and offline access is unsupported.
 
 A company account is bound to the exact issuer and subject. Email and display

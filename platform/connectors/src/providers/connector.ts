@@ -1,11 +1,11 @@
-import type { ChannelInbound, ChannelInboundDecision } from "@lightspeed-ai/agent-client";
+import type { ChannelInbound, ChannelInboundDecision } from "@lightspeed-ai/client";
 import type {
   ChannelDeliveryCommand,
   ChannelDeliveryResult,
   MaintainChannelTypingInput,
   PrepareChannelMediaInput,
   PrepareChannelMediaResult,
-} from "@lightspeed-ai/agent-client/workflow";
+} from "@lightspeed-ai/client/workflow";
 
 /** The three activities a connector serves on its account's task queue, by manifest name. */
 export interface ConnectorActivities {

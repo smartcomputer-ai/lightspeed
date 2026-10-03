@@ -56,13 +56,13 @@ for entry in package/package.json package/release.json package/dist/index.js \
   tar -tzf "$client_tgz" "$entry" >/dev/null
 done
 test -f dist/configurator-mcp/dist/bin.js
-test -f dist/configurator-mcp/node_modules/@lightspeed-ai/agent-client/dist/index.js
+test -f dist/configurator-mcp/node_modules/@lightspeed-ai/client/dist/index.js
 
 for runtime in platform platform-workers; do
   test -f "dist/runtime/$runtime.tar.gz"
   tar -tzf "dist/runtime/$runtime.tar.gz" ./package.json >/dev/null
 done
-tar -tzf dist/runtime/platform.tar.gz ./platform/server/src/main.ts >/dev/null
+tar -tzf dist/runtime/platform.tar.gz ./platform/backend/src/main.ts >/dev/null
 tar -tzf dist/runtime/platform.tar.gz ./platform/web/dist/index.html >/dev/null
 tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/host/main.ts >/dev/null
 tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/providers/telegram/connector.ts >/dev/null

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMatch } from "react-router-dom";
-import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed/platform-shared";
+import { FEATURES, type FeatureKey, type FeatureStates } from "@lightspeed-ai/platform-shared";
 import { api, type Universe } from "@/api";
 
 const LAST_UNIVERSE_KEY = "lightspeed:last-universe";

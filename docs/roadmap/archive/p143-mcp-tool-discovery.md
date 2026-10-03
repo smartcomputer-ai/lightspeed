@@ -641,7 +641,7 @@ Required coverage includes:
   deferred-loading values;
 - two server ids may reuse an endpoint and compatible credential while carrying
   different tool/approval policies;
-- generated API, Configurator MCP, TypeScript client, Platform server, demo,
+- generated API, Configurator MCP, TypeScript client, Platform backend, demo,
   and web tests remain in sync.
 
 The serialized `temporal_live_mcp_and_session_links_materialize` acceptance now

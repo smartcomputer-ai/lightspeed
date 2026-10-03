@@ -79,7 +79,7 @@ environment next to the bot, exec pollers have to be handed an id, the
 Environments page can display an idle policy but not set one on an existing
 environment, the editor and CLI give no hint that the policy lives there,
 and there is no way to retire or delete a bot at all
-(`platform/server/src/routes/bots.ts` has create and patch only;
+(`platform/backend/src/routes/bots.ts` has create and patch only;
 `enabled: false` pauses).
 
 ## Today
@@ -384,7 +384,7 @@ with the snapshot-patch trick from P135): `bots.closed_at timestamptz`,
   activity; poll fire resolves a missing `environmentId` from the bot
   profile; `bot_trigger_put` and its schema description accept the
   omission.
-- `platform/server`: `bots/:botId/close`, `DELETE bots/:botId`, `409` on
+- `platform/backend`: `bots/:botId/close`, `DELETE bots/:botId`, `409` on
   enabling a closed bot, `410` on webhook ingest and manual events for a
   closed bot; `signalBotConfig` carries `closed`.
 - `platform/web`: Environments page idle-policy modal and create-dialog

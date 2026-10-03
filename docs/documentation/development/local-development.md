@@ -113,7 +113,7 @@ Run the explicit live authentication check once Keycloak has started:
 
 ```bash
 LIGHTSPEED_PLATFORM_OIDC_TEST_ISSUER=http://localhost:18090/realms/lightspeed \
-  npm run test:sso --workspace @lightspeed/platform-server
+  npm run test:sso --workspace @lightspeed-ai/platform-backend
 ```
 
 This uses a disposable in-process PostgreSQL database and the real provider's
@@ -190,7 +190,7 @@ those pieces have different responsibilities.
 | Public operation names, request fields, or response shapes | `crates/api`; follow [Changing contracts](changing-contracts.md) through generated consumers. |
 | Durable execution, activities, or gateway behavior | `crates/temporal-workflow` and `crates/temporal-runtime`; distinguish workflow decisions from activity I/O. |
 | Provider transport, tool execution, or persistence | The relevant adapter under `crates/`, such as `llm-runtime`, `tools`, or `store-pg`. |
-| Product accounts, management routes, or the web experience | `platform/server`, `platform/db`, and `platform/web`; shared product types live in `platform/shared`. |
+| Product accounts, management routes, or the web experience | `platform/backend`, `platform/db`, and `platform/web`; shared product types live in `platform/shared`. |
 | Machine execution or provisioning | The environment protocol, daemon, client, or provider; see [Environment providers](../integrating-and-extending/environment-providers.md). |
 
 Use [Architecture](../how-it-works/architecture.md) to understand those
@@ -207,7 +207,7 @@ trace tells you where the regression test belongs.
 
 ## Edit, check, and restart
 
-Vite updates the web UI as you edit. The Platform server runs through `tsx
+Vite updates the web UI as you edit. The Platform backend runs through `tsx
 watch` and restarts on relevant source changes. The Rust runtime and daemon
 run through ordinary `cargo run`; the supervisor does not watch and rebuild
 them. Configurator and the optional connector host also run without watch
@@ -230,8 +230,8 @@ relevant processes too.
 For a web change, use its own checks while the development server stays open:
 
 ```bash
-npm run typecheck --workspace @lightspeed/platform-web
-npm run test --workspace @lightspeed/platform-web
+npm run typecheck --workspace @lightspeed-ai/platform-web
+npm run test --workspace @lightspeed-ai/platform-web
 ```
 
 The demo backend makes many visual and interaction changes easy to inspect

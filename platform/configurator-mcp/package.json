@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/configurator-mcp",
+  "name": "@lightspeed-ai/configurator-mcp",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -27,7 +27,7 @@
     "check": "npm run check:generated && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "@lightspeed-ai/agent-client": "file:../../clients/typescript",
+    "@lightspeed-ai/client": "file:../../clients/typescript",
     "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "ajv": "^8.17.1",

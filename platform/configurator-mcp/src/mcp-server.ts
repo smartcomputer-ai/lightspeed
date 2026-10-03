@@ -1,4 +1,4 @@
-import type { CallerAccess, LightspeedClient, MethodParams } from "@lightspeed-ai/agent-client";
+import type { CallerAccess, LightspeedClient, MethodParams } from "@lightspeed-ai/client";
 import {
   ProtocolError,
   ProtocolErrorCode,

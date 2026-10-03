@@ -5,7 +5,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type {
   EnvironmentProviderBindingView,
   DeploymentEnvironmentProviderView,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 import { api } from "@/api";
 import {
   AlertDialog,

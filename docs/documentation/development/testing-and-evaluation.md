@@ -38,9 +38,9 @@ test output will help diagnose a failure.
 TypeScript workspaces have their own test and typecheck scripts. For example:
 
 ```bash
-npm run test --workspace @lightspeed/platform-web -- src/lib/subscriptions.test.ts
-npm run test --workspace @lightspeed-ai/agent-client
-npm run typecheck --workspace @lightspeed/connectors
+npm run test --workspace @lightspeed-ai/platform-web -- src/lib/subscriptions.test.ts
+npm run test --workspace @lightspeed-ai/client
+npm run typecheck --workspace @lightspeed-ai/connectors
 ```
 
 Read the nearest `package.json` before choosing a script. A package may use

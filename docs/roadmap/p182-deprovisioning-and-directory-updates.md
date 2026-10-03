@@ -219,7 +219,7 @@ acceptance step; no automatic deactivation or core-key cascade was added.
 
 ## Current seams
 
-- [Better Auth setup](../../platform/server/src/auth.ts),
+- [Better Auth setup](../../platform/backend/src/auth.ts),
   [Platform schema](../../platform/db/src/schema/auth.ts),
-  [universes routes](../../platform/server/src/routes/universes.ts),
+  [universes routes](../../platform/backend/src/routes/universes.ts),
   [Members page](../../platform/web/src/pages/MembersPage.tsx).

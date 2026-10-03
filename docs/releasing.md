@@ -1,7 +1,7 @@
 # Build and release
 
 Lightspeed owns and publishes a coherent release containing the hosted runtime,
-the Incus provider, envd, the CLI, Configurator MCP, the platform server/web
+the Incus provider, envd, the CLI, Configurator MCP, the platform backend/web
 image, the connector-host image (published as `platform-workers`), the generated
 TypeScript client, the static in-browser demo and documentation site, API
 contracts, checksums, an SPDX SBOM, and a release manifest. A consumer should
@@ -57,7 +57,7 @@ file under `crates/store-pg/migrations/`, register it in
 `release/metadata.env`.
 
 The TypeScript platform owns a separate Drizzle migration history under
-`platform/db/migrations/` and applies it when the platform server starts. CI
+`platform/db/migrations/` and applies it when the platform backend starts. CI
 tests both an empty installation and an upgrade from the supported baseline in
 `LIGHTSPEED_PLATFORM_UPGRADE_FROM` against real PostgreSQL. The manifest
 records that baseline and `LIGHTSPEED_PLATFORM_SCHEMA_REVISION`. Run the same

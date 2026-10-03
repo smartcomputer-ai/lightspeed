@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/platform-db",
+  "name": "@lightspeed-ai/platform-db",
   "private": true,
   "type": "module",
   "exports": {

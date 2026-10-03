@@ -64,7 +64,7 @@ client_tgz="$(find "$dist_dir/npm" -maxdepth 1 -name '*.tgz' -print -quit)"
 cp -R platform/configurator-mcp/dist "$dist_dir/configurator-mcp/dist"
 cp platform/configurator-mcp/package.json platform/configurator-mcp/package-lock.json \
   "$dist_dir/configurator-mcp/"
-cp "$client_tgz" "$dist_dir/configurator-mcp/agent-client.tgz"
+cp "$client_tgz" "$dist_dir/configurator-mcp/client.tgz"
 node scripts/release/stage-package.mjs configurator "$dist_dir/configurator-mcp" "$version" "$git_sha"
 (cd "$dist_dir/configurator-mcp" && \
   npm ci --omit=dev --offline --ignore-scripts)

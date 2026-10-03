@@ -1,4 +1,4 @@
-import type { SessionActivity } from "@lightspeed-ai/agent-client";
+import type { SessionActivity } from "@lightspeed-ai/client";
 import { StatusDot, type BotTone } from "@/components/bot/status";
 
 /** The dot for what a session is doing: working, waiting, idle or closed. */

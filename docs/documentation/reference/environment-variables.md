@@ -32,7 +32,7 @@ and then applies the defaults from `scripts/dev/env.sh`.
 
 These variables configure `lightspeed-runtime`, including its JSON-RPC gateway,
 Temporal worker, PostgreSQL stores, CAS, provider clients, and preprocessing.
-They do not configure the TypeScript Platform server.
+They do not configure the TypeScript Platform backend.
 
 ### Gateway, Temporal, and storage
 
@@ -163,7 +163,7 @@ are given together.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform server's fallback gateway URL. |
+| `LIGHTSPEED_API_URL` | Required unless a saved connection or `--api-url` supplies it | Lightspeed JSON-RPC endpoint, normally ending in `/rpc`. Also used as the Platform backend's fallback gateway URL. |
 | `LIGHTSPEED_API_KEY` | Unset | Bearer key sent to an authenticated gateway. |
 | `LIGHTSPEED_UNIVERSE` | Unset | Universe UUID or core slug overriding saved selection. Only deployment keys may switch universes; slugs require universe-list permission. |
 | `LIGHTSPEED_CONFIG_DIR` | `$XDG_CONFIG_HOME/lightspeed`, otherwise `$HOME/.config/lightspeed` | Saved CLI connection metadata and protected owned credential files. |
@@ -246,10 +246,10 @@ machines without Incus.
 | --- | --- | --- |
 | `LIGHTSPEED_INCUS_PROVIDER_CONFIG` | **Required unless `--config` is supplied** | Path to the provider's JSON configuration. Incus credentials, templates, network policy, and ingress settings live in that file rather than separate environment variables. |
 
-## Platform server
+## Platform backend
 
 These variables configure the TypeScript management API/web server under
-`platform/server`. Its database and authentication are separate concerns from
+`platform/backend`. Its database and authentication are separate concerns from
 the Rust runtime database and gateway authentication. For provider setup and
 acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-sign-on.md).
 
@@ -355,7 +355,7 @@ Never reuse their credentials in a deployed environment.
 | --- | --- | --- |
 | `LIGHTSPEED_AUTH_MODE` | `authenticated` | Both `full` and `runtime` provision a CLI key and connection handoff by default; full also provisions a separate Platform key when needed. Explicit `single` remains supported for runtime-only local use. |
 | `LIGHTSPEED_CHANNELS_CONNECTORS` | Empty | Providers the `full` development profile hands to one connector host process (`LIGHTSPEED_CONNECTOR_PROVIDERS`). Values: `telegram`, `whatsapp`, or both. WhatsApp additionally needs `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`; the session directory defaults to `.lightspeed-dev/whatsapp-auth`. |
-| `PORT` | `3000` | Platform server port. |
+| `PORT` | `3000` | Platform backend port. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_BIND_PORT` | `18081` | Configurator port used by the supervisor. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped service key. |
 | `LIGHTSPEED_PLATFORM_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER` | `false` | Retired; `true` fails startup. |

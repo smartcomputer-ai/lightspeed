@@ -4,7 +4,7 @@ import { McpToolPicker } from "@/components/mcp/tool-picker";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { slugify } from "@lightspeed/platform-shared";
+import { slugify } from "@lightspeed-ai/platform-shared";
 import { CheckCircle2, ExternalLink, Loader2, LogIn, Pencil, Plus, RotateCcw, Server, Trash2 } from "lucide-react";
 import {
   api,

@@ -8,7 +8,7 @@ import {
   type WASocket,
 } from "baileys";
 import qrcode from "qrcode-terminal";
-import type { LightspeedClient } from "@lightspeed-ai/agent-client";
+import type { LightspeedClient } from "@lightspeed-ai/client";
 import type {
   ConnectorActivities,
   InboundGate,

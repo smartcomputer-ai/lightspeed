@@ -1,4 +1,4 @@
-import type { BotReadResponse } from "@lightspeed-ai/agent-client";
+import type { BotReadResponse } from "@lightspeed-ai/client";
 import { ReadError } from "@/components/read-error";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";

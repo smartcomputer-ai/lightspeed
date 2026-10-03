@@ -1,4 +1,4 @@
-import { AGENT_MODEL_API_KINDS } from "@lightspeed/platform-shared";
+import { AGENT_MODEL_API_KINDS } from "@lightspeed-ai/platform-shared";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import type { WorkspaceAttachmentDraft } from "@/api";
 import {

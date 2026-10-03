@@ -520,7 +520,7 @@ maps supported file-transcription families to the audio protocol, bypasses the
 agent-only age filter for those routes, and keeps them out of agent pickers.
 Custom providers continue to use their declared API kinds and manual choices.
 
-Validation passed: 572 web tests, 162 Platform server tests, 13 Rust model
+Validation passed: 572 web tests, 162 Platform backend tests, 13 Rust model
 discovery tests, eight API contract tests, TypeScript checks, and production
 and demo builds. Browser checks covered speech suggestions, editable transcript
 preview, clearing the default, and mobile layout. A real Chromium recorder

@@ -165,7 +165,7 @@ The outputs have distinct jobs:
 | Output | Purpose |
 | --- | --- |
 | `dist/bin/` and `dist/archives/` | Four Linux executables and their archives, plus the static demo and docs archives. |
-| `dist/npm/` | The publishable `@lightspeed-ai/agent-client` package. |
+| `dist/npm/` | The publishable `@lightspeed-ai/client` package. |
 | `dist/contracts/` | Generated public API contracts. |
 | `dist/configurator-mcp/` and `dist/runtime/` | Staged inputs for component images. |
 | `dist/release-manifest.json` and `dist/envd.json` | Release identity, compatibility and component references, plus daemon discovery metadata. |

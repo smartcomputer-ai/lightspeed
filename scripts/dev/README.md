@@ -204,7 +204,7 @@ scripts/dev/infra/minio-reset.sh
 
 `reset.sh` recreates both databases, applies the runtime's ledgered schema, and
 clears the Lightspeed MinIO prefix. Platform applies its independently owned
-database migrations when the Platform server starts.
+database migrations when the Platform backend starts.
 
 The runtime's fresh PostgreSQL baseline is organized into eleven domain migrations
 in `crates/store-pg/migrations/`: identity and scoped API keys share a definition;

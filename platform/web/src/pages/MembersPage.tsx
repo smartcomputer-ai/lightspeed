@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api, type Member } from "@/api";
-import { UNIVERSE_ROLES, type UniverseRole } from "@lightspeed/platform-shared";
+import { UNIVERSE_ROLES, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import {
   AlertDialog,
   AlertDialogAction,

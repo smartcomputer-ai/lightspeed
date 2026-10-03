@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Universe } from "@/api";
-import { UNIVERSE_ICONS } from "@lightspeed/platform-shared";
+import { UNIVERSE_ICONS } from "@lightspeed-ai/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
 import { UniverseAppearanceCard } from "./universe-appearance-card";

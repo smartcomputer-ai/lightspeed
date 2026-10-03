@@ -1,5 +1,5 @@
-import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed/platform-shared";
-export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
+import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
+export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/client";
 import type {
   Attribution,
   ResourceAccessSummary,
@@ -20,7 +20,7 @@ import type {
   SessionEventView,
   SessionEventsReadResponse,
   ToolCallDisplayView,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 
 /// Thin fetch wrapper for /api/v1 (cookie-authenticated, same origin).
 
@@ -669,15 +669,15 @@ export type {
   SessionSummaryView,
   WebhookPreset,
   WebhookVerification,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 
-import type { BotView } from "@lightspeed-ai/agent-client";
+import type { BotView } from "@lightspeed-ai/client";
 
 export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
   return bot.displayName ?? bot.botId;
 }
 
-/// Connector host health, aggregated by the platform server from each
+/// Connector host health, aggregated by the platform backend from each
 /// connector's /healthz (`GET /api/v1/status/channels`). Platform-owned;
 /// unrelated to the core channel account records.
 export interface ChannelConnectorHealth {

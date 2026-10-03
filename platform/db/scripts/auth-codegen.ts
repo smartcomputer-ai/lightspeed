@@ -1,6 +1,6 @@
 // Codegen-only better-auth config: mirrors the server's plugin set so
 // `@better-auth/cli generate` emits the matching drizzle schema. Not
-// imported at runtime — the runtime config lives in @lightspeed/platform-server.
+// imported at runtime — the runtime config lives in @lightspeed-ai/platform-backend.
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { drizzle } from "drizzle-orm/node-postgres";

@@ -340,7 +340,7 @@ function createPlan(profile, sourceEnv) {
       {
         name: "platform",
         command: tsx,
-        args: ["watch", "platform/server/src/main.ts"],
+        args: ["watch", "platform/backend/src/main.ts"],
         cwd: repoRoot,
         env,
         // First-login bootstrap checks the canonical administrator through RPC.
@@ -361,7 +361,7 @@ function createPlan(profile, sourceEnv) {
   }
 
   // The demo is the web UI over its in-browser backend: no infrastructure,
-  // no runtime, no Platform server — just Vite in demo mode.
+  // no runtime, no Platform backend — just Vite in demo mode.
   if (profile === "demo") {
     ports.push({ name: "demo web", port: 5_175 });
     readiness.push({ name: "demo web", url: "http://localhost:5175/demo/" });

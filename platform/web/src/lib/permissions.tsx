@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { UniverseAction } from "@lightspeed-ai/agent-client";
-import { roleAtLeast, universeRoleSchema, type UniverseRole } from "@lightspeed/platform-shared";
+import type { UniverseAction } from "@lightspeed-ai/client";
+import { roleAtLeast, universeRoleSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 
 type Identity = { userId: string; platformAdmin: boolean };

@@ -75,7 +75,7 @@ For every forwarded request, in order:
    `not_found` for the universe.
 2. **Method.** The member's role meets the method's minimum role. The table
    is generated from the manifest's `role` metadata into
-   `platform/server/src/routes/method-roles.ts`; a test asserts every
+   `platform/backend/src/routes/method-roles.ts`; a test asserts every
    manifest method has an entry, so a new core method fails the Platform
    build until it is classified. Otherwise `forbidden`.
 3. **Target.** When the manifest names a `target` for the method and the
@@ -231,7 +231,7 @@ greenfield rule:
 
 Notes on steps 1 and 2 as built:
 
-- The gate is the member client (`platform/server/src/runtime-client.ts`):
+- The gate is the member client (`platform/backend/src/runtime-client.ts`):
   every core call a route makes for a member passes the role and target
   checks, so a new route cannot forget them. Deployment methods use a
   separate client and are never called on a member's behalf.
@@ -311,11 +311,11 @@ written; the live core suites cover the core half.
 
 ## Current seams
 
-- [Better Auth setup](../../platform/server/src/auth.ts),
-  [gateway proxy](../../platform/server/src/routes/gateway.ts),
-  [universes routes](../../platform/server/src/routes/universes.ts),
-  [runtime client](../../platform/server/src/runtime-client.ts),
-  [bootstrap](../../platform/server/src/bootstrap.ts).
+- [Better Auth setup](../../platform/backend/src/auth.ts),
+  [gateway proxy](../../platform/backend/src/routes/gateway.ts),
+  [universes routes](../../platform/backend/src/routes/universes.ts),
+  [runtime client](../../platform/backend/src/runtime-client.ts),
+  [bootstrap](../../platform/backend/src/bootstrap.ts).
 - [Platform schema](../../platform/db/src/schema/auth.ts),
   [Members page](../../platform/web/src/pages/MembersPage.tsx),
-  [Configurator installer](../../platform/server/src/routes/setups.ts).
+  [Configurator installer](../../platform/backend/src/routes/setups.ts).

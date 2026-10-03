@@ -65,6 +65,7 @@ for (const channel of ['main', 'release']) {
     if (channel === 'release') f.env.LIGHTSPEED_ENVD_PUBLIC_URL_BASE = 'https://example.test/releases/v1';
     f.create();
     const manifest = f.manifest();
+    assert.equal(manifest.typescriptClient.name, "@lightspeed-ai/client");
     assert.deepEqual(Object.keys(manifest.binaries).sort(), ['cli', 'envd', 'providerIncus', 'runtime']);
     assert.equal(manifest.binaries.runtime.file, `lightspeed-runtime-${version}.tar.gz`);
     assert.equal(manifest.binaries.runtime.url, `oci://${registry}/runtime-bundle@${digest}`);

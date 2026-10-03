@@ -20,9 +20,9 @@
     "platform/db/scripts/**/*.ts",
     "platform/db/drizzle.config.ts",
     "platform/shared/src/**/*.ts",
-    "platform/server/src/**/*.ts",
-    "platform/server/test/**/*.ts",
-    "platform/server/scripts/**/*.ts",
+    "platform/backend/src/**/*.ts",
+    "platform/backend/test/**/*.ts",
+    "platform/backend/scripts/**/*.ts",
     "platform/cli/src/**/*.ts"
   ]
 }

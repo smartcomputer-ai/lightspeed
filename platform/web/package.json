@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/platform-web",
+  "name": "@lightspeed-ai/platform-web",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,8 +14,8 @@
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/space-grotesk": "^5.2.10",
-    "@lightspeed-ai/agent-client": "*",
-    "@lightspeed/platform-shared": "*",
+    "@lightspeed-ai/client": "*",
+    "@lightspeed-ai/platform-shared": "*",
     "@shadcn/react": "^0.2.0",
     "@tabler/icons-react": "^3.44.0",
     "@tailwindcss/vite": "^4.3.2",

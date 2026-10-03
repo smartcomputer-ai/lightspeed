@@ -8,7 +8,7 @@
   deleted). Implementation log at the end of this document.
 - Proposed 2026-08-30 from a design conversation with Lukas, after a
   survey of `platform/bots`, `platform/channels`, `platform/workers`, the
-  Platform server/db/web glue, and the Rust runtime crates.
+  Platform backend/db/web glue, and the Rust runtime crates.
 - Direction from Lukas: move bots and the core of Channels (workflows,
   control plane, tables) into `temporal-workflow`, `temporal-runtime`,
   `store-pg`, and dedicated domain crates; keep the messaging bridges
@@ -36,7 +36,7 @@ conversation is the receiver of `message_*` workflow tools, every event
 goes through one admission pipeline — but they run as a second product
 plane written against the core's public API:
 
-- The Platform server is itself a Temporal client (`bot-common.ts`,
+- The Platform backend is itself a Temporal client (`bot-common.ts`,
   `bot-schedules.ts`): signal-with-start, queries, and Schedule
   reconciliation at boot happen in route handlers.
 - Two databases hold one product: `bots`, `bot_triggers`, `bot_events`,
@@ -395,7 +395,7 @@ runs the environment reconciler *and* the power reaper (today the
 gateway-only mode skips the reaper — an asymmetry to fix while
 rewriting the composition).
 
-`./dev.sh full` becomes runtime + envd + Platform server + web +
+`./dev.sh full` becomes runtime + envd + Platform backend + web +
 Configurator + the opt-in connector host: the four `platform-workers`
 processes disappear. `platform/workers` becomes the connector host.
 
@@ -430,7 +430,7 @@ two dependencies — the core API and Temporal — and reads no database.
    (heartbeating, cancelled by scope) — unchanged payloads.
 4. Health and metrics as today, per account.
 
-The host authenticates the way the Platform server does: it is a
+The host authenticates the way the Platform backend does: it is a
 first-party deployment process, so in `trusted-header` mode it stamps
 `x-lightspeed-universe` per call and uses the operator scope for
 discovery; in `single` mode the universe is fixed; in `api-key` mode
@@ -540,7 +540,7 @@ and core-Channels variable groups in `docs/variables.md`.
   — ported; the rest moves to `platform/connectors`.
 - `platform/db/src/schema/{bots,channels}.ts`, migrations
   `0001_channels`, `0002_bots`.
-- `platform/server/src/routes/{bot-hooks,bot-common}.ts`,
+- `platform/backend/src/routes/{bot-hooks,bot-common}.ts`,
   `bot-schedules.ts`; the bot logic in `routes/bots.ts` and
   `routes/channel-accounts.ts` (they become passthroughs).
 - `platform/workers` roles `bots-*`, `channels-*`; the Channels search
@@ -577,12 +577,12 @@ and core-Channels variable groups in `docs/variables.md`.
    grant-leased Telegram tokens and per-account WhatsApp session
    directories, `channels/inbound/admit` with the decision → reply
    mapping, one activity worker per `connectorTaskQueue` (derivation
-   exported from `@lightspeed-ai/agent-client/workflow` and asserted
+   exported from `@lightspeed-ai/client/workflow` and asserted
    against the contract vector), one health/metrics listener.
    `platform/channels` and `platform/workers` are deleted; `dev.sh
    full` starts one `connectors` process behind
    `LIGHTSPEED_CHANNELS_CONNECTORS`. `platform/bots` survived only
-   because `platform/server` still imported it (deleted in slice 4). The WhatsApp
+   because `platform/backend` still imported it (deleted in slice 4). The WhatsApp
    group-join pairing announcement was dropped: the core has no
    "is pairing required" query, and the first message in the group
    yields `pairing_required` anyway.
@@ -753,8 +753,8 @@ and core-Channels variable groups in `docs/variables.md`.
   documents carry `data.conversation` / `data.message` (CEL filters written
   against the TS layout need updating).
 - **Slice 4, Platform cut-over (2026-08-30).** `platform/bots` is deleted
-  and the Platform server is no longer a Temporal client
-  (`@temporalio/client` and `@lightspeed/bots` left its dependencies).
+  and the Platform backend is no longer a Temporal client
+  (`@temporalio/client` and `@lightspeed-ai/bots` left its dependencies).
   `routes/bots.ts` and `routes/channel-accounts.ts` are thin passthroughs
   on the existing `engineClientFor` / `withGateway` seam at the same URL
   paths with the core response shapes: reads keep member access, writes
@@ -773,7 +773,7 @@ and core-Channels variable groups in `docs/variables.md`.
   (`LIGHTSPEED_PLATFORM_SCHEMA_REVISION=1`), and the migration gate now
   asserts the moved tables never reappear (the `lightspeed_channels`
   role machinery went with them). The web UI and the demo backend read
-  the generated `@lightspeed-ai/agent-client` types (`platform/web/src/api.ts`
+  the generated `@lightspeed-ai/client` types (`platform/web/src/api.ts`
   re-exports them; the demo emulates the new wire exactly, hooks at the
   core-shaped path). Release staging no longer ships `platform/bots/src`.
   Found while migrating: `BotTriggerView` serialized the poll spec's

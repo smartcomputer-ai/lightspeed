@@ -2,7 +2,7 @@ import type {
   ChannelInbound,
   ChannelInboundDecision,
   LightspeedClient,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/client";
 import type { InboundGate, InboundVerdict } from "../providers/connector.js";
 import type { ConnectorMetrics } from "./metrics.js";
 import type { FixedWindowRateLimiter } from "./rate-limit.js";

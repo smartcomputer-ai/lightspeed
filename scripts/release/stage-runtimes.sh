@@ -24,7 +24,7 @@ copy_workspace_manifests() {
     platform/configurator-mcp \
     platform/connectors \
     platform/db \
-    platform/server \
+    platform/backend \
     platform/shared \
     platform/web; do
     mkdir -p "$root/$workspace"
@@ -55,16 +55,16 @@ stage_runtime() {
       "$root/platform/connectors"
   else
     rm -rf "$root/platform/cli" "$root/platform/configurator-mcp" \
-      "$root/platform/db" "$root/platform/server" "$root/platform/shared" \
+      "$root/platform/db" "$root/platform/backend" "$root/platform/shared" \
       "$root/platform/web"
   fi
   "$tar_command" --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     -C "$root" -czf "$dist_dir/runtime/$name.tar.gz" .
 }
 
-stage_runtime platform @lightspeed/platform-server \
+stage_runtime platform @lightspeed-ai/platform-backend \
   clients/typescript/dist \
-  platform/server/src \
+  platform/backend/src \
   platform/db/src \
   platform/db/migrations \
   platform/shared/src \
@@ -72,6 +72,6 @@ stage_runtime platform @lightspeed/platform-server \
 # The "platform-workers" runtime is the connector host (platform/connectors):
 # Bots and Channels core moved into the Rust runtime. The artifact keeps its
 # name so image references and manifest keys stay stable.
-stage_runtime platform-workers @lightspeed/connectors \
+stage_runtime platform-workers @lightspeed-ai/connectors \
   clients/typescript/dist \
   platform/connectors/src

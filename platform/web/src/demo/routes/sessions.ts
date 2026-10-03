@@ -2,7 +2,7 @@ import { defaultEnvironmentAttachment, environmentAttachments, isEnvironmentAtta
 import { modelFromConfig } from "@/lib/model-defaults";
 /// Session routes over the engine simulation: the sessions browser, the
 /// transcript's long-poll tail, run control, and the settings sheet. Shapes
-/// and status codes follow the platform server's gateway so the UI cannot
+/// and status codes follow the platform backend's gateway so the UI cannot
 /// tell the difference.
 import { Hono, type Context } from "hono";
 import {
@@ -12,9 +12,9 @@ import {
   sessionMessageSchema,
   sessionSteerSchema,
   type MessageAttachment,
-} from "@lightspeed/platform-shared";
+} from "@lightspeed-ai/platform-shared";
 import type { Environment, ModelConfig, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
-import type { ProfileInstructions } from "@lightspeed-ai/agent-client";
+import type { ProfileInstructions } from "@lightspeed-ai/client";
 import {
   refreshDemoCompactionView,
   PROFILE_INSTRUCTIONS_KEY,
