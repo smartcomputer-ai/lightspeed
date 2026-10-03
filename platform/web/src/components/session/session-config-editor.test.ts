@@ -13,6 +13,23 @@ import {
   workspaceAttachmentsFromConfig,
 } from "./session-config-editor";
 
+describe("provider-triggered compaction", () => {
+  const model = { providerId: "anthropic", apiKind: "anthropic:messages", model: "claude-opus-5" };
+
+  it.each([undefined, 50_000, 150_000])("accepts Anthropic threshold %s", (compactThresholdTokens) => {
+    expect(configError({ model, context: { compaction: { mode: "providerTriggered", compactThresholdTokens } } })).toBeNull();
+  });
+
+  it.each([0, 1_000, 49_999])("rejects Anthropic threshold %s before saving", (compactThresholdTokens) => {
+    expect(configError({ model, context: { compaction: { mode: "providerTriggered", compactThresholdTokens } } })).toContain("50,000");
+  });
+
+  it("rejects Chat Completions and preserves standalone's lower threshold", () => {
+    expect(configError({ model: { ...model, apiKind: "openai:completions" }, context: { compaction: { mode: "providerTriggered" } } })).toContain("requires OpenAI Responses or Anthropic Messages");
+    expect(configError({ model, context: { compaction: { mode: "providerStandalone", compactThresholdTokens: 1_000 } } })).toBeNull();
+  });
+});
+
 describe("specific tool choice", () => {
   it.each([
     { providerId: "openai", apiKind: "openai:responses", model: "gpt-5.5" },
@@ -426,5 +443,18 @@ describe("attachment validation and source discovery", () => {
       expect(mcpAttachmentError(config, [{ serverId: "catalog", allowedTools: ["search"] }])).toBeNull();
     }
     expect(mcpAttachmentError({ features: { mcp: { servers: [{ serverId: "catalog", tools: ["delete"] }] } } }, [{ serverId: "catalog", allowedTools: ["search"] }])).toContain("not allowed");
+  });
+});
+
+
+describe("compaction capacity", () => {
+  it("preserves the capacity override when the mode is default or disabled", () => {
+    for (const mode of ["default", "disabled"]) {
+      const context = { inputLimitTokens: 128000, compaction: { mode } };
+      expect(normalizeSessionConfig({ context })).toEqual({ context: mode === "default" ? { inputLimitTokens: 128000 } : context });
+    }
+  });
+  it.each([0, -1, 1.5])("rejects invalid input capacity %s", (inputLimitTokens) => {
+    expect(configError({ context: { inputLimitTokens } })).toContain("positive integer");
   });
 });

@@ -21,6 +21,7 @@ export const METHODS = [
   "session/events/read",
   "session/context/append",
   "session/context/remove",
+  "session/context/replace",
   "session/context/compact",
   "session/runs/start",
   "session/runs/list",
@@ -241,11 +242,17 @@ export const METHOD_INFO = {
     summary: "Remove keyed session context",
     description: "Removes active entries by stable key with per-key results. Missing keys are idempotent no-ops; runtime-reserved run keys cannot be removed.",
   },
+  "session/context/replace": {
+    scope: "universe",
+    access: {"action":"control_session","kind":"universe"},
+    summary: "Replace session context entries",
+    description: "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
+  },
   "session/context/compact": {
     scope: "universe",
     access: {"action":"control_session","kind":"universe"},
     summary: "Compact session context",
-    description: "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
+    description: "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
   },
   "session/runs/start": {
     scope: "universe",
@@ -1127,9 +1134,18 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfContextRemoveResponse;
   };
   /**
+   * Replace session context entries
+   *
+   * Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
+   */
+  "session/context/replace": {
+    params: Api.ContextReplaceParams;
+    result: Api.AgentApiOutcomeOfContextReplaceResponse;
+  };
+  /**
    * Compact session context
    *
-   * Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
    */
   "session/context/compact": {
     params: Api.ContextCompactParams;
@@ -2354,9 +2370,17 @@ export const rpc = {
     return client.call("session/context/remove", params);
   },
   /**
+   * Replace session context entries
+   *
+   * Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.
+   */
+  sessionContextReplace(client: RpcCaller, params: Api.ContextReplaceParams): Promise<Api.AgentApiOutcomeOfContextReplaceResponse> {
+    return client.call("session/context/replace", params);
+  },
+  /**
    * Compact session context
    *
-   * Runs the configured compaction policy on an open idle session and waits for the resulting context revision.
+   * Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.
    */
   sessionContextCompact(client: RpcCaller, params: Api.ContextCompactParams): Promise<Api.AgentApiOutcomeOfContextCompactResponse> {
     return client.call("session/context/compact", params);

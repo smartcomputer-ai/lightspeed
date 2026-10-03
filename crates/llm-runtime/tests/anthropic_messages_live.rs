@@ -186,6 +186,7 @@ async fn anthropic_messages_live_adapter_generates_result() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = generation_request(
         1,
@@ -365,6 +366,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_search() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let execution = adapter
@@ -429,6 +431,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_fetch() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let execution = adapter
@@ -492,6 +495,7 @@ async fn anthropic_messages_live_adapter_describes_image_input() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = generation_request(
         1,
@@ -584,6 +588,7 @@ async fn anthropic_messages_live_adapter_reads_pdf_document_input() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = generation_request(
         1,
@@ -644,6 +649,7 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -760,6 +766,7 @@ async fn anthropic_messages_live_adapter_preserves_thinking_blocks() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -779,7 +786,11 @@ async fn anthropic_messages_live_adapter_preserves_thinking_blocks() {
         provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
     assert_eq!(
         provider_request["thinking"],
-        json!({ "type": "adaptive", "display": "summarized" }),
+        json!({
+            "type": "adaptive",
+            "display": "summarized",
+            "block_binding": { "prefix_mismatch_behavior": "error" }
+        }),
         "the effort tier must derive adaptive thinking with a visible summary"
     );
     assert_eq!(
@@ -879,6 +890,7 @@ async fn anthropic_messages_live_adapter_thinks_across_tool_round_trip() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -908,7 +920,11 @@ async fn anthropic_messages_live_adapter_thinks_across_tool_round_trip() {
     );
     assert_eq!(
         provider_request["thinking"],
-        json!({ "type": "adaptive", "display": "summarized" })
+        json!({
+            "type": "adaptive",
+            "display": "summarized",
+            "block_binding": { "prefix_mismatch_behavior": "error" }
+        })
     );
     assert_visible_thinking(&execution.result, "tool call turn");
     let kinds = execution
@@ -1024,6 +1040,7 @@ async fn anthropic_messages_live_adapter_default_output_cap_is_accepted() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let mut request = intent_request(
         "live-anthropic-messages-default-cap",
@@ -1078,6 +1095,7 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_truncation_but_keeps_
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let mut request = intent_request(
         "live-anthropic-messages-truncation",
@@ -1171,6 +1189,7 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_refusal() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = intent_request(
         "live-anthropic-messages-refusal",
@@ -1207,7 +1226,24 @@ async fn anthropic_messages_live_adapter_fails_the_turn_on_refusal() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
-async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
+async fn anthropic_messages_live_adapter_native_context_compaction() {
+    check_adapter_context_compaction(model_selection(), true).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY and Claude Sonnet 4.5 (costs real money)"]
+async fn anthropic_messages_live_adapter_legacy_context_compaction() {
+    check_adapter_context_compaction(
+        ModelSelection {
+            model: "claude-sonnet-4-5".into(),
+            ..model_selection()
+        },
+        false,
+    )
+    .await;
+}
+
+async fn check_adapter_context_compaction(model: ModelSelection, native: bool) {
     let blobs = Arc::new(InMemoryBlobStore::new());
     let first_ref = text_blob(
         &blobs,
@@ -1223,11 +1259,15 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
     let request = ContextCompactionRequest {
         session_id: SessionId::new("session-live-anthropic-compaction"),
         request: ContextCompactionTask {
-            model: model_selection(),
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
+            model,
             request_fingerprint: "live-anthropic-messages-compaction".to_string(),
             context: ContextSnapshot {
                 api_kind: ProviderApiKind::AnthropicMessages,
@@ -1249,12 +1289,16 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
     assert_eq!(result.context_revision, 7);
     assert_eq!(result.context_entries.len(), 1);
     let entry = &result.context_entries[0];
-    assert!(matches!(
-        entry.kind,
-        ContextEntryKind::Message {
-            role: ContextMessageRole::User
-        }
-    ));
+    if native {
+        assert_eq!(entry.kind, ContextEntryKind::ProviderOpaque);
+    } else {
+        assert!(matches!(
+            entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        ));
+    }
     assert_eq!(
         entry.content.provider_kind.as_deref(),
         Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
@@ -1263,6 +1307,17 @@ async fn anthropic_messages_live_adapter_summarizes_context_compaction() {
         .read_text(&entry.content.content_ref)
         .await
         .expect("summary text");
+    let summary = if native {
+        let block: Value = serde_json::from_str(&summary).expect("native compaction block");
+        assert_eq!(block["type"], "compaction");
+        assert!(block["signature"].as_str().is_some_and(|s| !s.is_empty()));
+        block["content"]
+            .as_str()
+            .expect("native summary content")
+            .to_owned()
+    } else {
+        summary
+    };
     assert!(
         summary.to_uppercase().contains("ZEPHYR"),
         "expected the summary to retain the codename, got {summary:?}"
@@ -1311,6 +1366,7 @@ async fn tool_media_round_trip(model: String, set: support::tool_media::ToolMedi
         retrying_anthropic_messages_client(live_client()),
         blobs.clone(),
     )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
     .with_debug_dumps(true);
 
     let mut request = intent_request(
@@ -1362,4 +1418,506 @@ async fn tool_media_round_trip(model: String, set: support::tool_media::ToolMedi
     let final_text =
         support::content_text(blobs.as_ref(), &assistant_entry(&followup_execution)).await;
     assert_tool_media_answer(&final_text, &fixture);
+}
+
+/// Model for the preserved-thinking repair test. It must run the
+/// conversation check on replayed thinking, which the default live model
+/// does not, so the test names one explicitly instead of relying on the
+/// account's enforcement default.
+fn preserved_thinking_model() -> String {
+    env_or_dotenv_var("ANTHROPIC_PRESERVED_THINKING_MODEL")
+        .unwrap_or_else(|_| "claude-opus-5-5".to_string())
+}
+
+fn is_http_status(error: &llm_runtime::LlmAdapterError, status: u16) -> bool {
+    matches!(
+        error,
+        llm_runtime::LlmAdapterError::Provider { source }
+            if matches!(source.as_ref(), llm_clients::LlmApiError::HttpStatus(http) if http.status == status)
+    )
+}
+
+/// A repair that rewrites an image the provider has already seen changes
+/// the conversation prefix that later thinking is bound to. With
+/// `drop_block` the session continues and the provider reports the dropped
+/// reasoning; with `error` the same request fails, which is what lets suites
+/// catch unintended history edits. An unchanged replay passes under `error`,
+/// so the adapter's ordinary lowering makes no edit of its own.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let strict = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+    let lenient = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+    let model = ModelSelection {
+        model: preserved_thinking_model(),
+        ..model_selection()
+    };
+
+    let image_ref = blobs
+        .put_bytes(support::media::png_image(800, 600, [200, 40, 40]))
+        .await
+        .expect("store image");
+    let mut image = user_entry(1, image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let question = user_entry(
+        2,
+        text_blob(
+            &blobs,
+            "Name the dominant color of this image in one word. Then compute 13 * 17 + 29 * 31, \
+             thinking it through carefully, and reply with the color and the number.",
+        )
+        .await,
+    );
+    let request = |fingerprint: &str, entries: Vec<ContextEntry>| {
+        let mut request = intent_request(fingerprint, entries);
+        request.model = model.clone();
+        request.output_limit = Some(8192);
+        request.reasoning_effort = Some("high".to_string());
+        request
+    };
+
+    let first = strict
+        .generate(generation_request(
+            1,
+            request(
+                "live-anthropic-edit-1",
+                vec![image.clone(), question.clone()],
+            ),
+        ))
+        .await
+        .expect("first turn");
+    assert_eq!(first.result.status, LlmGenerationStatus::Succeeded);
+    assert_visible_thinking(&first.result, "first turn");
+
+    let history = |image: ContextEntry| {
+        let mut entries = vec![image, question.clone()];
+        let offset = entries.len();
+        entries.extend(
+            first
+                .result
+                .context_entries
+                .iter()
+                .enumerate()
+                .map(|(index, item)| retained_context_entry(offset + index, item)),
+        );
+        entries
+    };
+    let followup = text_blob(
+        &blobs,
+        "Now add 4 to that number. Reply with just the number.",
+    )
+    .await;
+    let with_followup = |mut entries: Vec<ContextEntry>| {
+        entries.push(user_entry(entries.len() as u64 + 1, followup.clone()));
+        entries
+    };
+
+    // Control: an unchanged replay verifies under the strict policy.
+    let unchanged = strict
+        .generate(generation_request(
+            2,
+            request(
+                "live-anthropic-edit-2",
+                with_followup(history(image.clone())),
+            ),
+        ))
+        .await
+        .expect("unchanged replay verifies");
+    assert_eq!(unchanged.result.status, LlmGenerationStatus::Succeeded);
+
+    // The edit: the earlier image now lowers to different bytes, as when
+    // normalization first applies to an oversized image already in history.
+    let edited_ref = blobs
+        .put_bytes(support::media::oversized_png([200, 40, 40]))
+        .await
+        .expect("store edited image");
+    let mut edited = image.clone();
+    edited.content.content_ref = edited_ref;
+    let edited_history = with_followup(history(edited));
+
+    let error = strict
+        .generate(generation_request(
+            3,
+            request("live-anthropic-edit-3", edited_history.clone()),
+        ))
+        .await
+        .expect_err("strict policy rejects thinking bound to the edited prefix");
+    assert!(is_http_status(&error, 400), "expected a 400, got {error:?}");
+
+    let continued = lenient
+        .generate(generation_request(
+            4,
+            request("live-anthropic-edit-4", edited_history.clone()),
+        ))
+        .await
+        .expect("drop_block continues after the edit");
+    assert_eq!(continued.result.status, LlmGenerationStatus::Succeeded);
+    let sent = provider_request_json(&blobs, &dumps(&continued).provider_request_ref).await;
+    assert_eq!(
+        sent["thinking"]["block_binding"],
+        json!({ "prefix_mismatch_behavior": "drop_block" })
+    );
+    let response = provider_request_json(&blobs, &dumps(&continued).raw_response_ref).await;
+    let transformations = response["input_transformations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("input_transformations missing: {response}"));
+    assert!(
+        transformations.iter().any(|entry| {
+            entry["type"] == json!("thinking_dropped")
+                && entry["reason"] == json!("prefix_binding_mismatch")
+        }),
+        "expected a dropped thinking block, got {transformations:?}"
+    );
+    let answer = continued
+        .result
+        .context_entries
+        .iter()
+        .find_map(|item| match item.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(item.content.clone()),
+            _ => None,
+        })
+        .expect("answer after the edit");
+    let answer = support::content_text(blobs.as_ref(), &answer).await;
+    assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
+
+    // Native compaction replaces this whole window. Binding checks apply
+    // when kept thinking is replayed after the swap, not to this summary call.
+    let compaction = |entries: Vec<ContextEntry>| ContextCompactionRequest {
+        session_id: SessionId::new("session-live-anthropic-edit"),
+        request: ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
+            model: model.clone(),
+            request_fingerprint: "live-anthropic-edit-compaction".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::AnthropicMessages,
+                context_revision: 1,
+                entries,
+                token_estimate: None,
+            },
+            target_tokens: Some(300),
+            params: None,
+        },
+    };
+    let strict_compacted = strict
+        .compact_context(compaction(edited_history.clone()))
+        .await
+        .expect("native whole-window compaction accepts the edited history");
+    assert_eq!(strict_compacted.status, ContextCompactionStatus::Succeeded);
+    let mut replay = vec![retained_context_entry(
+        0,
+        &strict_compacted.context_entries[0],
+    )];
+    replay.push(user_entry(
+        2,
+        text_blob(
+            &blobs,
+            "Answer the pending arithmetic question. Reply with just the number.",
+        )
+        .await,
+    ));
+    let after_compaction = strict
+        .generate(generation_request(
+            5,
+            request("live-anthropic-edited-compacted", replay),
+        ))
+        .await
+        .expect("strict replay of the replacement succeeds without invalid old thinking");
+    assert_eq!(
+        after_compaction.result.status,
+        LlmGenerationStatus::Succeeded
+    );
+    let compacted = lenient
+        .compact_context(compaction(edited_history))
+        .await
+        .expect("native compaction also accepts the edited history with drop_block");
+    assert_eq!(compacted.status, ContextCompactionStatus::Succeeded);
+}
+
+/// Reasoning effort `none` must not send `{type: "disabled"}` to models
+/// that reject it: Claude Opus 5.5 keeps thinking on at every effort and
+/// Claude Sonnet 5.5 turns it off only with `between_tools`.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_none_effort_runs_where_disabled_is_rejected() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+    let input_ref = text_blob(&blobs, "Reply with the single word: ready").await;
+
+    for (model, thinking_type) in [
+        ("claude-opus-5-5", "adaptive"),
+        ("claude-sonnet-5-5", "between_tools"),
+    ] {
+        let mut request = intent_request(
+            "live-anthropic-none-effort",
+            vec![user_entry(1, input_ref.clone())],
+        );
+        request.model.model = model.to_owned();
+        request.reasoning_effort = Some("none".to_owned());
+
+        let execution = adapter
+            .generate(generation_request(1, request))
+            .await
+            .unwrap_or_else(|error| panic!("{model}: {error:?}"));
+
+        assert_eq!(
+            execution.result.status,
+            LlmGenerationStatus::Succeeded,
+            "{model}"
+        );
+        let sent = provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
+        assert_eq!(sent["thinking"]["type"], json!(thinking_type), "{model}");
+    }
+}
+
+/// An image over the pixel cap is sent as a downscaled copy the provider
+/// accepts and the model can still read, announced with the dimensions the
+/// model sees.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_sees_oversized_image() {
+    use support::media::{OVERSIZED_SHOWN_AT, oversized_png, texts_containing};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_ref = blobs
+        .put_bytes(oversized_png([30, 60, 220]))
+        .await
+        .expect("store image");
+    let mut image = user_entry(1, image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let question = user_entry(
+        2,
+        text_blob(
+            &blobs,
+            "What is the dominant color of this image? Reply with one English word in lowercase.",
+        )
+        .await,
+    );
+    let adapter = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+
+    let execution = adapter
+        .generate(generation_request(
+            1,
+            intent_request("live-anthropic-oversized-image", vec![image, question]),
+        ))
+        .await
+        .expect("generate");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let sent = provider_request_json(&blobs, &dumps(&execution).provider_request_ref).await;
+    assert_eq!(
+        texts_containing(&sent, OVERSIZED_SHOWN_AT).len(),
+        1,
+        "{sent}"
+    );
+    let answer = execution
+        .result
+        .context_entries
+        .iter()
+        .find_map(|item| match item.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(item.content.clone()),
+            _ => None,
+        })
+        .expect("assistant answer");
+    let answer = support::content_text(blobs.as_ref(), &answer)
+        .await
+        .to_lowercase();
+    assert!(answer.contains("blue"), "expected blue, got {answer:?}");
+}
+
+/// A request the provider refuses crosses the runtime boundary as
+/// `Rejected`, carrying the provider's own message rather than a wrapped
+/// runtime error, so the run fails as `request_rejected`.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_runtime_reports_provider_rejections() {
+    use engine::{CoreAgentIoError, CoreAgentLlm as _};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let mut corrupt = b"\x89PNG\r\n\x1a\n".to_vec();
+    corrupt.extend(std::iter::repeat_n(0x5a, 4096));
+    let image_ref = blobs.put_bytes(corrupt).await.expect("store image");
+    let mut image = user_entry(1, image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let question = user_entry(2, text_blob(&blobs, "Describe this image.").await);
+    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    ));
+    let runtime = llm_runtime::LlmRuntime::new(
+        llm_runtime::LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter),
+    );
+
+    let error = runtime
+        .generate(generation_request(
+            1,
+            intent_request("live-anthropic-rejection", vec![image, question]),
+        ))
+        .await
+        .expect_err("the provider rejects an undecodable image");
+
+    let CoreAgentIoError::Rejected { message } = error else {
+        panic!("expected a rejection, got {error:?}");
+    };
+    assert!(!message.is_empty());
+    assert!(
+        !message.contains("provider call failed"),
+        "the provider's message is kept without runtime wrapping: {message}"
+    );
+}
+
+/// Crossing the request media budget omits the oldest media, which rewrites
+/// content the provider has already seen. On a model that checks preserved
+/// thinking, the session continues under `drop_block`, while the strict
+/// policy rejects the same request.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_adapter_continues_after_media_omission() {
+    use llm_runtime::media::MAX_REQUEST_MEDIA_ITEMS;
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let strict = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error)
+    .with_debug_dumps(true);
+    let lenient = AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+    let model = ModelSelection {
+        model: preserved_thinking_model(),
+        ..model_selection()
+    };
+    let request = |fingerprint: &str, entries: Vec<ContextEntry>| {
+        let mut request = intent_request(fingerprint, entries);
+        request.model = model.clone();
+        request.output_limit = Some(8192);
+        request.reasoning_effort = Some("high".to_string());
+        request
+    };
+    async fn swatch(blobs: &InMemoryBlobStore, id: u64, index: usize) -> ContextEntry {
+        let bytes = support::media::png_image(16, 16, [(index * 7 % 256) as u8, 90, 160]);
+        let mut entry = user_entry(id, blobs.put_bytes(bytes).await.expect("store image"));
+        entry.content.media_type = Some("image/png".to_owned());
+        entry.preview = Some("[image]".to_owned());
+        entry
+    }
+    let mut next_id = 0u64;
+
+    // A turn within the budget, with real thinking to replay.
+    let mut history = Vec::new();
+    for index in 0..MAX_REQUEST_MEDIA_ITEMS - 1 {
+        next_id += 1;
+        history.push(swatch(&blobs, next_id, index).await);
+    }
+    next_id += 1;
+    history.push(user_entry(
+        next_id,
+        text_blob(
+            &blobs,
+            "These are color swatches. Compute 13 * 17 + 29 * 31, thinking it through \
+             carefully, and reply with just the number.",
+        )
+        .await,
+    ));
+    let first = strict
+        .generate(generation_request(
+            1,
+            request("live-anthropic-budget-1", history.clone()),
+        ))
+        .await
+        .expect("first turn within the budget");
+    assert_eq!(first.result.status, LlmGenerationStatus::Succeeded);
+    assert_visible_thinking(&first.result, "first turn");
+    let offset = next_id as usize;
+    history.extend(
+        first
+            .result
+            .context_entries
+            .iter()
+            .enumerate()
+            .map(|(index, item)| retained_context_entry(offset + index, item)),
+    );
+    next_id = history.len() as u64;
+
+    // New media pushes the request over the budget: the oldest chunk of
+    // images is now sent as placeholders.
+    for index in 0..5 {
+        next_id += 1;
+        history.push(swatch(&blobs, next_id, 200 + index).await);
+    }
+    next_id += 1;
+    history.push(user_entry(
+        next_id,
+        text_blob(
+            &blobs,
+            "Now add 4 to that number. Reply with just the number.",
+        )
+        .await,
+    ));
+
+    let error = strict
+        .generate(generation_request(
+            2,
+            request("live-anthropic-budget-2", history.clone()),
+        ))
+        .await
+        .expect_err("strict policy rejects thinking bound to the omitted media");
+    assert!(is_http_status(&error, 400), "expected a 400, got {error:?}");
+
+    let continued = lenient
+        .generate(generation_request(
+            3,
+            request("live-anthropic-budget-3", history),
+        ))
+        .await
+        .expect("drop_block continues after the omission");
+    assert_eq!(continued.result.status, LlmGenerationStatus::Succeeded);
+    let sent = provider_request_json(&blobs, &dumps(&continued).provider_request_ref).await;
+    assert_eq!(
+        support::media::texts_containing(&sent, "omitted from this request").len(),
+        10
+    );
+    let answer = continued
+        .result
+        .context_entries
+        .iter()
+        .find_map(|item| match item.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(item.content.clone()),
+            _ => None,
+        })
+        .expect("answer after the omission");
+    let answer = support::content_text(blobs.as_ref(), &answer).await;
+    assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
 }

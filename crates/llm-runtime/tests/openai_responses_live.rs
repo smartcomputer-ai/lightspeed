@@ -1012,3 +1012,207 @@ async fn openai_responses_live_adapter_sees_tool_media() {
         support::content_text(blobs.as_ref(), &assistant_entry(&followup_execution)).await;
     assert_tool_media_answer(&final_text, &fixture);
 }
+
+fn user_message(entry_id: u64, content_ref: BlobRef, media_type: Option<&str>) -> ContextEntry {
+    ContextEntry {
+        key: None,
+        entry_id: ContextEntryId::new(entry_id),
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        source: ContextEntrySource::RunInput {
+            run_id: RunId::new(1),
+            input_index: 0,
+        },
+        content: engine::ContentRef {
+            content_ref,
+            media_type: media_type.map(str::to_owned),
+            provider_kind: None,
+        },
+        preview: media_type.map(|_| "[image]".to_owned()),
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
+        supersedes: None,
+    }
+}
+
+fn media_request(
+    turn: u64,
+    entries: Vec<ContextEntry>,
+    reasoning_effort: Option<&str>,
+) -> LlmGenerationRequest {
+    LlmGenerationRequest {
+        session_id: SessionId::new("session-live-media"),
+        run_id: RunId::new(1),
+        turn_id: TurnId::new(turn),
+        request: LlmRequest {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "openai".to_string(),
+                model: live_model(),
+            },
+            request_fingerprint: format!("live-openai-responses-media-{turn}"),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                context_revision: 0,
+                entries,
+                token_estimate: None,
+            },
+            tools: Vec::new(),
+            tool_choice: None,
+            output_limit: Some(4096),
+            reasoning_effort: reasoning_effort.map(str::to_owned),
+            parallel_tool_use: None,
+            processing_tier: None,
+            provider_response_id: None,
+            compaction: None,
+            params: Some(openai_params(&OpenAiResponsesParams {
+                store: Some(false),
+                stream: Some(false),
+                ..OpenAiResponsesParams::default()
+            })),
+        },
+    }
+}
+
+async fn assistant_answer(
+    blobs: &InMemoryBlobStore,
+    execution: &llm_runtime::LlmGenerationExecution,
+) -> String {
+    let content = execution
+        .result
+        .context_entries
+        .iter()
+        .rev()
+        .find_map(|entry| match entry.kind {
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            } => Some(entry.content.clone()),
+            _ => None,
+        })
+        .expect("assistant entry");
+    support::content_text(blobs, &content).await.to_lowercase()
+}
+
+/// An image over the pixel cap is sent as a downscaled copy the provider
+/// accepts and the model can still read, announced with the dimensions the
+/// model sees.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_sees_oversized_image() {
+    use support::media::{OVERSIZED_SHOWN_AT, oversized_png, texts_containing};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_ref = blobs
+        .put_bytes(oversized_png([30, 60, 220]))
+        .await
+        .expect("store image");
+    let question_ref = text_blob(
+        &blobs,
+        "What is the dominant color of this image? Reply with one English word in lowercase.",
+    )
+    .await;
+    let adapter = OpenAiResponsesLlmAdapter::new(
+        retrying_openai_responses_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+
+    let execution = adapter
+        .generate(media_request(
+            1,
+            vec![
+                user_message(1, image_ref, Some("image/png")),
+                user_message(2, question_ref, None),
+            ],
+            None,
+        ))
+        .await
+        .expect("generate");
+
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
+    let sent = support::content_text(
+        blobs.as_ref(),
+        &engine::ContentRef::text(dumps(&execution).provider_request_ref.clone()),
+    )
+    .await;
+    let sent: Value = serde_json::from_str(&sent).expect("provider request json");
+    assert_eq!(
+        texts_containing(&sent, OVERSIZED_SHOWN_AT).len(),
+        1,
+        "{sent}"
+    );
+    let answer = assistant_answer(&blobs, &execution).await;
+    assert!(answer.contains("blue"), "expected blue, got {answer:?}");
+}
+
+/// Repairs rewrite content the provider has already seen, such as an
+/// earlier image newly normalized. Replayed encrypted reasoning must not
+/// strand the session when that happens: the follow-up after an edited
+/// image still succeeds.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_responses_live_adapter_continues_after_an_image_edit() {
+    use support::media::{oversized_png, png_image};
+    use support::tool_media::retained;
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_ref = blobs
+        .put_bytes(png_image(800, 600, [200, 40, 40]))
+        .await
+        .expect("store image");
+    let question_ref = text_blob(
+        &blobs,
+        "Name the dominant color of this image in one word. Then compute 13 * 17 + 29 * 31, \
+         thinking it through carefully, and reply with the color and the number.",
+    )
+    .await;
+    let image = user_message(1, image_ref, Some("image/png"));
+    let question = user_message(2, question_ref, None);
+    let adapter = OpenAiResponsesLlmAdapter::new(
+        retrying_openai_responses_client(live_client()),
+        blobs.clone(),
+    )
+    .with_debug_dumps(true);
+
+    let first = adapter
+        .generate(media_request(
+            1,
+            vec![image.clone(), question.clone()],
+            Some("medium"),
+        ))
+        .await
+        .expect("first turn");
+    assert_eq!(first.result.status, LlmGenerationStatus::Succeeded);
+    assert!(
+        first
+            .result
+            .context_entries
+            .iter()
+            .any(|entry| matches!(entry.kind, ContextEntryKind::ReasoningState)),
+        "the replay must carry reasoning to be meaningful: {:?}",
+        first.result.context_entries
+    );
+
+    let edited_ref = blobs
+        .put_bytes(oversized_png([200, 40, 40]))
+        .await
+        .expect("store edited image");
+    let mut edited = image;
+    edited.content.content_ref = edited_ref;
+    let mut entries = vec![edited, question];
+    entries.extend(retained(3, &first.result.context_entries));
+    let followup_ref = text_blob(
+        &blobs,
+        "Now add 4 to that number. Reply with just the number.",
+    )
+    .await;
+    entries.push(user_message(entries.len() as u64 + 1, followup_ref, None));
+
+    let continued = adapter
+        .generate(media_request(2, entries, Some("medium")))
+        .await
+        .expect("follow-up after the image edit");
+    assert_eq!(continued.result.status, LlmGenerationStatus::Succeeded);
+    let answer = assistant_answer(&blobs, &continued).await;
+    assert!(answer.contains("1124"), "expected 1124, got {answer:?}");
+}

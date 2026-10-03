@@ -709,24 +709,36 @@ async fn failed_generation_result_from_error(
     request: LlmGenerationRequest,
     error: CoreAgentIoError,
 ) -> Result<LlmGenerationResult, engine::storage::BlobStoreError> {
-    let failure_ref = write_error_blob(
-        blobs,
-        format!(
-            "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
-            request.run_id, request.turn_id
+    // Mirrors the hosted activity: a rejection keeps the provider's message
+    // word for word.
+    let context_limit = matches!(error, CoreAgentIoError::ContextLimit { .. });
+    let (status, text) = match error {
+        CoreAgentIoError::Rejected { message } | CoreAgentIoError::ContextLimit { message } => {
+            (LlmGenerationStatus::Rejected, message)
+        }
+        error => (
+            LlmGenerationStatus::Failed,
+            format!(
+                "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
+                request.run_id, request.turn_id
+            ),
         ),
-    )
-    .await?;
+    };
+    let failure_ref = write_error_blob(blobs, text).await?;
     Ok(LlmGenerationResult {
         run_id: request.run_id,
         turn_id: request.turn_id,
-        status: LlmGenerationStatus::Failed,
+        status,
         failure_ref: Some(failure_ref),
         context_entries: Vec::new(),
         facts: LlmGenerationFacts {
             duration_ms: None,
             provider_response_id: None,
-            finish: LlmFinish::Failed,
+            finish: if context_limit {
+                LlmFinish::ContextLimit
+            } else {
+                LlmFinish::Failed
+            },
             usage: None,
             tool_calls: Vec::new(),
             approval_requests: Vec::new(),
@@ -750,6 +762,8 @@ async fn failed_context_compaction_result_from_error(
     )
     .await?;
     Ok(ContextCompactionResult {
+        usage: None,
+        calls: 0,
         session_id: request.session_id,
         context_revision,
         status: ContextCompactionStatus::Failed,
@@ -783,6 +797,7 @@ async fn failed_tool_batch_result(
         )
         .await?;
         results.push(ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -859,6 +874,22 @@ mod tests {
     }
 
     struct FailCompactionLlm;
+
+    const REJECTION: &str = "messages.3.content.1.image.source.base64: image exceeds 2000 pixels";
+
+    struct RejectingLlm;
+
+    #[async_trait]
+    impl CoreAgentLlm for RejectingLlm {
+        async fn generate(
+            &self,
+            _request: LlmGenerationRequest,
+        ) -> Result<LlmGenerationResult, CoreAgentIoError> {
+            Err(CoreAgentIoError::Rejected {
+                message: REJECTION.to_owned(),
+            })
+        }
+    }
 
     #[async_trait]
     impl CoreAgentLlm for FailOnceLlm {
@@ -1197,7 +1228,11 @@ mod tests {
             },
             generation: Default::default(),
             limits: Default::default(),
-            context: ContextConfig { compaction: None },
+            context: ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
+                compaction: None,
+            },
             features: Default::default(),
         }
     }
@@ -1255,6 +1290,7 @@ mod tests {
 
     fn run_config() -> RunConfig {
         RunConfig {
+            input_limit_tokens: None,
             max_turns: None,
             max_tool_rounds: None,
             model_override: None,
@@ -1354,7 +1390,7 @@ mod tests {
             .expect("compact context");
 
         assert!(outcome.accepted);
-        assert!(!outcome.state.context.pending_compaction);
+        assert!(!outcome.state.context.compaction.is_pending());
         assert!(outcome.emitted_entries.iter().any(|entry| matches!(
             &entry.event,
             CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
@@ -1515,7 +1551,21 @@ mod tests {
             .expect("run child");
 
         assert!(outcome.accepted);
-        assert_eq!(outcome.state.lifecycle.config, Some(session_config));
+        assert_eq!(
+            outcome.state.lifecycle.config,
+            source_state.lifecycle.config
+        );
+        assert!(matches!(
+            outcome
+                .state
+                .lifecycle
+                .config
+                .as_ref()
+                .unwrap()
+                .context
+                .compaction,
+            Some(engine::CompactionPolicy::ProviderStandalone { .. })
+        ));
         assert!(outcome.state.runs.active.is_none());
         assert_eq!(outcome.state.runs.completed.len(), 1);
         assert!(!outcome.state.context.entries.iter().any(|entry| {
@@ -2356,6 +2406,43 @@ mod tests {
                 assert!(index < user_position);
             }
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_rejection_fails_the_run_with_the_provider_message() {
+        let (runner, session_id) = runner_with(Arc::new(RejectingLlm)).await;
+        runner
+            .drive_command(DriveCommand {
+                session_id: session_id.clone(),
+                observed_at_ms: 10,
+                command: CoreAgentCommand::OpenSession { config: config() },
+                max_steps: None,
+            })
+            .await
+            .expect("open session");
+
+        let driven = runner
+            .drive_command(DriveCommand {
+                session_id,
+                observed_at_ms: 20,
+                command: request_run_command(BlobRef::from_bytes(b"input")),
+                max_steps: Some(32),
+            })
+            .await
+            .expect("drive request");
+
+        let run = &driven.state.runs.completed[0];
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("run failure");
+        assert_eq!(failure.kind, engine::RunFailureKind::RequestRejected);
+        let message_ref = failure.message_ref.as_ref().expect("provider message");
+        let message = runner
+            .stores
+            .blobs
+            .read_bytes(message_ref)
+            .await
+            .expect("read message");
+        assert_eq!(message, REJECTION.as_bytes());
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -58,10 +58,13 @@ async fn anthropic_messages_live_core_session_uses_public_remote_mcp() {
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::AnthropicMessages,
-            Arc::new(AnthropicMessagesLlmAdapter::new(
-                retrying_anthropic_messages_client(live_client()),
-                blobs.clone(),
-            )),
+            Arc::new(
+                AnthropicMessagesLlmAdapter::new(
+                    retrying_anthropic_messages_client(live_client()),
+                    blobs.clone(),
+                )
+                .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error),
+            ),
         ),
     ));
     let stores = RunnerStores::new(sessions.clone(), blobs.clone());
@@ -217,13 +220,18 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             processing_tier: None,
         },
         limits: Default::default(),
-        context: ContextConfig { compaction: None },
+        context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
+            compaction: None,
+        },
         features: Default::default(),
     }
 }
 
 fn run_config() -> RunConfig {
     RunConfig {
+        input_limit_tokens: None,
         max_turns: Some(2),
         reasoning_effort: None,
         parallel_tool_use: None,

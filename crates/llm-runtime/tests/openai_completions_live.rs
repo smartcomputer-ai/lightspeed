@@ -947,3 +947,53 @@ async fn openai_completions_runtime_live_sees_tool_media() {
         .expect("tool-result generation");
     assert_tool_media_answer(&assistant_text(&blobs, &second).await, &fixture);
 }
+
+/// An image over the pixel cap is sent as a downscaled copy the provider
+/// accepts and the model can still read, announced with the dimensions the
+/// model sees.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY (costs real money)"]
+async fn openai_completions_runtime_live_sees_oversized_image() {
+    use support::media::{OVERSIZED_SHOWN_AT, oversized_png, texts_containing};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let image_ref = blobs
+        .put_bytes(oversized_png([30, 60, 220]))
+        .await
+        .expect("store image");
+    let question_ref = text_blob(
+        &blobs,
+        "Name the dominant image color with one lowercase English word.",
+    )
+    .await;
+    let source = ContextEntrySource::RunInput {
+        run_id: RunId::new(1),
+        input_index: 0,
+    };
+    let user = ContextEntryKind::Message {
+        role: ContextMessageRole::User,
+    };
+    let mut image = entry(1, user.clone(), source.clone(), image_ref);
+    image.content.media_type = Some("image/png".to_owned());
+    image.preview = Some("[image]".to_owned());
+    let request = generation_request(vec![image, entry(2, user, source, question_ref)]);
+
+    let execution = live_adapter(blobs.clone())
+        .generate(request)
+        .await
+        .expect("generate from oversized image");
+
+    let sent: serde_json::Value = serde_json::from_str(
+        &blobs
+            .read_text(&dumps(&execution).provider_request_ref)
+            .await
+            .expect("provider request"),
+    )
+    .expect("provider request json");
+    assert_eq!(
+        texts_containing(&sent, OVERSIZED_SHOWN_AT).len(),
+        1,
+        "{sent}"
+    );
+    let answer = assistant_text(&blobs, &execution).await.to_lowercase();
+    assert!(answer.contains("blue"), "expected blue, got {answer:?}");
+}

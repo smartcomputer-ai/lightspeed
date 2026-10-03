@@ -404,7 +404,32 @@
         "action": "control_session",
         "kind": "universe"
       },
-      "description": "Runs the configured compaction policy on an open idle session and waits for the resulting context revision.",
+      "description": "Replaces active tool results and user messages in place by entry id, with per-entry results, e.g. to withdraw content the provider rejects. Entries keep their ids, positions, and kinds, so a tool result takes only text and its call stays answered. Refused while a run is active; ids no longer in context report absent.",
+      "group": "session",
+      "method": "session/context/replace",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/ContextReplaceParams"
+        },
+        "type": "ContextReplaceParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfContextReplaceResponse"
+        },
+        "type": "AgentApiOutcome<ContextReplaceResponse>"
+      },
+      "role": "contributor",
+      "scope": "universe",
+      "summary": "Replace session context entries",
+      "target": "sessionId"
+    },
+    {
+      "access": {
+        "action": "control_session",
+        "kind": "universe"
+      },
+      "description": "Performs one standalone compaction in any automatic mode, including Disabled, and waits for completion. Active work queues the operation until a safe turn boundary; automatic policy remains unchanged.",
       "group": "session",
       "method": "session/context/compact",
       "params": {
@@ -1644,7 +1669,7 @@
         },
         "type": "AgentApiOutcome<VfsWorkspaceCreateResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Create a mutable VFS workspace",
       "target": null

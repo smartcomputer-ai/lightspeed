@@ -188,13 +188,18 @@ fn session_config(model: ModelSelection) -> SessionConfig {
             processing_tier: None,
         },
         limits: Default::default(),
-        context: ContextConfig { compaction: None },
+        context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
+            compaction: None,
+        },
         features: Default::default(),
     }
 }
 
 fn run_config() -> RunConfig {
     RunConfig {
+        input_limit_tokens: None,
         max_turns: Some(2),
         reasoning_effort: None,
         parallel_tool_use: None,

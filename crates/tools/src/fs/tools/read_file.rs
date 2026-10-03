@@ -2,14 +2,16 @@
 
 use engine::{
     BlobRef,
-    media::{MediaKind, admit_tool_media, media_handle, sniff_media_type, tool_media_line},
+    media::{
+        MediaDescriptor, MediaKind, admit_tool_media, media_handle, sniff_media_type,
+        tool_media_line,
+    },
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ToolResult,
     fs::{FsError, FsPath, FsToolContext},
-    runtime::ToolMediaOutput,
 };
 
 use super::{invalid_request, resolve_path};
@@ -56,10 +58,11 @@ pub struct ReadFileMedia {
 
 impl ReadFileResult {
     /// The media the tool hands the model, named after the file.
-    pub fn media_outputs(&self) -> Vec<ToolMediaOutput> {
+    pub fn media_outputs(&self) -> Vec<MediaDescriptor> {
         self.media
             .iter()
-            .map(|media| ToolMediaOutput {
+            .map(|media| MediaDescriptor {
+                handle: media.handle.clone(),
                 content_ref: media.content_ref.clone(),
                 media_type: media.media_type.clone(),
                 kind: media.kind,

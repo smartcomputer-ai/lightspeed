@@ -28,6 +28,12 @@ pub const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const ANTHROPIC_OAUTH_BETA: &str = "oauth-2025-04-20";
 /// Current beta header for Anthropic's provider-hosted MCP connector.
 pub const ANTHROPIC_MCP_BETA: &str = "mcp-client-2025-11-20";
+/// Beta header for `thinking.block_binding`, which chooses what the API does
+/// with preserved thinking whose conversation prefix has changed. The field
+/// is rejected without it, so requests carrying it always send the header.
+pub const ANTHROPIC_THINKING_BINDING_BETA: &str = "thinking-binding-controls-2026-08-01";
+pub const ANTHROPIC_COMPACTION_BETA: &str = "compact-2026-01-12";
+pub const ANTHROPIC_ON_DEMAND_COMPACTION_BETA: &str = "compact-2026-09-04";
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -158,15 +164,48 @@ impl Client {
         }
     }
 
-    /// Attach per-request auth: API keys go in `x-api-key`; OAuth bearer
-    /// tokens go in `Authorization` plus the OAuth beta header merged with
-    /// the configured beta headers (a per-request header replaces the
-    /// default, so the merge must re-include them).
+    /// The `anthropic-beta` value for a request needing `request_betas`
+    /// beyond the configured ones, or `None` when the configured default
+    /// header already covers it. A per-request header replaces the default,
+    /// so the merge re-includes the configured betas.
+    fn request_beta_header(
+        &self,
+        request_betas: &[&str],
+    ) -> Result<Option<HeaderValue>, LlmApiError> {
+        let mut betas = self.beta_headers.clone();
+        for beta in request_betas {
+            if !betas.iter().any(|existing| existing == beta) {
+                betas.push((*beta).to_owned());
+            }
+        }
+        if betas.len() == self.beta_headers.len() {
+            return Ok(None);
+        }
+        HeaderValue::from_str(&betas.join(","))
+            .map(Some)
+            .map_err(|err| {
+                ConfigurationError::new(format!("invalid anthropic-beta header: {err}")).into()
+            })
+    }
+
+    /// Attach per-request auth and betas: API keys go in `x-api-key`; OAuth
+    /// bearer tokens go in `Authorization` and add the OAuth beta.
     fn apply_auth(
         &self,
         builder: reqwest::RequestBuilder,
         auth: Option<crate::RequestAuth<'_>>,
+        request_betas: &[&str],
     ) -> Result<reqwest::RequestBuilder, LlmApiError> {
+        let with_betas = |builder: reqwest::RequestBuilder, oauth: bool| {
+            let mut betas = request_betas.to_vec();
+            if oauth {
+                betas.push(ANTHROPIC_OAUTH_BETA);
+            }
+            Ok::<_, LlmApiError>(match self.request_beta_header(&betas)? {
+                Some(header) => builder.header("anthropic-beta", header),
+                None => builder,
+            })
+        };
         match auth {
             Some(crate::RequestAuth::None) => Err(ConfigurationError::new(
                 "anonymous Anthropic requests are not supported",
@@ -177,7 +216,10 @@ impl Client {
                     Some(crate::RequestAuth::ApiKey(api_key)) => Some(api_key),
                     _ => None,
                 };
-                Ok(builder.header("x-api-key", self.auth_header(api_key)?))
+                with_betas(
+                    builder.header("x-api-key", self.auth_header(api_key)?),
+                    false,
+                )
             }
             Some(crate::RequestAuth::Bearer(token)) => {
                 let mut bearer =
@@ -187,14 +229,7 @@ impl Client {
                         ))
                     })?;
                 bearer.set_sensitive(true);
-                let mut betas = self.beta_headers.clone();
-                betas.push(ANTHROPIC_OAUTH_BETA.to_owned());
-                let betas = HeaderValue::from_str(&betas.join(",")).map_err(|err| {
-                    ConfigurationError::new(format!("invalid anthropic-beta header: {err}"))
-                })?;
-                Ok(builder
-                    .header(AUTHORIZATION, bearer)
-                    .header("anthropic-beta", betas))
+                with_betas(builder.header(AUTHORIZATION, bearer), true)
             }
         }
     }
@@ -252,7 +287,7 @@ impl Client {
         }
         let builder = self.http.request(Method::GET, url);
         let response = self
-            .apply_auth(builder, auth)?
+            .apply_auth(builder, auth, &[])?
             .send()
             .await
             .map_err(map_reqwest_error)?;
@@ -270,7 +305,7 @@ impl Client {
         request.stream = Some(false);
         let builder = self.http.request(Method::POST, self.messages_url.clone());
         let response = self
-            .apply_auth(builder, auth)?
+            .apply_auth(builder, auth, &request.required_betas())?
             .json(&request)
             .send()
             .await
@@ -287,10 +322,9 @@ impl Client {
         mut request: CreateMessageRequest,
     ) -> Result<MessageStream, LlmApiError> {
         request.stream = Some(true);
+        let builder = self.http.request(Method::POST, self.messages_url.clone());
         let response = self
-            .http
-            .request(Method::POST, self.messages_url.clone())
-            .header("x-api-key", self.auth_header(None)?)
+            .apply_auth(builder, None, &request.required_betas())?
             .json(&request)
             .send()
             .await
@@ -423,11 +457,46 @@ pub struct CreateMessageRequest {
     pub container: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_servers: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Value>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
 
 impl CreateMessageRequest {
+    /// Betas the request body depends on, sent alongside the configured ones.
+    pub fn required_betas(&self) -> Vec<&'static str> {
+        let mut betas = Vec::new();
+        let compaction_enabled = self.context_management.as_ref().is_some_and(|management| {
+            management["edits"]
+                .as_array()
+                .is_some_and(|edits| edits.iter().any(|edit| edit["type"] == "compact_20260112"))
+        });
+        let replays_compaction = self.messages.iter().any(|message| {
+            matches!(&message.content, MessageParamContent::Blocks(blocks) if blocks.iter().any(|block| {
+                matches!(block, ContentBlockParam::Raw(raw) if raw["type"] == "compaction")
+            }))
+        });
+        let signed_compaction = self.messages.iter().any(|message| {
+            matches!(&message.content, MessageParamContent::Blocks(blocks) if blocks.iter().any(|block| {
+                matches!(block, ContentBlockParam::Raw(raw) if raw["type"] == "compaction" && raw.get("signature").is_some_and(|s| s.is_string()))
+            }))
+        });
+        if self.extra.contains_key("compaction") || (signed_compaction && !compaction_enabled) {
+            betas.push(ANTHROPIC_ON_DEMAND_COMPACTION_BETA);
+        } else if compaction_enabled || replays_compaction {
+            betas.push(ANTHROPIC_COMPACTION_BETA);
+        }
+        if self
+            .thinking
+            .as_ref()
+            .is_some_and(|thinking| thinking.extra.contains_key("block_binding"))
+        {
+            betas.push(ANTHROPIC_THINKING_BINDING_BETA);
+        }
+        betas
+    }
+
     pub fn user_text(model: impl Into<String>, text: impl Into<String>, max_tokens: u64) -> Self {
         Self {
             model: model.into(),
@@ -447,6 +516,7 @@ impl CreateMessageRequest {
             service_tier: None,
             container: None,
             mcp_servers: None,
+            context_management: None,
             extra: BTreeMap::new(),
         }
     }
@@ -935,6 +1005,7 @@ pub enum StopReason {
     ToolUse,
     PauseTurn,
     Refusal,
+    #[serde(alias = "model_context_window_exceeded")]
     ModelContextWindow,
     #[serde(other)]
     Unknown,
@@ -942,6 +1013,8 @@ pub enum StopReason {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<Vec<Usage>>,
     #[serde(default)]
     pub input_tokens: Option<u64>,
     #[serde(default)]
@@ -1205,6 +1278,73 @@ fn split_beta_headers(value: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn client_with_betas(betas: &[&str]) -> Client {
+        let mut config = Config::new("test-key");
+        config.beta_headers = betas.iter().map(|beta| (*beta).to_owned()).collect();
+        Client::new(config).expect("client")
+    }
+
+    #[test]
+    fn compaction_betas_merge_with_thinking_and_configured_betas() {
+        let mut request = CreateMessageRequest::user_text("model", "hi", 16);
+        request.context_management = Some(json!({"edits": [{"type": "compact_20260112"}]}));
+        let mut thinking = Thinking::adaptive();
+        thinking.extra.insert(
+            "block_binding".to_owned(),
+            json!({"prefix_mismatch_behavior": "drop_block"}),
+        );
+        request.thinking = Some(thinking);
+        assert_eq!(
+            request.required_betas(),
+            [ANTHROPIC_COMPACTION_BETA, ANTHROPIC_THINKING_BINDING_BETA]
+        );
+        let client = client_with_betas(&["context-1m", ANTHROPIC_COMPACTION_BETA]);
+        let mut betas = request.required_betas();
+        betas.push(ANTHROPIC_OAUTH_BETA);
+        assert_eq!(
+            client
+                .request_beta_header(&betas)
+                .unwrap()
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "context-1m,compact-2026-01-12,thinking-binding-controls-2026-08-01,oauth-2025-04-20"
+        );
+    }
+
+    #[test]
+    fn block_binding_requires_the_binding_beta() {
+        let mut request = CreateMessageRequest::user_text("model", "hi", 16);
+        assert!(request.required_betas().is_empty());
+        let mut thinking = Thinking::adaptive();
+        thinking.extra.insert(
+            "block_binding".to_owned(),
+            json!({ "prefix_mismatch_behavior": "drop_block" }),
+        );
+        request.thinking = Some(thinking);
+        assert_eq!(request.required_betas(), [ANTHROPIC_THINKING_BINDING_BETA]);
+    }
+
+    #[test]
+    fn request_betas_merge_with_configured_betas() {
+        let client = client_with_betas(&["context-1m"]);
+        assert_eq!(client.request_beta_header(&[]).expect("header"), None);
+        assert_eq!(
+            client.request_beta_header(&["context-1m"]).expect("header"),
+            None,
+            "configured betas already ride on the default header"
+        );
+        assert_eq!(
+            client
+                .request_beta_header(&[ANTHROPIC_THINKING_BINDING_BETA, ANTHROPIC_OAUTH_BETA])
+                .expect("header")
+                .expect("merged header"),
+            HeaderValue::from_static(
+                "context-1m,thinking-binding-controls-2026-08-01,oauth-2025-04-20"
+            )
+        );
+    }
 
     #[test]
     fn message_helpers_extract_text_usage_and_tool_uses() {

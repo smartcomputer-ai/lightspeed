@@ -381,10 +381,9 @@ impl MethodAccess {
         Some(match action {
             Read => RecommendedRole::Viewer,
             CreateSession | ControlSession | StopSession | DeleteSession | ShareSession
-            | InvokeBot | UseResource | CreateWorkspace => RecommendedRole::Contributor,
-            CreateProfile | ManageProfile | CreateBot | ManageBot | ConfigureResource => {
-                RecommendedRole::Operator
-            }
+            | InvokeBot | UseResource => RecommendedRole::Contributor,
+            CreateProfile | ManageProfile | CreateBot | ManageBot | ConfigureResource
+            | CreateWorkspace => RecommendedRole::Operator,
         })
     }
 }
@@ -581,6 +580,14 @@ mod tests {
 
     #[test]
     fn people_get_roles_and_machines_and_deployments_none() {
+        assert_eq!(
+            method_access(METHOD_VFS_WORKSPACES_CREATE).and_then(MethodAccess::recommended_role),
+            Some(RecommendedRole::Operator)
+        );
+        assert_eq!(
+            method_access(METHOD_VFS_WORKSPACES_UPDATE).and_then(MethodAccess::recommended_role),
+            Some(RecommendedRole::Contributor)
+        );
         assert_eq!(
             method_access(METHOD_SESSION_READ).and_then(MethodAccess::recommended_role),
             Some(RecommendedRole::Viewer)

@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { universeIconSchema, universeIconColorSchema } from "./universe-appearance.js";
+export * from "./universe-appearance.js";
+export * from "./workspace-transfers.js";
 
 /// Input shapes shared by the API (validation) and the CLI (request typing).
 
@@ -14,6 +17,8 @@ export type UniverseCreateInput = z.infer<typeof universeCreateSchema>;
 
 export const universeUpdateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
+  icon: universeIconSchema.optional(),
+  iconColor: universeIconColorSchema.optional(),
   gatewayUrl: z.union([z.url(), z.null()]).optional(),
   status: z.enum(["active", "archived"]).optional(),
   /// Switches to change; others keep what they were.
@@ -60,6 +65,11 @@ export const workspaceCreateSchema = z.object({
   displayName: z.string().min(1).max(100).optional(),
 });
 export type WorkspaceCreateInput = z.infer<typeof workspaceCreateSchema>;
+
+export const workspaceRenameSchema = z.object({
+  displayName: z.string().trim().min(1).max(100),
+  expectedRevision: z.number().int().nonnegative(),
+});
 
 
 export function slugify(name: string): string {

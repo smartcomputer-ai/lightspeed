@@ -576,7 +576,7 @@ pub fn next_context_compaction_request(
     session_id: &SessionId,
     state: &CoreAgentState,
 ) -> Result<Option<ContextCompactionRequest>, DomainError> {
-    if !state.context.pending_compaction {
+    if !state.context.compaction.is_pending() {
         return Ok(None);
     }
     let request = crate::core::components::llm::build_context_compaction_task(state)
@@ -601,9 +601,18 @@ pub fn generation_result_proposals(
             "llm generation result does not match active turn".into(),
         ));
     }
-    let context_entries = context_entries_from_llm_result(state, &result)?;
+    let overflow = result.facts.finish == LlmFinish::ContextLimit;
+    let context_entries = if overflow {
+        Vec::new()
+    } else {
+        context_entries_from_llm_result(state, &result)?
+    };
     let outcome = turn_outcome_for_generation_result(&result);
-    let approval_requests = result.facts.approval_requests.clone();
+    let approval_requests = if overflow {
+        Vec::new()
+    } else {
+        result.facts.approval_requests.clone()
+    };
     let joins = CoreAgentJoins {
         run_id: Some(result.run_id),
         turn_id: Some(result.turn_id),
@@ -662,9 +671,19 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
         LlmGenerationStatus::Failed => TurnOutcome::Failed {
             failure_ref: result.failure_ref.clone(),
         },
+        LlmGenerationStatus::Rejected if result.facts.finish == LlmFinish::ContextLimit => {
+            TurnOutcome::ContextLimit {
+                failure_ref: result.failure_ref.clone(),
+            }
+        }
+        LlmGenerationStatus::Rejected => TurnOutcome::Rejected {
+            failure_ref: result.failure_ref.clone(),
+        },
         LlmGenerationStatus::Succeeded => match result.facts.finish {
             LlmFinish::ToolCalls => TurnOutcome::ToolCallsQueued,
-            LlmFinish::ContextLimit => TurnOutcome::ContextUpdateRequired,
+            LlmFinish::ContextLimit => TurnOutcome::ContextLimit {
+                failure_ref: result.failure_ref.clone(),
+            },
             LlmFinish::Cancelled => TurnOutcome::Cancelled,
             // A content filter (a provider refusal) and an output-cap cut-off
             // are terminal for the turn: the provider did not finish serving
@@ -735,19 +754,43 @@ pub fn context_compaction_result_proposals(
     state: &CoreAgentState,
     result: ContextCompactionResult,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
-    if !state.context.pending_compaction {
-        return Err(DomainError::InvariantViolation(
+    let plan = state.context.compaction.pending_plan().ok_or_else(|| {
+        DomainError::InvariantViolation(
             "context compaction result received without pending request".to_owned(),
-        ));
-    }
+        )
+    })?;
     if result.context_revision != state.context.revision {
         return Err(DomainError::InvariantViolation(format!(
             "context compaction result revision {} does not match active context revision {}",
             result.context_revision, state.context.revision
         )));
     }
+    if result.status == crate::ContextCompactionStatus::Succeeded
+        && result.context_entries.is_empty()
+    {
+        return Err(DomainError::InvariantViolation(
+            "successful compaction has no usable context".into(),
+        ));
+    }
+    if result.status == crate::ContextCompactionStatus::Failed && !result.context_entries.is_empty()
+    {
+        return Err(DomainError::InvariantViolation(
+            "failed compaction cannot replace context".into(),
+        ));
+    }
     let mut proposals = Vec::new();
     let mut base_revision = state.context.revision;
+    if result.status == crate::ContextCompactionStatus::Succeeded {
+        proposals.push(CoreAgentEventProposal::new(
+            CoreAgentJoins::default(),
+            CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
+                base_revision,
+                entry_ids: plan.covered_entry_ids.clone(),
+                reason: crate::ContextRemovalReason::ProviderCompacted,
+            }),
+        ));
+        base_revision += 1;
+    }
     if !result.context_entries.is_empty() {
         let entries = context_entries_from_inputs(
             state,
@@ -759,7 +802,8 @@ pub fn context_compaction_result_proposals(
                     (
                         None,
                         ContextEntrySource::Runtime {
-                            label: "provider_standalone_compaction".to_owned(),
+                            label: crate::core::components::context::STANDALONE_COMPACTION_SOURCE
+                                .to_owned(),
                         },
                         entry,
                     )
@@ -780,11 +824,31 @@ pub fn context_compaction_result_proposals(
     proposals.push(CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
         CoreAgentEvent::Context(ContextEvent::CompactionFinished {
+            usage: result.usage,
+            calls: result.calls,
             base_revision,
             status: result.status,
-            failure_ref: result.failure_ref,
+            failure_ref: result.failure_ref.clone(),
         }),
     ));
+    if result.status == crate::ContextCompactionStatus::Failed
+        && plan.trigger == crate::ContextCompactionTrigger::ContextLimit
+        && let Some(run) = &state.runs.active
+    {
+        proposals.push(CoreAgentEventProposal::new(
+            CoreAgentJoins {
+                run_id: Some(run.run_id),
+                ..Default::default()
+            },
+            CoreAgentEvent::Run(crate::RunEvent::Failed {
+                run_id: run.run_id,
+                failure: crate::RunFailure {
+                    kind: crate::RunFailureKind::ContextFailure,
+                    message_ref: result.failure_ref,
+                },
+            }),
+        ));
+    }
     Ok(proposals)
 }
 
@@ -1247,8 +1311,9 @@ pub fn resume_tool_batch_proposals(
             ToolBatchResumeOutput::AwaitTool {
                 result_ref,
                 additional_context,
+                attachments,
             },
-        ) => await_resume_result(state, result_ref, additional_context)?,
+        ) => await_resume_result(state, result_ref, additional_context, attachments)?,
         (
             ToolBatchSuspension::JoinedWorkflowCalls { .. },
             ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context },
@@ -1398,6 +1463,7 @@ fn await_resume_result(
     state: &CoreAgentState,
     result_ref: BlobRef,
     additional_context: Vec<ContextEntryInput>,
+    attachments: Vec<crate::Attachment>,
 ) -> Result<ToolInvocationBatchResult, DomainError> {
     validate_supplemental_entries(&additional_context, &"await")?;
     let active_run = state
@@ -1432,6 +1498,7 @@ fn await_resume_result(
         turn_id: batch.turn_id,
         batch_id: batch.batch_id,
         results: vec![ToolInvocationResult {
+            effects: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -1440,7 +1507,7 @@ fn await_resume_result(
             output_ref: Some(result_ref),
             model_visible_context_entries,
             error_ref: None,
-            effects: Vec::new(),
+            attachments,
         }],
     })
 }
@@ -1549,6 +1616,7 @@ fn joined_workflow_resume_result(
                 status,
                 content_ref,
             )];
+        let mut attachments = Vec::new();
         if status == ToolCallStatus::Succeeded {
             model_visible_context_entries.extend(
                 additional_context
@@ -1556,8 +1624,15 @@ fn joined_workflow_resume_result(
                     .filter(|item| item.promise_id == joined.promise_id)
                     .flat_map(|item| item.entries.iter().cloned()),
             );
+            attachments.extend(
+                additional_context
+                    .iter()
+                    .filter(|item| item.promise_id == joined.promise_id)
+                    .flat_map(|item| item.attachments.iter().cloned()),
+            );
         }
         results.push(ToolInvocationResult {
+            effects: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -1566,7 +1641,7 @@ fn joined_workflow_resume_result(
             output_ref,
             model_visible_context_entries,
             error_ref,
-            effects: Vec::new(),
+            attachments,
         });
     }
     Ok(ToolInvocationBatchResult {
@@ -1619,6 +1694,7 @@ fn validate_minted_promise_id(
 fn invalid_await_tool_result(call_id: ToolCallId, _message: String) -> ToolInvocationResult {
     let error_ref = crate::unavailable_tool_result_ref();
     ToolInvocationResult {
+        attachments: Vec::new(),
         duration_ms: None,
         output_bytes: None,
         truncated: false,
@@ -2082,6 +2158,7 @@ fn validate_result_matches_active_tool_batch(
 
 fn invocation_result_to_call_result(result: ToolInvocationResult) -> ToolCallResult {
     ToolCallResult {
+        attachments: result.attachments,
         call_id: result.call_id,
         status: result.status,
         output_ref: result.output_ref,
@@ -2119,7 +2196,11 @@ mod tests {
             },
             generation: Default::default(),
             limits: Default::default(),
-            context: ContextConfig { compaction: None },
+            context: ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
+                compaction: None,
+            },
             features: Default::default(),
         }
     }
@@ -2571,6 +2652,126 @@ mod tests {
     }
 
     #[test]
+    fn configuring_a_new_default_activates_an_unselected_session_and_replays() {
+        for initially_attached in [false, true] {
+            let mut drive = CoreAgentDrive::from_replayed(
+                SessionId::new("session-default"),
+                CoreAgentState::new(),
+                None,
+            );
+            let attachment = |id: &str, default| crate::EnvironmentAttachment {
+                environment_id: id.to_owned(),
+                default,
+                access: crate::EnvironmentAccess::Read,
+                working_directory: None,
+            };
+            let mut initial = config();
+            if initially_attached {
+                initial.features.environments = Some(crate::EnvironmentsFeature {
+                    environments: vec![attachment("environment-a", false)],
+                    ..Default::default()
+                });
+            }
+            open_session_with_config(&mut drive, initial);
+            let checkpoint = drive.state().clone();
+            let mut log = Vec::new();
+            let mut updated = drive.state().lifecycle.config.clone().unwrap();
+            updated.features.environments = Some(crate::EnvironmentsFeature {
+                environments: vec![attachment("environment-a", true)],
+                ..Default::default()
+            });
+            let action = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: Some(drive.state().lifecycle.config_revision),
+                        config: updated.clone(),
+                    },
+                    20,
+                )
+                .unwrap();
+            log.extend(commit_action(&mut drive, action));
+            assert_eq!(
+                drive
+                    .state()
+                    .environment
+                    .active_environment_id
+                    .as_ref()
+                    .map(|id| id.as_str()),
+                Some("environment-a")
+            );
+
+            // Clearing is intentional: an unchanged default must not reactivate
+            // during retries or unrelated attachment changes.
+            let clear = drive
+                .admit_command(CoreAgentCommand::ClearActiveEnvironment, 21)
+                .unwrap();
+            log.extend(commit_action(&mut drive, clear));
+            let retry = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: None,
+                        config: updated.clone(),
+                    },
+                    22,
+                )
+                .unwrap();
+            assert!(matches!(retry, CoreAgentAction::Idle));
+            updated
+                .features
+                .environments
+                .as_mut()
+                .unwrap()
+                .environments
+                .push(attachment("environment-b", false));
+            let unrelated = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: None,
+                        config: updated.clone(),
+                    },
+                    23,
+                )
+                .unwrap();
+            log.extend(commit_action(&mut drive, unrelated));
+            assert_eq!(drive.state().environment.active_environment_id, None);
+
+            let attachments = &mut updated.features.environments.as_mut().unwrap().environments;
+            attachments[0].default = false;
+            attachments[1].default = true;
+            let changed_default = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: None,
+                        config: updated,
+                    },
+                    24,
+                )
+                .unwrap();
+            log.extend(commit_action(&mut drive, changed_default));
+            assert_eq!(
+                drive
+                    .state()
+                    .environment
+                    .active_environment_id
+                    .as_ref()
+                    .map(|id| id.as_str()),
+                Some("environment-b")
+            );
+
+            let mut replayed = checkpoint;
+            for entry in log {
+                let stored = CoreAgentCodec.encode_entry(&entry).unwrap();
+                crate::apply_event(
+                    &mut replayed,
+                    &CoreAgentCodec.decode_entry(&stored).unwrap(),
+                )
+                .unwrap();
+            }
+            assert_eq!(&replayed, drive.state());
+        }
+    }
+
+    #[test]
     fn config_replace_clears_an_active_environment_that_is_no_longer_attached() {
         let session_id = SessionId::new("session-environment-detach");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
@@ -2667,6 +2868,7 @@ mod tests {
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results: vec![ToolInvocationResult {
+                attachments: Vec::new(),
                 duration_ms: None,
                 output_bytes: None,
                 truncated: false,
@@ -2761,6 +2963,7 @@ mod tests {
             output: ToolBatchResumeOutput::AwaitTool {
                 result_ref: BlobRef::from_bytes(b"await output"),
                 additional_context: Vec::new(),
+                attachments: Vec::new(),
             },
         })
     }
@@ -3209,6 +3412,81 @@ mod tests {
     }
 
     #[test]
+    fn catalog_metadata_refresh_keeps_position_supersession_and_replays() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("metadata"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        upsert(
+            &mut drive,
+            TEST_CATALOG_KEY,
+            catalog_input(BlobRef::from_bytes(b"v1")),
+            20,
+        );
+        let mut input = catalog_input(BlobRef::from_bytes(b"v2"));
+        upsert(&mut drive, TEST_CATALOG_KEY, input.clone(), 21);
+        let checkpoint = drive.state().clone();
+        let previous = checkpoint.context.entries.last().unwrap().clone();
+        input.provenance_ref = Some(BlobRef::from_bytes(b"updated diagnostics"));
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new(TEST_CATALOG_KEY),
+                    entry: input.clone(),
+                },
+                22,
+            )
+            .unwrap();
+        let log = commit_action(&mut drive, action);
+        assert_eq!(entry_ids(&drive), vec![1, 2]);
+        let updated = drive.state().context.entries.last().unwrap();
+        assert_eq!(updated.entry_id, previous.entry_id);
+        assert_eq!(updated.content, previous.content);
+        assert_eq!(updated.supersedes, previous.supersedes);
+        assert_eq!(updated.provenance_ref, input.provenance_ref);
+        // The metadata path must not become an in-place rewrite of model text
+        // or of the update marker, nor edit a superseded version.
+        let mut changed_text = updated.clone();
+        changed_text.content.content_ref = BlobRef::from_bytes(b"forged text");
+        let mut changed_link = updated.clone();
+        changed_link.supersedes = None;
+        for invalid in [
+            changed_text,
+            changed_link,
+            drive.state().context.entries[0].clone(),
+        ] {
+            assert!(matches!(
+                crate::core::components::context::validate_entry_replacement(
+                    drive.state(),
+                    &invalid
+                ),
+                Err(DomainError::InvariantViolation(_))
+            ));
+        }
+        let mut replayed = checkpoint;
+        for event in &log {
+            let stored = CoreAgentCodec.encode_entry(event).unwrap();
+            crate::apply_event(
+                &mut replayed,
+                &CoreAgentCodec.decode_entry(&stored).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(&replayed, drive.state());
+        let noop = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new(TEST_CATALOG_KEY),
+                    entry: input,
+                },
+                23,
+            )
+            .unwrap();
+        assert!(matches!(noop, CoreAgentAction::Idle));
+    }
+
+    #[test]
     fn catalog_keys_supersede_independently_and_replay_text_and_provenance() {
         let mut drive =
             CoreAgentDrive::from_replayed(SessionId::new("catalogs"), CoreAgentState::new(), None);
@@ -3466,13 +3744,21 @@ mod tests {
         else {
             panic!("expected compact action");
         };
-        // The stale catalog version and the conversation go to the compactor;
-        // the current catalog stays out of it.
+        // Current configuration accompanies the covered prefix but is retained.
         assert_eq!(
             request
                 .request
                 .context
                 .entry_ids()
+                .iter()
+                .map(|id| id.as_u64())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            request
+                .request
+                .covered_entry_ids
                 .iter()
                 .map(|id| id.as_u64())
                 .collect::<Vec<_>>(),
@@ -3482,6 +3768,8 @@ mod tests {
         let completed = drive
             .resume_context_compaction(
                 ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
                     session_id: request.session_id,
                     context_revision: request.request.context.context_revision,
                     status: ContextCompactionStatus::Succeeded,
@@ -3494,8 +3782,10 @@ mod tests {
             )
             .expect("resume compaction");
         commit_action(&mut drive, completed);
-        let prune = drive.next_action(33, 64).expect("prune compacted entries");
-        commit_action(&mut drive, prune);
+        assert!(matches!(
+            drive.next_action(33, 64).unwrap(),
+            CoreAgentAction::Idle
+        ));
 
         // v1 and the native entry are gone; v2 (id 3) and the compaction item remain.
         let ids = entry_ids(&drive);
@@ -4012,79 +4302,116 @@ mod tests {
 
     #[test]
     fn provider_compaction_prunes_superseded_entries_after_compaction_item() {
-        let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
-        open_session(&mut drive);
-        request_run(&mut drive, BlobRef::from_bytes(b"input before compaction"));
-        let llm_request = drive_until_generate(&mut drive);
-        let consumed_input_entry_id = drive
-            .state()
-            .runs
-            .active
-            .as_ref()
-            .expect("active run")
-            .input_entry_ids[0];
-
-        let resumed = drive
-            .resume_generation(
-                LlmGenerationResult {
-                    run_id: llm_request.run_id,
-                    turn_id: llm_request.turn_id,
-                    status: LlmGenerationStatus::Succeeded,
-                    failure_ref: None,
-                    context_entries: vec![
-                        openai_compaction_input(BlobRef::from_bytes(
-                            br#"{"type":"compaction","encrypted_content":"opaque"}"#,
-                        )),
-                        message_input(
-                            ContextMessageRole::Assistant,
-                            BlobRef::from_bytes(b"assistant after compaction"),
-                        ),
-                    ],
-                    facts: LlmGenerationFacts {
-                        duration_ms: None,
-                        provider_response_id: Some("resp-1".to_owned()),
-                        finish: LlmFinish::Stop,
-                        usage: None,
-                        tool_calls: Vec::new(),
-                        approval_requests: Vec::new(),
-                        context_token_estimate: None,
-                    },
-                },
-                30,
-            )
-            .expect("resume generation");
-        commit_action(&mut drive, resumed);
-
-        let complete_run = drive.next_action(31, 64).expect("complete run");
-        commit_action(&mut drive, complete_run);
-
-        let prune = drive
-            .next_action(32, 64)
-            .expect("provider compaction prune");
-        let entries = commit_action(&mut drive, prune);
-        let CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
-            entry_ids, reason, ..
-        }) = &entries[0].event
-        else {
-            panic!("expected context removal");
-        };
-        assert_eq!(entry_ids, &vec![consumed_input_entry_id]);
-        assert_eq!(reason, &ContextRemovalReason::ProviderCompacted);
-
-        let retained = &drive.state().context.entries;
-        assert_eq!(retained.len(), 2);
-        assert!(matches!(retained[0].kind, ContextEntryKind::ProviderOpaque));
-        assert_eq!(
-            retained[0].content.provider_kind.as_deref(),
-            Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND)
-        );
-        assert!(matches!(
-            retained[1].kind,
-            ContextEntryKind::Message {
-                role: ContextMessageRole::Assistant
+        for provider_kind in [
+            OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+            crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND,
+        ] {
+            let session_id = SessionId::new("session-a");
+            let mut drive =
+                CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+            let mut session_config = config();
+            if provider_kind == crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND {
+                session_config.model = crate::ModelSelection {
+                    api_kind: crate::ProviderApiKind::AnthropicMessages,
+                    provider_id: "anthropic".to_owned(),
+                    model: "claude-opus-5".to_owned(),
+                };
             }
-        ));
+            session_config.context.compaction = Some(crate::CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: None,
+            });
+            open_session_with_config(&mut drive, session_config);
+            request_run(&mut drive, BlobRef::from_bytes(b"input before compaction"));
+            let llm_request = drive_until_generate(&mut drive);
+            let consumed_input_entry_id = drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .expect("active run")
+                .input_entry_ids[0];
+
+            let checkpoint = serde_json::to_vec(drive.state()).unwrap();
+            let head = drive.head().cloned();
+            let mut compacted = openai_compaction_input(BlobRef::from_bytes(
+                br#"{"type":"compaction","content":"summary"}"#,
+            ));
+            compacted.content.provider_kind = Some(provider_kind.to_owned());
+            let resumed = drive
+                .resume_generation(
+                    LlmGenerationResult {
+                        run_id: llm_request.run_id,
+                        turn_id: llm_request.turn_id,
+                        status: LlmGenerationStatus::Succeeded,
+                        failure_ref: None,
+                        context_entries: vec![
+                            compacted,
+                            message_input(
+                                ContextMessageRole::Assistant,
+                                BlobRef::from_bytes(b"assistant after compaction"),
+                            ),
+                        ],
+                        facts: LlmGenerationFacts {
+                            duration_ms: None,
+                            provider_response_id: Some("resp-1".to_owned()),
+                            finish: LlmFinish::Stop,
+                            usage: None,
+                            tool_calls: Vec::new(),
+                            approval_requests: Vec::new(),
+                            context_token_estimate: None,
+                        },
+                    },
+                    30,
+                )
+                .expect("resume generation");
+            let mut replay_events = commit_action(&mut drive, resumed);
+
+            let complete_run = drive.next_action(31, 64).expect("complete run");
+            replay_events.extend(commit_action(&mut drive, complete_run));
+
+            let prune = drive
+                .next_action(32, 64)
+                .expect("provider compaction prune");
+            let entries = commit_action(&mut drive, prune);
+            let CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
+                entry_ids, reason, ..
+            }) = &entries[0].event
+            else {
+                panic!("expected context removal");
+            };
+            assert_eq!(entry_ids, &vec![consumed_input_entry_id]);
+            assert_eq!(reason, &ContextRemovalReason::ProviderCompacted);
+
+            replay_events.extend(entries);
+            let mut replayed = CoreAgentDrive::from_replayed(
+                session_id,
+                serde_json::from_slice(&checkpoint).unwrap(),
+                head,
+            );
+            replayed
+                .resume_appended(
+                    replay_events
+                        .iter()
+                        .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                        .collect(),
+                )
+                .unwrap();
+            assert_eq!(replayed.state(), drive.state());
+
+            let retained = &drive.state().context.entries;
+            assert_eq!(retained.len(), 2);
+            assert!(matches!(retained[0].kind, ContextEntryKind::ProviderOpaque));
+            assert_eq!(
+                retained[0].content.provider_kind.as_deref(),
+                Some(provider_kind)
+            );
+            assert!(matches!(
+                retained[1].kind,
+                ContextEntryKind::Message {
+                    role: ContextMessageRole::Assistant
+                }
+            ));
+        }
     }
 
     #[test]
@@ -4132,6 +4459,8 @@ mod tests {
         let completed = drive
             .resume_context_compaction(
                 ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
                     session_id: request.session_id,
                     context_revision: compaction_task.context.context_revision,
                     status: ContextCompactionStatus::Succeeded,
@@ -4145,23 +4474,25 @@ mod tests {
             .expect("resume compaction");
         let completed_entries = commit_action(&mut drive, completed);
         assert!(matches!(
-            completed_entries[0].event,
+            completed_entries[1].event,
             CoreAgentEvent::Context(ContextEvent::EntriesApplied { .. })
         ));
         assert!(matches!(
-            completed_entries[1].event,
+            completed_entries[2].event,
             CoreAgentEvent::Context(ContextEvent::CompactionFinished {
                 status: ContextCompactionStatus::Succeeded,
                 ..
             })
         ));
-        assert!(!drive.state().context.pending_compaction);
+        assert!(!drive.state().context.compaction.is_pending());
 
-        let prune = drive.next_action(33, 64).expect("prune compacted entries");
-        let pruned_entries = commit_action(&mut drive, prune);
+        assert!(matches!(
+            drive.next_action(33, 64).unwrap(),
+            CoreAgentAction::Idle
+        ));
         let CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
             entry_ids, reason, ..
-        }) = &pruned_entries[0].event
+        }) = &completed_entries[0].event
         else {
             panic!("expected provider compaction prune");
         };
@@ -4282,13 +4613,20 @@ mod tests {
                 .any(|entry| entry.content.content_ref == read_ref
                     && matches!(entry.kind, ContextEntryKind::ToolResult { .. }))
         );
-        assert!(entries.iter().all(|entry| !matches!(
-            entry.kind,
-            ContextEntryKind::Catalog { .. } | ContextEntryKind::Instructions
-        )));
+        assert!(
+            entries
+                .iter()
+                .filter(|entry| request.request.covered_entry_ids.contains(&entry.entry_id))
+                .all(|entry| !matches!(
+                    entry.kind,
+                    ContextEntryKind::Catalog { .. } | ContextEntryKind::Instructions
+                ))
+        );
         let action = drive
             .resume_context_compaction(
                 ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
                     session_id: request.session_id,
                     context_revision: request.request.context.context_revision,
                     status: ContextCompactionStatus::Succeeded,
@@ -4301,9 +4639,11 @@ mod tests {
             )
             .unwrap();
         events.extend(commit_action(&mut drive, action));
-        let action = drive.next_action(163, 64).unwrap();
-        events.extend(commit_action(&mut drive, action));
-        assert_eq!(drive.state().context.entries.len(), 3);
+        assert!(matches!(
+            drive.next_action(163, 64).unwrap(),
+            CoreAgentAction::Idle
+        ));
+        assert!(drive.state().context.entries.len() >= 3);
         assert!(
             drive
                 .state()
@@ -4327,6 +4667,638 @@ mod tests {
             )
             .unwrap();
         assert_eq!(replayed.state(), drive.state());
+    }
+
+    #[test]
+    fn compaction_keeps_recent_tool_exchanges_byte_for_byte_and_renders_summary_first() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("tail"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let mut inputs = Vec::new();
+        for turn in 1..=3 {
+            let mut call = message_input(
+                ContextMessageRole::Assistant,
+                BlobRef::from_bytes(format!("native call {turn}").as_bytes()),
+            );
+            call.kind = ContextEntryKind::ToolCall {
+                call_id: crate::ToolCallId::new(format!("call-{turn}")),
+                name: ToolName::new("tool"),
+            };
+            inputs.push((
+                None,
+                ContextEntrySource::AssistantOutput {
+                    run_id: RunId::new(99),
+                    turn_id: crate::TurnId::new(turn),
+                },
+                call,
+            ));
+            let mut result = message_input(
+                ContextMessageRole::User,
+                BlobRef::from_bytes(format!("native result {turn}").as_bytes()),
+            );
+            result.kind = ContextEntryKind::ToolResult {
+                call_id: crate::ToolCallId::new(format!("call-{turn}")),
+                is_error: false,
+            };
+            inputs.push((
+                None,
+                ContextEntrySource::Tool {
+                    run_id: RunId::new(99),
+                    turn_id: crate::TurnId::new(turn),
+                    batch_id: Some(crate::ToolBatchId::new(turn)),
+                },
+                result,
+            ));
+        }
+        let entries = context_entries_from_inputs(drive.state(), inputs).unwrap();
+        commit_core_event_result(
+            &mut drive,
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                base_revision: 0,
+                entries,
+            }),
+            12,
+        )
+        .unwrap();
+        request_run(&mut drive, BlobRef::from_bytes(b"current work"));
+        let generation = drive_until_generate(&mut drive);
+        let action = drive
+            .resume_generation(overflow_result(&generation), 80)
+            .unwrap();
+        commit_action(&mut drive, action);
+        let compact = loop {
+            let action = drive.next_action(81, 64).unwrap();
+            if let CoreAgentAction::CompactContext { request } = action {
+                break request;
+            }
+            commit_action(&mut drive, action);
+        };
+        assert_eq!(
+            compact
+                .request
+                .covered_entry_ids
+                .iter()
+                .map(|id| id.as_u64())
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let tail = drive.state().context.entries[2..].to_vec();
+        let action = drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    session_id: compact.session_id,
+                    context_revision: compact.request.context.context_revision,
+                    status: ContextCompactionStatus::Succeeded,
+                    context_entries: vec![message_input(
+                        ContextMessageRole::User,
+                        BlobRef::from_bytes(b"summary"),
+                    )],
+                    failure_ref: None,
+                    usage: None,
+                    calls: 1,
+                },
+                82,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        let generation = drive_until_generate(&mut drive);
+        assert_eq!(
+            generation.request.context.entries[0].content.content_ref,
+            BlobRef::from_bytes(b"summary")
+        );
+        assert_eq!(generation.request.context.entries[1..], tail);
+        assert_eq!(
+            drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .unwrap()
+                .tool_batches
+                .len(),
+            0,
+            "compaction must not execute tools"
+        );
+    }
+
+    #[test]
+    fn omitted_compaction_defaults_to_standalone_for_every_chat_api() {
+        for api_kind in [
+            ProviderApiKind::OpenAiResponses,
+            ProviderApiKind::AnthropicMessages,
+            ProviderApiKind::OpenAiCompletions,
+        ] {
+            let mut drive = CoreAgentDrive::from_replayed(
+                SessionId::new("defaults"),
+                CoreAgentState::new(),
+                None,
+            );
+            let mut config = config();
+            config.model.api_kind = api_kind;
+            open_session_with_config(&mut drive, config);
+            assert!(matches!(
+                drive
+                    .state()
+                    .lifecycle
+                    .config
+                    .as_ref()
+                    .unwrap()
+                    .context
+                    .compaction,
+                Some(CompactionPolicy::ProviderStandalone {
+                    compact_threshold_tokens: None,
+                    ..
+                })
+            ));
+        }
+    }
+
+    fn overflow_result(request: &LlmGenerationRequest) -> LlmGenerationResult {
+        LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Rejected,
+            failure_ref: Some(BlobRef::from_bytes(b"provider context length exceeded")),
+            context_entries: vec![],
+            facts: LlmGenerationFacts {
+                duration_ms: None,
+                provider_response_id: None,
+                finish: LlmFinish::ContextLimit,
+                usage: None,
+                tool_calls: vec![],
+                approval_requests: vec![],
+                context_token_estimate: None,
+            },
+        }
+    }
+
+    #[test]
+    fn input_capacity_follows_the_effective_model_without_reusing_stale_limits() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("capacity"), CoreAgentState::new(), None);
+        let mut config = config();
+        config.context.reported_input_limit_tokens = Some(200_000);
+        config.context.input_limit_tokens = Some(100_000);
+        open_session_with_config(&mut drive, config);
+        assert_eq!(
+            crate::compaction_input_limit_tokens(drive.state()),
+            Some(100_000)
+        );
+        let mut override_config = run_config();
+        override_config.model_override = Some(ModelSelection {
+            model: "another-model".into(),
+            ..drive
+                .state()
+                .lifecycle
+                .config
+                .as_ref()
+                .unwrap()
+                .model
+                .clone()
+        });
+        let action = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    override_config,
+                ),
+                20,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        let request = drive_until_generate(&mut drive);
+        assert_eq!(crate::compaction_input_limit_tokens(drive.state()), None);
+        assert_eq!(request.request.model.model, "another-model");
+    }
+
+    #[test]
+    fn generation_metadata_and_usage_observation_survive_replay_with_distinct_lifetimes() {
+        let session_id = SessionId::new("generation-observation");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::Disabled);
+        open_session_with_config(&mut drive, config);
+        let mut overrides = run_config();
+        overrides.model_override = Some(ModelSelection {
+            model: "override-model".into(),
+            ..drive
+                .state()
+                .lifecycle
+                .config
+                .as_ref()
+                .unwrap()
+                .model
+                .clone()
+        });
+        overrides.input_limit_tokens = Some(64_000);
+        let action = drive
+            .admit_command(
+                request_run_command(None, user_input(BlobRef::from_bytes(b"input")), overrides),
+                20,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        let request = drive_until_generate(&mut drive);
+        let checkpoint = drive.state().clone();
+        let head = drive.head().cloned();
+        let action = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![message_input(
+                        ContextMessageRole::Assistant,
+                        BlobRef::from_bytes(b"answer"),
+                    )],
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: None,
+                        finish: LlmFinish::Stop,
+                        usage: Some(crate::LlmUsage {
+                            input_tokens: Some(100),
+                            output_tokens: Some(20),
+                            reasoning_tokens: None,
+                            total_tokens: Some(120),
+                            cached_input_tokens: None,
+                            cache_write_input_tokens: None,
+                            cache_miss_input_tokens: None,
+                        }),
+                        tool_calls: vec![],
+                        approval_requests: vec![],
+                        context_token_estimate: Some(TokenEstimate {
+                            tokens: 100,
+                            quality: crate::TokenEstimateQuality::ProviderCounted,
+                        }),
+                    },
+                },
+                80,
+            )
+            .unwrap();
+        let mut events = commit_action(&mut drive, action);
+        assert_eq!(drive.state().context.observed_tokens(), Some(120));
+        assert_eq!(
+            drive.state().context.last_generation_model(),
+            Some(&request.request.model)
+        );
+        for now in 81..100 {
+            let action = drive.next_action(now, 64).unwrap();
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            events.extend(commit_action(&mut drive, action));
+        }
+        assert!(drive.state().runs.active.is_none());
+        assert_eq!(
+            crate::compaction_input_limit_tokens(drive.state()),
+            Some(64_000)
+        );
+        assert_eq!(drive.state().context.observed_tokens(), Some(120));
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new("client.additional"),
+                    entry: message_input(
+                        ContextMessageRole::User,
+                        BlobRef::from_bytes(b"new context"),
+                    ),
+                },
+                101,
+            )
+            .unwrap();
+        events.extend(commit_action(&mut drive, action));
+        assert_eq!(drive.state().context.observed_tokens(), None);
+        assert_eq!(
+            crate::compaction_input_limit_tokens(drive.state()),
+            Some(64_000)
+        );
+        assert_eq!(
+            drive.state().context.last_generation_model(),
+            Some(&request.request.model)
+        );
+        let mut replay = CoreAgentDrive::from_replayed(session_id, checkpoint, head);
+        replay
+            .resume_appended(
+                events
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replay.state(), drive.state());
+    }
+
+    #[test]
+    fn disabled_blocks_overflow_recovery_but_explicit_compaction_still_works() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("disabled"), CoreAgentState::new(), None);
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::Disabled);
+        open_session_with_config(&mut drive, config);
+        upsert(
+            &mut drive,
+            "client.old",
+            message_input(
+                ContextMessageRole::User,
+                BlobRef::from_bytes(b"old history"),
+            ),
+            12,
+        );
+        let action = drive
+            .admit_command(CoreAgentCommand::CompactContext, 13)
+            .unwrap();
+        commit_action(&mut drive, action);
+        let CoreAgentAction::CompactContext { request } = drive.next_action(14, 64).unwrap() else {
+            panic!("explicit compact must work");
+        };
+        let action = drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    session_id: request.session_id,
+                    context_revision: request.request.context.context_revision,
+                    status: ContextCompactionStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![message_input(
+                        ContextMessageRole::User,
+                        BlobRef::from_bytes(b"summary"),
+                    )],
+                    usage: None,
+                    calls: 1,
+                },
+                15,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        assert_eq!(
+            drive
+                .state()
+                .lifecycle
+                .config
+                .as_ref()
+                .unwrap()
+                .context
+                .compaction,
+            Some(CompactionPolicy::Disabled)
+        );
+        request_run(&mut drive, BlobRef::from_bytes(b"current work"));
+        let request = drive_until_generate(&mut drive);
+        let action = drive
+            .resume_generation(overflow_result(&request), 80)
+            .unwrap();
+        commit_action(&mut drive, action);
+        for now in 81..100 {
+            let action = drive.next_action(now, 64).unwrap();
+            assert!(!matches!(action, CoreAgentAction::CompactContext { .. }));
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            commit_action(&mut drive, action);
+        }
+        let record = drive.state().runs.completed.last().unwrap();
+        assert_eq!(record.status, RunStatus::Failed);
+        assert_eq!(
+            record.failure.as_ref().unwrap().kind,
+            RunFailureKind::ContextFailure
+        );
+        assert_eq!(
+            record.failure.as_ref().unwrap().message_ref,
+            Some(BlobRef::from_bytes(b"provider context length exceeded"))
+        );
+    }
+
+    #[test]
+    fn unknown_limits_recover_twice_in_the_same_run_and_replay_atomically() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("overflow"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        upsert(
+            &mut drive,
+            "client.history",
+            message_input(
+                ContextMessageRole::User,
+                BlobRef::from_bytes(b"older history"),
+            ),
+            12,
+        );
+        request_run(&mut drive, BlobRef::from_bytes(b"current work"));
+        let mut request = drive_until_generate(&mut drive);
+        let run_id = request.run_id;
+        for attempt in 1..=2 {
+            let checkpoint = drive.state().clone();
+            let head = drive.head().cloned();
+            let mut overflow = overflow_result(&request);
+            let partial_ref = BlobRef::from_bytes(b"discarded partial tool call");
+            let mut partial = message_input(ContextMessageRole::Assistant, partial_ref.clone());
+            partial.kind = ContextEntryKind::ToolCall {
+                call_id: crate::ToolCallId::new("unanswered"),
+                name: ToolName::new("tool"),
+            };
+            overflow.context_entries.push(partial);
+            let action = drive.resume_generation(overflow, 80).unwrap();
+            let mut events = commit_action(&mut drive, action);
+            assert!(
+                !drive
+                    .state()
+                    .context
+                    .entries
+                    .iter()
+                    .any(|entry| entry.content.content_ref == partial_ref)
+            );
+            let compact = loop {
+                let action = drive.next_action(81, 64).unwrap();
+                if let CoreAgentAction::CompactContext { request } = action {
+                    break request;
+                }
+                events.extend(commit_action(&mut drive, action));
+            };
+            assert_eq!(
+                drive
+                    .state()
+                    .runs
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .context_recovery
+                    .attempts,
+                attempt
+            );
+            assert_eq!(drive.state().runs.active.as_ref().unwrap().run_id, run_id);
+            let covered = &compact.request.covered_entry_ids;
+            let tail: Vec<_> = drive
+                .state()
+                .context
+                .entries
+                .iter()
+                .filter(|entry| !covered.contains(&entry.entry_id))
+                .cloned()
+                .collect();
+            let action = drive
+                .resume_context_compaction(
+                    ContextCompactionResult {
+                        session_id: compact.session_id,
+                        context_revision: compact.request.context.context_revision,
+                        status: ContextCompactionStatus::Succeeded,
+                        failure_ref: None,
+                        context_entries: vec![message_input(
+                            ContextMessageRole::User,
+                            BlobRef::from_bytes(format!("summary {attempt}").as_bytes()),
+                        )],
+                        usage: None,
+                        calls: 1,
+                    },
+                    82,
+                )
+                .unwrap();
+            events.extend(commit_action(&mut drive, action));
+            for entry in tail {
+                assert!(drive.state().context.entries.contains(&entry));
+            }
+            assert!(
+                !drive
+                    .state()
+                    .context
+                    .entries
+                    .iter()
+                    .any(|entry| covered.contains(&entry.entry_id))
+            );
+            request = loop {
+                let action = drive.next_action(83, 64).unwrap();
+                if let CoreAgentAction::GenerateLlm { request } = action {
+                    break request;
+                }
+                events.extend(commit_action(&mut drive, action));
+            };
+            assert_eq!(request.run_id, run_id);
+            let mut replay =
+                CoreAgentDrive::from_replayed(SessionId::new("overflow"), checkpoint, head);
+            replay
+                .resume_appended(
+                    events
+                        .iter()
+                        .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                        .collect(),
+                )
+                .unwrap();
+            assert_eq!(replay.state(), drive.state());
+        }
+        let action = drive
+            .resume_generation(overflow_result(&request), 90)
+            .unwrap();
+        commit_action(&mut drive, action);
+        for now in 91..110 {
+            let action = drive.next_action(now, 64).unwrap();
+            assert!(!matches!(action, CoreAgentAction::CompactContext { .. }));
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            commit_action(&mut drive, action);
+        }
+        assert_eq!(
+            drive.state().runs.completed.last().unwrap().status,
+            RunStatus::Failed
+        );
+        assert!(drive.state().runs.active.is_none());
+        request_run(&mut drive, BlobRef::from_bytes(b"new work"));
+        let next = drive_until_generate(&mut drive);
+        assert_ne!(next.run_id, run_id);
+        assert_eq!(
+            drive.state().runs.active.as_ref().unwrap().context_recovery,
+            crate::ContextRecoveryState::default()
+        );
+    }
+
+    #[test]
+    fn manual_compaction_queues_without_invalidating_an_inflight_request() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("queued"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        upsert(
+            &mut drive,
+            "client.history",
+            message_input(
+                ContextMessageRole::User,
+                BlobRef::from_bytes(b"older history"),
+            ),
+            12,
+        );
+        request_run(&mut drive, BlobRef::from_bytes(b"current work"));
+        let request = drive_until_generate(&mut drive);
+        let revision = drive.state().context.revision;
+        let action = drive
+            .admit_command(CoreAgentCommand::CompactContext, 80)
+            .unwrap();
+        commit_action(&mut drive, action);
+        assert!(drive.state().context.compaction.is_queued());
+        assert_eq!(drive.state().context.revision, revision);
+        let restored: CoreAgentState =
+            serde_json::from_slice(&serde_json::to_vec(drive.state()).unwrap()).unwrap();
+        assert_eq!(&restored, drive.state());
+        assert!(restored.context.compaction.is_queued());
+        assert_eq!(
+            next_generation_request(&SessionId::new("queued"), drive.state())
+                .unwrap()
+                .unwrap(),
+            request
+        );
+        let action = drive
+            .resume_generation(overflow_result(&request), 81)
+            .unwrap();
+        commit_action(&mut drive, action);
+        let compact = loop {
+            let action = drive.next_action(82, 64).unwrap();
+            if let CoreAgentAction::CompactContext { request } = action {
+                break request;
+            }
+            commit_action(&mut drive, action);
+        };
+        assert_eq!(
+            drive
+                .state()
+                .context
+                .compaction
+                .pending_plan()
+                .unwrap()
+                .trigger,
+            ContextCompactionTrigger::Manual
+        );
+        assert!(!compact.request.covered_entry_ids.is_empty());
+        let restored: CoreAgentState =
+            serde_json::from_slice(&serde_json::to_vec(drive.state()).unwrap()).unwrap();
+        assert_eq!(
+            next_context_compaction_request(&SessionId::new("queued"), &restored)
+                .unwrap()
+                .unwrap(),
+            compact
+        );
+        let preserved = drive.state().context.entries.clone();
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::CancelRun {
+                    run_id: request.run_id,
+                    requested_by: None,
+                },
+                83,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        for now in 84..100 {
+            let action = drive.next_action(now, 64).unwrap();
+            assert!(!matches!(action, CoreAgentAction::CompactContext { .. }));
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            commit_action(&mut drive, action);
+        }
+        assert!(!drive.state().context.compaction.is_pending());
+        assert_eq!(drive.state().context.entries, preserved);
+        assert_eq!(
+            drive.state().runs.completed.last().unwrap().status,
+            RunStatus::Cancelled
+        );
     }
 
     #[test]
@@ -4362,6 +5334,8 @@ mod tests {
         let completed = drive
             .resume_context_compaction(
                 ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
                     session_id,
                     context_revision: compaction_task.context.context_revision,
                     status: ContextCompactionStatus::Failed,
@@ -4383,7 +5357,7 @@ mod tests {
         };
         assert_eq!(status, &ContextCompactionStatus::Failed);
         assert_eq!(event_failure_ref.as_ref(), Some(&failure_ref));
-        assert!(!drive.state().context.pending_compaction);
+        assert!(!drive.state().context.compaction.is_pending());
         assert!(matches!(
             drive.next_action(33, 64).expect("next action"),
             CoreAgentAction::Idle
@@ -4556,12 +5530,12 @@ mod tests {
         assert_eq!(request.session_id, session_id);
         let compaction_task = &request.request;
         assert_eq!(
-            compaction_task.context.entries.len(),
+            compaction_task.covered_entry_ids.len(),
             1,
-            "instructions are preserved outside the compactable provider window"
+            "instructions accompany compaction without being replaced"
         );
         assert!(matches!(
-            compaction_task.context.entries[0].kind,
+            compaction_task.context.entries[1].kind,
             ContextEntryKind::ProviderOpaque
         ));
         assert_eq!(
@@ -4570,7 +5544,7 @@ mod tests {
                 .token_estimate
                 .as_ref()
                 .map(|estimate| estimate.tokens),
-            Some(11)
+            None
         );
     }
 
@@ -5696,6 +6670,307 @@ mod tests {
         ));
     }
 
+    fn text_input(kind: ContextEntryKind, text: &[u8]) -> ContextEntryInput {
+        ContextEntryInput {
+            kind,
+            content: crate::ContentRef::text(BlobRef::from_bytes(text)),
+            preview: Some(String::from_utf8_lossy(text).into_owned()),
+            origin: None,
+            provenance_ref: None,
+            token_estimate: None,
+        }
+    }
+
+    fn replace_entries(
+        drive: &mut CoreAgentDrive,
+        entries: Vec<(ContextEntryId, ContextEntryInput)>,
+        now: u64,
+    ) -> Result<CoreAgentAction, CoreAgentDriveError> {
+        drive.admit_command(
+            CoreAgentCommand::ReplaceContextEntries {
+                expected_revision: None,
+                entries: entries.into_iter().collect(),
+            },
+            now,
+        )
+    }
+
+    /// One completed run: user input, then an assistant answer.
+    fn drive_with_completed_run(session_id: SessionId) -> (CoreAgentDrive, Vec<CoreAgentEntry>) {
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut entries = Vec::new();
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        entries.extend(commit_action(&mut drive, open));
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        entries.extend(commit_action(&mut drive, request));
+        let llm_request = loop {
+            let action = drive.next_action(21, 8).expect("next");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        };
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![message_input(
+                        ContextMessageRole::Assistant,
+                        BlobRef::from_bytes(b"answer"),
+                    )],
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: None,
+                        finish: LlmFinish::Stop,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume generation");
+        entries.extend(commit_action(&mut drive, resumed));
+        loop {
+            let action = drive.next_action(31, 8).expect("next");
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        }
+        assert!(drive.state().runs.active.is_none());
+        (drive, entries)
+    }
+
+    #[test]
+    fn entry_replacement_swaps_content_in_place_and_replays() {
+        let session_id = SessionId::new("session-replace");
+        let (mut drive, mut entries) = drive_with_completed_run(session_id.clone());
+        let before = drive.state().context.entries.clone();
+        let user = ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        };
+        let input = before
+            .iter()
+            .find(|entry| entry.kind == user)
+            .expect("user input entry")
+            .clone();
+        let revision = drive.state().context.revision;
+        let replacement = text_input(user, b"[message removed by operator]");
+
+        let action = replace_entries(&mut drive, vec![(input.entry_id, replacement.clone())], 40)
+            .expect("replace");
+        entries.extend(commit_action(&mut drive, action));
+
+        let after = &drive.state().context.entries;
+        assert_eq!(
+            after.iter().map(|entry| entry.entry_id).collect::<Vec<_>>(),
+            before
+                .iter()
+                .map(|entry| entry.entry_id)
+                .collect::<Vec<_>>(),
+            "ids and order are unchanged"
+        );
+        let replaced = after
+            .iter()
+            .find(|entry| entry.entry_id == input.entry_id)
+            .expect("replaced entry");
+        assert_eq!(replaced.content, replacement.content);
+        assert_eq!(replaced.preview, replacement.preview);
+        assert_eq!(replaced.source, input.source);
+        assert_eq!(drive.state().context.revision, revision + 1);
+
+        // A retry, and an entry no longer active, are no-ops.
+        let retry = replace_entries(
+            &mut drive,
+            vec![
+                (input.entry_id, replacement),
+                (ContextEntryId::new(999), text_input(input.kind, b"[gone]")),
+            ],
+            50,
+        )
+        .expect("retry");
+        assert!(
+            !matches!(retry, CoreAgentAction::AppendEvents { .. }),
+            "{retry:?}"
+        );
+
+        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .expect("replay");
+        assert_eq!(replayed.state(), drive.state());
+    }
+
+    #[test]
+    fn entry_replacement_rejects_assistant_output_and_changed_kinds() {
+        let (mut drive, _) = drive_with_completed_run(SessionId::new("session-replace-reject"));
+        let assistant_kind = ContextEntryKind::Message {
+            role: ContextMessageRole::Assistant,
+        };
+        let assistant = drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .find(|entry| entry.kind == assistant_kind)
+            .expect("assistant entry")
+            .entry_id;
+        let user = drive.state().context.entries[0].entry_id;
+
+        for (entry_id, input) in [
+            (assistant, text_input(assistant_kind.clone(), b"[forged]")),
+            (
+                user,
+                text_input(assistant_kind, b"[now an assistant message]"),
+            ),
+        ] {
+            let error = replace_entries(&mut drive, vec![(entry_id, input)], 40)
+                .expect_err("replacement must be rejected");
+            let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error
+            else {
+                panic!("expected rejected command");
+            };
+            assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        }
+    }
+
+    #[test]
+    fn entry_replacement_is_refused_while_a_run_is_active() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-active"),
+            CoreAgentState::new(),
+            None,
+        );
+        open_session(&mut drive);
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        commit_action(&mut drive, request);
+        while drive.state().runs.active.is_none() {
+            let action = drive.next_action(21, 1).expect("start run");
+            commit_action(&mut drive, action);
+        }
+
+        let user = ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        };
+        let error = replace_entries(
+            &mut drive,
+            vec![(ContextEntryId::new(1), text_input(user, b"[x]"))],
+            21,
+        )
+        .expect_err("active run blocks replacement");
+        let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
+            panic!("expected rejected command");
+        };
+        assert_eq!(rejection.kind, CommandRejectionKind::ActiveWork);
+    }
+
+    #[test]
+    fn rejected_generation_fails_run_as_request_rejected_and_replays() {
+        let session_id = SessionId::new("session-rejected");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut entries = Vec::new();
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        entries.extend(commit_action(&mut drive, open));
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        entries.extend(commit_action(&mut drive, request));
+        let llm_request = loop {
+            let action = drive.next_action(21, 8).expect("next");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            entries.extend(commit_action(&mut drive, action));
+        };
+
+        let failure_ref = BlobRef::from_bytes(b"messages.3.content.1: image exceeds 2000 px");
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Rejected,
+                    failure_ref: Some(failure_ref.clone()),
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: None,
+                        finish: LlmFinish::Failed,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume rejected generation");
+        entries.extend(commit_action(&mut drive, resumed));
+        let fail_run = drive.next_action(31, 8).expect("fail run");
+        entries.extend(commit_action(&mut drive, fail_run));
+
+        let completed = drive.state().runs.completed.last().expect("completed run");
+        assert_eq!(completed.status, RunStatus::Failed);
+        let failure = completed.failure.as_ref().expect("run failure");
+        assert_eq!(failure.kind, RunFailureKind::RequestRejected);
+        assert_eq!(failure.message_ref.as_ref(), Some(&failure_ref));
+        assert!(matches!(
+            drive.next_action(32, 8).expect("next"),
+            CoreAgentAction::Idle
+        ));
+
+        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .expect("replay");
+        assert_eq!(replayed.state(), drive.state());
+    }
+
     #[test]
     fn failed_generation_fails_run_without_starting_another_turn() {
         let session_id = SessionId::new("session-a");
@@ -5841,11 +7116,26 @@ mod tests {
         commit_action(&mut drive, deferred);
 
         assert_eq!(await_wake(drive.state(), 91), Some(WakeReason::Terminal));
+        let metadata = crate::Attachment::File(crate::FileAttachment::new(
+            BlobRef::from_bytes(b"asset"),
+            "asset.txt".into(),
+            None,
+        ));
+        let mut command = resume_tool_batch_command_with_claim(&request, WakeReason::Terminal);
+        if let CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
+            output: ToolBatchResumeOutput::AwaitTool { attachments, .. },
+            ..
+        }) = &mut command
+        {
+            attachments.push(metadata.clone());
+        }
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
         let resumed = drive
-            .admit_command(
-                resume_tool_batch_command_with_claim(&request, WakeReason::Terminal),
-                91,
-            )
+            .admit_command(command, 91)
             .expect("resume terminal await");
         let entries = commit_action(&mut drive, resumed);
         assert!(entries.iter().any(|entry| matches!(
@@ -5860,6 +7150,7 @@ mod tests {
                 _ => None,
             })
             .expect("await call completion");
+        assert_eq!(result.attachments, vec![metadata]);
         assert_eq!(result.output_ref.as_ref(), Some(&result_ref));
         assert_eq!(result.model_visible_context_entries.len(), 1);
         assert!(matches!(
@@ -5880,6 +7171,15 @@ mod tests {
                 .parked_tool_batch
                 .is_none()
         );
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
     }
 
     #[test]
@@ -6758,6 +8058,7 @@ mod tests {
                 turn_id: request.turn_id,
                 batch_id: request.batch_id,
                 results: vec![ToolInvocationResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
@@ -6845,6 +8146,16 @@ mod tests {
             Some("render.png"),
         )
         .expect("admitted descriptor");
+        let metadata = crate::Attachment::File(crate::FileAttachment::new(
+            BlobRef::from_bytes(b"asset"),
+            "asset.txt".into(),
+            None,
+        ));
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
         let resumed = drive
             .admit_command(
                 CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
@@ -6854,6 +8165,7 @@ mod tests {
                     claim_observed_at_ms: 100,
                     output: ToolBatchResumeOutput::JoinedWorkflowCalls {
                         additional_context: vec![crate::PromiseContextEntries {
+                            attachments: vec![metadata.clone()],
                             promise_id: promise_id.clone(),
                             entries: vec![handed_over.context_entry()],
                         }],
@@ -6871,6 +8183,7 @@ mod tests {
         else {
             panic!("expected original call completion");
         };
+        assert_eq!(result.attachments, vec![metadata]);
         assert_eq!(result.call_id, call.call_id);
         assert_eq!(result.status, ToolCallStatus::Succeeded);
         assert_eq!(result.output_ref.as_ref(), Some(&payload_ref));
@@ -6892,6 +8205,15 @@ mod tests {
                 .as_ref()
                 .is_some_and(|run| run.parked_tool_batch.is_none())
         );
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
     }
 
     #[test]
@@ -6993,6 +8315,7 @@ mod tests {
             if call.tool_name.as_str() == "local_echo" {
                 let content_ref = BlobRef::from_bytes(b"echo complete");
                 results.push(ToolInvocationResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
@@ -7042,6 +8365,7 @@ mod tests {
             };
             joined_ids.push((call.call_id.clone(), promise_id));
             results.push(ToolInvocationResult {
+                attachments: Vec::new(),
                 duration_ms: None,
                 output_bytes: None,
                 truncated: false,
@@ -7262,6 +8586,7 @@ mod tests {
             )])),
         };
         let completed_results = vec![ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -8088,6 +9413,7 @@ mod tests {
     ) -> ToolInvocationResult {
         let content_ref = BlobRef::from_bytes(call_id.as_str().as_bytes());
         ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -8582,6 +9908,7 @@ mod tests {
                     None,
                     user_input(BlobRef::from_bytes(b"input")),
                     RunConfig {
+                        input_limit_tokens: None,
                         model_override: Some(override_model.clone()),
                         ..Default::default()
                     },

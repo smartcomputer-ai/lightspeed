@@ -18,13 +18,14 @@ pub fn admit_command(
     observed_at_ms: u64,
 ) -> Result<Vec<CoreAgentEventProposal>, CommandError> {
     match command {
-        CoreAgentCommand::OpenSession { config } => {
+        CoreAgentCommand::OpenSession { mut config } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(
                     CommandRejectionKind::CoreAgentState,
                     "session can only be opened from new state",
                 );
             }
+            materialize_compaction_default(&mut config);
             config.validate().map_err(command_rejection_from_domain)?;
             Ok(vec![CoreAgentEventProposal::new(
                 CoreAgentJoins::default(),
@@ -32,7 +33,7 @@ pub fn admit_command(
             )])
         }
         CoreAgentCommand::OpenManagedSession {
-            config,
+            mut config,
             session_universe_id,
             workflow_tools,
         } => {
@@ -42,6 +43,7 @@ pub fn admit_command(
                     "session can only be opened from new state",
                 );
             }
+            materialize_compaction_default(&mut config);
             config.validate().map_err(command_rejection_from_domain)?;
             let admitted = workflow_tools
                 .admit(session_universe_id)
@@ -115,7 +117,7 @@ pub fn admit_command(
         }
         CoreAgentCommand::ReplaceSessionConfig {
             expected_revision,
-            config,
+            mut config,
         } => {
             require_open(state)?;
             require_no_active_or_queued_work(
@@ -134,6 +136,7 @@ pub fn admit_command(
                     );
                 }
             }
+            materialize_compaction_default(&mut config);
             let current = state.lifecycle.config.as_ref().ok_or_else(|| {
                 CommandError::Domain(DomainError::InvariantViolation(
                     "open session is missing config".to_owned(),
@@ -158,8 +161,24 @@ pub fn admit_command(
             // The attachment list is the allowed set: an active environment
             // the new document no longer attaches is cleared in the same
             // batch so no batch runs against an unlisted machine. The
-            // pointer is never filled here; defaults apply at profile
-            // application only.
+            // pointer is filled when an empty session gains a new default.
+            // An unchanged default does not undo an explicit deactivation
+            // during an unrelated configuration edit.
+            let default_id = |config: &crate::SessionConfig| {
+                config
+                    .features
+                    .environments
+                    .as_ref()
+                    .and_then(|environments| environments.default_attachment())
+                    .map(|attachment| attachment.environment_id.clone())
+            };
+            let activates_default = if state.environment.active_environment_id.is_none()
+                && default_id(&config) != default_id(current)
+            {
+                default_id(&config).map(crate::EnvironmentId::new)
+            } else {
+                None
+            };
             let clears_active = state
                 .environment
                 .active_environment_id
@@ -182,6 +201,13 @@ pub fn admit_command(
                 proposals.push(CoreAgentEventProposal::new(
                     CoreAgentJoins::default(),
                     CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
+                ));
+            } else if let Some(environment_id) = activates_default {
+                proposals.push(CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentSet {
+                        environment_id,
+                    }),
                 ));
             }
             Ok(proposals)
@@ -272,6 +298,17 @@ pub fn admit_command(
             if crate::core::components::context::context_upsert_is_noop(state, &key, &entry) {
                 return Ok(Vec::new());
             }
+            if let Some(replacement) =
+                crate::core::components::context::catalog_metadata_replacement(state, &key, &entry)
+            {
+                return Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Context(ContextEvent::EntriesReplaced {
+                        base_revision: state.context.revision,
+                        entries: vec![replacement],
+                    }),
+                )]);
+            }
             let entries = crate::core::components::context::context_entries_from_inputs(
                 state,
                 vec![(Some(key), ContextEntrySource::ContextEdit, entry)],
@@ -347,6 +384,47 @@ pub fn admit_command(
                 }),
             )])
         }
+        CoreAgentCommand::ReplaceContextEntries {
+            expected_revision,
+            entries,
+        } => {
+            require_open(state)?;
+            require_no_pending_compaction(
+                state,
+                "context cannot be edited while context compaction is pending",
+            )?;
+            if state.runs.active.is_some() {
+                return reject(
+                    CommandRejectionKind::ActiveWork,
+                    "context entries cannot be replaced while a run is active",
+                );
+            }
+            validate_expected_context_revision(state, expected_revision)?;
+            let mut replaced = Vec::new();
+            for (entry_id, input) in entries {
+                let Some(entry) =
+                    crate::core::components::context::replacement_entry(state, entry_id, input)
+                else {
+                    continue;
+                };
+                if crate::core::components::context::entry_by_id(state, entry_id) == Some(&entry) {
+                    continue;
+                }
+                crate::core::components::context::validate_entry_replacement(state, &entry)
+                    .map_err(command_rejection_from_domain)?;
+                replaced.push(entry);
+            }
+            if replaced.is_empty() {
+                return Ok(Vec::new());
+            }
+            Ok(vec![CoreAgentEventProposal::new(
+                CoreAgentJoins::default(),
+                CoreAgentEvent::Context(ContextEvent::EntriesReplaced {
+                    base_revision: state.context.revision,
+                    entries: replaced,
+                }),
+            )])
+        }
         CoreAgentCommand::CompactContext => {
             require_open(state)?;
             crate::core::components::context::manual_compaction_requested_proposal(state)
@@ -363,7 +441,7 @@ pub fn admit_command(
             if !force
                 && (state.runs.active.is_some()
                     || !state.runs.queued.is_empty()
-                    || state.context.pending_compaction
+                    || state.context.compaction.is_pending()
                     || state
                         .promises
                         .pending()
@@ -875,7 +953,7 @@ fn require_no_active_or_queued_work(
 ) -> Result<(), CommandError> {
     if state.runs.active.is_some()
         || !state.runs.queued.is_empty()
-        || state.context.pending_compaction
+        || state.context.compaction.is_pending()
     {
         reject(CommandRejectionKind::ActiveWork, message)
     } else {
@@ -921,7 +999,7 @@ fn require_no_pending_compaction(
     state: &CoreAgentState,
     message: &'static str,
 ) -> Result<(), CommandError> {
-    if state.context.pending_compaction {
+    if state.context.compaction.is_pending() {
         reject(CommandRejectionKind::ActiveWork, message)
     } else {
         Ok(())
@@ -975,6 +1053,15 @@ fn unknown_reference_rejection_from_domain(error: DomainError) -> CommandError {
         CommandRejectionKind::UnknownReference,
         error.to_string(),
     ))
+}
+
+fn materialize_compaction_default(config: &mut crate::SessionConfig) {
+    if config.context.compaction.is_none() {
+        config.context.compaction = Some(crate::CompactionPolicy::ProviderStandalone {
+            compact_threshold_tokens: None,
+            target_tokens: None,
+        });
+    }
 }
 
 #[cfg(test)]

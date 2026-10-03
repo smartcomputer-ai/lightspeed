@@ -170,12 +170,10 @@ pub struct SubagentResultEnvelope {
     pub output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Media the child referenced in `output` by `media:` handle, resolved
-    /// against what the child saw. The parent's runtime appends each as a
-    /// media entry after the result, so the parent sees it and can use the
-    /// same handle.
+    /// Recorded attachments explicitly referenced by the child's final answer.
+    /// Only media becomes native model input; file references remain metadata.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub media: Vec<engine::media::MediaDescriptor>,
+    pub attachments: Vec<crate::attachments::Attachment>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

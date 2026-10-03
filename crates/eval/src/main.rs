@@ -643,6 +643,7 @@ impl EvalRuntime {
                         input: user_input(input_ref),
                     },
                     run_config: RunConfig {
+                        input_limit_tokens: None,
                         max_turns: self.config.limits.max_turns,
                         max_tool_rounds: self.config.limits.max_tool_rounds,
                         ..Default::default()
@@ -929,7 +930,11 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
             max_turns: Some(case.run.max_turns.unwrap_or(12)),
             max_tool_rounds: Some(case.run.max_tool_rounds.unwrap_or(8)),
         },
-        context: ContextConfig { compaction: None },
+        context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
+            compaction: None,
+        },
         features: Default::default(),
     }
 }

@@ -5,6 +5,7 @@ use crate::{
 };
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
+const MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD: u32 = 50_000;
 
 /// Current version of every feature block. Bumps per feature once a breaking
 /// behavior revision ships; `validate_feature_version` then becomes a
@@ -41,6 +42,16 @@ impl SessionConfig {
 }
 
 pub(crate) fn validate_config_update_for_state(
+    state: &CoreAgentState,
+    config: &SessionConfig,
+) -> Result<(), DomainError> {
+    validate_recorded_config_update(state, config)?;
+    validate_retained_native_model(state, &config.model)
+}
+
+/// Replay keeps structural invariants, but does not reapply a newer admission
+/// policy to model changes already recorded in the log.
+pub(crate) fn validate_recorded_config_update(
     state: &CoreAgentState,
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
@@ -110,8 +121,13 @@ impl LimitsConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
+    /// Provider-reported capacity resolved at admission, independent of the user override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
 }
 
 impl ContextConfig {
@@ -449,8 +465,8 @@ impl EnvironmentsFeature {
         self.attachment(environment_id).is_some()
     }
 
-    /// The attachment activated when a profile is applied and nothing is
-    /// active; validation admits at most one.
+    /// The attachment selected when introducing a default to an unselected
+    /// session or applying a profile; validation admits at most one.
     pub fn default_attachment(&self) -> Option<&EnvironmentAttachment> {
         self.environments
             .iter()
@@ -603,6 +619,9 @@ pub enum CompactionPolicy {
 /// this is the runs/start escape hatch, including raw provider params.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
+    /// Input capacity resolved outside the reducer for this run’s effective model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -661,6 +680,25 @@ pub(crate) fn validate_run_config_for_state(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
+    validate_recorded_run_config(state, run_config)?;
+    let config = current_config(state)?;
+    validate_retained_native_model(
+        state,
+        run_config.model_override.as_ref().unwrap_or(&config.model),
+    )
+}
+
+/// A committed run has already passed admission. Preserve its model selection
+/// even if the current native-state admission policy would refuse it now.
+pub(crate) fn validate_recorded_run_config(
+    state: &CoreAgentState,
+    run_config: &RunConfig,
+) -> Result<(), DomainError> {
+    if run_config.input_limit_tokens == Some(0) {
+        return Err(DomainError::ProviderCompatibility(
+            "input_limit_tokens must be positive".into(),
+        ));
+    }
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
@@ -1083,6 +1121,11 @@ fn validate_context_config(
     context: &ContextConfig,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
+    if context.input_limit_tokens == Some(0) || context.reported_input_limit_tokens == Some(0) {
+        return Err(DomainError::ProviderCompatibility(
+            "input_limit_tokens must be positive".into(),
+        ));
+    }
     match (&context.compaction, api_kind) {
         (None | Some(CompactionPolicy::Disabled), _) => Ok(()),
         (
@@ -1091,6 +1134,22 @@ fn validate_context_config(
             }),
             ProviderApiKind::OpenAiResponses,
         ) => validate_openai_responses_compact_threshold(*compact_threshold_tokens),
+        (
+            Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens,
+            }),
+            ProviderApiKind::AnthropicMessages,
+        ) => {
+            if compact_threshold_tokens
+                .is_some_and(|threshold| threshold < MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD)
+            {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "Anthropic Messages compact_threshold_tokens must be at least {} when set",
+                    MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD
+                )));
+            }
+            Ok(())
+        }
         (
             Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
@@ -1102,7 +1161,7 @@ fn validate_context_config(
         ) => validate_provider_standalone_compaction(*compact_threshold_tokens, *target_tokens),
         (Some(CompactionPolicy::ProviderTriggered { .. }), api_kind) => {
             Err(DomainError::ProviderCompatibility(format!(
-                "provider-triggered compaction requires OpenAI Responses api kind, got {:?}",
+                "provider-triggered compaction requires OpenAI Responses or Anthropic Messages api kind, got {:?}",
                 api_kind
             )))
         }
@@ -1181,6 +1240,28 @@ fn validate_session_provider_is_pinned(
     Ok(())
 }
 
+fn validate_retained_native_model(
+    state: &CoreAgentState,
+    model: &ModelSelection,
+) -> Result<(), DomainError> {
+    let current = state
+        .context
+        .last_generation_model()
+        .or_else(|| state.lifecycle.config.as_ref().map(|config| &config.model));
+    if current.is_some_and(|current| current != model)
+        && state.context.entries.iter().any(|entry| {
+            matches!(entry.kind, crate::ContextEntryKind::ReasoningState)
+                || entry.content.provider_kind.as_deref().is_some_and(|kind| {
+                    kind == crate::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND
+                        || kind == crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
+                })
+        })
+    {
+        return Err(DomainError::ProviderCompatibility("model cannot change while native compaction or reasoning state is retained; use a new session".into()));
+    }
+    Ok(())
+}
+
 fn validate_active_context_api_kind(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
@@ -1202,8 +1283,156 @@ mod tests {
             },
             generation: GenerationConfig::default(),
             limits: LimitsConfig::default(),
-            context: ContextConfig { compaction },
+            context: ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
+                compaction,
+            },
             features: FeaturesConfig::default(),
+        }
+    }
+
+    #[test]
+    fn recorded_native_model_changes_replay_but_new_changes_are_rejected() {
+        use crate::{
+            AcceptedRunEvent, BlobRef, CommandError, CommandRejectionKind, ContentRef,
+            ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
+            ContextEvent, ContextMessageRole, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
+            CoreAgentLifecycleEvent, EventSeq, RunEvent, RunId, RunRequestCommand,
+            RunRequestSource, RunSource, SessionPosition, admit_command, apply_event,
+        };
+        for (api_kind, kind, provider_kind) in [
+            (
+                ProviderApiKind::OpenAiResponses,
+                ContextEntryKind::ReasoningState,
+                None,
+            ),
+            (
+                ProviderApiKind::OpenAiResponses,
+                ContextEntryKind::ProviderOpaque,
+                Some(crate::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND),
+            ),
+            (
+                ProviderApiKind::AnthropicMessages,
+                ContextEntryKind::ProviderOpaque,
+                Some(crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND),
+            ),
+        ] {
+            let original = config(api_kind, None);
+            let changed = SessionConfig {
+                model: ModelSelection {
+                    model: "another-model".into(),
+                    ..original.model.clone()
+                },
+                ..original.clone()
+            };
+            let native = ContextEntry {
+                entry_id: ContextEntryId::new(1),
+                key: None,
+                kind,
+                source: ContextEntrySource::ContextEdit,
+                content: ContentRef {
+                    content_ref: BlobRef::from_bytes(b"native state"),
+                    media_type: None,
+                    provider_kind: provider_kind.map(str::to_owned),
+                },
+                preview: None,
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+                supersedes: None,
+            };
+            let events = [
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config: original }),
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                    base_revision: 0,
+                    entries: vec![native],
+                }),
+            ];
+            let entry = |seq, event| CoreAgentEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(seq),
+                },
+                observed_at_ms: seq,
+                joins: Default::default(),
+                event,
+            };
+            let history = vec![entry(1, events[0].clone()), entry(2, events[1].clone())];
+            let mut state = CoreAgentState::new();
+            for event in &history {
+                apply_event(&mut state, event).unwrap();
+            }
+            let run_config = RunConfig {
+                model_override: Some(changed.model.clone()),
+                ..Default::default()
+            };
+            let input = vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content: ContentRef {
+                    content_ref: BlobRef::from_bytes(b"continue"),
+                    media_type: Some("text/plain".into()),
+                    provider_kind: None,
+                },
+                preview: None,
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+            }];
+            for command in [
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: changed.clone(),
+                },
+                CoreAgentCommand::RequestRun(RunRequestCommand {
+                    submission_id: None,
+                    source: RunRequestSource::Input {
+                        input: input.clone(),
+                    },
+                    run_config: run_config.clone(),
+                    notify_on_terminal: vec![],
+                    requested_by: None,
+                }),
+            ] {
+                assert!(matches!(admit_command(&state, command, 3),
+                    Err(CommandError::Rejected(rejection)) if rejection.kind == CommandRejectionKind::ProviderCompatibility));
+            }
+            for recorded in [
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
+                    config: changed.clone(),
+                    revision: 1,
+                }),
+                CoreAgentEvent::Run(RunEvent::Accepted(AcceptedRunEvent {
+                    run_id: RunId::new(1),
+                    submission_id: None,
+                    source: RunSource::Input { input },
+                    run_config,
+                    config_revision: 0,
+                    notify_on_terminal: vec![],
+                    requested_by: None,
+                })),
+            ] {
+                let mut committed = history.clone();
+                committed.push(entry(3, recorded));
+                let serialized = serde_json::to_vec(&committed).unwrap();
+                let decoded: Vec<CoreAgentEntry> = serde_json::from_slice(&serialized).unwrap();
+                let mut replay = CoreAgentState::new();
+                for event in &decoded {
+                    apply_event(&mut replay, event).expect("recorded model change replays");
+                }
+                let mut applied = state.clone();
+                apply_event(&mut applied, committed.last().unwrap()).unwrap();
+                assert_eq!(replay, applied);
+                if let Some(run) = replay.runs.queued.first() {
+                    assert_eq!(run.run_config.model_override.as_ref(), Some(&changed.model));
+                } else {
+                    assert_eq!(
+                        replay.lifecycle.config.as_ref().unwrap().model,
+                        changed.model
+                    );
+                }
+            }
         }
     }
 
@@ -1286,6 +1515,7 @@ mod tests {
                     validate_run_config_for_state(
                         pinned_state,
                         &RunConfig {
+                            input_limit_tokens: None,
                             model_override: Some(changed),
                             ..Default::default()
                         }
@@ -1315,6 +1545,7 @@ mod tests {
                 validate_run_config_for_state(
                     pinned_state,
                     &RunConfig {
+                        input_limit_tokens: None,
                         model_override: Some(ModelSelection {
                             model: model.into(),
                             ..original.model.clone()
@@ -1360,9 +1591,9 @@ mod tests {
     }
 
     #[test]
-    fn provider_triggered_compaction_rejects_non_openai_responses_api_kind() {
+    fn provider_triggered_compaction_rejects_openai_completions_api_kind() {
         let config = config(
-            ProviderApiKind::AnthropicMessages,
+            ProviderApiKind::OpenAiCompletions,
             Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: None,
             }),
@@ -1370,9 +1601,34 @@ mod tests {
 
         let error = config
             .validate()
-            .expect_err("provider-triggered compaction is OpenAI Responses only");
+            .expect_err("Chat Completions has no provider-triggered compaction");
 
         assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+    }
+
+    #[test]
+    fn provider_triggered_compaction_validates_anthropic_threshold() {
+        for threshold in [None, Some(50_000), Some(150_000)] {
+            config(
+                ProviderApiKind::AnthropicMessages,
+                Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: threshold,
+                }),
+            )
+            .validate()
+            .expect("valid Anthropic compaction threshold");
+        }
+        for threshold in [0, 1000, 49_999] {
+            let error = config(
+                ProviderApiKind::AnthropicMessages,
+                Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: Some(threshold),
+                }),
+            )
+            .validate()
+            .expect_err("threshold below Anthropic minimum");
+            assert!(matches!(error, DomainError::ProviderCompatibility(_)));
+        }
     }
 
     #[test]

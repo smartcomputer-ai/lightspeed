@@ -5,7 +5,7 @@ import { RunOutcomeLine, RunStatsRow, RunStatsTrigger } from "@/components/sessi
 import { ActivityIcon, GROUP_ORDER, groupStyle, useElapsed } from "@/components/session/tool-trace";
 import { SystemChips, TranscriptEntryView } from "@/components/session/transcript-view";
 import { sectionActivity, type RunSection } from "@/lib/sessions/run-sections";
-import { formatDuration, type ActiveRun, type TranscriptEntry } from "@/lib/sessions/transcript";
+import { formatDuration, runFailureText, type ActiveRun, type TranscriptEntry } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
 import { TranscriptEntrance } from "./transcript-motion";
 
@@ -58,7 +58,7 @@ export function RunSectionView({
       ) : section.summary ? (
         <RunOutcomeLine summary={section.summary} showStatistics={showRunStatistics} />
       ) : null}
-      {section.reply && <TranscriptEntryView entry={section.reply} loadFullText={loadFullText} />}
+      {section.reply && <TranscriptEntryView entry={section.reply} loadFullText={loadFullText} copyable />}
     </div>
   );
 }
@@ -127,7 +127,7 @@ function RunStrip({
       {summary?.status === "failed" && (
         <p className="flex items-start gap-1.5 px-2 pb-1.5 text-xs text-destructive">
           <TriangleAlert className="mt-px size-3.5 shrink-0" />
-          <span className="[overflow-wrap:anywhere]">Run failed{summary.error ? `: ${summary.error}` : ""}</span>
+          <span className="[overflow-wrap:anywhere]">{runFailureText(summary)}</span>
         </p>
       )}
     </div>

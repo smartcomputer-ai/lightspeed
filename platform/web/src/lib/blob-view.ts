@@ -1,6 +1,6 @@
 /// Blob pages: one address per stored blob in a universe,
 /// `/u/<slug>/blobs/<hex digest>`. A digest is a capability within its
-/// universe, so the page needs no other scope. Name, type, and the session a
+/// universe, so the page needs no other scope. Name, type, and the source a
 /// link came from ride in the query as display hints; the store keeps bytes
 /// only.
 
@@ -9,6 +9,9 @@ export interface BlobHints {
   type?: string;
   /// The session the link was followed from, for a way back.
   session?: string;
+  /// The workspace and relative file path the link was followed from.
+  workspace?: string;
+  path?: string;
 }
 
 const HEX = /^[a-f0-9]{64}$/;
@@ -26,6 +29,10 @@ export function blobHref(slug: string, blobRef: string, hints: BlobHints = {}): 
   if (hints.name) query.set("name", hints.name);
   if (hints.type) query.set("type", hints.type);
   if (hints.session) query.set("session", hints.session);
+  if (hints.workspace) {
+    query.set("workspace", hints.workspace);
+    if (hints.path) query.set("path", hints.path);
+  }
   const search = query.toString();
   return `/u/${slug}/blobs/${digest}${search ? `?${search}` : ""}`;
 }

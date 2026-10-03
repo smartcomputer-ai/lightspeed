@@ -360,7 +360,7 @@ async fn prepare_operation(
     if matches!(operation, SessionOperation::RefreshContext) && busy {
         return Ok((candidate, ProfileApplySummary::default()));
     }
-    if busy || drive.state().context.pending_compaction {
+    if busy || drive.state().context.compaction.is_pending() {
         return Err(AgentApiError::rejected(
             "session preparation requires no active or queued work",
         ));
@@ -522,12 +522,13 @@ async fn apply_profile(
             .active_environment_id
             .is_none()
     {
-        summary.active_environment_changed = true;
         candidate.push(
             CoreAgentCommand::SetActiveEnvironment { environment_id },
             workflow_time_ms(ctx),
         )?;
     }
+    summary.active_environment_changed = drive.state().environment.active_environment_id
+        != candidate.state().environment.active_environment_id;
     let mut desired = admissions::active_instruction_inputs(candidate.state());
     desired.retain(|key, _| {
         key.as_str() != "instructions.050.profile"
@@ -770,7 +771,12 @@ mod tests {
             setup_requested: false,
             ..Default::default()
         };
-        state.core_state.context.pending_compaction = true;
+        state.core_state.context.compaction.phase =
+            engine::ContextCompactionPhase::Pending(engine::ContextCompactionPlan {
+                run_id: None,
+                covered_entry_ids: vec![engine::ContextItemId::new(1)],
+                trigger: engine::ContextCompactionTrigger::Manual,
+            });
         assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
             &state
         ));

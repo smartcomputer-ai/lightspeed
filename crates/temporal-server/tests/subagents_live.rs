@@ -63,6 +63,31 @@ async fn temporal_live_agent_run_hands_up_media_the_child_linked() -> anyhow::Re
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_agent_run_hands_up_only_explicitly_linked_files() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    run_with_scripted_subagent_live_worker(|client, id, api, blobs, sessions, model| {
+        run_file_attachment_live_client(client, id, api, blobs, sessions, model, false)
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_agent_spawn_await_hands_up_file_metadata_without_model_input()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    run_with_scripted_subagent_live_worker(|client, id, api, blobs, sessions, model| {
+        run_file_attachment_live_client(client, id, api, blobs, sessions, model, true)
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn temporal_live_agent_run_fans_out_three_children() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
@@ -311,7 +336,8 @@ impl CoreAgentLlm for SubagentScriptedLlm {
             })
             .await?
         {
-            if user_text.starts_with("AGENT_SPAWN_SLOW")
+            if (user_text.starts_with("AGENT_SPAWN_SLOW")
+                || user_text.starts_with("AGENT_SPAWN_FILES"))
                 && let Some(promise_id) = parse_reply_promise(&tool_result)
             {
                 return self
@@ -327,6 +353,25 @@ impl CoreAgentLlm for SubagentScriptedLlm {
                         )],
                     )
                     .await;
+            }
+            if user_text.starts_with("CHILD_FILES") {
+                for entry in &request.request.context.entries {
+                    if matches!(entry.kind, ContextEntryKind::ToolResult { .. }) {
+                        let text = self
+                            .blobs
+                            .read_text(&entry.content.content_ref)
+                            .await
+                            .map_err(io_error)?;
+                        if text.starts_with("File attachment: report.md") {
+                            let handle = text
+                                .split_whitespace()
+                                .find(|word| word.starts_with("file:"))
+                                .expect("reference tool handle");
+                            return self.final_result(&request, format!("[report]({handle}) and [unknown](file:000000000000000000000000)")).await;
+                        }
+                    }
+                }
+                return Err(io_error("child did not receive report reference"));
             }
             if user_text.starts_with("CHILD_MEDIA") {
                 // The child links the image it read by the handle the tool
@@ -381,6 +426,34 @@ impl CoreAgentLlm for SubagentScriptedLlm {
                 .final_result(
                     &request,
                     format!("parent done: {}{media_report}", texts.join(" | ")),
+                )
+                .await;
+        }
+        if let Some(profile) = user_text
+            .strip_prefix("AGENT_RUN_FILES ")
+            .or_else(|| user_text.strip_prefix("AGENT_SPAWN_FILES "))
+        {
+            let tool = if user_text.starts_with("AGENT_SPAWN_FILES") {
+                AGENT_SPAWN_TOOL_NAME
+            } else {
+                AGENT_RUN_TOOL_NAME
+            };
+            return self.tool_calls_result(&request, vec![(tool, serde_json::json!({"agent": profile.trim(), "input": "CHILD_FILES", "label": "file child"}))]).await;
+        }
+        if user_text.starts_with("CHILD_FILES") {
+            return self
+                .tool_calls_result(
+                    &request,
+                    vec![
+                        (
+                            "vfs_reference",
+                            serde_json::json!({"path":"/workspace/report.md"}),
+                        ),
+                        (
+                            "vfs_reference",
+                            serde_json::json!({"path":"/workspace/intermediate.txt"}),
+                        ),
+                    ],
                 )
                 .await;
         }
@@ -825,6 +898,108 @@ async fn run_agent_run_media_live_client(
     api.delete_profile(ProfileDeleteParams { profile_id })
         .await?;
     terminate_live_session(&client, &session_id, "sub-agent media live cleanup").await;
+    Ok(())
+}
+
+async fn run_file_attachment_live_client(
+    client: Client,
+    session_id: SessionId,
+    api: Arc<GatewayAgentApi>,
+    blobs: Arc<dyn BlobStore>,
+    _sessions: Arc<dyn SessionStore>,
+    model: ModelSelection,
+    spawned: bool,
+) -> anyhow::Result<()> {
+    let bytes = b"# Final report\n";
+    let reference =
+        engine::FileAttachment::new(engine::BlobRef::from_bytes(bytes), "report.md".into(), None);
+    let snapshot = support::live::upload_snapshot(
+        api.as_ref(),
+        vec![
+            vfs::InlineFile::new("/report.md", bytes.to_vec())?,
+            vfs::InlineFile::new("/intermediate.txt", b"private intermediate".to_vec())?,
+        ],
+    )
+    .await?;
+    let workspace = api
+        .create_vfs_workspace(api::VfsWorkspaceCreateParams {
+            snapshot_ref: Some(snapshot.snapshot_ref.to_string()),
+            ..Default::default()
+        })
+        .await?
+        .result
+        .workspace;
+    // Only the child receives the workspace. The parent's link must stand alone.
+    let child_config =
+        serde_json::from_value(serde_json::json!({"features":{"vfs":{"workspaces":[{
+            "path":"/workspace", "workspaceId":workspace.workspace_id, "access":"read"
+        }]}}}))?;
+    let profile_id = create_child_profile_with_config(api.as_ref(), child_config).await?;
+    let script = if spawned {
+        "AGENT_SPAWN_FILES"
+    } else {
+        "AGENT_RUN_FILES"
+    };
+    let run_id = start_subagent_parent(
+        api.as_ref(),
+        &session_id,
+        &model,
+        &profile_id,
+        4,
+        &format!("{script} {profile_id}"),
+    )
+    .await?;
+    let run = wait_for_terminal_run(api.as_ref(), &session_id, &run_id).await?;
+    assert_eq!(run.status, api::RunStatus::Completed, "{run:?}");
+    let call_name = if spawned {
+        AWAIT_TOOL_NAME
+    } else {
+        AGENT_RUN_TOOL_NAME
+    };
+    let call = run
+        .tool_batches
+        .iter()
+        .flat_map(|batch| &batch.calls)
+        .find(|call| call.tool_name == call_name)
+        .expect("receiving tool call");
+    assert_eq!(call.attachments.len(), 1, "only the linked report travels");
+    let attachment = &call.attachments[0];
+    assert_eq!(attachment.kind, api::ToolAttachmentKind::File);
+    assert_eq!(attachment.handle, reference.handle);
+    assert_eq!(attachment.content_ref, reference.content_ref.as_str());
+    let source = attachment
+        .source
+        .as_ref()
+        .expect("workspace origin travels with the file");
+    assert_eq!(source.kind, "vfs_workspace");
+    assert_eq!(source.id, workspace.workspace_id);
+    assert_eq!(source.path, "report.md");
+    assert!(call.effects.is_empty(), "attachments are not effects");
+    assert!(
+        call.media.is_empty(),
+        "file metadata does not load model input"
+    );
+    assert_eq!(blobs.read_bytes(&reference.content_ref).await?, bytes);
+    let output = final_assistant_text(&run).expect("parent output");
+    assert!(output.contains(&reference.handle));
+    assert!(!output.contains("intermediate.txt"));
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            session_id: session_id.to_string(),
+            direction: Default::default(),
+            before: None,
+            after: None,
+            limit: Some(500),
+            wait_ms: Some(0),
+        })
+        .await?
+        .result;
+    assert!(events.events.iter().any(|event| matches!(&event.kind,
+        api::SessionEventKindView::ToolCallCompleted { attachments, .. }
+            if attachments.iter().any(|item| item.handle == reference.handle))));
+    api.delete_profile(ProfileDeleteParams { profile_id })
+        .await?;
+    terminate_live_session(&client, &session_id, "file attachment live cleanup").await;
     Ok(())
 }
 

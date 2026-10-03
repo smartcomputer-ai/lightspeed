@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Download, FileQuestion, Link2 } from "lucide-react";
-import { api, type SessionView } from "@/api";
+import { validWorkspaceTransferPath } from "@lightspeed/platform-shared";
+import { api, type SessionView, type WorkspaceTree, type VfsTreeEntry } from "@/api";
 import { LoadingNote, UniverseNotFound } from "@/components/page";
 import { ReadError } from "@/components/read-error";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { useActiveUniverse } from "@/lib/universes";
 
 /// One stored blob, addressed by its digest within the universe: stored
 /// text, instructions, catalogs, and media the model was shown. Links carry
-/// a name, a type, and the session they came from as display hints.
+/// a name, a type, and their source session or workspace as display hints.
 export function BlobPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
@@ -33,6 +34,8 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
   const name = search.get("name")?.trim() || undefined;
   const hint = search.get("type")?.trim() || undefined;
   const session = search.get("session")?.trim() || undefined;
+  const workspace = search.get("workspace")?.trim() || undefined;
+  const path = search.get("path") || undefined;
   const blob = useQuery({
     queryKey: ["blob", universeId, digest],
     queryFn: () => api<{ bytesBase64: string; bytes: number }>(
@@ -63,6 +66,7 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
             </span>
           </div>
           {session && <LinkedFrom universeId={universeId} slug={slug} sessionId={session} />}
+          {workspace && <LinkedFromWorkspace universeId={universeId} slug={slug} workspaceId={workspace} path={path} />}
         </div>
         <CopyLink />
         {bytes && view && <DownloadLink bytes={bytes} name={name ?? `${digest.slice(0, 12)}${extension(view)}`} />}
@@ -93,6 +97,39 @@ function LinkedFrom({ universeId, slug, sessionId }: { universeId: string; slug:
         ? <span className="font-mono" title={sessionId}>{label}</span>
         : <Link to={`/u/${slug}/sessions/${encodeURIComponent(sessionId)}`} title={label}
             className="font-medium text-foreground underline-offset-2 hover:underline">{label}</Link>}
+    </p>
+  );
+}
+
+function LinkedFromWorkspace({ universeId, slug, workspaceId, path }: {
+  universeId: string; slug: string; workspaceId: string; path?: string;
+}) {
+  const source = useQuery({
+    queryKey: ["workspace-tree", universeId, workspaceId],
+    queryFn: () => api<WorkspaceTree>("GET", `/api/v1/universes/${universeId}/workspaces/${encodeURIComponent(workspaceId)}/tree`),
+    retry: false,
+  });
+  const label = source.data?.workspace.displayName?.trim() || workspaceId;
+  const workspaceHref = `/u/${slug}/workspaces/${encodeURIComponent(workspaceId)}`;
+  let entry: VfsTreeEntry | undefined;
+  if (source.data && path && validWorkspaceTransferPath(path)) {
+    entry = { kind: "directory", entries: source.data.manifest.root.entries };
+    for (const segment of path.split("/")) {
+      entry = entry?.kind === "directory" && Object.hasOwn(entry.entries, segment)
+        ? entry.entries[segment] : undefined;
+    }
+  }
+  const available = source.data && !source.error;
+  const linkClass = "font-medium text-foreground underline-offset-2 hover:underline";
+  return (
+    <p className="truncate text-xs text-muted-foreground">
+      Linked from workspace:{" "}
+      {available
+        ? <Link to={workspaceHref} title={label} className={linkClass}>{label}</Link>
+        : <span title={workspaceId}>{label}</span>}
+      {path && <>{" / "}{available && entry?.kind === "file"
+        ? <Link to={`${workspaceHref}/files/${path.split("/").map(encodeURIComponent).join("/")}`} title={path} className={linkClass}>{path}</Link>
+        : <span title={path}>{path}</span>}</>}
     </p>
   );
 }
@@ -158,7 +195,7 @@ function DownloadLink({ bytes, name }: { bytes: Uint8Array; name: string }) {
   const url = useObjectUrl(bytes, "application/octet-stream");
   if (!url) return null;
   return (
-    <Button variant="outline" size="sm" render={<a href={url} download={name} />}>
+    <Button variant="outline" size="sm" nativeButton={false} render={<a href={url} download={name} />}>
       <Download data-icon="inline-start" />
       Download
     </Button>

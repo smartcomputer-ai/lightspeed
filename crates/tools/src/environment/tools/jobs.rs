@@ -111,7 +111,9 @@ fn submit_result_from_response(
             .map(|summary| JobSubmitted {
                 name: summary.name,
                 handle: ctx.environment_id.clone().map(|environment_id| JobHandle {
-                    environment_id,
+                    environment_id: crate::environment::handles::environment_handle(
+                        &environment_id,
+                    ),
                     job_id: summary.job_id.clone(),
                 }),
                 job_id: summary.job_id,

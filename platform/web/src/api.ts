@@ -1,10 +1,11 @@
-import type { FeatureStates, UniverseRole } from "@lightspeed/platform-shared";
-export type { ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
+import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed/platform-shared";
+export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
 import type {
   Attribution,
   ResourceAccessSummary,
   SessionActivity,
   ContextEntryView,
+  ContextCompactionView,
   RunSummaryView,
   RunStatus,
   EnvironmentCredentialSourceView,
@@ -77,6 +78,8 @@ export async function api<T>(method: string, path: string, body?: unknown, signa
 }
 
 export interface Universe {
+  icon?: UniverseIconName;
+  iconColor?: UniverseIconColor;
   id: string;
   lightspeedUniverseId: string;
   name: string;
@@ -484,6 +487,7 @@ export interface SessionView {
   activeEnvironmentId?: string | null;
   config?: Record<string, unknown> | null;
   configRevision: number;
+  activeContext?: { compaction?: ContextCompactionView | null };
   management?: SessionManagement | null;
   origin?: SessionOrigin | null;
   /// Bounded newest-first run summary page. Authoritative for recent run

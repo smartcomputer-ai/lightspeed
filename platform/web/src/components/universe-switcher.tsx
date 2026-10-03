@@ -2,7 +2,8 @@ import { slugify, universeSlugSchema } from "@lightspeed/platform-shared";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Check, ChevronsUpDown, Orbit, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { UniverseIcon } from "@/components/universe-icon";
 import { api, type Universe } from "@/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -61,9 +62,7 @@ export function UniverseSwitcher({
               />
             }
           >
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              <Orbit className="size-4" />
-            </div>
+            <UniverseIcon icon={active?.icon} iconColor={active?.iconColor} />
             <div className="grid flex-1 text-left leading-tight">
               <span className="truncate text-sm font-medium">
                 {active?.name ?? "Select universe"}
@@ -87,6 +86,7 @@ export function UniverseSwitcher({
                 key={universe.id}
                 onClick={() => navigate(universeHome(universe))}
               >
+                <UniverseIcon icon={universe.icon} iconColor={universe.iconColor} className="size-6 rounded-md" />
                 <span className="truncate">{universe.name}</span>
                 {universe.id === active?.id && <Check className="ml-auto size-4" />}
               </DropdownMenuItem>

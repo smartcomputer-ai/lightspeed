@@ -112,7 +112,7 @@ export function SessionComposer({
   const [flash, setFlash] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
-  const [pendingSubmit, setPendingSubmit] = useState<"send" | "steer" | null>(null);
+  const [pendingSubmit, setPendingSubmit] = useState<{ mode: "send" | "steer"; waitingForTranscript: boolean } | null>(null);
 
   const updateText = (value: string) => {
     textRef.current = value;
@@ -151,6 +151,7 @@ export function SessionComposer({
       caret = next.length;
     }
     updateText(next);
+    setPendingSubmit(pending => pending?.waitingForTranscript ? { ...pending, waitingForTranscript: false } : pending);
     selection.current = null;
     caretAfterInsert.current = caret;
     setAnnouncement("Dictation added. Review and edit before sending.");
@@ -172,26 +173,34 @@ export function SessionComposer({
   }, [flash]);
 
   const hasContent = text.trim().length > 0 || files.items.length > 0;
+  const voiceCanSubmit = voice.phase === "recording" || voice.phase === "transcribing";
+
+  const cancelVoice = () => {
+    setPendingSubmit(null);
+    voice.cancel();
+  };
 
   const submit = (steer: boolean) => {
     if (disabled) return;
-    // Enter while recording finishes the recording; the transcript still
-    // needs a review before anything is sent.
-    if (voice.phase === "recording") {
-      void voice.stop();
+    // An explicit send includes the transcript, even before it is ready.
+    if (voiceCanSubmit) {
+      setPendingSubmit({ mode: steer ? "steer" : "send", waitingForTranscript: true });
+      if (voice.phase === "recording") void voice.stop();
       return;
     }
     if (!hasContent) return;
     if (files.failed) {
+      setPendingSubmit(null);
       setNotice("Remove or retry the attachments that failed to upload.");
       return;
     }
     if (files.uploading) {
-      setPendingSubmit(steer ? "steer" : "send");
+      setPendingSubmit({ mode: steer ? "steer" : "send", waitingForTranscript: false });
       return;
     }
     const mode: ComposerMode | null = !runActive ? null : steer ? "steer" : "queue";
     if (mode === "steer" && !canSteer) {
+      setPendingSubmit(null);
       setNotice(`There is no run to steer right now. Press Enter to queue the message instead.`);
       return;
     }
@@ -207,21 +216,27 @@ export function SessionComposer({
     updateText("");
   };
 
-  // A send asked for while uploads were running goes out once they finish.
+  // Wait for the requested transcript and uploads; cancellation or failure
+  // must never send a partial draft.
   useEffect(() => {
-    if (!pendingSubmit || files.uploading) return;
+    if (!pendingSubmit) return;
+    if (disabled || voice.phase === "error" || (pendingSubmit.waitingForTranscript && voice.phase === "idle")) {
+      setPendingSubmit(null);
+      return;
+    }
+    if (pendingSubmit.waitingForTranscript || files.uploading) return;
     if (!hasContent) {
       setPendingSubmit(null);
       return;
     }
-    submit(pendingSubmit === "steer");
+    submit(pendingSubmit.mode === "steer");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSubmit, files.uploading]);
+  }, [pendingSubmit, files.uploading, files.failed, voice.phase, disabled]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Escape" && VOICE_BUSY.has(voice.phase)) {
       event.preventDefault();
-      voice.cancel();
+      cancelVoice();
       return;
     }
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
@@ -232,6 +247,7 @@ export function SessionComposer({
   };
 
   const startVoice = () => {
+    setPendingSubmit(null);
     setAnnouncement(undefined);
     void voice.start();
   };
@@ -274,8 +290,8 @@ export function SessionComposer({
         : "Enter queues a follow-up…"
       : "Message the agent…";
   const sendLabel = runActive ? "Queue message" : "Send message";
-  const sendTitle = voice.phase === "recording"
-    ? "Enter stops the recording; review the transcript before sending"
+  const sendTitle = voiceCanSubmit
+    ? "Send when transcription finishes"
     : pendingSubmit
       ? "Sends when the uploads finish"
       : runActive
@@ -371,7 +387,7 @@ export function SessionComposer({
               )}
               <div className="min-w-2 flex-1" />
               {dictation && !disabled && (
-                <VoiceControl voice={voice} unavailableReason={dictation.disabledReason} settingsHref={dictation.settingsHref}
+                <VoiceControl voice={{ ...voice, cancel: cancelVoice }} unavailableReason={dictation.disabledReason} settingsHref={dictation.settingsHref}
                   demo={isDemoDictation} onStart={startVoice} />
               )}
               {runActive && canStop && (
@@ -384,7 +400,7 @@ export function SessionComposer({
               {!disabled && (
                 <div className="flex shrink-0">
                   <Button type="button" size="icon-sm" onClick={() => submit(false)}
-                    disabled={!hasContent && voice.phase !== "recording"}
+                    disabled={!hasContent && !voiceCanSubmit}
                     aria-label={sendLabel} title={sendTitle}
                     className={cn(runActive && "rounded-r-none")}>
                     {pendingSubmit ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}
@@ -392,18 +408,18 @@ export function SessionComposer({
                   {runActive && (
                     <DropdownMenu>
                       <DropdownMenuTrigger render={
-                        <Button type="button" size="icon-sm" aria-label="Queue or steer" disabled={!hasContent}
+                        <Button type="button" size="icon-sm" aria-label="Queue or steer" disabled={!hasContent && !voiceCanSubmit}
                           className="w-5 rounded-l-none border-l border-l-primary-foreground/20" />
                       }>
                         <ChevronDown className="size-3" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="top" align="end" className="w-72">
-                        <DropdownMenuItem disabled={!hasContent} onClick={() => submit(false)}>
+                        <DropdownMenuItem disabled={!hasContent && !voiceCanSubmit} onClick={() => submit(false)}>
                           <ListPlus />
                           <span>Queue as the next run</span>
                           <DropdownMenuShortcut>↵</DropdownMenuShortcut>
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled={!hasContent || !canSteer} onClick={() => submit(true)}>
+                        <DropdownMenuItem disabled={(!hasContent && !voiceCanSubmit) || !canSteer} onClick={() => submit(true)}>
                           <CornerDownRight />
                           <span className="flex flex-col">
                             <span>Steer the current run</span>
@@ -432,9 +448,9 @@ export function SessionComposer({
             </div>
           )}
           <span role="status" aria-live="polite" className="sr-only">
-            {voice.phase === "recording" ? "Recording. Enter stops and transcribes; Escape discards."
+            {voice.phase === "recording" ? "Recording. Enter sends after transcription; Stop inserts the text; Escape discards."
               : voice.phase === "requesting" ? "Waiting for microphone permission…"
-              : voice.phase === "transcribing" ? "Transcribing… You can keep editing."
+              : voice.phase === "transcribing" ? pendingSubmit?.waitingForTranscript ? "Transcribing… Your message will send when ready." : "Transcribing… You can keep editing."
               : announcement ?? ""}
           </span>
         </div>

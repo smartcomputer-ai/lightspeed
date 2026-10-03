@@ -136,7 +136,7 @@ pub(super) fn openai_responses_config_with(
 pub fn anthropic_messages_live_model() -> String {
     env_or_dotenv_var("ANTHROPIC_MESSAGES_MODEL")
         .or_else(|_| env_or_dotenv_var("ANTHROPIC_LIVE_MODEL"))
-        .unwrap_or_else(|_| "claude-opus-5".to_string())
+        .unwrap_or_else(|_| "claude-opus-5-5".to_string())
 }
 
 pub fn anthropic_messages_live_client() -> am::Client {

@@ -182,6 +182,14 @@ impl HttpAgentApi {
         self.request(METHOD_SESSION_READ, params).await
     }
 
+    pub(crate) async fn replace_context(
+        &self,
+        params: api::ContextReplaceParams,
+    ) -> Result<AgentApiOutcome<api::ContextReplaceResponse>, AgentApiError> {
+        self.request(api::METHOD_SESSION_CONTEXT_REPLACE, params)
+            .await
+    }
+
     pub(crate) async fn read_run(
         &self,
         params: RunReadParams,

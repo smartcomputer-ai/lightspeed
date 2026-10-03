@@ -127,9 +127,16 @@ impl<'a> CoreAgentProjector<'a> {
             updated_at_ms: params.record.updated_at_ms,
             runs,
             active_run,
-            active_context: self
-                .project_context_state(params.state.context.revision, &params.state.context.entries)
-                .await?,
+            active_context: {
+                let mut context = self
+                    .project_context_state(
+                        params.state.context.revision,
+                        &params.state.context.entries,
+                    )
+                    .await?;
+                context.compaction = context_compaction_to_api(params.state);
+                context
+            },
             active_tools: active_tools_to_api(
                 params.state.tooling.revision,
                 &params.state.tooling.tools,
@@ -406,6 +413,7 @@ impl<'a> CoreAgentProjector<'a> {
         entries: &[ContextEntry],
     ) -> Result<ContextView, AgentApiError> {
         Ok(ContextView {
+            compaction: None,
             revision,
             entries: self
                 .project_context_entries(&entries.iter().collect::<Vec<_>>())
@@ -959,6 +967,17 @@ impl<'a> CoreAgentProjector<'a> {
                         .collect(),
                     reason: context_removal_reason_to_api(reason).to_owned(),
                 }),
+                ContextEvent::EntriesReplaced {
+                    base_revision,
+                    entries,
+                } => {
+                    let projected = self.project_context_event_entries(entries).await?;
+                    Ok(SessionEventKindView::ContextEntriesReplaced {
+                        base_revision: *base_revision,
+                        revision: context_event_revision(*base_revision)?,
+                        entries: projected,
+                    })
+                }
                 ContextEvent::KeysRemoved {
                     base_revision,
                     keys,
@@ -996,16 +1015,28 @@ impl<'a> CoreAgentProjector<'a> {
                 ContextEvent::CompactionRequested {
                     base_revision,
                     trigger,
+                    ..
                 } => Ok(SessionEventKindView::ContextCompactionRequested {
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
                     trigger: context_compaction_trigger_to_api(*trigger).to_owned(),
                 }),
+                ContextEvent::CompactionQueued { base_revision } => {
+                    Ok(SessionEventKindView::ContextCompactionRequested {
+                        base_revision: *base_revision,
+                        revision: *base_revision,
+                        trigger: "manualQueued".into(),
+                    })
+                }
                 ContextEvent::CompactionFinished {
+                    usage,
+                    calls,
                     base_revision,
                     status,
                     failure_ref,
                 } => Ok(SessionEventKindView::ContextCompactionFinished {
+                    usage: usage.as_ref().map(llm_usage_to_api),
+                    calls: *calls,
                     base_revision: *base_revision,
                     revision: context_event_revision(*base_revision)?,
                     status: context_compaction_status_to_api(*status).to_owned(),
@@ -1088,6 +1119,7 @@ impl<'a> CoreAgentProjector<'a> {
                     call_id: result.call_id.as_str().to_owned(),
                     status: core_tool_status_to_api_status(result.status),
                     effects: tool_effects_to_api(&result.effects),
+                    attachments: tool_attachments_to_api(&result.attachments),
                     output_bytes: result.output_bytes,
                     truncated: result.truncated,
                 }),
@@ -1149,6 +1181,7 @@ impl<'a> CoreAgentProjector<'a> {
     ) -> Result<Vec<ToolBatchView>, AgentApiError> {
         let result_by_call = self.project_tool_results_for_run(context_entries).await?;
         let effect_by_call = tool_effects_for_run(projection, run_id);
+        let attachment_by_call = tool_attachments_for_run(projection, run_id);
         let mut batches = Vec::new();
         let mut completed_batches = BTreeMap::new();
 
@@ -1178,6 +1211,10 @@ impl<'a> CoreAgentProjector<'a> {
                             status: result
                                 .map(|result| result.status)
                                 .unwrap_or(ToolItemStatus::Running),
+                            attachments: attachment_by_call
+                                .get(call.call_id.as_str())
+                                .cloned()
+                                .unwrap_or_default(),
                             effects: effect_by_call
                                 .get(call.call_id.as_str())
                                 .cloned()
@@ -1513,6 +1550,7 @@ fn openai_annotated_span(text: &str, annotation: &Value) -> Option<String> {
 fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
     match kind {
         RunFailureKind::ModelFailure => RunFailureKindView::ModelFailure,
+        RunFailureKind::RequestRejected => RunFailureKindView::RequestRejected,
         RunFailureKind::ToolFailure => RunFailureKindView::ToolFailure,
         RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
         RunFailureKind::LimitExceeded => RunFailureKindView::LimitExceeded,
@@ -1920,6 +1958,17 @@ pub fn parse_api_run_id(value: &str) -> Result<RunId, AgentApiError> {
         .map_err(|error| AgentApiError::invalid_request(format!("invalid run id {value}: {error}")))
 }
 
+pub fn parse_api_item_id(value: &str) -> Result<ContextEntryId, AgentApiError> {
+    let raw = value.strip_prefix("item_").ok_or_else(|| {
+        AgentApiError::invalid_request(format!("item id must use item_<number> form: {value}"))
+    })?;
+    raw.parse::<u64>()
+        .map(ContextEntryId::new)
+        .map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid item id {value}: {error}"))
+        })
+}
+
 pub fn api_turn_id(turn_id: TurnId) -> String {
     format!("turn_{}", turn_id.as_u64())
 }
@@ -1955,10 +2004,81 @@ fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str 
     }
 }
 
+fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompactionView> {
+    let config = state.lifecycle.config.as_ref()?;
+    let policy = config.context.compaction.as_ref();
+    let requested = match policy {
+        Some(CompactionPolicy::ProviderTriggered { .. }) => "providerTriggered",
+        Some(CompactionPolicy::ProviderStandalone { .. }) => "providerStandalone",
+        _ => "disabled",
+    };
+    let signed_window = state.context.entries.iter().any(|entry| entry.content.provider_kind.as_deref() == Some(engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
+        && matches!(entry.kind, ContextEntryKind::ProviderOpaque) && matches!(&entry.source, ContextEntrySource::Runtime { label } if label == engine::STANDALONE_COMPACTION_SOURCE));
+    let effective = if requested == "providerTriggered" && signed_window {
+        "providerStandalone"
+    } else {
+        requested
+    };
+    let model = state
+        .runs
+        .active
+        .as_ref()
+        .and_then(|run| run.run_config.model_override.as_ref())
+        .or(state.context.last_generation_model())
+        .unwrap_or(&config.model);
+    let strategy = match (effective, &model.api_kind) {
+        ("disabled", _) => "disabled",
+        ("providerTriggered", _) => "providerTriggered",
+        (_, ProviderApiKind::OpenAiCompletions) => "modelSummary",
+        _ => "nativePreferred",
+    };
+    let input_limit_tokens = engine::compaction_input_limit_tokens(state);
+    let override_threshold = match policy {
+        Some(
+            CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens,
+            }
+            | CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens,
+                ..
+            },
+        ) => *compact_threshold_tokens,
+        _ => None,
+    };
+    let (compact_threshold_tokens, source) = if effective == "disabled" {
+        (None, "disabled")
+    } else if let Some(threshold) = override_threshold {
+        (Some(threshold), "override")
+    } else if effective == "providerTriggered" {
+        (None, "providerDefault")
+    } else if let Some(limit) = input_limit_tokens {
+        (Some(limit.saturating_mul(4) / 5), "inputCapacity")
+    } else {
+        (None, "contextLengthError")
+    };
+    Some(api::ContextCompactionView {
+        requested_mode: requested.into(),
+        effective_mode: effective.into(),
+        effective_strategy: strategy.into(),
+        compact_threshold_tokens,
+        threshold_source: source.into(),
+        input_limit_tokens,
+        observed_tokens: state.context.observed_tokens(),
+        pending: state.context.compaction.is_pending(),
+        queued: state.context.compaction.is_queued(),
+        recovery_attempts: state
+            .runs
+            .active
+            .as_ref()
+            .map_or(0, |run| run.context_recovery.attempts),
+    })
+}
+
 fn context_compaction_trigger_to_api(trigger: ContextCompactionTrigger) -> &'static str {
     match trigger {
         ContextCompactionTrigger::Manual => "manual",
         ContextCompactionTrigger::HighWatermark => "highWatermark",
+        ContextCompactionTrigger::ContextLimit => "contextLimit",
     }
 }
 
@@ -2090,6 +2210,7 @@ pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfi
             max_tool_rounds: config.limits.max_tool_rounds,
         }),
         context: (!config.context.is_default()).then(|| api::ContextConfig {
+            input_limit_tokens: config.context.input_limit_tokens,
             compaction: config
                 .context
                 .compaction
@@ -2578,6 +2699,7 @@ fn llm_generation_status_to_api(status: &LlmGenerationStatus) -> &'static str {
     match status {
         LlmGenerationStatus::Succeeded => "succeeded",
         LlmGenerationStatus::Failed => "failed",
+        LlmGenerationStatus::Rejected => "rejected",
         LlmGenerationStatus::Cancelled => "cancelled",
     }
 }
@@ -2604,6 +2726,64 @@ fn tool_effects_for_run(
         }
     }
     effects
+}
+
+fn tool_attachments_for_run(
+    projection: &CoreAgentProjection<'_>,
+    run_id: RunId,
+) -> BTreeMap<String, Vec<api::ToolAttachmentView>> {
+    projection
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            if let CoreAgentEvent::Tool(ToolEvent::CallCompleted {
+                run_id: event_run_id,
+                result,
+                ..
+            }) = &entry.event
+                && *event_run_id == run_id
+                && !result.attachments.is_empty()
+            {
+                Some((
+                    result.call_id.to_string(),
+                    tool_attachments_to_api(&result.attachments),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn tool_attachments_to_api(attachments: &[engine::Attachment]) -> Vec<api::ToolAttachmentView> {
+    attachments
+        .iter()
+        .map(|attachment| match attachment {
+            engine::Attachment::Media(media) => api::ToolAttachmentView {
+                kind: api::ToolAttachmentKind::Media,
+                handle: media.handle.clone(),
+                content_ref: media.content_ref.to_string(),
+                name: media.name.clone(),
+                media_type: Some(media.media_type.clone()),
+                source: None,
+            },
+            engine::Attachment::File(file) => api::ToolAttachmentView {
+                kind: api::ToolAttachmentKind::File,
+                handle: file.handle.clone(),
+                content_ref: file.content_ref.to_string(),
+                name: Some(file.name.clone()),
+                media_type: file.media_type.clone(),
+                source: file
+                    .source
+                    .as_ref()
+                    .map(|source| api::AttachmentSourceView {
+                        kind: source.kind.clone(),
+                        id: source.id.clone(),
+                        path: source.path.clone(),
+                    }),
+            },
+        })
+        .collect()
 }
 
 fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
@@ -3171,8 +3351,58 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn compaction_projection_preserves_requested_policy_and_reports_signed_transition() {
+        let mut state = CoreAgentState::new();
+        state.lifecycle.config = Some(SessionConfig {
+            model: ModelSelection {
+                provider_id: "anthropic".into(),
+                api_kind: ProviderApiKind::AnthropicMessages,
+                model: "claude-opus-5-5".into(),
+            },
+            generation: Default::default(),
+            limits: Default::default(),
+            features: Default::default(),
+            context: engine::ContextConfig {
+                compaction: Some(CompactionPolicy::ProviderTriggered {
+                    compact_threshold_tokens: None,
+                }),
+                input_limit_tokens: Some(100_000),
+                reported_input_limit_tokens: None,
+            },
+        });
+        let view = context_compaction_to_api(&state).unwrap();
+        assert_eq!(view.threshold_source, "providerDefault");
+        let mut retained = context_entry(
+            1,
+            ContextEntrySource::Runtime {
+                label: engine::STANDALONE_COMPACTION_SOURCE.into(),
+            },
+        );
+        retained.content.provider_kind =
+            Some(engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.into());
+        state.context.entries.push(retained);
+        assert_eq!(
+            context_compaction_to_api(&state).unwrap().effective_mode,
+            "providerTriggered",
+            "plain legacy summaries do not force a native transition"
+        );
+        state.context.entries[0].kind = ContextEntryKind::ProviderOpaque;
+        let view = context_compaction_to_api(&state).unwrap();
+        assert_eq!(view.requested_mode, "providerTriggered");
+        assert_eq!(view.effective_mode, "providerStandalone");
+        assert_eq!(view.compact_threshold_tokens, Some(80_000));
+        assert_eq!(view.threshold_source, "inputCapacity");
+        state.lifecycle.config.as_mut().unwrap().context.compaction =
+            Some(CompactionPolicy::Disabled);
+        let view = context_compaction_to_api(&state).unwrap();
+        assert_eq!(view.effective_mode, "disabled");
+        assert_eq!(view.compact_threshold_tokens, None);
+    }
+
     fn tool_call_with_status(status: ToolItemStatus) -> ToolCallView {
         ToolCallView {
+            attachments: Vec::new(),
             tool_id: None,
             call_id: "call-1".to_owned(),
             tool_name: "read_file".to_owned(),
@@ -3865,6 +4095,7 @@ mod tests {
                 turn_id: TurnId::new(3),
                 batch_id: ToolBatchId::new(4),
                 result: engine::ToolCallResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
@@ -4377,6 +4608,8 @@ mod tests {
                 max_tool_rounds: Some(3),
             },
             context: engine::ContextConfig {
+                reported_input_limit_tokens: None,
+                input_limit_tokens: None,
                 compaction: Some(engine::CompactionPolicy::ProviderStandalone {
                     compact_threshold_tokens: Some(20_000),
                     target_tokens: Some(8_000),
@@ -4464,6 +4697,7 @@ mod tests {
                     max_tool_rounds: Some(3),
                 }),
                 context: Some(api::ContextConfig {
+                    input_limit_tokens: None,
                     compaction: Some(api::CompactionPolicy::ProviderStandalone {
                         compact_threshold_tokens: Some(20_000),
                         target_tokens: Some(8_000),

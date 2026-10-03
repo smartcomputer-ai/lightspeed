@@ -16,6 +16,15 @@ it("addresses blobs by digest within the universe, with hints in the query", () 
   expect(appHref("/u/acme/blobs/x")).toBe(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/u/acme/blobs/x`);
 });
 
+it("carries optional workspace and file origins alongside session hints", () => {
+  const path = "docs/résumé #?.txt";
+  const url = new URL(blobHref("acme", digest, { workspace: "ws", path, session: "s1" })!, "https://example.test");
+  expect(url.searchParams.get("workspace")).toBe("ws");
+  expect(url.searchParams.get("path")).toBe(path);
+  expect(url.searchParams.get("session")).toBe("s1");
+  expect(blobHref("acme", digest, { path })).toBe(`/u/acme/blobs/${digest}`);
+});
+
 it("trusts the bytes over the claimed type", () => {
   expect(blobView(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d), "text/plain")).toEqual({ kind: "image", mime: "image/png" });
   expect(blobView(text("%PDF-1.7"), undefined)).toEqual({ kind: "pdf", mime: "application/pdf" });

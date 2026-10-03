@@ -1670,6 +1670,7 @@ fn run_view_can_expose_tool_batches() {
             turn_id: "turn_1".to_owned(),
             status: ToolItemStatus::Succeeded,
             calls: vec![ToolCallView {
+                attachments: Vec::new(),
                 tool_id: None,
                 started_at_ms: None,
                 completed_at_ms: None,
@@ -2074,6 +2075,24 @@ impl AgentApiService for TestService {
                     failure: None,
                     activation_text: None,
                     activation_text_truncated: false,
+                })
+                .collect(),
+        }))
+    }
+
+    async fn replace_context(
+        &self,
+        params: ContextReplaceParams,
+    ) -> Result<AgentApiOutcome<ContextReplaceResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(ContextReplaceResponse {
+            context_revision: 1,
+            results: params
+                .entries
+                .iter()
+                .map(|entry| ContextReplaceResult {
+                    entry_id: entry.entry_id.clone(),
+                    status: ContextReplaceStatus::Replaced,
+                    failure: None,
                 })
                 .collect(),
         }))

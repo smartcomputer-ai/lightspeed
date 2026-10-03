@@ -3,6 +3,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   formatDuration,
   formatTokens,
+  runFailureText,
   type TranscriptRunSummary,
 } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
@@ -66,7 +67,7 @@ export function RunOutcomeLine({
   summary: TranscriptRunSummary;
   showStatistics?: boolean;
 }) {
-  const { status, error, durationMs } = summary;
+  const { status, durationMs } = summary;
   const duration = !showStatistics || durationMs === undefined ? null : formatDuration(durationMs);
   const stats = showStatistics && hasRunStats(summary);
   if (status === "completed" && !duration && !stats) return null;
@@ -75,7 +76,7 @@ export function RunOutcomeLine({
       {status === "failed" ? (
         <span className="flex min-w-0 items-start gap-1.5 text-destructive">
           <TriangleAlert className="mt-px size-3.5 shrink-0" />
-          <span className="[overflow-wrap:anywhere]">Run failed{error ? `: ${error}` : ""}</span>
+          <span className="[overflow-wrap:anywhere]">{runFailureText(summary)}</span>
         </span>
       ) : status === "cancelled" ? (
         <span>Run cancelled</span>

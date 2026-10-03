@@ -96,9 +96,31 @@ pub type SessionManagementView = ManagedSessionWorkflowToolsInput;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<ContextCompactionView>,
     pub revision: u64,
     #[serde(default)]
     pub entries: Vec<ContextEntryView>,
+}
+
+/// Resolved automatic policy and the currently pending standalone operation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextCompactionView {
+    pub requested_mode: String,
+    pub effective_mode: String,
+    /// Native APIs are preferred where supported; summaries use the same model route.
+    pub effective_strategy: String,
+    pub threshold_source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_threshold_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_tokens: Option<u32>,
+    pub pending: bool,
+    pub queued: bool,
+    pub recovery_attempts: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -136,8 +158,8 @@ pub struct RunView {
     pub entries: Vec<ContextEntryView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_batches: Vec<ToolBatchView>,
-    /// Provider token usage summed over the run's completed generations;
-    /// absent until the first generation reports usage. The cached share
+    /// Provider token usage summed over the run's completed generations and standalone compactions;
+    /// absent until the first operation reports usage. The cached share
     /// (`cachedInputTokens / inputTokens`) is the prompt-cache hit rate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<LlmUsageView>,
@@ -169,7 +191,7 @@ pub enum ApprovalSubjectView {
     },
 }
 
-/// Provider-reported token usage for one generation or a sum of them. Every
+/// Provider-reported token usage for generations and compactions, or their sum. Every
 /// field is optional because providers report different subsets; counts
 /// that a provider reports separately (Anthropic's cache read/write) are
 /// folded into `input_tokens` so the field always means "prompt tokens
@@ -231,6 +253,9 @@ pub struct ToolCallView {
     pub status: ToolItemStatus,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffectView>,
+    /// Immutable attachments available from this call; files do not imply model input.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<ToolAttachmentView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display: Option<ToolCallDisplayView>,
     /// When the call was dispatched for execution, from the committed
@@ -597,4 +622,37 @@ pub enum ToolItemStatus {
     Failed,
     Cancelled,
     Unavailable,
+}
+
+/// A portable immutable asset supplied by a completed tool call.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolAttachmentView {
+    pub kind: ToolAttachmentKind,
+    /// Model-facing alias, resolved against recorded attachments.
+    pub handle: String,
+    /// Full immutable blob identity; read through the universe-scoped blob API.
+    pub content_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AttachmentSourceView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolAttachmentKind {
+    Media,
+    File,
+}
+
+/// Descriptive source, independent of the attachment's immutable content identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentSourceView {
+    pub kind: String,
+    pub id: String,
+    pub path: String,
 }

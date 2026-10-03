@@ -86,6 +86,7 @@ import { sessionDraftKey } from "@/lib/sessions/draft";
 import { SessionComposer, type ComposerMessage, type ComposerMode } from "@/components/session/composer";
 import { SessionResourceChips, useSessionResources } from "@/components/session/session-resources";
 import { hasResources } from "@/lib/sessions/session-resources";
+import { findFileReference, filesByHandle } from "@/lib/file-references";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -103,7 +104,7 @@ import { sectionsByRun, withPendingRunInputs } from "@/lib/sessions/run-sections
 import { DetailPrompt, ListNote, LoadingNote, UniverseNotFound } from "@/components/page";
 import { useCreateParam } from "@/lib/create-param";
 import { ReadError } from "@/components/read-error";
-import { useSessionTail } from "@/lib/sessions/tail";
+import { fetchHistory, useSessionTail } from "@/lib/sessions/tail";
 import {
   mediaByHandle,
   mediaHandleFor,
@@ -1602,6 +1603,7 @@ export function SessionDetail({
     [universeId, sessionId],
   );
   const transcriptMedia = useMemo(() => mediaByHandle(entries), [entries]);
+  const transcriptFiles = useMemo(() => filesByHandle(entries), [entries]);
   const transcriptLinks = useMemo<TranscriptLinks>(() => {
     const names = new Map((botRoster ?? []).map((bot) => [bot.botId, botLabel(bot)]));
     const href = sessionHref ?? ((target: string) => `/u/${slug}/sessions/${target}`);
@@ -1616,8 +1618,13 @@ export function SessionDetail({
       navigate: (target) => void navigate(target),
       loadMedia,
       mediaByHandle: transcriptMedia,
+      filesByHandle: transcriptFiles,
+      fileReferenceSource: {
+        universeId, sessionId,
+        load: (handle, signal) => findFileReference(handle, (before) => fetchHistory(universeId, sessionId, before, signal)),
+      },
     };
-  }, [botRoster, sessionHref, slug, sessionId, navigate, loadMedia, transcriptMedia]);
+  }, [botRoster, sessionHref, slug, sessionId, navigate, loadMedia, transcriptMedia, transcriptFiles, universeId]);
   // Operator override: the engine happily admits direct runs on a managed
   // session (they queue like any client run), so the gate here is policy,
   // not capability. Off by default because direct input bypasses the

@@ -1,35 +1,44 @@
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ComponentProps } from "react";
-import { DocumentChip, MediaByHandle } from "@/components/session/media";
+import { useMediaUrl } from "@/components/session/media";
 import { TranscriptLinksContext } from "@/components/session/transcript-links";
-import { useContext } from "react";
+import { useContext, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { isFileHandle, type FileReference } from "@/lib/file-references";
 import { cn } from "@/lib/utils";
 
 const MEDIA_SCHEME = "media:";
 
-/// `media:` is how the model names media it was shown; keep those URLs so
+/// Media and file handles name recorded tool assets; keep those URLs so
 /// the renderer below can resolve them, and sanitize everything else.
 function urlTransform(url: string): string {
-  return url.startsWith(MEDIA_SCHEME) ? url : defaultUrlTransform(url);
+  return url.startsWith(MEDIA_SCHEME) || url.startsWith("file:") ? url : defaultUrlTransform(url);
 }
 
+type ReferenceProps = ComponentProps<"a"> & { showImage?: boolean };
+
 function MarkdownImage({ src, alt }: ComponentProps<"img">) {
-  if (typeof src === "string" && src.startsWith(MEDIA_SCHEME)) {
-    return <MediaByHandle handle={src} alt={alt} />;
+  if (typeof src === "string" && (src.startsWith("file:") || src.startsWith(MEDIA_SCHEME))) {
+    return <MarkdownLink href={src} showImage>{alt ?? "Image"}</MarkdownLink>;
   }
   return <img src={src} alt={alt} />;
 }
 
-function MarkdownLink({ href, children, ...rest }: ComponentProps<"a">) {
+function MarkdownLink({ href, children, showImage = false, ...rest }: ReferenceProps) {
   const links = useContext(TranscriptLinksContext);
+  if (typeof href === "string" && href.startsWith("file:")) {
+    const file = isFileHandle(href) ? links.filesByHandle?.get(href) ?? undefined : undefined;
+    if (isFileHandle(href) && links.fileReferenceSource) {
+      return <HistoricalFileLink href={href} showImage={showImage} {...rest} data-attachment-reference={href}>{children}</HistoricalFileLink>;
+    }
+    return <FileLink file={file} showImage={showImage} {...rest} data-attachment-reference={href}>{children}</FileLink>;
+  }
   if (typeof href === "string" && href.startsWith(MEDIA_SCHEME)) {
     const media = links.mediaByHandle?.get(href);
-    if (media && media.kind === "document") {
-      return <DocumentChip media={media} />;
-    }
     if (media) {
-      return <MediaByHandle handle={href} alt={typeof children === "string" ? children : undefined} inline />;
+      const target = links.blobHref?.(media.blobRef, { name: media.name, type: media.mime });
+      return <AttachmentContent source={media} href={target ?? undefined} showImage={showImage && media.kind === "image"} {...rest} data-attachment-reference={href}>{children}</AttachmentContent>;
     }
     return (
       <span className="rounded border border-dashed px-1 text-xs text-muted-foreground" title="This media is not part of the session">
@@ -38,6 +47,47 @@ function MarkdownLink({ href, children, ...rest }: ComponentProps<"a">) {
     );
   }
   return <a href={href} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
+}
+
+function HistoricalFileLink({ href, children, ...rest }: ReferenceProps & { href: string }) {
+  const links = useContext(TranscriptLinksContext);
+  const source = links.fileReferenceSource!;
+  const reference = useQuery({
+    queryKey: ["file-reference", source.universeId, source.sessionId, href, links.filesByHandle?.get(href)],
+    queryFn: ({ signal }) => source.load(href, signal),
+    staleTime: Infinity,
+    retry: false,
+  });
+  if (reference.isPending) return <span className="text-muted-foreground" title="Looking up file reference" aria-busy="true">{children}</span>;
+  return <FileLink file={reference.data ?? undefined} {...rest}>{children}</FileLink>;
+}
+
+function FileLink({ file, children, ...rest }: ReferenceProps & { file?: FileReference }) {
+  const links = useContext(TranscriptLinksContext);
+  const target = file && links.blobHref?.(file.blobRef, {
+    name: file.name, type: file.type,
+    workspace: file.workspace, path: file.path,
+  });
+  return file
+    ? <AttachmentContent source={{ blobRef: file.blobRef, mime: file.type ?? "application/octet-stream" }} href={target ?? undefined} {...rest}>{children}</AttachmentContent>
+    : <span className="text-muted-foreground" title="This file reference is unavailable">{children} (unavailable)</span>;
+}
+
+/// Markdown chooses presentation; loading a preview here never changes model context.
+function AttachmentContent({ source, href, showImage = false, children, ...rest }: ReferenceProps & {
+  source: { blobRef: string; mime: string; localUrl?: string };
+}) {
+  const canPreview = showImage && (source.mime.startsWith("image/") || source.mime === "application/octet-stream");
+  const url = useMediaUrl(canPreview || !href ? source : null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const target = href || url;
+  const preview = canPreview && url && failedUrl !== url;
+  const content = preview
+    ? <img src={url} alt={typeof children === "string" ? children : "Image"} onError={() => setFailedUrl(url)} className="max-h-96 max-w-full rounded-lg border object-contain" loading="lazy" />
+    : children;
+  return target
+    ? <a {...rest} href={target} target="_blank" rel="noopener noreferrer">{content}</a>
+    : <span className="text-muted-foreground">{children}</span>;
 }
 
 export function MarkdownContent({

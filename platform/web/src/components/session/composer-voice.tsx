@@ -45,7 +45,7 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
         </span>
         <LevelMeter level={voice.level} />
         <PillButton label="Cancel dictation" title="Discard recording (Esc)" onClick={voice.cancel}><X /></PillButton>
-        <PillButton label="Stop recording" title="Stop and transcribe (Enter)" onClick={() => void voice.stop()}>
+        <PillButton label="Stop recording" title="Stop and insert transcript" onClick={() => void voice.stop()}>
           <Square className="fill-current" />
         </PillButton>
       </Pill>
@@ -93,7 +93,7 @@ export function VoiceControl({ voice, unavailableReason, settingsHref, demo, onS
   }
   return (
     <Button type="button" variant="ghost" size="icon-sm" aria-label="Dictate message"
-      title={demo ? "Dictate (demo inserts a sample transcript)" : "Dictate. Enter stops, Esc discards; you review the text before sending."}
+      title={demo ? "Dictate (demo inserts a sample transcript)" : "Dictate. Stop inserts the text; Send or Enter sends after transcription; Esc discards."}
       className="text-muted-foreground hover:text-foreground" onClick={onStart}>
       <Mic />
     </Button>

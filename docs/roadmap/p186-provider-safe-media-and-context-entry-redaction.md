@@ -1,0 +1,472 @@
+# P186 — Provider-safe media and context entry redaction
+
+**Status:** Implemented and live-verified, 2026-10-01 (all four slices).
+Revises the request-time media rules of
+[tool result media](p171-tool-result-media.md).
+
+## Outcome
+
+A session can recover when its active context no longer fits or is no longer
+accepted by its provider, while preserving its durable history and as much
+useful information as possible. Known media limits are handled before sending
+the request. If a provider rejects a request for a reason the runtime cannot
+predict, the failure says so plainly.
+An operator can neutralize an offending entry with one public API call that
+appends an ordinary event, instead of rewriting the session log.
+
+Five changes deliver this, with provider-specific lowering and continuation:
+
+1. Every image is sent as a normalized copy for the model, bounded in pixels
+   and bytes. Stored originals are unchanged.
+2. Each request keeps its media within one fixed, provider-independent media
+   budget, omitting the oldest media when it would not fit.
+3. A provider rejecting a request is reported as a distinct run failure,
+   `RequestRejected`, carrying the provider's message word for word.
+4. `session/context/replace` replaces the text of chosen entries in place,
+   by entry ID, so an operator can neutralize the entry that causes a
+   rejection. `session/read` already lists active context with entry
+   IDs, so the operator can find that entry.
+5. A repair that invalidates preserved thinking uses the provider's supported
+   continuation policy, so incompatible past reasoning does not itself prevent
+   the session from continuing.
+
+## Rationale: repair active context to preserve task continuity
+
+Active context is a repairable projection of the session's durable history.
+Compaction is one existing repair strategy: when context grows too large, it
+summarizes older material so the task can continue. Media normalization,
+request-time omission, and operator redaction address other reasons the
+provider can no longer use the context. They share the same objective:
+preserve the work already done and restore a usable conversation.
+
+The choice of remedy depends on how confidently the runtime can identify the
+problem. A known context or media limit permits an automatic repair. An
+unexplained rejection calls for a visible failure and a precise operator
+repair mechanism. The runtime does not choose entries to redact on a guess.
+
+A repair preserves task continuity, but cannot promise identical reasoning
+continuity. Compaction loses detail; omission hides older media; redaction
+neutralizes selected content. If a repair invalidates provider-bound thinking,
+the provider may also need to discard that reasoning. Losing it can require
+the model to reconstruct conclusions or repeat analysis, but does not require
+discarding the rest of the conversation or starting a new session.
+
+Durable context repairs use revision guards, safe execution boundaries, and
+ordinary audit events. Request-time transformations leave stored entries and
+original blobs intact. Compaction and redaction retain their own policies and
+implementations; this proposal does not introduce a generic repair framework.
+
+## Incident
+
+A long-running agent session accumulated 32 images through tool results,
+one of them 2166 × 2464 px. Each image passed admission when it was produced.
+Once a request carried more than 20 images, Anthropic applied its many-image
+rule (every image at most 2000 px per side) and rejected the whole request
+with `invalid_request_error`. Every later run resent the same history and
+failed the same way, including the user's request to make the images smaller.
+Recovery required restoring the session from a backup and rewriting its event
+log by hand, because no public command could reach the offending entry.
+
+The cause was specific to one provider, but the failure mode is not: any
+provider can reject a history that grew past one of its limits or that holds
+one entry it no longer accepts, and the runtime has no supported way out.
+
+## Baseline
+
+- [Tool result media](p171-tool-result-media.md) assumes providers downscale
+  oversized images themselves and states that request failures are
+  forbidden. The first part is true only per image: the many-image rule
+  rejects rather than downscales, and it counts images from earlier turns.
+- Admission (`engine::media::admit_tool_media`, gateway run input) checks media
+  type, a 10 MB raw byte limit, and at most eight items per result or run.
+  Dimensions, image counts across the session, and request totals are never
+  checked.
+- All three adapters read the original blob and base64-encode it on every
+  request (`llm-runtime` `blob_io::read_base64`). The 10 MB raw admission
+  limit therefore admits images over Anthropic's 10 MB *encoded* limit, and a
+  few dozen ordinary images exceed the 32 MB request limit.
+- Compaction requests lower the same entries, images included, so compaction
+  fails on the same history.
+- Provider errors are classified provider-neutrally (`ProviderFailureKind` in
+  `llm-clients`), but `LlmRuntime` passes on only the retry decision. Every
+  terminal provider error becomes an untyped message, and the run fails as a
+  generic `ModelFailure`.
+- Context ordering is entry-ID ordering: active entries keep strictly
+  increasing `entry_id`, and a keyed upsert removes the old entry and appends
+  its replacement at the tail. External context commands (`UpsertContext`,
+  `ReplaceContextPrefix`, `RemoveContext`) address entries only by key.
+  Run-appended entries have no key and are unreachable. A keyed replace also
+  moves the entry to the tail. `session/read` returns the active context
+  (`activeContext`) with entry IDs, kinds, and previews.
+- Tool calls and tool results are separate entries (`ToolCall`, `ToolResult`),
+  one per call. Tool-produced media are further separate user-role entries
+  that follow the result.
+- Every provider requires each tool call to be answered: Anthropic a
+  `tool_result` per `tool_use`, OpenAI Responses a `function_call_output` per
+  `function_call`, Chat Completions a `tool` message per `tool_calls` id.
+  Removing calls is not safe either: an OpenAI Responses reasoning item must be
+  followed by the item it produced, and Anthropic signs thinking across the
+  assistant turn that holds the calls.
+
+### Provider limits
+
+These limits set the values of the media budget (Decision 2), which sits
+below the limits of every supported API kind. They are not consulted at
+request time.
+
+Anthropic Messages, first-party API, as of 2026-10-01:
+
+| Limit | Value |
+| --- | --- |
+| Per image, any request | 8000 × 8000 px |
+| Per image, request with more than 20 image blocks | 2000 px per side; earlier turns and `tool_result` images count |
+| Images per request | 600 (100 for 200k-context models) |
+| Per image, base64-encoded | 10 MB |
+| Request body | 32 MB |
+| Native resolution, high-resolution tier (Claude 4.7 and later) | 2576 px long edge, 4784 visual tokens; larger images are downscaled server-side |
+
+OpenAI Responses and Chat Completions limits are checked against current
+provider documentation during implementation, to confirm that the budget
+sits below them too.
+
+## Decisions
+
+### 1. Normalize every image once, with a fixed cap
+
+The adapter sends a normalized copy for the model instead of the original
+bytes. This is a property of lowering, not of admission or session state:
+the stored blob, the entry's `ContentRef`, its `media:` handle, and every
+projection keep referring to the original. A session may change models within
+its provider, so a copy computed for one request shape must not be baked into
+durable state.
+
+- **The cap is fixed and independent of the request.** No side may exceed
+  2000 px. A cap that depended on the request (for example, 2576 px until the
+  21st image) would change the bytes of earlier images partway through a
+  session, which invalidates the prompt cache and edits history as the
+  provider sees it. With a fixed cap, an image is lowered identically from its
+  first request to its last. On high-resolution models this gives up at most
+  the 2000–2576 px range, which the provider would otherwise downscale itself.
+- **A byte budget per image.** If a resized image is still above the
+  per-image budget (initially 3.75 MB raw, which is 5 MB encoded), it is
+  re-encoded as JPEG at a fixed quality, with any alpha channel flattened
+  onto white.
+- **Compliant images pass through byte-identical.** Dimensions come from the
+  image header without a full decode. An image within both the pixel cap and
+  the byte budget is sent unchanged, so existing sessions without oversized
+  images see no prompt-cache change.
+- **Output is deterministic.** For a given source and normalization spec, the
+  output bytes are always the same: fixed resampling filter, fixed encoder
+  settings, pinned codec crate version. Caching is therefore only an
+  optimization. A worker-local LRU keyed by (source blob ref, spec version)
+  avoids repeated decodes; a cache miss on another worker yields the same
+  bytes. A persistent copy store is added only if measurement calls for it.
+- **A resized image states what the model sees.** Its announcement gains the
+  dimensions the model sees beside the original's, for example
+  `· shown at 2000×1400 of 4000×2800`, so coordinate-based work can scale
+  back to the source. The text is deterministic and does not affect caching.
+- **GIF and animated images** lower their first frame, which matches what
+  providers read.
+- **PDFs are not normalized.** They count toward request totals in Decision 2.
+- One shared function in `llm-runtime` serves all three adapters and the
+  compaction request path, which shares lowering. The engine is unchanged.
+
+Normalizing an existing history can change image bytes the provider has
+already seen. This migration uses the thinking-continuation policy in Decision
+5, just as omission and redaction do.
+
+### 2. Keep each request within one fixed media budget
+
+After normalization, lowering counts the media in the request against one
+media budget: a maximum number of media items and a maximum of encoded media
+bytes. The budget is a constant, the same for every provider and model, and
+conservative enough to sit below every supported API kind's limits: at most
+100 media items (Anthropic's per-request cap on 200k-context models) and
+24 MiB of encoded media (room for text below Anthropic's 32 MB body limit).
+Omission is counted in chunks of 10, and rounding never drops below the four
+newest items that fit.
+
+- **One budget, not a limits table per provider.** A table per API kind would
+  have to track provider limits by hand, and a stale row would either omit
+  media needlessly or miss a real limit. It would also move the cut point
+  whenever a session switches model or API kind, invalidating the prompt cache
+  and preserved thinking, which is the instability Decision 1's fixed pixel
+  cap avoids. After normalization, every image already meets the per-image
+  limits, so the budget only has to bound the aggregate.
+- **When it fits, nothing changes.**
+- **When it does not fit, the oldest media is omitted.** Media entries are
+  replaced, oldest first, with the placeholder text the text-only path already
+  uses:
+  `[image · media:3f9a2c1d4e7b · omitted from this request to stay within provider limits]`.
+  Order is by recency alone. The latest tool batch is the newest media, so it
+  is omitted last without any special protection. If it alone exceeds the
+  budget, its newest items are kept: eight images at the 5 MB encoded
+  per-image budget already exceed a 32 MB body limit. Failing the turn instead
+  would not help, because the latest batch stays the latest after the run
+  fails and every later request would fail the same way.
+- **The cut point moves in fixed chunks.** The number of omitted items is
+  rounded up to a fixed chunk size. The cut point is therefore a pure function
+  of the context, with no stored state: retries produce identical requests,
+  and the boundary moves only once per chunk of new media, so a growing
+  session invalidates its prompt cache rarely rather than every turn.
+- **The budget never fails a request.** It manages media only, and a single
+  image always fits within the per-image budget. A request whose non-media
+  content alone exceeds the provider's body limit is a context-size problem
+  for compaction, or a rejection under Decision 3.
+
+Omission rewrites earlier user content as the provider sees it, in sessions
+that are still healthy. Decision 1 keeps it rare, because pixel limits no
+longer trigger it; only aggregate media does.
+
+### 3. Report provider rejections as `RequestRejected`
+
+A terminal provider error classified as `InvalidRequest` or `ContextLength`
+fails the run with a new `RunFailureKind::RequestRejected`. Every other terminal
+provider error stays `ModelFailure`.
+
+- The classification comes from the existing provider-neutral
+  `ProviderFailureKind`. The LLM I/O boundary gains a rejected outcome beside
+  `Failed`, the turn failure records it, and the run failure carries it. The
+  engine stays deterministic: it records the classification it is given and
+  never inspects provider errors.
+- The failure record keeps the provider's message word for word.
+- A provider-reported `ContextLength` is a rejection like any other: it does
+  not trigger compaction. Compaction keeps its own token-budget policy, and
+  the operator can run `session/context/compact` after seeing the failure.
+- On a rejection, the adapter logs, next to the provider's message, the
+  position each entry ID was lowered to in the request (for example message
+  and content index). Provider messages cite request positions, not entry
+  IDs, and only the adapter knows how entries were merged into provider
+  messages. The mapping is a log line, not durable state: its shape is
+  provider-specific.
+- Clients show that the provider rejected the request, with that message.
+  They do not suggest a fix or guess which entry caused it: the runtime cannot
+  know, and provider messages differ in how precisely they point at a cause.
+- The public run failure view gains the new kind; the API contract and the
+  TypeScript consumers are regenerated.
+
+### 4. Replace context entries in place
+
+`session/context/replace { sessionId, entries: [{ entryId, item }] }` replaces
+active entries by entry ID. Its shape follows `session/context/append`: each
+entry carries an `InputItem` converted by the same path, and results report
+`replaced`, `unchanged`, `absent`, or `failed` with an admission failure per
+entry. It mirrors `ReplaceContextPrefix` with entry IDs instead of a key
+prefix, reusing the existing structures: a
+`ReplaceContextEntries { expected_revision, entries }` command of
+`ContextEntryInput`s and an `EntriesReplaced { base_revision, entries }` event
+of `ContextEntry`s, projected as `contextEntriesReplaced` with entry views.
+
+**In place, not removal.** A replaced entry keeps its entry ID, position, key,
+source, and kind, including role and `call_id`. Removing a tool result would
+leave its call unanswered, which every provider rejects; removing the call as
+well breaks reasoning and thinking that providers bind to it. Replacing under
+the same entry ID keeps both the ordering invariant and call/result pairing.
+A keyed upsert cannot do this, because it appends a new entry at the tail,
+and run-appended entries have no key. Pairing alone does not preserve
+thinking bound to the earlier content; Decision 5 supplies the continuation
+policy after that content changes.
+
+**The engine guards kind, not content.** A replacement must keep the entry's
+kind, key, and source, and only tool results and user messages qualify: tool
+calls, assistant output, reasoning, and provider-opaque entries carry content
+the provider signed or shaped. A tool result takes only text; a user message
+takes text or media, so an image can also be replaced by a smaller copy.
+Adapters lower the new content like any other tool result or user message,
+and an image replaced by text is no longer media anywhere.
+
+A kind that cannot be replaced, or media for a tool result, fails that entry;
+other entries in the request still apply. A run in progress or a closed
+session rejects the whole request, and the engine also refuses while
+compaction is pending or for unconsumed run input or steering. An ID no
+longer in active context reports `absent`, and an identical replacement
+reports `unchanged`, so retries are idempotent. The engine command is atomic:
+a refusal by the workflow fails every entry it carried.
+
+**Redaction is a client convention.** The CLI's `session context redact`
+replaces entries with standard placeholders:
+
+| Entry | Placeholder |
+| --- | --- |
+| Tool result | `[tool result removed by operator]` |
+| Media (image or document) | `[image · media:3f9a2c1d4e7b · removed by operator]` |
+| User message (run input, steering, context edit) | `[message removed by operator]` |
+
+The original content stays in the event log. The web transcript resolves
+`media:` handles from transcript history, so a replaced image still renders
+there. A sub-agent hand-off resolves links against the child's active
+context, so a replaced image no longer travels with it. There is no web
+affordance and no automatic redaction.
+
+**Finding the entry.** `session/read` returns the active context in context
+order, with each entry's ID, kind, preview, and media handle; the CLI lists
+it as a table (`lightspeed session context list`). Together with the
+adapter's position log from Decision 3, an operator can go from a provider
+message that cites a request position to the entry ID to replace.
+
+### 5. Continue after a repair invalidates preserved thinking
+
+Thinking compatibility is part of recovery for normalization of existing
+histories, omission, redaction, and compaction that retains thinking from
+earlier turns. It is an implementation requirement, not an optional check on
+sessions that are still healthy.
+
+The Anthropic adapter defaults to
+`thinking.block_binding.prefix_mismatch_behavior: "drop_block"` wherever the
+model and thinking mode support it, with the
+`thinking-binding-controls-2026-08-01` beta header. Anthropic then drops
+incompatible thinking and subsequent thinking blocks while retaining the
+other request content. This policy remains on subsequent requests and after
+restart; it is not a one-request retry setting. See the provider's
+[preserved-thinking contract](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
+
+Setting the field also changes behavior on accounts the provider does not
+enforce by default (created before 2026-08-31): any value opts the request into
+enforcement, so mismatched thinking that such accounts currently pass to the
+model is dropped instead. This is the intended contract, and it makes every
+deployment behave the same.
+
+The adapter continues sending the stored thinking unchanged. Original
+reasoning stays in the event history. New responses may still generate
+thinking. Other request errors continue through Decision 3; this policy does
+not make every provider rejection recoverable.
+
+`drop_block` also absorbs history edits the runtime makes by mistake, which
+would otherwise surface as rejections. Two measures keep such bugs visible:
+
+- Production logs every reported `input_transformations` entry with its path
+  and reason, so unexpected drops are observable. A per-session metric is
+  added only if the logs prove insufficient.
+- Live and CI suites that do not exercise a repair send `"error"`, so an
+  unintended history edit fails a test instead of being absorbed.
+
+Anthropic accepts `block_binding` only with `adaptive` and `enabled` thinking.
+Thinking that is off needs no fallback: every model that checks preserved
+thinking (Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5) rejects
+`disabled` outright. Reasoning effort `none` therefore lowers by model: to
+`disabled` where the model accepts it, to `between_tools` on Claude Sonnet
+5.5, and to adaptive thinking at the lowest effort where thinking cannot be
+turned off (Claude Opus 5.5, the Fable and Mythos lines). Requests without a
+thinking config on a model that thinks by default carry no binding and keep
+the provider's account default; compaction requests, which replay earlier
+thinking, send an explicit adaptive config on those models so the policy
+applies to them too. Other adapters follow their native contracts;
+Anthropic's policy does not authorize stripping OpenAI reasoning items or
+other provider-opaque content. OpenAI Responses accepts replayed encrypted
+reasoning after an earlier image changes, so it needs no equivalent.
+
+Provider wire settings, their interpretation, and dropped-block diagnostics
+remain in the adapter. This decision does not change the engine or the
+public contract, and nothing inspects signatures. Stable normalization and
+chunked omission still matter: fewer history edits preserve more reasoning
+and more of the prompt cache.
+
+## How a failing session recovers
+
+| Failure | Handled by | Automatic |
+| --- | --- | --- |
+| Context exceeds its token budget | Existing compaction policy: older context summarized | According to session policy |
+| Image over a provider's pixel or per-image byte limit | Normalization (Decision 1): a bounded copy is sent | Yes |
+| Request over the media count or byte budget | Media budget (Decision 2): oldest media omitted in fixed chunks | Yes |
+| Unexplained rejection caused by a redactable entry | `RequestRejected` (Decision 3), then redaction by an operator (Decision 4) | No |
+| A repair invalidates preserved thinking | Provider-specific continuation (Decision 5): incompatible past thinking excluded from model input | For verified model and mode combinations |
+
+The runtime repairs automatically only what it can predict. For anything
+else it cannot know which entry is at fault, and removing context on a guess
+is worse than a visible failure. The provider's message, shown word for word,
+is the operator's starting point.
+Redaction is a repair mechanism for selected entries, not a guarantee that
+every rejection is caused by content it can repair.
+
+## Slices
+
+1. **Normalization and thinking continuation.** Shared lowering function in
+   `llm-runtime`, header probe, fixed cap, byte budget, deterministic
+   encoding, resize announcement, worker-local cache, all three adapters.
+   Anthropic `drop_block` default, beta header, `input_transformations`
+   logging, `"error"` in suites that do not exercise a repair, and
+   model-specific lowering of effort `none`. Tests: oversized PNG and JPEG are downscaled
+   within the cap; compliant images pass through byte-identical; output is
+   identical across calls; a 32-image history with a 2166 × 2464 image lowers
+   within the many-image rule; unchanged histories retain valid thinking; an
+   existing history whose image is newly normalized continues with prefix
+   enforcement enabled, across later turns and a restart, with original
+   history unchanged; compaction that retains thinking continues likewise. A
+   credentialed live suite exercises an enforcing model and mode explicitly,
+   rather than relying on the account age or the default model.
+2. **Rejection.** `RequestRejected` through the I/O boundary, turn, and run
+   failure; the adapter's position log; contract regeneration. Tests: an
+   `InvalidRequest` and a `ContextLength` error fail the run as
+   `RequestRejected` with the provider message intact; other terminal errors
+   stay `ModelFailure`.
+3. **Replacement.** The entry-replacement command and event,
+   `session/context/replace`, CLI `context list`, `replace`, and `redact`,
+   contract regeneration, and replay coverage for replacement and its
+   rejections.
+   Tests: a redacted history continues with prefix enforcement enabled, and a
+   session whose request the provider rejects runs again after redaction.
+4. **Media budget.** The budget constants, oldest-first omission rounded to a
+   fixed chunk, in all three adapters and the compaction request path. Tests:
+   omission order; an eight-image result over the budget keeps its newest
+   images, and the next request is identical; identical requests across
+   retries; the cut point holds steady until a chunk of new media arrives; a
+   history with omitted media continues with prefix enforcement enabled.
+
+Slice 1 closes the incident: normalization removes the per-image failure, and
+`drop_block` lets existing sessions continue once normalization changes image
+bytes the provider has already seen. Every later slice can also change such
+content, so each verifies continuation for its own repair. Slice 3 supplies
+operator repair for unexplained rejections caused by redactable entries.
+Slice 4 comes last because, after normalization, only aggregate media can
+trigger it.
+
+### Progress
+
+Slice 1 is implemented: `llm-runtime::media` normalizes images for all three
+adapters, and the Anthropic adapter sends the binding policy, configurable on
+the hosted runtime through `LIGHTSPEED_ANTHROPIC_THINKING_PREFIX_MISMATCH`.
+Live suites cover an oversized image on every adapter, and on Claude Opus 5.5
+an unchanged replay verifying under `error`, an edited image failing generation
+and compaction under `error`, and both continuing under `drop_block` with the
+dropped thinking reported. Restart continuity is not separately tested: the
+policy and normalization are pure functions of configuration and stored
+content, so a restarted worker sends the same request.
+
+Slice 2 is implemented: the I/O boundary carries `CoreAgentIoError::Rejected`
+and `LlmGenerationStatus::Rejected`, the turn records `TurnOutcome::Rejected`,
+and the run fails as `request_rejected` with the provider's message as its
+failure text. The web transcript and the CLI say that the provider rejected
+the request. Each adapter logs, on a rejection, which entries each message or
+input item holds (`messages.3=[12,13]`). A hosted live test sends an image the
+provider cannot decode and checks the kind and the unwrapped provider message.
+Only HTTP rejections are classified: an OpenAI Responses response that reports
+`status: failed` in-band, and a rejected compaction request, still fail as
+before.
+
+Slice 3 is implemented as entry replacement (Decision 4). The hosted live
+test continues past the rejection: it replaces the undecodable image with a
+placeholder through `session/context/replace`, checks that the entry keeps
+its id and is no longer media, and runs the same session again successfully.
+
+Slice 4 is implemented: `RequestMedia` prepares every image and PDF of a
+request once, decides which oldest items to omit, and hands the prepared
+copies to the adapter, so the budget costs no extra blob reads; compaction
+requests go through the same lowering. Unit tests cover omission order,
+whole-chunk steps, an oversized batch keeping its newest items, and
+identical requests across calls. A live test on Claude Opus 5.5 crosses the
+budget after a thinking turn: the strict policy rejects the rewritten
+history, and `drop_block` continues with the right answer.
+
+## Non-goals
+
+- Changing compaction triggers or summarization strategy. Compaction inherits
+  the media safeguards and applicable thinking-continuation policy.
+- Introducing a generic context-repair framework.
+- A limits table per provider API kind consulted at request time.
+- Suggesting fixes in clients, or redacting automatically after a rejection.
+- Retrying after a rejection by matching provider error text.
+- Removing tool calls or call/result pairs, and redacting tool calls.
+- Client-supplied replacement content.
+- Storing copies for a specific provider in session state, or rewriting
+  existing events.
+- The Anthropic Files API as an alternative to base64 payloads.

@@ -159,8 +159,14 @@ pub(super) async fn drive_until_idle(
                 };
             }
             CoreAgentAction::CompactContext { request } => {
-                let result = call_context_compact(ctx, request).await?;
-                action = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
+                action = match call_context_compact(ctx, drive, request).await? {
+                    control::Raced::Completed(result) => {
+                        drive.resume_context_compaction(result, workflow_time_ms(ctx))?
+                    }
+                    control::Raced::Preempted => {
+                        drive.next_action_unbounded(workflow_time_ms(ctx))?
+                    }
+                };
             }
             CoreAgentAction::InvokeTools { request } => {
                 let request = match request.promise_control_argument_request() {
@@ -324,7 +330,7 @@ pub(super) fn should_close_on_terminal(args: &AgentSessionArgs, state: &CoreAgen
         && !state.runs.completed.is_empty()
         && state.runs.active.is_none()
         && state.runs.queued.is_empty()
-        && !state.context.pending_compaction
+        && !state.context.compaction.is_pending()
         && !state
             .promises
             .pending()
@@ -684,18 +690,11 @@ fn environment_attachment_catalog_matches(state: &CoreAgentState, origin: Option
         .config
         .as_ref()
         .is_some_and(|config| config.features.environments.is_some())
-        && origin.and_then(|origin| origin.strip_prefix("runtime.environments:"))
-            == Some(
-                state
-                    .environment
-                    .active_environment_id
-                    .as_ref()
-                    .map_or("", |id| id.as_str()),
-            )
+        && origin == Some("runtime.environments")
 }
 
-/// Drop the attachment catalog as soon as its recorded selection is stale.
-/// A later runtime projection rebuilds it; switching performs no discovery.
+/// The directory belongs to the attachment feature, independently of selection.
+/// Legacy selection-bound directories are removed until the next refresh.
 pub(super) fn invalid_environment_attachment_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {

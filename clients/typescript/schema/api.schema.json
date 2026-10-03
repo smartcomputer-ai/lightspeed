@@ -982,6 +982,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfContextReplaceResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/ContextReplaceResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfDeploymentApiKeyCreateResponse": {
       "properties": {
         "notifications": {
@@ -2803,6 +2820,26 @@
           "type": "object"
         }
       ]
+    },
+    "AttachmentSourceView": {
+      "description": "Descriptive source, independent of the attachment's immutable content identity.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "path"
+      ],
+      "type": "object"
     },
     "Attribution": {
       "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
@@ -7448,6 +7485,69 @@
       ],
       "type": "object"
     },
+    "ContextCompactionView": {
+      "description": "Resolved automatic policy and the currently pending standalone operation.",
+      "properties": {
+        "compactThresholdTokens": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "effectiveMode": {
+          "type": "string"
+        },
+        "effectiveStrategy": {
+          "description": "Native APIs are preferred where supported; summaries use the same model route.",
+          "type": "string"
+        },
+        "inputLimitTokens": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "observedTokens": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pending": {
+          "type": "boolean"
+        },
+        "queued": {
+          "type": "boolean"
+        },
+        "recoveryAttempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestedMode": {
+          "type": "string"
+        },
+        "thresholdSource": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestedMode",
+        "effectiveMode",
+        "effectiveStrategy",
+        "thresholdSource",
+        "pending",
+        "queued",
+        "recoveryAttempts"
+      ],
+      "type": "object"
+    },
     "ContextConfig": {
       "additionalProperties": false,
       "properties": {
@@ -7459,6 +7559,16 @@
             {
               "type": "null"
             }
+          ],
+          "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+        },
+        "inputLimitTokens": {
+          "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
           ]
         }
       },
@@ -7998,8 +8108,118 @@
       ],
       "type": "string"
     },
+    "ContextReplaceEntry": {
+      "properties": {
+        "entryId": {
+          "description": "The active entry to replace, by the `id` that `session/read` lists in\n`activeContext`. Only tool results and user messages can be replaced,\nand the entry keeps its kind: a tool result takes only text.",
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/definitions/InputItem"
+        }
+      },
+      "required": [
+        "entryId",
+        "item"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceParams": {
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/ContextReplaceEntry"
+          },
+          "type": "array"
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceResponse": {
+      "properties": {
+        "contextRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/definitions/ContextReplaceResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contextRevision",
+        "results"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceResult": {
+      "properties": {
+        "entryId": {
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InputAdmissionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/ContextReplaceStatus"
+        }
+      },
+      "required": [
+        "entryId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ContextReplaceStatus": {
+      "oneOf": [
+        {
+          "enum": [
+            "replaced",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "The entry already holds this content.",
+          "type": "string"
+        },
+        {
+          "const": "absent",
+          "description": "Not in active context, so retries after a removal are no-ops.",
+          "type": "string"
+        }
+      ]
+    },
     "ContextView": {
       "properties": {
+        "compaction": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContextCompactionView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "entries": {
           "default": [],
           "items": {
@@ -10850,7 +11070,7 @@
       "type": "object"
     },
     "LlmUsageView": {
-      "description": "Provider-reported token usage for one generation or a sum of them. Every\nfield is optional because providers report different subsets; counts\nthat a provider reports separately (Anthropic's cache read/write) are\nfolded into `input_tokens` so the field always means \"prompt tokens\nbilled on this request, cached or not\".",
+      "description": "Provider-reported token usage for generations and compactions, or their sum. Every\nfield is optional because providers report different subsets; counts\nthat a provider reports separately (Anthropic's cache read/write) are\nfolded into `input_tokens` so the field always means \"prompt tokens\nbilled on this request, cached or not\".",
       "properties": {
         "cacheWriteInputTokens": {
           "description": "Prompt tokens written into the provider's prompt cache (Anthropic).",
@@ -12978,15 +13198,24 @@
     },
     "RunFailureKindView": {
       "description": "Why a run failed, as the engine classified it.",
-      "enum": [
-        "model_failure",
-        "tool_failure",
-        "context_failure",
-        "limit_exceeded",
-        "cancelled",
-        "internal"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "model_failure",
+            "tool_failure",
+            "context_failure",
+            "limit_exceeded",
+            "cancelled",
+            "internal"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "request_rejected",
+          "description": "The provider rejected the request as invalid or larger than the model\naccepts. `message` is the provider's own text, unchanged; resending the\nsame context fails the same way.",
+          "type": "string"
+        }
+      ]
     },
     "RunLimitsConfig": {
       "properties": {
@@ -13427,7 +13656,7 @@
               "type": "null"
             }
           ],
-          "description": "Provider token usage summed over the run's completed generations;\nabsent until the first generation reports usage. The cached share\n(`cachedInputTokens / inputTokens`) is the prompt-cache hit rate."
+          "description": "Provider token usage summed over the run's completed generations and standalone compactions;\nabsent until the first operation reports usage. The cached share\n(`cachedInputTokens / inputTokens`) is the prompt-cache hit rate."
         }
       },
       "required": [
@@ -14273,7 +14502,7 @@
           "type": "object"
         },
         {
-          "description": "The run ended in failure. `kind` is the engine's classification;\n`message` is free text for display.",
+          "description": "The run ended in failure. `kind` is the engine's classification;\n`message` is free text for display, and the provider's own message for\n`request_rejected`.",
           "properties": {
             "kind": {
               "$ref": "#/definitions/RunFailureKindView"
@@ -14619,6 +14848,38 @@
           "type": "object"
         },
         {
+          "description": "Active entries replaced in place by id (`session/context/replace`).\nEach keeps its id, position, and kind; the replaced content stays in\nthe event history.",
+          "properties": {
+            "baseRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "entries": {
+              "items": {
+                "$ref": "#/definitions/ContextEntryView"
+              },
+              "type": "array"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "contextEntriesReplaced",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "baseRevision",
+            "revision",
+            "entries"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "baseRevision": {
               "format": "uint64",
@@ -14754,6 +15015,12 @@
               "minimum": 0,
               "type": "integer"
             },
+            "calls": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
             "failureRef": {
               "type": [
                 "string",
@@ -14771,6 +15038,16 @@
             "type": {
               "const": "contextCompactionFinished",
               "type": "string"
+            },
+            "usage": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LlmUsageView"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -14941,6 +15218,13 @@
         {
           "description": "One tool call finished. `output_bytes` is the size of the\nmodel-visible text the tool produced before the runtime's projection\nbudget was applied, absent for synthetic results; `truncated` is true\nwhen that budget cut it.",
           "properties": {
+            "attachments": {
+              "description": "Portable immutable assets, separate from effects and native media input.",
+              "items": {
+                "$ref": "#/definitions/ToolAttachmentView"
+              },
+              "type": "array"
+            },
             "batchId": {
               "type": "string"
             },
@@ -16620,6 +16904,57 @@
       ],
       "type": "object"
     },
+    "ToolAttachmentKind": {
+      "enum": [
+        "media",
+        "file"
+      ],
+      "type": "string"
+    },
+    "ToolAttachmentView": {
+      "description": "A portable immutable asset supplied by a completed tool call.",
+      "properties": {
+        "contentRef": {
+          "description": "Full immutable blob identity; read through the universe-scoped blob API.",
+          "type": "string"
+        },
+        "handle": {
+          "description": "Model-facing alias, resolved against recorded attachments.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/ToolAttachmentKind"
+        },
+        "mediaType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AttachmentSourceView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "handle",
+        "contentRef"
+      ],
+      "type": "object"
+    },
     "ToolBatchView": {
       "properties": {
         "calls": {
@@ -16802,6 +17137,13 @@
         },
         "argumentsRef": {
           "type": "string"
+        },
+        "attachments": {
+          "description": "Immutable attachments available from this call; files do not imply model input.",
+          "items": {
+            "$ref": "#/definitions/ToolAttachmentView"
+          },
+          "type": "array"
         },
         "callId": {
           "type": "string"

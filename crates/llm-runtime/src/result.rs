@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use engine::{
-    BlobRef, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, RunId, TurnId, storage::BlobStore,
+    BlobRef, ContextEntryId, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
+    LlmGenerationResult, LlmGenerationStatus, RunId, TurnId, storage::BlobStore,
 };
 use serde::Serialize;
 
@@ -163,4 +165,62 @@ pub async fn partial_output_entries(
         partial.push(entry);
     }
     Ok(partial)
+}
+
+/// Where each context entry was lowered in a provider request: the index of
+/// the message or input item that carries it.
+pub(crate) type RequestPositions = Vec<(ContextEntryId, usize)>;
+
+/// Log, beside a provider's rejection, which entries each request position
+/// holds. Provider messages cite request positions (`messages.3.content.1`),
+/// not entry IDs, and only the adapter knows how entries were merged into
+/// provider messages. The mapping is a log line rather than durable state
+/// because its shape is provider-specific.
+pub(crate) fn log_request_rejection(
+    request: &LlmGenerationRequest,
+    field: &str,
+    positions: &[(ContextEntryId, usize)],
+    message: &str,
+) {
+    let positions = format_request_positions(field, positions);
+    tracing::warn!(
+        session_id = %request.session_id,
+        run_id = %request.run_id,
+        turn_id = %request.turn_id,
+        model = %request.request.model.model,
+        provider_message = message,
+        entry_positions = %positions,
+        "provider rejected the request"
+    );
+}
+
+/// `messages.0=[1,2] messages.1=[3]`: the entry IDs each position holds.
+fn format_request_positions(field: &str, positions: &[(ContextEntryId, usize)]) -> String {
+    let mut by_position = BTreeMap::<usize, Vec<String>>::new();
+    for (entry_id, index) in positions {
+        by_position
+            .entry(*index)
+            .or_default()
+            .push(entry_id.to_string());
+    }
+    by_position
+        .into_iter()
+        .map(|(index, entries)| format!("{field}.{index}=[{}]", entries.join(",")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_positions_group_entries_by_position() {
+        let positions =
+            [(1, 0), (2, 0), (5, 1), (7, 3)].map(|(id, index)| (ContextEntryId::new(id), index));
+        assert_eq!(
+            format_request_positions("messages", &positions),
+            "messages.0=[1,2] messages.1=[5] messages.3=[7]"
+        );
+    }
 }

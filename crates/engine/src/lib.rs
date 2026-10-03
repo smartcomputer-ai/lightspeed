@@ -7,6 +7,9 @@
 //! calls, runtime tools, process runners, Temporal workflows, or production
 //! persistence.
 
+pub mod attachments;
+pub use attachments::{Attachment, AttachmentSource, FileAttachment};
+
 pub mod blob;
 pub mod core;
 pub mod emission;

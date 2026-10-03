@@ -4,9 +4,9 @@
 //! Anthropic Messages API requests and maps responses back into context
 //! entries and reducer facts, mirroring the OpenAI Responses adapter.
 //!
-//! Anthropic has no server-side compaction endpoint, so the standalone
-//! compaction path runs a summarization request over the compactable context
-//! and returns the summary as a user-visible replacement message.
+//! Provider-triggered compaction runs inside ordinary generation requests.
+//! Standalone compaction uses signed on-demand blocks on supported models
+//! and a summary-generation request on older models.
 
 use std::sync::Arc;
 
@@ -33,13 +33,14 @@ use crate::{
     executor::{LlmCompactionAdapter, LlmGenerationAdapter},
     mcp::{McpInventoryResolver, UnconfiguredMcpInventoryResolver, injected_native_tools},
     params::{
-        anthropic_messages_params, anthropic_thinking_from_effort,
+        ThinkingPrefixMismatch, anthropic_messages_params, anthropic_thinking_from_effort,
+        anthropic_thinks_by_default, default_anthropic_block_binding,
         default_anthropic_thinking_display,
     },
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, debug_dump_request, partial_output_entries, store_debug_dumps,
-        truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
+        partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
     secrets::{
         REDACTED_SECRET_PLACEHOLDER, SecretResolveError, SecretResolver, UnconfiguredSecretResolver,
@@ -123,6 +124,7 @@ pub struct AnthropicMessagesLlmAdapter {
     secrets: Arc<dyn SecretResolver>,
     provider_keys: Arc<dyn ModelProviderResolver>,
     inventory: Arc<dyn McpInventoryResolver>,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 }
 
 impl AnthropicMessagesLlmAdapter {
@@ -134,7 +136,26 @@ impl AnthropicMessagesLlmAdapter {
             secrets: Arc::new(UnconfiguredSecretResolver),
             provider_keys: Arc::new(NoStoredModelProviders),
             inventory: Arc::new(UnconfiguredMcpInventoryResolver),
+            thinking_prefix_mismatch: ThinkingPrefixMismatch::default(),
         }
+    }
+
+    async fn log_rejection(&self, request: &LlmGenerationRequest, message: &str) {
+        match materialize_messages_tracked(self.blobs.as_ref(), &message_entries(&request.request))
+            .await
+        {
+            Ok((_, positions)) => log_request_rejection(request, "messages", &positions, message),
+            Err(error) => tracing::warn!(%error, "could not map a rejected Anthropic request"),
+        }
+    }
+
+    /// What the provider does with preserved thinking after a history edit.
+    /// Production keeps the `DropBlock` default so repairs never strand a
+    /// session; suites that exercise no repair use `Error` so an unintended
+    /// edit fails instead of being absorbed.
+    pub fn with_thinking_prefix_mismatch(mut self, behavior: ThinkingPrefixMismatch) -> Self {
+        self.thinking_prefix_mismatch = behavior;
+        self
     }
 
     pub fn with_secret_resolver(mut self, secrets: Arc<dyn SecretResolver>) -> Self {
@@ -169,6 +190,7 @@ impl AnthropicMessagesLlmAdapter {
             self.blobs.as_ref(),
             self.inventory.as_ref(),
             request,
+            self.thinking_prefix_mismatch,
         )
         .await
     }
@@ -177,7 +199,13 @@ impl AnthropicMessagesLlmAdapter {
         &self,
         task: &ContextCompactionTask,
     ) -> LlmAdapterResult<am::CreateMessageRequest> {
-        materialize_compact_request(self.blobs.as_ref(), task).await
+        materialize_compact_request_with_binding(
+            self.blobs.as_ref(),
+            self.inventory.as_ref(),
+            task,
+            self.thinking_prefix_mismatch,
+        )
+        .await
     }
 }
 
@@ -207,11 +235,15 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             self.inventory.as_ref(),
             &request.request,
             &mut catalog,
+            self.thinking_prefix_mismatch,
         )
         .await?;
-        let (mut send_request, mut redacted_request) =
-            inject_remote_mcp_auth(self.secrets.as_ref(), &request.request, provider_request)
-                .await?;
+        let (mut send_request, mut redacted_request) = inject_remote_mcp_auth(
+            self.secrets.as_ref(),
+            &request.request.tools,
+            provider_request,
+        )
+        .await?;
         let provider =
             resolve_model_provider(self.provider_keys.as_ref(), &request.request.model).await?;
         let mut request_dumps = Vec::new();
@@ -220,13 +252,23 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             if let Some(dump) = debug_dump_request(self.debug_dumps, &redacted_request)? {
                 request_dumps.push(dump);
             }
-            let response = self
+            let response = match self
                 .client
                 .create(
                     send_request.clone(),
                     provider.as_ref().map(|provider| provider.as_request_auth()),
                 )
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    if let Some(rejection) = error.request_rejection() {
+                        self.log_rejection(&request, &rejection.message).await;
+                    }
+                    return Err(error.into());
+                }
+            };
+            log_input_transformations(&request, &response.raw_json);
             let paused = response.parsed.stop_reason == Some(am::StopReason::PauseTurn);
             if paused && responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
                 return Err(LlmAdapterError::InvalidProviderRequest {
@@ -279,6 +321,32 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
     }
 }
 
+/// Log every thinking block the provider dropped or let through despite a
+/// changed conversation prefix. `drop_block` would otherwise absorb history
+/// edits silently, including ones the runtime makes by mistake.
+fn log_input_transformations(request: &LlmGenerationRequest, raw_response: &Value) {
+    let Some(entries) = raw_response
+        .get("input_transformations")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for entry in entries {
+        let field = |name: &str| entry.get(name).and_then(Value::as_str).unwrap_or_default();
+        let (kind, path, reason) = (field("type"), field("path"), field("reason"));
+        tracing::warn!(
+            session_id = %request.session_id,
+            run_id = %request.run_id,
+            turn_id = %request.turn_id,
+            model = %request.request.model.model,
+            kind,
+            path,
+            reason,
+            "Anthropic transformed replayed thinking"
+        );
+    }
+}
+
 fn paused_assistant_message(raw_response: &Value) -> LlmAdapterResult<am::MessageParam> {
     let blocks = raw_response
         .get("content")
@@ -295,6 +363,10 @@ fn paused_assistant_message(raw_response: &Value) -> LlmAdapterResult<am::Messag
 
 #[async_trait]
 impl LlmCompactionAdapter for AnthropicMessagesLlmAdapter {
+    fn blobs(&self) -> Option<&dyn BlobStore> {
+        Some(self.blobs.as_ref())
+    }
+
     async fn compact_context(
         &self,
         request: ContextCompactionRequest,
@@ -308,6 +380,17 @@ impl LlmCompactionAdapter for AnthropicMessagesLlmAdapter {
             });
         }
         let provider_request = self.materialize_compact_request(&request.request).await?;
+        let provider_request = if supports_native_compaction(&request.request.model.model) {
+            inject_remote_mcp_auth(
+                self.secrets.as_ref(),
+                &request.request.tools,
+                provider_request,
+            )
+            .await?
+            .0
+        } else {
+            provider_request
+        };
         let provider =
             resolve_model_provider(self.provider_keys.as_ref(), &request.request.model).await?;
         let response = self
@@ -316,8 +399,40 @@ impl LlmCompactionAdapter for AnthropicMessagesLlmAdapter {
                 provider_request,
                 provider.as_ref().map(|provider| provider.as_request_auth()),
             )
-            .await?;
-        result_from_compact_response(self.blobs.as_ref(), &request, &response).await
+            .await;
+        match response {
+            Ok(response) => {
+                result_from_compact_response(self.blobs.as_ref(), &request, &response).await
+            }
+            Err(error)
+                if supports_native_compaction(&request.request.model.model)
+                    && crate::compaction::native_compaction_unavailable(&error) =>
+            {
+                let summary_request = materialize_summary_request(
+                    self.blobs.as_ref(),
+                    &request.request,
+                    self.thinking_prefix_mismatch,
+                )
+                .await?;
+                let response = self
+                    .client
+                    .create(
+                        summary_request,
+                        provider.as_ref().map(|provider| provider.as_request_auth()),
+                    )
+                    .await?;
+                let mut result = result_from_compact_response_with_strategy(
+                    self.blobs.as_ref(),
+                    &request,
+                    &response,
+                    false,
+                )
+                .await?;
+                result.calls = 2;
+                Ok(result)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 }
 
@@ -325,14 +440,20 @@ pub async fn materialize_create_request(
     blobs: &dyn BlobStore,
     request: &LlmRequest,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
-    materialize_create_request_with_inventory(blobs, &UnconfiguredMcpInventoryResolver, request)
-        .await
+    materialize_create_request_with_inventory(
+        blobs,
+        &UnconfiguredMcpInventoryResolver,
+        request,
+        ThinkingPrefixMismatch::default(),
+    )
+    .await
 }
 
 async fn materialize_create_request_with_inventory(
     blobs: &dyn BlobStore,
     inventory: &dyn McpInventoryResolver,
     request: &LlmRequest,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
     let mut catalog = crate::tool_catalog::ToolCatalog::resolve(
         blobs,
@@ -340,7 +461,14 @@ async fn materialize_create_request_with_inventory(
         &request.tools,
     )
     .await?;
-    materialize_request_with_catalog(blobs, inventory, request, &mut catalog).await
+    materialize_request_with_catalog(
+        blobs,
+        inventory,
+        request,
+        &mut catalog,
+        thinking_prefix_mismatch,
+    )
+    .await
 }
 
 async fn materialize_request_with_catalog(
@@ -348,6 +476,7 @@ async fn materialize_request_with_catalog(
     inventory: &dyn McpInventoryResolver,
     request: &LlmRequest,
     catalog: &mut crate::tool_catalog::ToolCatalog,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
     if request.processing_tier.is_some() {
         return Err(LlmAdapterError::InvalidProviderRequest {
@@ -359,7 +488,7 @@ async fn materialize_request_with_catalog(
     // per-run provider params win: derived values never overwrite fields the
     // params body already sets.
     if let Some(effort) = request.reasoning_effort.as_deref() {
-        let derived = anthropic_thinking_from_effort(effort)?;
+        let derived = anthropic_thinking_from_effort(effort, &request.model.model)?;
         if params.thinking.is_none() && params.output_config.is_none() {
             params.thinking = Some(derived.thinking);
             params.output_config = derived.output_config;
@@ -369,6 +498,10 @@ async fn materialize_request_with_catalog(
     // summary; current models omit it unless told otherwise.
     if let Some(thinking) = params.thinking.as_mut() {
         default_anthropic_thinking_display(thinking);
+        // Every repair that rewrites content the provider has already seen
+        // invalidates the thinking produced after it; the binding policy
+        // decides whether the session continues without that reasoning.
+        default_anthropic_block_binding(thinking, thinking_prefix_mismatch);
     }
     if request.provider_response_id.is_some() {
         return Err(LlmAdapterError::InvalidProviderRequest {
@@ -377,16 +510,24 @@ async fn materialize_request_with_catalog(
                 .to_owned(),
         });
     }
-    if matches!(
-        request.compaction,
-        Some(CompactionPolicy::ProviderTriggered { .. })
-    ) {
+    let signed_compaction = has_signed_compaction(blobs, &request.context.entries).await?;
+    if params.extra.contains_key("context_management") || params.extra.contains_key("compaction") {
         return Err(LlmAdapterError::InvalidProviderRequest {
-            message: "Anthropic Messages does not support provider-triggered compaction; \
-                      use the provider-standalone compaction policy"
-                .to_owned(),
+            message: "compaction configuration must use the session policy".into(),
         });
     }
+    let context_management = match request.compaction.as_ref().filter(|_| !signed_compaction) {
+        Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens,
+        }) => {
+            let mut edit = json!({"type": "compact_20260112"});
+            if let Some(threshold) = compact_threshold_tokens {
+                edit["trigger"] = json!({"type": "input_tokens", "value": threshold});
+            }
+            Some(json!({"edits": [edit]}))
+        }
+        _ => None,
+    };
 
     let max_tokens = request
         .output_limit
@@ -411,14 +552,7 @@ async fn materialize_request_with_catalog(
     // detail; nothing in the planned request or the session log changes.
     let cache_control = prompt_cache_control(params.prompt_cache_ttl.as_deref());
     let system = materialize_system(blobs, &request.context.entries, &cache_control).await?;
-    let message_entries = request
-        .context
-        .entries
-        .iter()
-        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut messages = materialize_messages(blobs, &message_entries).await?;
+    let mut messages = materialize_messages(blobs, &message_entries(request)).await?;
     place_message_breakpoint(&mut messages, &cache_control);
     let (mut tools, mcp_servers) =
         materialize_tools(inventory, &request.model.model, catalog).await?;
@@ -450,6 +584,7 @@ async fn materialize_request_with_catalog(
         service_tier: params.service_tier.clone(),
         container: params.container.clone(),
         mcp_servers: non_empty(mcp_servers).map(Value::from),
+        context_management,
         extra: params.extra.clone(),
     })
 }
@@ -458,6 +593,75 @@ pub async fn materialize_compact_request(
     blobs: &dyn BlobStore,
     task: &ContextCompactionTask,
 ) -> LlmAdapterResult<am::CreateMessageRequest> {
+    materialize_compact_request_with_binding(
+        blobs,
+        &UnconfiguredMcpInventoryResolver,
+        task,
+        ThinkingPrefixMismatch::default(),
+    )
+    .await
+}
+
+async fn materialize_compact_request_with_binding(
+    blobs: &dyn BlobStore,
+    inventory: &dyn McpInventoryResolver,
+    task: &ContextCompactionTask,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
+) -> LlmAdapterResult<am::CreateMessageRequest> {
+    if supports_native_compaction(&task.model.model) {
+        let request = LlmRequest {
+            model: task.model.clone(),
+            request_fingerprint: task.request_fingerprint.clone(),
+            context: task.context.clone(),
+            tools: task.tools.clone(),
+            tool_choice: None,
+            output_limit: Some(task.target_tokens.unwrap_or(4096).saturating_add(4096)),
+            reasoning_effort: None,
+            parallel_tool_use: None,
+            processing_tier: None,
+            provider_response_id: None,
+            compaction: Some(CompactionPolicy::Disabled),
+            params: task.params.clone(),
+        };
+        let mut native = materialize_create_request_with_inventory(
+            blobs,
+            inventory,
+            &request,
+            thinking_prefix_mismatch,
+        )
+        .await?;
+        native.context_management = None;
+        native.stop_sequences = None;
+        native.tool_choice = None;
+        if let Some(output) = native.output_config.as_mut().and_then(Value::as_object_mut) {
+            output.remove("format");
+            output.remove("task_budget");
+        }
+        native
+            .extra
+            .insert("compaction".into(), json!({"type": "summarize"}));
+        return Ok(native);
+    }
+    materialize_summary_request(blobs, task, thinking_prefix_mismatch).await
+}
+
+async fn materialize_summary_request(
+    blobs: &dyn BlobStore,
+    task: &ContextCompactionTask,
+    thinking_prefix_mismatch: ThinkingPrefixMismatch,
+) -> LlmAdapterResult<am::CreateMessageRequest> {
+    // The summarized history replays earlier thinking. On models that think
+    // by default, an explicit adaptive config is otherwise a no-op but lets
+    // the request carry the binding policy, so compaction still succeeds
+    // after a repair changed content that thinking was bound to.
+    let thinking = anthropic_thinks_by_default(&task.model.model).then(|| {
+        let mut thinking = am::Thinking::adaptive();
+        thinking.extra.insert(
+            "block_binding".to_owned(),
+            thinking_prefix_mismatch.block_binding(),
+        );
+        thinking
+    });
     let mut messages = materialize_messages(blobs, &task.context.entries).await?;
     messages.push(am::MessageParam::user(compaction_instruction(
         task.target_tokens,
@@ -475,7 +679,7 @@ pub async fn materialize_compact_request(
         stop_sequences: None,
         stream: None,
         temperature: None,
-        thinking: None,
+        thinking,
         output_config: None,
         tool_choice: None,
         tools: None,
@@ -484,6 +688,7 @@ pub async fn materialize_compact_request(
         service_tier: None,
         container: None,
         mcp_servers: None,
+        context_management: None,
         extra: Default::default(),
     })
 }
@@ -649,13 +854,24 @@ async fn materialize_messages(
     blobs: &dyn BlobStore,
     entries: &[ContextEntry],
 ) -> LlmAdapterResult<Vec<am::MessageParam>> {
+    Ok(materialize_messages_tracked(blobs, entries).await?.0)
+}
+
+/// [`materialize_messages`] plus the message each entry landed in.
+async fn materialize_messages_tracked(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+) -> LlmAdapterResult<(Vec<am::MessageParam>, RequestPositions)> {
     let mut messages: Vec<am::MessageParam> = Vec::new();
+    let mut positions = RequestPositions::with_capacity(entries.len());
+    let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
     for entry in entries {
         if is_raw_input_message(entry) {
             let (role, blocks) = materialize_input_message(blobs, entry).await?;
             for block in blocks {
                 push_block(&mut messages, role, block)?;
             }
+            positions.push((entry.entry_id, messages.len().saturating_sub(1)));
             continue;
         }
         if entry.content.provider_kind.as_deref()
@@ -668,14 +884,28 @@ async fn materialize_messages(
                     am::ContentBlockParam::Raw(block),
                 )?;
             }
+            positions.push((entry.entry_id, messages.len().saturating_sub(1)));
             continue;
         }
-        let (role, blocks) = materialize_block(blobs, entry).await?;
+        let (role, blocks) = materialize_block(blobs, entry, &mut media).await?;
         for block in blocks {
             push_block(&mut messages, role, block)?;
         }
+        positions.push((entry.entry_id, messages.len().saturating_sub(1)));
     }
-    Ok(messages)
+    Ok((messages, positions))
+}
+
+/// Entries the request lowers into `messages`; instructions become the
+/// system prompt instead.
+fn message_entries(request: &LlmRequest) -> Vec<ContextEntry> {
+    request
+        .context
+        .entries
+        .iter()
+        .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
+        .cloned()
+        .collect()
 }
 
 async fn text_blocks(blobs: &dyn BlobStore, entry: &ContextEntry) -> LlmAdapterResult<Vec<Value>> {
@@ -765,6 +995,7 @@ async fn materialize_input_message(
 async fn materialize_block(
     blobs: &dyn BlobStore,
     entry: &ContextEntry,
+    media: &mut crate::media::RequestMedia,
 ) -> LlmAdapterResult<(am::MessageRole, Vec<am::ContentBlockParam>)> {
     match &entry.kind {
         ContextEntryKind::Message { role } => {
@@ -772,13 +1003,21 @@ async fn materialize_block(
                 ContextMessageRole::User => am::MessageRole::User,
                 ContextMessageRole::Assistant => am::MessageRole::Assistant,
             };
+            if media.is_omitted(entry) {
+                return Ok((
+                    role,
+                    vec![am::ContentBlockParam::text(
+                        crate::media::omission_placeholder(entry),
+                    )],
+                ));
+            }
             if let Some(mime) = crate::blob_io::image_media_type(entry.content.media_type.as_deref()) {
-                let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                let image = media.image(blobs, entry, mime).await?;
                 return Ok((
                     role,
                     vec![
-                        am::ContentBlockParam::text(crate::blob_io::media_announcement(entry)),
-                        am::ContentBlockParam::image_base64(mime, data),
+                        am::ContentBlockParam::text(image.announcement(entry)),
+                        am::ContentBlockParam::image_base64(image.media_type, image.base64),
                     ],
                 ));
             }
@@ -787,7 +1026,7 @@ async fn materialize_block(
                 entry.preview.as_deref(),
             ) {
                 let blocks = if document.is_pdf {
-                    let data = crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    let data = media.pdf_base64(blobs, entry).await?;
                     vec![
                         am::ContentBlockParam::text(crate::blob_io::media_announcement(entry)),
                         am::ContentBlockParam::document_base64(document.mime, data, document.name),
@@ -1033,11 +1272,10 @@ fn anthropic_tool_search_model_support(model: &str) -> Option<bool> {
 /// configured.
 async fn inject_remote_mcp_auth(
     secrets: &dyn SecretResolver,
-    request: &LlmRequest,
+    tools: &[ToolSpec],
     materialized: am::CreateMessageRequest,
 ) -> LlmAdapterResult<(am::CreateMessageRequest, am::CreateMessageRequest)> {
-    let auth_specs: Vec<(&ToolSpec, &RemoteMcpToolSpec)> = request
-        .tools
+    let auth_specs: Vec<(&ToolSpec, &RemoteMcpToolSpec)> = tools
         .iter()
         .filter_map(|tool| match &tool.kind {
             ToolKind::RemoteMcp(remote_mcp)
@@ -1202,16 +1440,23 @@ pub async fn result_from_response(
     context_entries.extend(text_run_context_entries(blobs, text_run).await?);
 
     let usage = response.parsed.usage.as_ref().map(llm_usage);
-    let context_token_estimate =
-        response
-            .parsed
-            .usage
-            .as_ref()
-            .and_then(prompt_tokens)
-            .map(|tokens| TokenEstimate {
-                tokens: u64_to_u32(tokens),
-                quality: TokenEstimateQuality::ProviderCounted,
-            });
+    let context_token_estimate = response
+        .parsed
+        .usage
+        .as_ref()
+        .and_then(|usage| {
+            prompt_tokens(
+                usage
+                    .iterations
+                    .as_ref()
+                    .and_then(|items| items.last())
+                    .unwrap_or(usage),
+            )
+        })
+        .map(|tokens| TokenEstimate {
+            tokens: u64_to_u32(tokens),
+            quality: TokenEstimateQuality::ProviderCounted,
+        });
     let finish = finish_reason(response.parsed.stop_reason, !tool_calls.is_empty());
     // A turn cut off at `max_tokens` fails, keeping the partial text the
     // user can see; tool calls from an unfinished turn have nothing to
@@ -1388,6 +1633,87 @@ pub async fn result_from_compact_response(
     request: &ContextCompactionRequest,
     response: &ApiResponse<am::Message>,
 ) -> LlmAdapterResult<ContextCompactionResult> {
+    result_from_compact_response_with_strategy(
+        blobs,
+        request,
+        response,
+        supports_native_compaction(&request.request.model.model),
+    )
+    .await
+}
+
+async fn result_from_compact_response_with_strategy(
+    blobs: &dyn BlobStore,
+    request: &ContextCompactionRequest,
+    response: &ApiResponse<am::Message>,
+    native: bool,
+) -> LlmAdapterResult<ContextCompactionResult> {
+    if response.parsed.stop_reason == Some(am::StopReason::ModelContextWindow) {
+        return Err(LlmAdapterError::ContextLimit {
+            message: "compaction input exceeds the model context window".into(),
+        });
+    }
+    if native {
+        if response.raw_json["stop_reason"] == "model_context_window_exceeded"
+            || response.raw_json["stop_reason"] == "model_context_window"
+        {
+            return Err(LlmAdapterError::ContextLimit {
+                message: "compaction input exceeds the model context window".into(),
+            });
+        }
+        if response.raw_json["stop_reason"] != "compaction" {
+            return Err(LlmAdapterError::InvalidProviderRequest {
+                message: format!(
+                    "Anthropic compaction did not finish: {:?}",
+                    response.parsed.stop_reason
+                ),
+            });
+        }
+        let blocks = response.raw_json["content"].as_array().ok_or_else(|| {
+            LlmAdapterError::InvalidProviderRequest {
+                message: "compaction response has no content".into(),
+            }
+        })?;
+        if blocks.len() != 1
+            || blocks[0]["type"] != "compaction"
+            || blocks[0]["content"]
+                .as_str()
+                .is_none_or(|s| s.trim().is_empty())
+            || blocks[0]["signature"].as_str().is_none_or(str::is_empty)
+        {
+            return Err(LlmAdapterError::InvalidProviderRequest {
+                message: "compaction response has no valid signed block".into(),
+            });
+        }
+        return Ok(ContextCompactionResult {
+            usage: response.parsed.usage.as_ref().map(llm_usage),
+            calls: 1,
+            session_id: request.session_id.clone(),
+            context_revision: request.request.context.context_revision,
+            status: ContextCompactionStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![ContextEntryInput {
+                kind: ContextEntryKind::ProviderOpaque,
+                content: engine::ContentRef {
+                    content_ref: put_json(blobs, &blocks[0]).await?,
+                    media_type: Some(MEDIA_TYPE_JSON.into()),
+                    provider_kind: Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.into()),
+                },
+                preview: Some("compaction state".into()),
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+            }],
+        });
+    }
+    if !matches!(
+        response.parsed.stop_reason,
+        Some(am::StopReason::EndTurn | am::StopReason::StopSequence)
+    ) {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: "summary did not complete normally".into(),
+        });
+    }
     let summary = response.parsed.output_text();
     let summary = summary.trim();
     if summary.is_empty() {
@@ -1421,6 +1747,8 @@ pub async fn result_from_compact_response(
     }
     let content_ref = put_text(blobs, summary).await?;
     Ok(ContextCompactionResult {
+        usage: response.parsed.usage.as_ref().map(llm_usage),
+        calls: 1,
         session_id: request.session_id.clone(),
         context_revision: request.request.context.context_revision,
         status: ContextCompactionStatus::Succeeded,
@@ -1583,6 +1911,15 @@ async fn opaque_context_entry(
     raw_block: Value,
 ) -> LlmAdapterResult<ContextEntryInput> {
     let provider_kind = match block.r#type.as_str() {
+        "compaction"
+            if block
+                .content
+                .as_ref()
+                .and_then(Value::as_str)
+                .is_some_and(|summary| !summary.trim().is_empty()) =>
+        {
+            ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
+        }
         "server_tool_use" => ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND,
         "mcp_tool_use" => ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
         "mcp_tool_result" => ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
@@ -1608,6 +1945,7 @@ async fn opaque_context_entry(
 
 fn opaque_preview(block: &am::ContentBlock) -> String {
     match (block.r#type.as_str(), block.name.as_deref()) {
+        ("compaction", _) => "compaction state".to_owned(),
         ("server_tool_use", Some(name)) => {
             format!("Anthropic Messages server tool call: {name}")
         }
@@ -1631,6 +1969,17 @@ fn finish_reason(stop_reason: Option<am::StopReason>, has_tool_calls: bool) -> L
 }
 
 fn llm_usage(usage: &am::Usage) -> LlmUsage {
+    if let Some(iterations) = usage
+        .iterations
+        .as_ref()
+        .filter(|iterations| !iterations.is_empty())
+    {
+        let mut total = None;
+        for iteration in iterations {
+            merge_llm_usage(&mut total, Some(&llm_usage(iteration)));
+        }
+        return total.expect("nonempty usage iterations");
+    }
     let input_tokens = prompt_tokens(usage);
     let output_tokens = usage.output_tokens;
     LlmUsage {
@@ -1664,6 +2013,55 @@ fn prompt_tokens(usage: &am::Usage) -> Option<u64> {
 
 fn u64_to_u32(value: u64) -> u32 {
     value.min(u64::from(u32::MAX)) as u32
+}
+
+fn supports_native_compaction(model: &str) -> bool {
+    [
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-opus-5",
+        "claude-opus-5-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-5",
+        "claude-sonnet-5-5",
+        "claude-fable-5",
+        "claude-fable-5-1",
+        "claude-mythos-5",
+        "claude-mythos-5-1",
+        "claude-mythos-preview",
+    ]
+    .iter()
+    .any(|prefix| {
+        model == *prefix
+            || model.strip_prefix(prefix).is_some_and(|suffix| {
+                suffix.len() == 9
+                    && suffix.starts_with("-20")
+                    && suffix[1..].bytes().all(|b| b.is_ascii_digit())
+            })
+    })
+}
+
+async fn has_signed_compaction(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+) -> LlmAdapterResult<bool> {
+    for entry in entries {
+        if entry.content.provider_kind.as_deref()
+            == Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
+            && entry.kind == ContextEntryKind::ProviderOpaque
+        {
+            let value: Value =
+                serde_json::from_str(&read_text(blobs, &entry.content.content_ref).await?)
+                    .map_err(|error| LlmAdapterError::InvalidProviderRequest {
+                        message: error.to_string(),
+                    })?;
+            if value["signature"].is_string() {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -1809,6 +2207,83 @@ mod tests {
         }
     }
 
+    #[test]
+    fn native_capability_requires_a_known_model_or_its_dated_alias() {
+        assert!(supports_native_compaction("claude-opus-5-5"));
+        assert!(supports_native_compaction("claude-sonnet-5-5"));
+        assert!(supports_native_compaction("claude-fable-5-1"));
+        assert!(supports_native_compaction("claude-mythos-5-1"));
+        assert!(supports_native_compaction("claude-opus-5-5-20260929"));
+        assert!(!supports_native_compaction("claude-opus-5-unknown"));
+        assert!(!supports_native_compaction("claude-sonnet-4-5"));
+    }
+
+    struct SummaryOnlyMessagesApi(Arc<FakeAnthropicMessagesApi>);
+    #[async_trait]
+    impl AnthropicMessagesApi for SummaryOnlyMessagesApi {
+        async fn create(
+            &self,
+            request: am::CreateMessageRequest,
+            auth: Option<llm_clients::RequestAuth<'_>>,
+        ) -> Result<ApiResponse<am::Message>, llm_clients::LlmApiError> {
+            if request.extra.contains_key("compaction") {
+                return Err(llm_clients::LlmApiError::Unsupported(
+                    llm_clients::UnsupportedOperation::new("anthropic:messages", "compaction"),
+                ));
+            }
+            self.0.create(request, auth).await
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unavailable_native_compaction_uses_a_summary_on_the_same_messages_model() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let api = fake_api(
+            json!({"id": "summary", "type": "message", "role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "Keep ABC-123"}]}),
+        );
+        let adapter = AnthropicMessagesLlmAdapter::new(
+            Arc::new(SummaryOnlyMessagesApi(api.clone())),
+            blobs.clone(),
+        );
+        let result = LlmCompactionAdapter::compact_context(
+            &adapter,
+            ContextCompactionRequest {
+                session_id: SessionId::new("fallback"),
+                request: ContextCompactionTask {
+                    model: ModelSelection {
+                        model: "claude-opus-5-5".into(),
+                        ..model()
+                    },
+                    request_fingerprint: "fallback".into(),
+                    context: ContextSnapshot {
+                        api_kind: ProviderApiKind::AnthropicMessages,
+                        context_revision: 4,
+                        entries: vec![user_entry(1, text_blob(&blobs, "Remember ABC-123").await)],
+                        token_estimate: None,
+                    },
+                    target_tokens: Some(128),
+                    params: None,
+                    tools: vec![],
+                    input_limit_tokens: None,
+                    covered_entry_ids: vec![],
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.calls, 2);
+        assert_eq!(
+            read_text(
+                blobs.as_ref(),
+                &result.context_entries[0].content.content_ref
+            )
+            .await
+            .unwrap(),
+            "Keep ABC-123"
+        );
+        assert_eq!(api.seen.lock().unwrap()[0].model, "claude-opus-5-5");
+    }
+
     fn fake_api(raw_json: Value) -> Arc<FakeAnthropicMessagesApi> {
         fake_api_sequence(vec![raw_json])
     }
@@ -1902,7 +2377,11 @@ mod tests {
 
         assert_eq!(
             value["thinking"],
-            json!({ "type": "adaptive", "display": "summarized" })
+            json!({
+                "type": "adaptive",
+                "display": "summarized",
+                "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+            })
         );
         assert_eq!(value["output_config"], json!({ "effort": "max" }));
     }
@@ -1958,7 +2437,11 @@ mod tests {
 
         assert_eq!(
             value["thinking"],
-            json!({ "type": "adaptive", "display": "omitted" })
+            json!({
+                "type": "adaptive",
+                "display": "omitted",
+                "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+            })
         );
     }
 
@@ -2009,7 +2492,12 @@ mod tests {
         // still fills in so the reasoning entries carry text.
         assert_eq!(
             value["thinking"],
-            json!({ "type": "enabled", "budget_tokens": 512, "display": "summarized" })
+            json!({
+                "type": "enabled",
+                "budget_tokens": 512,
+                "display": "summarized",
+                "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+            })
         );
         assert!(value.get("output_config").is_none());
     }
@@ -2226,7 +2714,12 @@ mod tests {
                 "stop_sequences": ["<END>"],
                 "stream": false,
                 "temperature": 0.2,
-                "thinking": { "type": "enabled", "budget_tokens": 1024, "display": "summarized" },
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": 1024,
+                    "display": "summarized",
+                    "block_binding": { "prefix_mismatch_behavior": "drop_block" }
+                },
                 "output_config": { "effort": "high" },
                 "tool_choice": {
                     "type": "tool",
@@ -2972,6 +3465,103 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn provider_triggered_compaction_materializes_and_replays_native_summary() {
+        let blobs = InMemoryBlobStore::new();
+        for threshold in [None, Some(50_000)] {
+            let mut request = intent_request(Vec::new());
+            request.compaction = Some(CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: threshold,
+            });
+            let native = materialize_create_request(&blobs, &request).await.unwrap();
+            let mut edit = json!({"type": "compact_20260112"});
+            if let Some(value) = threshold {
+                edit["trigger"] = json!({"type": "input_tokens", "value": value});
+            }
+            assert_eq!(native.context_management, Some(json!({"edits": [edit]})));
+            assert!(
+                native
+                    .required_betas()
+                    .contains(&am::ANTHROPIC_COMPACTION_BETA)
+            );
+        }
+
+        let summary = json!({"type": "compaction", "content": "Keep the user's goals."});
+        let raw_json = json!({
+            "id": "msg_compacted", "stop_reason": "end_turn",
+            "content": [summary, {"type": "text", "text": "Continuing."}],
+            "usage": {
+                "input_tokens": 23000, "output_tokens": 1000,
+                "iterations": [
+                    {"type": "compaction", "input_tokens": 180000, "output_tokens": 3500, "cache_read_input_tokens": 10000},
+                    {"type": "message", "input_tokens": 23000, "output_tokens": 1000}
+                ]
+            }
+        });
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).unwrap(),
+            raw_json,
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let result = result_from_response(&blobs, &generation_request(), &response)
+            .await
+            .unwrap();
+        assert_eq!(result.context_entries.len(), 2);
+        let entry = &result.context_entries[0];
+        assert_eq!(entry.kind, ContextEntryKind::ProviderOpaque);
+        assert_eq!(
+            entry.content.provider_kind.as_deref(),
+            Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
+        );
+        assert_eq!(
+            read_json(&blobs, &entry.content.content_ref).await.unwrap(),
+            summary
+        );
+        let usage = result.facts.usage.as_ref().unwrap();
+        assert_eq!(usage.input_tokens, Some(213000));
+        assert_eq!(usage.output_tokens, Some(4500));
+        assert_eq!(usage.total_tokens, Some(217500));
+        assert_eq!(usage.cached_input_tokens, Some(10000));
+        assert_eq!(result.facts.context_token_estimate.unwrap().tokens, 23000);
+
+        let entries = result
+            .context_entries
+            .iter()
+            .enumerate()
+            .map(|(index, item)| retained_context_entry(index, item))
+            .collect();
+        // Replay still requires the beta if compaction has since been disabled.
+        let followup = materialize_create_request(&blobs, &intent_request(entries))
+            .await
+            .unwrap();
+        assert!(followup.context_management.is_none());
+        assert!(
+            followup
+                .required_betas()
+                .contains(&am::ANTHROPIC_COMPACTION_BETA)
+        );
+        let body = serde_json::to_value(followup).unwrap();
+        assert_eq!(body["messages"][0]["role"], "assistant");
+        assert_eq!(body["messages"][0]["content"][0], summary);
+        assert_eq!(body["messages"][0]["content"][1]["text"], "Continuing.");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn missing_native_compaction_summary_does_not_mark_history_for_pruning() {
+        let blobs = InMemoryBlobStore::new();
+        for content in [Value::Null, json!(""), json!(" ")] {
+            let block: am::ContentBlock =
+                serde_json::from_value(json!({"type": "compaction", "content": content})).unwrap();
+            let raw = serde_json::to_value(&block).unwrap();
+            let entry = opaque_context_entry(&blobs, &block, raw).await.unwrap();
+            assert_eq!(
+                entry.content.provider_kind.as_deref(),
+                Some(PROVIDER_KIND_BLOCK)
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn materialize_create_request_rejects_unsupported_intents() {
         let blobs = InMemoryBlobStore::new();
 
@@ -2980,18 +3570,6 @@ mod tests {
         let error = materialize_create_request(&blobs, &continuation)
             .await
             .expect_err("continuation must fail");
-        assert!(matches!(
-            error,
-            LlmAdapterError::InvalidProviderRequest { .. }
-        ));
-
-        let mut provider_triggered = intent_request(Vec::new());
-        provider_triggered.compaction = Some(CompactionPolicy::ProviderTriggered {
-            compact_threshold_tokens: Some(1000),
-        });
-        let error = materialize_create_request(&blobs, &provider_triggered)
-            .await
-            .expect_err("provider-triggered compaction must fail");
         assert!(matches!(
             error,
             LlmAdapterError::InvalidProviderRequest { .. }
@@ -3763,7 +4341,106 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn llm_runtime_runs_anthropic_summarization_compaction() {
+    async fn native_on_demand_compaction_preserves_signature_usage_and_generation_configuration() {
+        let blobs = InMemoryBlobStore::new();
+        let entries = vec![user_entry(
+            1,
+            text_blob(&blobs, "Keep exact identifier ABC-123").await,
+        )];
+        let mut generation = intent_request(entries);
+        generation.model.model = "claude-opus-5-5".into();
+        let mut toolset = tools::toolset::ToolsetConfig::empty();
+        toolset.web.fetch = true;
+        generation.tools = tools::toolset::register_toolset(&toolset)
+            .unwrap()
+            .tools
+            .into_values()
+            .collect();
+        let task = ContextCompactionTask {
+            model: generation.model.clone(),
+            context: generation.context.clone(),
+            tools: generation.tools.clone(),
+            request_fingerprint: "native".into(),
+            covered_entry_ids: vec![],
+            target_tokens: None,
+            input_limit_tokens: None,
+            params: None,
+        };
+        let compact = materialize_compact_request(&blobs, &task).await.unwrap();
+        let normal = materialize_create_request(&blobs, &generation)
+            .await
+            .unwrap();
+        assert_eq!(compact.system, normal.system);
+        assert_eq!(compact.tools, normal.tools);
+        assert!(compact.context_management.is_none());
+        assert!(compact.stop_sequences.is_none());
+        assert_eq!(compact.extra["compaction"], json!({"type":"summarize"}));
+        let block = json!({"type":"compaction", "content":"Keep ABC-123", "signature":"exact-native-signature"});
+        let raw_json = json!({"id":"native-summary", "role":"assistant", "type":"message", "stop_reason":"compaction", "content":[block],
+            "usage":{"input_tokens":0,"output_tokens":0,"iterations":[{"type":"compaction","input_tokens":144,"output_tokens":20}]}});
+        let response = ApiResponse {
+            parsed: serde_json::from_value(raw_json.clone()).unwrap(),
+            raw_json: raw_json.clone(),
+            status: 200,
+            headers: HeaderSnapshot::default(),
+        };
+        let request = ContextCompactionRequest {
+            session_id: SessionId::new("native"),
+            request: task,
+        };
+        let result = result_from_compact_response(&blobs, &request, &response)
+            .await
+            .unwrap();
+        assert_eq!(result.context_entries.len(), 1);
+        assert_eq!(result.calls, 1);
+        assert_eq!(result.usage.unwrap().input_tokens, Some(144));
+        assert_eq!(
+            read_json(&blobs, &result.context_entries[0].content.content_ref)
+                .await
+                .unwrap(),
+            block
+        );
+        generation.context.entries = vec![retained_context_entry(0, &result.context_entries[0])];
+        generation.compaction = Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens: None,
+        });
+        let replay = materialize_create_request(&blobs, &generation)
+            .await
+            .unwrap();
+        assert!(
+            replay.context_management.is_none(),
+            "signed blocks require the standalone strategy"
+        );
+        assert!(
+            replay
+                .required_betas()
+                .contains(&am::ANTHROPIC_ON_DEMAND_COMPACTION_BETA)
+        );
+        let body = serde_json::to_value(replay).unwrap();
+        // Only the normal cache breakpoint is added to the replayed block.
+        let mut replayed = body["messages"][0]["content"][0].clone();
+        replayed.as_object_mut().unwrap().remove("cache_control");
+        assert_eq!(replayed, block);
+        for stop in ["refusal", "max_tokens", "tool_use", "end_turn"] {
+            let mut raw = raw_json.clone();
+            raw["stop_reason"] = json!(stop);
+            let response = ApiResponse {
+                parsed: serde_json::from_value(raw.clone()).unwrap(),
+                raw_json: raw,
+                status: 200,
+                headers: HeaderSnapshot::default(),
+            };
+            assert!(
+                result_from_compact_response(&blobs, &request, &response)
+                    .await
+                    .is_err(),
+                "{stop} is not a usable compaction"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn llm_runtime_runs_legacy_anthropic_summarization_compaction() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let input_ref = text_blob(&blobs, "We chose Postgres as the session store.").await;
         let raw_json = json!({
@@ -3785,7 +4462,13 @@ mod tests {
         let request = ContextCompactionRequest {
             session_id: SessionId::new("session-a"),
             request: ContextCompactionTask {
-                model: model(),
+                covered_entry_ids: Vec::new(),
+                tools: Vec::new(),
+                input_limit_tokens: None,
+                model: ModelSelection {
+                    model: "claude-sonnet-4-5".into(),
+                    ..model()
+                },
                 request_fingerprint: "sha256:compact".to_string(),
                 context: ContextSnapshot {
                     api_kind: ProviderApiKind::AnthropicMessages,
@@ -3827,7 +4510,7 @@ mod tests {
         let seen = api.seen.lock().expect("seen");
         assert_eq!(seen.len(), 1);
         let request_json = serde_json::to_value(&seen[0]).expect("request json");
-        assert_eq!(request_json["model"], "claude-opus-4-8");
+        assert_eq!(request_json["model"], "claude-sonnet-4-5");
         // The cap leaves room for thinking above the summary budget.
         assert_eq!(
             request_json["max_tokens"],
@@ -3912,7 +4595,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, blocks) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize image entry");
 
@@ -3968,7 +4651,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, blocks) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize pdf entry");
 
@@ -4019,7 +4702,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (role, blocks) = materialize_block(&blobs, &entry)
+        let (role, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize markdown entry");
 
@@ -4063,7 +4746,7 @@ mod tests {
             supersedes: None,
         };
 
-        let (_, blocks) = materialize_block(&blobs, &entry)
+        let (_, blocks) = materialize_block(&blobs, &entry, &mut Default::default())
             .await
             .expect("materialize text entry");
 
@@ -4432,5 +5115,271 @@ mod tests {
                 .starts_with("[document: report.pdf · media:")
         );
         assert_eq!(blocks[4]["title"], json!("report.pdf"));
+    }
+
+    fn png_bytes(width: u32, height: u32, seed: u8) -> Vec<u8> {
+        use image::ImageEncoder as _;
+        let image = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([seed, (x % 256) as u8, (y % 256) as u8])
+        });
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&image, width, height, image::ExtendedColorType::Rgb8)
+            .expect("encode png");
+        bytes
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn many_image_history_lowers_within_the_pixel_cap() {
+        // Anthropic rejects a request with more than 20 images when any side
+        // exceeds 2000 px, counting images from earlier turns.
+        use base64::Engine as _;
+        const OVERSIZED: usize = 7;
+        let blobs = InMemoryBlobStore::new();
+        let mut entries = Vec::new();
+        let mut sources = Vec::new();
+        for index in 0..32 {
+            let bytes = if index == OVERSIZED {
+                png_bytes(2166, 2464, index as u8)
+            } else {
+                png_bytes(64, 48, index as u8)
+            };
+            let content_ref = blobs.put_bytes(bytes.clone()).await.expect("store image");
+            let mut entry = user_entry(index as u64 + 1, content_ref);
+            entry.content.media_type = Some("image/png".to_owned());
+            entry.preview = Some("[image]".to_owned());
+            entries.push(entry);
+            sources.push(bytes);
+        }
+
+        let request = materialize_create_request(&blobs, &intent_request(entries))
+            .await
+            .expect("materialize");
+        let value = serde_json::to_value(request).expect("json");
+        let blocks = value["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .flat_map(|message| message["content"].as_array().expect("blocks").iter())
+            .collect::<Vec<_>>();
+        let images = blocks
+            .iter()
+            .filter(|block| block["type"] == json!("image"))
+            .collect::<Vec<_>>();
+        assert_eq!(images.len(), 32);
+        for (index, (image, source)) in images.iter().zip(&sources).enumerate() {
+            let data = base64::engine::general_purpose::STANDARD
+                .decode(image["source"]["data"].as_str().expect("image data"))
+                .expect("base64");
+            let (width, height) = image::ImageReader::new(std::io::Cursor::new(&data))
+                .with_guessed_format()
+                .expect("format")
+                .into_dimensions()
+                .expect("dimensions");
+            assert!(
+                width <= 2000 && height <= 2000,
+                "image {index}: {width}×{height}"
+            );
+            if index != OVERSIZED {
+                assert_eq!(&data, source, "compliant image {index} is sent unchanged");
+            }
+        }
+        let resized = blocks
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .filter(|text| text.contains("shown at"))
+            .collect::<Vec<_>>();
+        assert_eq!(resized.len(), 1);
+        assert!(
+            resized[0].ends_with("· image/png · shown at 1758×2000 of 2166×2464]"),
+            "{}",
+            resized[0]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn adapter_sends_its_thinking_prefix_mismatch_behavior() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let mut request = intent_request(Vec::new());
+        request.reasoning_effort = Some("high".to_owned());
+
+        let default = AnthropicMessagesLlmAdapter::new(
+            fake_api(completed_text_response_json()),
+            blobs.clone(),
+        )
+        .materialize_create_request(&request)
+        .await
+        .expect("materialize");
+        let thinking = default.thinking.as_ref().expect("thinking");
+        assert_eq!(
+            thinking.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "drop_block" }))
+        );
+        assert_eq!(
+            default.required_betas(),
+            [am::ANTHROPIC_THINKING_BINDING_BETA]
+        );
+
+        let strict =
+            AnthropicMessagesLlmAdapter::new(fake_api(completed_text_response_json()), blobs)
+                .with_thinking_prefix_mismatch(ThinkingPrefixMismatch::Error)
+                .materialize_create_request(&request)
+                .await
+                .expect("materialize");
+        let thinking = strict.thinking.as_ref().expect("thinking");
+        assert_eq!(
+            thinking.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "error" }))
+        );
+
+        request.reasoning_effort = Some("none".to_owned());
+        let disabled = materialize_create_request(&InMemoryBlobStore::new(), &request)
+            .await
+            .expect("materialize");
+        assert!(
+            disabled.required_betas().is_empty(),
+            "disabled thinking rejects block_binding"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn none_effort_uses_between_tools_where_disabled_is_rejected() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.model.model = "claude-sonnet-5-5".to_owned();
+        request.reasoning_effort = Some("none".to_owned());
+
+        let materialized = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+
+        let value = serde_json::to_value(&materialized).expect("json");
+        assert_eq!(value["thinking"], json!({ "type": "between_tools" }));
+        assert!(value.get("output_config").is_none());
+        assert!(materialized.required_betas().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compaction_carries_the_binding_policy_on_models_that_think_by_default() {
+        let blobs = InMemoryBlobStore::new();
+        let input_ref = text_blob(&blobs, "Summarize me").await;
+        let task = |id: &str| ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
+            model: ModelSelection {
+                model: id.to_owned(),
+                ..model()
+            },
+            request_fingerprint: "sha256:compact".to_string(),
+            context: ContextSnapshot {
+                api_kind: ProviderApiKind::AnthropicMessages,
+                context_revision: 1,
+                entries: vec![user_entry(1, input_ref.clone())],
+                token_estimate: None,
+            },
+            target_tokens: None,
+            params: None,
+        };
+
+        let native = materialize_compact_request(&blobs, &task("claude-opus-5-5"))
+            .await
+            .unwrap();
+        assert_eq!(native.extra["compaction"], json!({"type": "summarize"}));
+        assert!(
+            native.thinking.is_none(),
+            "native compaction uses the generation thinking defaults"
+        );
+        assert!(
+            native
+                .required_betas()
+                .contains(&am::ANTHROPIC_ON_DEMAND_COMPACTION_BETA)
+        );
+
+        let older = materialize_compact_request(&blobs, &task("claude-opus-4-8"))
+            .await
+            .expect("materialize");
+        assert!(older.thinking.is_none(), "omitted thinking means off there");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tracked_lowering_maps_each_entry_to_its_message() {
+        let blobs = InMemoryBlobStore::new();
+        let text = text_blob(&blobs, "hello").await;
+        let mut assistant = user_entry(3, text.clone());
+        assistant.kind = ContextEntryKind::Message {
+            role: ContextMessageRole::Assistant,
+        };
+        let entries = vec![
+            user_entry(1, text.clone()),
+            user_entry(2, text.clone()),
+            assistant,
+            user_entry(4, text),
+        ];
+
+        let (messages, positions) = materialize_messages_tracked(&blobs, &entries)
+            .await
+            .expect("materialize");
+
+        assert_eq!(
+            messages.len(),
+            3,
+            "consecutive user entries share a message"
+        );
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 0), (3, 1), (4, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn media_over_the_request_budget_omits_the_oldest_identically_every_time() {
+        let blobs = InMemoryBlobStore::new();
+        let mut entries = Vec::new();
+        for index in 0..crate::media::MAX_REQUEST_MEDIA_ITEMS + 1 {
+            let content_ref = blobs
+                .put_bytes(png_bytes(8, 8, index as u8))
+                .await
+                .expect("store image");
+            let mut entry = user_entry(index as u64 + 1, content_ref);
+            entry.content.media_type = Some("image/png".to_owned());
+            entry.preview = Some("[image]".to_owned());
+            entries.push(entry);
+        }
+        let request = intent_request(entries);
+
+        let first = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize");
+        let second = materialize_create_request(&blobs, &request)
+            .await
+            .expect("materialize again");
+        assert_eq!(first, second, "retries send identical requests");
+
+        let value = serde_json::to_value(first).expect("json");
+        let blocks = value["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .flat_map(|message| message["content"].as_array().expect("blocks").iter())
+            .collect::<Vec<_>>();
+        let images = blocks
+            .iter()
+            .filter(|block| block["type"] == json!("image"))
+            .count();
+        let omitted = blocks
+            .iter()
+            .filter_map(|block| block["text"].as_str())
+            .filter(|text| {
+                text.ends_with("omitted from this request to stay within provider limits]")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(images, crate::media::MAX_REQUEST_MEDIA_ITEMS + 1 - 10);
+        assert_eq!(omitted.len(), 10, "the oldest chunk is omitted");
+        let first_text = blocks
+            .iter()
+            .find_map(|block| block["text"].as_str())
+            .expect("first block");
+        assert!(first_text.contains("omitted"), "{first_text}");
     }
 }

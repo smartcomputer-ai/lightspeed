@@ -8,7 +8,7 @@
 /// built from bots, triggers, workspaces, skills, and one Mac mini at home.
 import type { Environment, SecretGrant, UniverseSetup } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/agent-client";
-import { appendExchange, appendScriptedRun, closeSession, newSession } from "../engine";
+import { appendExchange, appendScriptedRun, closeSession, newSession, refreshDemoCompactionView } from "../engine";
 import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
 import {
   BOT_TOOLS,
@@ -1597,6 +1597,14 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     createdAtMs: ago(33 * DAY_MS),
     environmentId: ENV_MAC_MINI,
   });
+  telegram.view.config = {
+    ...telegram.view.config,
+    model: { ...OPUS, model: "claude-opus-5-5" },
+    context: {
+      inputLimitTokens: 128_000, compaction: { mode: "providerTriggered", compactThresholdTokens: 50_000 },
+    },
+  };
+  refreshDemoCompactionView(telegram);
   const whatsapp = managedSession(store, universe, {
     id: SESSION.whatsapp,
     botId: BOT.assistant,
@@ -1833,6 +1841,10 @@ function seedAssistant(store: DemoStore, universe: UniverseState): void {
     user: e22.prompt,
     steps: [
       {
+        compaction: {
+          mode: "providerTriggered",
+          summary: "Ada's long-lived Telegram thread: MRR €412k and churn 1.1%; Acme is the largest customer and finance is replacing its card. Priya's internal 1:1 moved to tomorrow at the same time. Competitor pricing for the Series A deck has landed before lunch. Elena's cohort retention cut and three cleared references are promised today. Draft replies require Ada's explicit 'send it' before sending. Current task: triage Elena's follow-up, draft with the existing commitments, and ask for approval.",
+        },
         thinking: "Important mail from Elena, right after the sync. Playbook: read the whole thread, the person's file, and commitments — the cohort cut and the references are already promised for today, so this is Needs reply with everything in hand.",
         tools: [
           vfsReadFile("/skills/email-triage/SKILL.md", SKILL_EMAIL_TRIAGE),
@@ -2693,6 +2705,8 @@ export function seedPersonalAssistant(store: DemoStore): void {
     id: PERSONAL_ASSISTANT_UNIVERSE_ID,
     slug: PERSONAL_ASSISTANT_SLUG,
     name: "Personal Assistant",
+    icon: "sparkles",
+    iconColor: "violet",
     lightspeedUniverseId: LIGHTSPEED_UNIVERSE_ID,
     role: "admin",
     createdAt: agoIso(5 * 7 * DAY_MS),

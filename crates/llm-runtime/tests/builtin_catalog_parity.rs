@@ -146,3 +146,23 @@ async fn builtin_requests_match_captured_provider_contracts() {
         assert_eq!(actual, entry["request"], "{api:?}: {case}");
     }
 }
+
+/// Run explicitly after an intentional change to provider-visible tool definitions.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "regenerates the committed provider request fixture"]
+async fn regenerate_builtin_provider_contracts() {
+    let mut baseline: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/builtin_catalogs.json")).expect("baseline");
+    for entry in &mut baseline {
+        let api = serde_json::from_value(entry["api"].clone()).expect("API kind");
+        entry["request"] = fixture(api, entry["case"].as_str().expect("case")).await;
+    }
+    std::fs::write(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/builtin_catalogs.json"
+        ),
+        format!("{}\n", serde_json::to_string_pretty(&baseline).unwrap()),
+    )
+    .unwrap();
+}

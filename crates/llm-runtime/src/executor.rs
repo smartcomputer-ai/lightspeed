@@ -21,6 +21,9 @@ pub trait LlmGenerationAdapter: Send + Sync {
 
 #[async_trait]
 pub trait LlmCompactionAdapter: Send + Sync {
+    fn blobs(&self) -> Option<&dyn engine::storage::BlobStore> {
+        None
+    }
     async fn compact_context(
         &self,
         request: ContextCompactionRequest,
@@ -136,21 +139,46 @@ impl LlmRuntime {
             });
         };
 
-        adapter
-            .compact_context(request)
-            .await
-            .map_err(io_error_from_adapter_error)
+        tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            crate::compaction::compact(adapter.as_ref(), request),
+        )
+        .await
+        .map_err(|_| CoreAgentIoError::Failed {
+            message: "compaction exceeded its ten-minute operation budget".into(),
+        })?
+        .map_err(io_error_from_adapter_error)
     }
 }
 
-/// Preserves the client-derived retry disposition across the generic I/O
-/// boundary. Only provider errors with explicit transient evidence become
-/// `Retryable`; every other adapter error stays terminal.
+/// Preserves the client-derived retry disposition and request rejections
+/// across the generic I/O boundary. Only provider errors with explicit
+/// transient evidence become `Retryable`; a provider refusing the request
+/// itself becomes `Rejected` with the provider's message unchanged; every
+/// other adapter error stays terminal.
 fn io_error_from_adapter_error(error: LlmAdapterError) -> CoreAgentIoError {
     match &error {
+        LlmAdapterError::ContextLimit { message } => CoreAgentIoError::ContextLimit {
+            message: message.clone(),
+        },
         LlmAdapterError::Provider { source } if source.retryable() => CoreAgentIoError::Retryable {
             retry_after: source.retry_after(),
             message: error.to_string(),
+        },
+        LlmAdapterError::Provider { source } => match source.request_rejection() {
+            Some(rejection)
+                if rejection.kind == llm_clients::ProviderFailureKind::ContextLength =>
+            {
+                CoreAgentIoError::ContextLimit {
+                    message: rejection.message.clone(),
+                }
+            }
+            Some(rejection) => CoreAgentIoError::Rejected {
+                message: rejection.message.clone(),
+            },
+            None => CoreAgentIoError::Failed {
+                message: error.to_string(),
+            },
         },
         _ => CoreAgentIoError::Failed {
             message: error.to_string(),
@@ -230,6 +258,75 @@ mod tests {
         };
         assert!(message.contains("connection reset"));
         assert_eq!(retry_after, None);
+    }
+
+    fn http_error(
+        status: u16,
+        kind: llm_clients::ProviderFailureKind,
+        message: &str,
+    ) -> llm_clients::LlmApiError {
+        llm_clients::ProviderHttpError {
+            api_kind: "anthropic:messages".to_owned(),
+            status,
+            kind,
+            message: message.to_owned(),
+            error_code: None,
+            error_type: Some("invalid_request_error".to_owned()),
+            retryable: kind.default_retryable(),
+            retry_after: None,
+            raw_json: None,
+            raw_text: None,
+            headers: Default::default(),
+        }
+        .into()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn provider_request_rejections_keep_the_provider_message() {
+        let message = "messages.3.content.1.image.source.base64: image dimensions exceed max \
+                       allowed size for many-image requests: 2000 pixels";
+        let error = failing_generate(http_error(
+            400,
+            llm_clients::ProviderFailureKind::InvalidRequest,
+            message,
+        ))
+        .await;
+        assert_eq!(
+            error,
+            CoreAgentIoError::Rejected {
+                message: message.to_owned()
+            }
+        );
+
+        let context = "prompt is too long: maximum context length is 200000 tokens";
+        let error = failing_generate(http_error(
+            400,
+            llm_clients::ProviderFailureKind::ContextLength,
+            context,
+        ))
+        .await;
+        assert_eq!(
+            error,
+            CoreAgentIoError::ContextLimit {
+                message: context.to_owned()
+            }
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn other_terminal_provider_errors_stay_failed() {
+        for (status, kind) in [
+            (401, llm_clients::ProviderFailureKind::Authentication),
+            (403, llm_clients::ProviderFailureKind::AccessDenied),
+            (404, llm_clients::ProviderFailureKind::NotFound),
+            (400, llm_clients::ProviderFailureKind::ContentFilter),
+        ] {
+            let error = failing_generate(http_error(status, kind, "denied")).await;
+            assert!(
+                matches!(error, CoreAgentIoError::Failed { .. }),
+                "{status}: {error:?}"
+            );
+        }
     }
 
     fn request() -> LlmGenerationRequest {

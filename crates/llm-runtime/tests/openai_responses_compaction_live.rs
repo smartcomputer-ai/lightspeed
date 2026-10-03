@@ -373,6 +373,8 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         limits: Default::default(),
         context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2_000),
             }),
@@ -396,6 +398,8 @@ fn standalone_session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
                 target_tokens: Some(128),
@@ -407,6 +411,7 @@ fn standalone_session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
+        input_limit_tokens: None,
         max_turns: Some(4),
         reasoning_effort: None,
         parallel_tool_use: None,
@@ -582,4 +587,53 @@ async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState)
         .read_text(message_ref)
         .await
         .unwrap_or_else(|error| format!("failed to read failure message: {error}"))
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires OPENAI_API_KEY and a compaction-capable Responses model (costs real money)"]
+async fn openai_responses_live_provider_triggered_without_threshold_override() {
+    let session_id = SessionId::new("provider-default-threshold");
+    let (runner, blobs) = live_runner(&session_id).await;
+    let mut config = session_config(live_model_selection());
+    config.context.compaction = Some(CompactionPolicy::ProviderTriggered {
+        compact_threshold_tokens: None,
+    });
+    let opened = runner
+        .drive_command(DriveCommand {
+            session_id: session_id.clone(),
+            observed_at_ms: 10,
+            command: CoreAgentCommand::OpenSession { config },
+            max_steps: Some(64),
+        })
+        .await
+        .unwrap();
+    assert!(opened.accepted);
+    let input = blobs
+        .put_bytes(b"Reply with only READY.".to_vec())
+        .await
+        .unwrap();
+    let result = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 20,
+            max_steps: Some(64),
+            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                requested_by: None,
+                notify_on_terminal: vec![],
+                submission_id: None,
+                source: engine::RunRequestSource::Input {
+                    input: user_input(input),
+                },
+                run_config: run_config(),
+            }),
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.quiescence, RunnerQuiescence::Idle);
+    assert_eq!(
+        result.state.runs.completed.last().unwrap().status,
+        engine::RunStatus::Completed,
+        "{}",
+        run_failure_text(blobs.as_ref(), &result.state).await
+    );
 }

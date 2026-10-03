@@ -71,30 +71,53 @@ pub(super) async fn call_llm_generate(
 
 pub(super) async fn call_context_compact(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
     request: engine::ContextCompactionRequest,
-) -> anyhow::Result<engine::ContextCompactionResult> {
+) -> anyhow::Result<control::Raced<engine::ContextCompactionResult>> {
     let session_id = request.session_id.clone();
     let context_revision = request.request.context.context_revision;
-    match ctx
-        .start_activity(
-            WorkflowActivities::context_compact,
-            crate::ContextCompactActivityRequest { request },
-            crate::llm_activity_options(),
-        )
-        .await
-    {
-        Ok(result) => Ok(result),
+    let run_id = drive
+        .state()
+        .context
+        .compaction
+        .pending_plan()
+        .and_then(|plan| plan.run_id);
+    let activity_ctx = ctx.clone();
+    let activity = activity_ctx.start_activity(
+        WorkflowActivities::context_compact,
+        crate::ContextCompactActivityRequest { request },
+        crate::llm_activity_options(),
+    );
+    let raced = control::race_activity_with_admissions(ctx, drive, activity, |state| {
+        state.context.compaction.is_pending()
+            && run_id.is_none_or(|id| {
+                state
+                    .runs
+                    .active
+                    .as_ref()
+                    .is_some_and(|run| run.run_id == id && run.status == RunStatus::Active)
+            })
+    })
+    .await?;
+    let outcome = match raced {
+        control::Raced::Preempted => return Ok(control::Raced::Preempted),
+        control::Raced::Completed(outcome) => outcome,
+    };
+    match outcome {
+        Ok(result) => Ok(control::Raced::Completed(result)),
         Err(error) => match llm_boundary_failure(&error) {
             Some(failure) => {
                 let failure_ref =
                     put_llm_boundary_error_blob(ctx, "context compaction", &failure).await;
-                Ok(engine::ContextCompactionResult {
+                Ok(control::Raced::Completed(engine::ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
                     session_id,
                     context_revision,
                     status: engine::ContextCompactionStatus::Failed,
                     failure_ref: Some(failure_ref),
                     context_entries: Vec::new(),
-                })
+                }))
             }
             None => Err(anyhow::anyhow!("{error}")),
         },

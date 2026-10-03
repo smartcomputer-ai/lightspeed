@@ -218,10 +218,13 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
     let llm = Arc::new(LlmRuntime::new(
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::AnthropicMessages,
-            Arc::new(AnthropicMessagesLlmAdapter::new(
-                retrying_anthropic_messages_client(live_client()),
-                blobs.clone(),
-            )),
+            Arc::new(
+                AnthropicMessagesLlmAdapter::new(
+                    retrying_anthropic_messages_client(live_client()),
+                    blobs.clone(),
+                )
+                .with_thinking_prefix_mismatch(llm_runtime::ThinkingPrefixMismatch::Error),
+            ),
         ),
     ));
     let stores = RunnerStores::new(sessions.clone(), blobs.clone()).with_vfs_catalog(vfs);
@@ -346,7 +349,11 @@ fn session_config(
             processing_tier: None,
         },
         limits: Default::default(),
-        context: ContextConfig { compaction: None },
+        context: ContextConfig {
+            reported_input_limit_tokens: None,
+            input_limit_tokens: None,
+            compaction: None,
+        },
         features: engine::FeaturesConfig {
             vfs: Some(engine::VfsFeature {
                 skills: Some(engine::VfsSkillsConfig {
@@ -367,6 +374,7 @@ fn session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
+        input_limit_tokens: None,
         max_turns: Some(6),
         reasoning_effort: None,
         parallel_tool_use: None,

@@ -1,5 +1,6 @@
 import { BotFace } from "@/components/icons/bot";
 import { cn } from "@/lib/utils";
+import { identityColor } from "@/lib/identity-colors";
 
 /// A bot keeps one colour everywhere it appears — roster, header, threads —
 /// derived from its immutable id, so renaming never changes the face.
@@ -10,7 +11,7 @@ export function botHue(botId: string): number {
 }
 
 export function botColor(botId: string): string {
-  return `oklch(0.58 0.11 ${botHue(botId)})`;
+  return identityColor(botHue(botId));
 }
 
 export function BotAvatar({

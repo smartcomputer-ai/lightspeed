@@ -220,6 +220,41 @@ mod tests {
         }
     }
 
+    #[test]
+    fn newly_configured_default_is_selected_before_context_discovery() {
+        let mut live = live();
+        let mut candidate = PreparationCandidate::new(&live);
+        let mut config = live.state().lifecycle.config.clone().unwrap();
+        let mut environment = attachment("new-default");
+        environment.default = true;
+        config.features.environments = Some(engine::EnvironmentsFeature {
+            environments: vec![environment],
+            ..Default::default()
+        });
+        candidate
+            .push(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: Some(live.state().lifecycle.config_revision),
+                    config,
+                },
+                2,
+            )
+            .unwrap();
+        let projection =
+            admissions::runtime_projection_request(live.session_id(), candidate.state());
+        assert_eq!(
+            projection.active_environment_id,
+            Some(engine::EnvironmentId::new("new-default"))
+        );
+        assert!(live.state().environment.active_environment_id.is_none());
+        let batch = candidate.finish(&live).unwrap();
+        commit(&mut live, batch);
+        assert_eq!(
+            live.state().environment.active_environment_id,
+            projection.active_environment_id
+        );
+    }
+
     fn proposed(live: &CoreAgentDrive) -> PreparationCandidate {
         let mut candidate = PreparationCandidate::new(live);
         let tool = engine::ToolSpec {
@@ -420,11 +455,11 @@ mod tests {
             expected_revision: None,
             key: catalog_key.clone(),
             entry: ContextEntryInput {
-                origin: Some("runtime.environments:old".into()),
+                origin: Some("runtime.environments".into()),
                 kind: ContextEntryKind::Catalog {
                     title: "Environments".into(),
                 },
-                ..instructions("old selection")
+                ..instructions("attachment directory")
             },
         };
         initial.push(old_catalog.clone(), 2).unwrap();
@@ -459,15 +494,12 @@ mod tests {
         );
         assert!(drive::invalid_environment_prompt_command(candidate.state()).is_none());
         let batch = candidate.finish(&live).unwrap();
-        assert_eq!(batch.events.len(), 3);
+        assert_eq!(batch.events.len(), 2);
         commit(&mut live, batch);
         assert!(drive::invalid_environment_prompt_command(live.state()).is_none());
-        assert!(engine::current_context_entry(live.state(), &catalog_key).is_none());
+        assert!(engine::current_context_entry(live.state(), &catalog_key).is_some());
         let mut candidate = PreparationCandidate::new(&live);
-        assert_eq!(
-            candidate.push(old_catalog, 4).unwrap_err().kind,
-            api::AgentApiErrorKind::Conflict
-        );
+        candidate.push(old_catalog, 4).unwrap();
         let error = candidate
             .push(
                 CoreAgentCommand::ReplaceContextPrefix {

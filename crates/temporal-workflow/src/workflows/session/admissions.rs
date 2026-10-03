@@ -157,9 +157,8 @@ pub(super) async fn admit_admissions(
 /// the live drive. Returns whether anything was admitted (accepted or
 /// rejected). Two classes are held back, in order, for a later drain:
 ///
-/// - everything while a standalone context compaction is pending (run
-///   requests would be rejected against that transient state; compaction
-///   only runs while no run is active, so nothing time-critical waits);
+/// - context/config/tool mutations while compaction is pending. Cancellation
+///   passes immediately and can abandon the frozen compaction request;
 /// - context/config/tool mutations while a turn's generation is in flight.
 ///   That turn's request is frozen at its planned revisions and the runtime
 ///   re-derives it from state, so those revisions must not move until the
@@ -169,11 +168,16 @@ pub(super) async fn drain_pending_admissions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
 ) -> anyhow::Result<bool> {
-    if drive.state().context.pending_compaction {
-        return Ok(false);
-    }
+    let compaction_pending = drive.state().context.compaction.is_pending();
     let turn_in_flight = turn_in_flight(drive.state());
     let admissions = ctx.state_mut(|state| {
+        if compaction_pending {
+            let (now, later) = std::mem::take(&mut state.pending_admissions)
+                .into_iter()
+                .partition(admissible_during_compaction);
+            state.pending_admissions = later;
+            return now;
+        }
         if state.run_preparation.is_some() {
             let (now, later) = std::mem::take(&mut state.pending_admissions)
                 .into_iter()
@@ -199,8 +203,11 @@ pub(super) async fn drain_pending_admissions(
 
 /// Pending admissions that `drain_pending_admissions` would admit now.
 pub(super) fn has_admissible_admissions(state: &AgentSessionWorkflow) -> bool {
-    if state.core_state.context.pending_compaction {
-        return false;
+    if state.core_state.context.compaction.is_pending() {
+        return state
+            .pending_admissions
+            .iter()
+            .any(admissible_during_compaction);
     }
     if state.run_preparation.is_some() {
         return state
@@ -225,12 +232,22 @@ pub(super) fn turn_in_flight(state: &CoreAgentState) -> bool {
         .is_some_and(|run| run.active_turn_id.is_some())
 }
 
+fn admissible_during_compaction(admission: &SessionAdmission) -> bool {
+    admission.core().is_some_and(|admission| {
+        matches!(
+            admission.command,
+            CoreAgentCommand::CancelRun { .. } | CoreAgentCommand::ForceCancelRun { .. }
+        )
+    })
+}
+
 /// Commands that do not move the config/context/toolset revisions an
 /// in-flight turn was planned against.
 pub(super) fn admissible_during_turn(command: &CoreAgentCommand) -> bool {
     matches!(
         command,
-        CoreAgentCommand::CancelRun { .. }
+        CoreAgentCommand::CompactContext
+            | CoreAgentCommand::CancelRun { .. }
             | CoreAgentCommand::ForceCancelRun { .. }
             | CoreAgentCommand::RequestRunSteering { .. }
             | CoreAgentCommand::DecideApproval(_)

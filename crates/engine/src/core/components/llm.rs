@@ -114,12 +114,22 @@ pub struct ContextCompactionTask {
     pub context: ContextSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub covered_entry_ids: Vec<crate::ContextEntryId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<ProviderParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<crate::LlmUsage>,
+    #[serde(default)]
+    pub calls: u32,
     pub session_id: SessionId,
     pub context_revision: u64,
     pub status: crate::ContextCompactionStatus,
@@ -227,38 +237,69 @@ pub(crate) fn build_context_compaction_task(
             DomainError::InvariantViolation("active session is missing config".to_owned()).into(),
         );
     };
-    if !state.context.pending_compaction {
-        return Err(DomainError::InvariantViolation(
+    let plan = state.context.compaction.pending_plan().ok_or_else(|| {
+        DomainError::InvariantViolation(
             "context compaction request is missing pending state".to_owned(),
         )
-        .into());
-    }
-    let CompactionPolicy::ProviderStandalone { target_tokens, .. } =
-        config.context.compaction.as_ref().ok_or_else(|| {
-            DomainError::ProviderCompatibility(
-                "pending context compaction requires provider-standalone policy".to_owned(),
-            )
-        })?
-    else {
-        return Err(DomainError::ProviderCompatibility(
-            "pending context compaction requires provider-standalone policy".to_owned(),
-        )
-        .into());
+    })?;
+    let model = state
+        .runs
+        .active
+        .as_ref()
+        .map(|run| {
+            run.run_config
+                .model_override
+                .clone()
+                .unwrap_or_else(|| config.model.clone())
+        })
+        .or_else(|| state.context.last_generation_model().cloned())
+        .unwrap_or_else(|| config.model.clone());
+    let target_tokens = match config.context.compaction {
+        Some(CompactionPolicy::ProviderStandalone { target_tokens, .. }) => target_tokens,
+        _ => None,
     };
-    let context = crate::core::components::context::compactable_context_snapshot(
-        state,
-        config.model.api_kind.clone(),
+    let covered_entry_ids = plan.covered_entry_ids.clone();
+    let mut ids = crate::core::components::context::planned_context_entry_ids(state);
+    ids.retain(|id| {
+        covered_entry_ids.contains(id)
+            || crate::core::components::context::entry_by_id(state, *id).is_some_and(|entry| {
+                matches!(
+                    entry.kind,
+                    crate::ContextEntryKind::Instructions | crate::ContextEntryKind::Catalog { .. }
+                )
+            })
+    });
+    let mut context = ContextSnapshot {
+        api_kind: model.api_kind.clone(),
+        context_revision: state.context.revision,
+        entries: crate::core::components::context::context_entries_by_id(state, &ids)?,
+        token_estimate: None,
+    };
+    let params = state
+        .runs
+        .active
+        .as_ref()
+        .and_then(|run| run.run_config.provider_params.clone());
+    let tools = active_tools(state, &model.api_kind)?;
+    context.token_estimate =
+        crate::core::components::context::combined_token_estimate(&context.entries);
+    let input_limit_tokens = crate::core::components::context::compaction_input_limit_tokens(state);
+    let request_fingerprint = compaction_request_fingerprint(
+        &model,
+        &context,
+        target_tokens,
+        params.as_ref(),
+        &tools,
+        input_limit_tokens,
     )?;
-    // Session-level provider params no longer exist; compaction-specific
-    // params can become runtime adapter policy if a need appears.
-    let params: Option<ProviderParams> = None;
-    let request_fingerprint =
-        compaction_request_fingerprint(&config.model, &context, *target_tokens, params.as_ref())?;
     Ok(ContextCompactionTask {
-        model: config.model.clone(),
+        model,
         request_fingerprint,
         context,
-        target_tokens: *target_tokens,
+        target_tokens,
+        covered_entry_ids,
+        tools,
+        input_limit_tokens,
         params,
     })
 }
@@ -385,11 +426,20 @@ fn compaction_request_fingerprint(
     context: &ContextSnapshot,
     target_tokens: Option<u32>,
     params: Option<&ProviderParams>,
+    tools: &[ToolSpec],
+    input_limit_tokens: Option<u32>,
 ) -> Result<String, PlanningError> {
-    let encoded =
-        serde_json::to_vec(&(model, context, target_tokens, params)).map_err(|error| {
-            PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
-        })?;
+    let encoded = serde_json::to_vec(&(
+        model,
+        context,
+        target_tokens,
+        params,
+        tools,
+        input_limit_tokens,
+    ))
+    .map_err(|error| {
+        PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
+    })?;
     let digest = Sha256::digest(encoded);
     Ok(format!(
         "{LLM_COMPACTION_FINGERPRINT_PREFIX}{}",
@@ -411,6 +461,7 @@ mod tests {
             processing_tier: Some(crate::ModelProcessingTier::Standard),
         };
         let run_config = RunConfig {
+            input_limit_tokens: None,
             max_output_tokens: Some(2048),
             tool_choice: Some(ToolChoice::RequiredAny),
             parallel_tool_use: Some(false),

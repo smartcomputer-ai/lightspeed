@@ -6,10 +6,13 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
 // Union values are written a | b — pick one.
 {
   "context": {
+    // Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
     "compaction": // one of:
       { "mode": "disabled" } |
       { "compactThresholdTokens": 0, "mode": "providerTriggered" } |
       { "compactThresholdTokens": 0, "mode": "providerStandalone", "targetTokens": 0 },
+    // Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+    "inputLimitTokens": 0,
   },
   // Capability grants. An absent feature is not granted; \`{}\` grants it with defaults. Every block carries a behavior \`version\` that pins semantics.
   "features": {

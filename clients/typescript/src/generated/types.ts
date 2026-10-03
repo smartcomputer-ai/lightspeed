@@ -697,6 +697,12 @@ export type SessionEventKindView =
     }
   | {
       baseRevision: number;
+      entries: ContextEntryView[];
+      revision: number;
+      type: "contextEntriesReplaced";
+    }
+  | {
+      baseRevision: number;
       keys: string[];
       revision: number;
       type: "contextKeysRemoved";
@@ -723,10 +729,12 @@ export type SessionEventKindView =
     }
   | {
       baseRevision: number;
+      calls?: number;
       failureRef?: string | null;
       revision: number;
       status: string;
       type: "contextCompactionFinished";
+      usage?: LlmUsageView | null;
     }
   | {
       catalogRef?: string | null;
@@ -763,6 +771,10 @@ export type SessionEventKindView =
       type: "toolCallStarted";
     }
   | {
+      /**
+       * Portable immutable assets, separate from effects and native media input.
+       */
+      attachments?: ToolAttachmentView[];
       batchId: string;
       callId: string;
       effects?: ToolEffectView[];
@@ -811,12 +823,20 @@ export type ApprovalDecisionKind = "approve" | "reject";
  * via the `definition` "RunFailureKindView".
  */
 export type RunFailureKindView =
-  | "model_failure"
-  | "tool_failure"
-  | "context_failure"
-  | "limit_exceeded"
-  | "cancelled"
-  | "internal";
+  | (
+      | "model_failure"
+      | "tool_failure"
+      | "context_failure"
+      | "limit_exceeded"
+      | "cancelled"
+      | "internal"
+    )
+  | "request_rejected";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ToolAttachmentKind".
+ */
+export type ToolAttachmentKind = "media" | "file";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunViewSource".
@@ -1297,6 +1317,11 @@ export type ContextAppendStatus = "applied" | "unchanged" | "failed";
  * via the `definition` "ContextRemoveStatus".
  */
 export type ContextRemoveStatus = "removed" | "absent" | "failed";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceStatus".
+ */
+export type ContextReplaceStatus = ("replaced" | "failed") | "unchanged" | "absent";
 /**
  * The methods a key may call, by group. Every public method but
  * `initialize` belongs to exactly one group, derived from its name, so a
@@ -1973,8 +1998,30 @@ export interface ResourceAccessSummary {
  * via the `definition` "ContextView".
  */
 export interface ContextView {
+  compaction?: ContextCompactionView | null;
   entries?: ContextEntryView[];
   revision: number;
+}
+/**
+ * Resolved automatic policy and the currently pending standalone operation.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextCompactionView".
+ */
+export interface ContextCompactionView {
+  compactThresholdTokens?: number | null;
+  effectiveMode: string;
+  /**
+   * Native APIs are preferred where supported; summaries use the same model route.
+   */
+  effectiveStrategy: string;
+  inputLimitTokens?: number | null;
+  observedTokens?: number | null;
+  pending: boolean;
+  queued: boolean;
+  recoveryAttempts: number;
+  requestedMode: string;
+  thresholdSource: string;
 }
 /**
  * A session context entry, faithful to the stored engine entry: keyed,
@@ -2130,7 +2177,7 @@ export interface PendingApprovalView {
   subject: ApprovalSubjectView;
 }
 /**
- * Provider-reported token usage for one generation or a sum of them. Every
+ * Provider-reported token usage for generations and compactions, or their sum. Every
  * field is optional because providers report different subsets; counts
  * that a provider reports separately (Anthropic's cache read/write) are
  * folded into `input_tokens` so the field always means "prompt tokens
@@ -2183,7 +2230,14 @@ export interface SessionConfig {
  * via the `definition` "ContextConfig".
  */
 export interface ContextConfig {
+  /**
+   * Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
+   */
   compaction?: CompactionPolicy | null;
+  /**
+   * Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+   */
+  inputLimitTokens?: number | null;
 }
 /**
  * Capability grants. An absent feature is not granted; `{}` grants it with
@@ -2711,6 +2765,37 @@ export interface ToolCallEventView {
   toolName: string;
 }
 /**
+ * A portable immutable asset supplied by a completed tool call.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ToolAttachmentView".
+ */
+export interface ToolAttachmentView {
+  /**
+   * Full immutable blob identity; read through the universe-scoped blob API.
+   */
+  contentRef: string;
+  /**
+   * Model-facing alias, resolved against recorded attachments.
+   */
+  handle: string;
+  kind: ToolAttachmentKind;
+  mediaType?: string | null;
+  name?: string | null;
+  source?: AttachmentSourceView | null;
+}
+/**
+ * Descriptive source, independent of the attachment's immutable content identity.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AttachmentSourceView".
+ */
+export interface AttachmentSourceView {
+  id: string;
+  kind: string;
+  path: string;
+}
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolEffectView".
  */
@@ -2751,8 +2836,8 @@ export interface RunView {
   status: RunStatus;
   toolBatches?: ToolBatchView[];
   /**
-   * Provider token usage summed over the run's completed generations;
-   * absent until the first generation reports usage. The cached share
+   * Provider token usage summed over the run's completed generations and standalone compactions;
+   * absent until the first operation reports usage. The cached share
    * (`cachedInputTokens / inputTokens`) is the prompt-cache hit rate.
    */
   usage?: LlmUsageView | null;
@@ -2774,6 +2859,10 @@ export interface ToolBatchView {
 export interface ToolCallView {
   arguments?: string | null;
   argumentsRef: string;
+  /**
+   * Immutable attachments available from this call; files do not imply model input.
+   */
+  attachments?: ToolAttachmentView[];
   callId: string;
   /**
    * When the call's terminal result was committed. The window to
@@ -4369,6 +4458,31 @@ export interface ContextRemoveResult {
   failure?: InputAdmissionFailureView | null;
   key: string;
   status: ContextRemoveStatus;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfContextReplaceResponse".
+ */
+export interface AgentApiOutcomeOfContextReplaceResponse {
+  notifications?: AgentNotification[];
+  result: ContextReplaceResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceResponse".
+ */
+export interface ContextReplaceResponse {
+  contextRevision: number;
+  results: ContextReplaceResult[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceResult".
+ */
+export interface ContextReplaceResult {
+  entryId: string;
+  failure?: InputAdmissionFailureView | null;
+  status: ContextReplaceStatus;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7054,6 +7168,27 @@ export interface ContextRemoveParams {
    * request-level.
    */
   keys: string[];
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceEntry".
+ */
+export interface ContextReplaceEntry {
+  /**
+   * The active entry to replace, by the `id` that `session/read` lists in
+   * `activeContext`. Only tool results and user messages can be replaced,
+   * and the entry keeps its kind: a tool result takes only text.
+   */
+  entryId: string;
+  item: InputItem;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ContextReplaceParams".
+ */
+export interface ContextReplaceParams {
+  entries: ContextReplaceEntry[];
   sessionId: string;
 }
 /**

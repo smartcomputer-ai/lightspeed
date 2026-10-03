@@ -158,6 +158,23 @@ impl ModelDiscoveryService {
         }
     }
 
+    /// Resolve reported capacity only; discovery failures leave the limit unknown.
+    pub(super) async fn input_limit(&self, model: &ModelSelection) -> Option<u32> {
+        if model.provider_id != ANTHROPIC_PROVIDER_ID
+            || model.api_kind != ProviderApiKind::AnthropicMessages
+        {
+            return None;
+        }
+        self.list_anthropic()
+            .await
+            .0
+            .into_iter()
+            .find(|item| item.model == model.model)
+            .and_then(|item| item.capabilities.max_input_tokens)
+            .and_then(|limit| u32::try_from(limit).ok())
+            .filter(|limit| *limit > 0)
+    }
+
     pub(super) async fn list(&self, selectable_only: bool) -> ModelListResponse {
         let (openai, anthropic, custom) = tokio::join!(
             self.list_openai(),

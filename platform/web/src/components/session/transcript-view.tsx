@@ -15,6 +15,7 @@ import { type TranscriptEntry, type TranscriptMedia } from "@/lib/sessions/trans
 import { MediaStrip } from "@/components/session/media";
 import { cn } from "@/lib/utils";
 import { TranscriptEntrance } from "./transcript-motion";
+import { ReplyCopyMenu } from "./reply-copy-menu";
 
 /// Full-width transcript rows without avatars. User inputs use muted bands;
 /// assistant output is plain rendered text, with compact tool and lifecycle markers.
@@ -23,10 +24,12 @@ export function TranscriptEntryView({
   entry,
   loadFullText,
   showRunStatistics = false,
+  copyable = false,
 }: {
   entry: TranscriptEntry;
   loadFullText?: FullTextLoader;
   showRunStatistics?: boolean;
+  copyable?: boolean;
 }) {
   switch (entry.kind) {
     case "message":
@@ -38,32 +41,7 @@ export function TranscriptEntryView({
           media={entry.media}
         />
       ) : (
-        <Message>
-          <MessageContent>
-            <Bubble variant="ghost" className="max-w-full">
-              <BubbleContent>
-                <MarkdownContent>{entry.text}</MarkdownContent>
-                {entry.citations?.length ? (
-                  <div className="mt-3 flex flex-wrap gap-2 border-t pt-3 pb-1 text-xs text-muted-foreground">
-                    <span className="font-medium">Sources</span>
-                    {entry.citations.map((citation, index) => (
-                      <a
-                        key={`${citation.url}:${index}`}
-                        href={citation.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={citation.citedText ?? undefined}
-                        className="text-primary underline underline-offset-4"
-                      >
-                        {citation.title || citationHost(citation.url)}
-                      </a>
-                    ))}
-                  </div>
-                ) : null}
-              </BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
+        <AssistantMessage entry={entry} copyable={copyable} />
       )}</TranscriptEntrance>;
     case "system":
       return <SystemChips entries={[entry]} />;
@@ -87,6 +65,38 @@ export function TranscriptEntryView({
         </Marker>
       );
   }
+}
+
+function AssistantMessage({ entry, copyable }: {
+  entry: Extract<TranscriptEntry, { kind: "message" }>;
+  copyable: boolean;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  return (
+    <Message>
+      <MessageContent className={copyable ? "pr-12" : undefined}>
+        <Bubble variant="ghost" className="max-w-full">
+          <BubbleContent>
+            <div ref={contentRef}>
+              <MarkdownContent>{entry.text}</MarkdownContent>
+              {entry.citations?.length ? (
+                <div className="mt-3 flex flex-wrap gap-2 border-t pt-3 pb-1 text-xs text-muted-foreground">
+                  <span className="font-medium">Sources</span>{" "}
+                  {entry.citations.map((citation, index) => (
+                    <a key={`${citation.url}:${index}`} href={citation.url} target="_blank" rel="noreferrer"
+                      title={citation.citedText ?? undefined} className="text-primary underline underline-offset-4">
+                      {citation.title || citationHost(citation.url)}{" "}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </BubbleContent>
+        </Bubble>
+      </MessageContent>
+      {copyable && <ReplyCopyMenu contentRef={contentRef} text={entry.text} citations={entry.citations} />}
+    </Message>
+  );
 }
 
 /// Context entries that are not conversation: instructions and catalog

@@ -139,9 +139,11 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
         CoreAgentEvent::Context(event) => match event {
             ContextEvent::EntriesApplied { .. } => "lightspeed.core.context.entries_applied",
             ContextEvent::EntriesRemoved { .. } => "lightspeed.core.context.entries_removed",
+            ContextEvent::EntriesReplaced { .. } => "lightspeed.core.context.entries_replaced",
             ContextEvent::KeysRemoved { .. } => "lightspeed.core.context.keys_removed",
             ContextEvent::KeyPrefixReplaced { .. } => "lightspeed.core.context.key_prefix_replaced",
             ContextEvent::StateReplaced { .. } => "lightspeed.core.context.state_replaced",
+            ContextEvent::CompactionQueued { .. } => "lightspeed.core.context.compaction_queued",
             ContextEvent::CompactionRequested { .. } => {
                 "lightspeed.core.context.compaction_requested"
             }

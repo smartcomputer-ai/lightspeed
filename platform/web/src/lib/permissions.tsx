@@ -25,7 +25,7 @@ const ACTION_ROLES: Record<PermissionAction, UniverseRole> = {
   share_session: "contributor",
   invoke_bot: "contributor",
   use_resource: "contributor",
-  create_workspace: "contributor",
+  create_workspace: "operator",
   create_profile: "operator",
   manage_profile: "operator",
   create_bot: "operator",

@@ -363,6 +363,77 @@ pub const ANTHROPIC_THINKING_DISPLAY_SUMMARIZED: &str = "summarized";
 /// `thinking.type` that turns thinking off; the API rejects `display` next
 /// to it because there is nothing to display.
 pub const ANTHROPIC_THINKING_TYPE_DISABLED: &str = "disabled";
+/// `thinking.type` that turns thinking off on models that reject
+/// `disabled`. It takes no other field.
+pub const ANTHROPIC_THINKING_TYPE_BETWEEN_TOOLS: &str = "between_tools";
+
+/// How a Claude model turns thinking off for reasoning effort `"none"`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnthropicThinkingOff {
+    /// `{type: "disabled"}`.
+    Disabled,
+    /// `{type: "between_tools"}`: the model rejects `disabled` but still
+    /// offers a thinking-off mode.
+    BetweenTools,
+    /// Thinking cannot be turned off; the closest request is adaptive
+    /// thinking at the lowest effort.
+    LowestEffort,
+}
+
+/// Family and version of a Claude model id, e.g. `("opus", 5, 5)` for
+/// `claude-opus-5-5`. `None` for ids that are not recognizably Claude, such
+/// as models behind Anthropic-compatible endpoints.
+fn claude_model_version(model: &str) -> Option<(String, u16, u16)> {
+    let normalized = model.to_ascii_lowercase();
+    if !normalized.contains("claude") {
+        return None;
+    }
+    let parts = normalized
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .collect::<Vec<_>>();
+    let family = parts
+        .iter()
+        .find(|part| matches!(**part, "opus" | "sonnet" | "haiku" | "fable" | "mythos"))?;
+    let mut versions = parts.iter().filter_map(|part| {
+        let value = part.parse::<u16>().ok()?;
+        (value < 100).then_some(value)
+    });
+    let major = versions.next()?;
+    let minor = versions.next().unwrap_or(0);
+    Some(((*family).to_owned(), major, minor))
+}
+
+/// How `model` turns thinking off. Claude Opus 5.5 and the Fable and Mythos
+/// lines keep thinking on at every effort and reject `disabled`; Claude
+/// Sonnet 5.5 rejects `disabled` in favour of `between_tools`. Later
+/// versions of each line are assumed to keep that behavior; unrecognized
+/// ids keep `disabled`.
+pub fn anthropic_thinking_off(model: &str) -> AnthropicThinkingOff {
+    match claude_model_version(model) {
+        Some((family, major, minor)) => match family.as_str() {
+            "fable" | "mythos" => AnthropicThinkingOff::LowestEffort,
+            "opus" if (major, minor) >= (5, 5) => AnthropicThinkingOff::LowestEffort,
+            "sonnet" if (major, minor) >= (5, 5) => AnthropicThinkingOff::BetweenTools,
+            _ => AnthropicThinkingOff::Disabled,
+        },
+        None => AnthropicThinkingOff::Disabled,
+    }
+}
+
+/// Whether `model` runs adaptive thinking when a request omits `thinking`
+/// (the Claude 5 generation and later). Sending `{type: "adaptive"}` to such
+/// a model changes nothing except that the request can then carry thinking
+/// options such as `block_binding`.
+pub fn anthropic_thinks_by_default(model: &str) -> bool {
+    match claude_model_version(model) {
+        Some((family, major, _)) => match family.as_str() {
+            "fable" | "mythos" => true,
+            "opus" | "sonnet" => major >= 5,
+            _ => false,
+        },
+        None => false,
+    }
+}
 
 /// Anthropic thinking settings derived from an intent reasoning effort.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -430,39 +501,100 @@ pub fn validate_openai_reasoning_effort(effort: &str) -> LlmAdapterResult<String
 /// mean "no reasoning" (models that cannot turn thinking off reject the
 /// request, which is the honest outcome for that tier). Unknown tiers are
 /// rejected.
-pub fn anthropic_thinking_from_effort(effort: &str) -> LlmAdapterResult<AnthropicThinkingSettings> {
+pub fn anthropic_thinking_from_effort(
+    effort: &str,
+    model: &str,
+) -> LlmAdapterResult<AnthropicThinkingSettings> {
     validate_reasoning_effort(
         effort,
         ANTHROPIC_REASONING_EFFORT_TIERS,
         ProviderApiKind::AnthropicMessages,
     )?;
+    let thinking = |kind: &str, display: Option<&str>| AnthropicThinkingConfig {
+        r#type: kind.to_owned(),
+        budget_tokens: None,
+        display: display.map(str::to_owned),
+        extra: BTreeMap::new(),
+    };
     if effort == "none" {
-        return Ok(AnthropicThinkingSettings {
-            thinking: AnthropicThinkingConfig {
-                r#type: ANTHROPIC_THINKING_TYPE_DISABLED.to_owned(),
-                budget_tokens: None,
-                display: None,
-                extra: BTreeMap::new(),
+        return Ok(match anthropic_thinking_off(model) {
+            AnthropicThinkingOff::Disabled => AnthropicThinkingSettings {
+                thinking: thinking(ANTHROPIC_THINKING_TYPE_DISABLED, None),
+                output_config: None,
             },
-            output_config: None,
+            AnthropicThinkingOff::BetweenTools => AnthropicThinkingSettings {
+                thinking: thinking(ANTHROPIC_THINKING_TYPE_BETWEEN_TOOLS, None),
+                output_config: None,
+            },
+            // No reasoning was asked for, so none is displayed.
+            AnthropicThinkingOff::LowestEffort => AnthropicThinkingSettings {
+                thinking: thinking("adaptive", Some("omitted")),
+                output_config: Some(serde_json::json!({ "effort": "low" })),
+            },
         });
     }
     Ok(AnthropicThinkingSettings {
-        thinking: AnthropicThinkingConfig {
-            r#type: "adaptive".to_owned(),
-            budget_tokens: None,
-            display: Some(ANTHROPIC_THINKING_DISPLAY_SUMMARIZED.to_owned()),
-            extra: BTreeMap::new(),
-        },
+        thinking: thinking("adaptive", Some(ANTHROPIC_THINKING_DISPLAY_SUMMARIZED)),
         output_config: Some(serde_json::json!({ "effort": effort })),
     })
 }
 
+/// What Anthropic does with a replayed thinking block whose conversation
+/// prefix no longer matches the one it was produced in.
+///
+/// Repairs that rewrite content the provider has already seen (image
+/// normalization of an existing history, media omission, redaction) change
+/// that prefix. `DropBlock` lets the session continue without the affected
+/// reasoning; `Error` fails the request, which suites use to catch
+/// unintended history edits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThinkingPrefixMismatch {
+    #[default]
+    DropBlock,
+    Error,
+}
+
+impl ThinkingPrefixMismatch {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DropBlock => "drop_block",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl ThinkingPrefixMismatch {
+    /// The `thinking.block_binding` object carrying this behavior.
+    pub fn block_binding(self) -> Value {
+        serde_json::json!({ "prefix_mismatch_behavior": self.as_str() })
+    }
+}
+
+/// Thinking types that turn thinking on. The API accepts `display` and
+/// `block_binding` only next to these; `disabled` and `between_tools` reject
+/// both.
+fn thinking_is_on(thinking: &AnthropicThinkingConfig) -> bool {
+    matches!(thinking.r#type.as_str(), "adaptive" | "enabled")
+}
+
+/// Fill in `block_binding` when params leave it unset and thinking is on.
+/// Explicit params keep their value.
+pub fn default_anthropic_block_binding(
+    thinking: &mut AnthropicThinkingConfig,
+    behavior: ThinkingPrefixMismatch,
+) {
+    if thinking_is_on(thinking) && !thinking.extra.contains_key("block_binding") {
+        thinking
+            .extra
+            .insert("block_binding".to_owned(), behavior.block_binding());
+    }
+}
+
 /// Fill in the thinking display mode when params leave it unset so reasoning
-/// entries carry summary text. Explicit params keep their value; disabled
-/// thinking never gets one.
+/// entries carry summary text. Explicit params keep their value; thinking
+/// that is off never gets one.
 pub fn default_anthropic_thinking_display(thinking: &mut AnthropicThinkingConfig) {
-    if thinking.display.is_none() && thinking.r#type != ANTHROPIC_THINKING_TYPE_DISABLED {
+    if thinking.display.is_none() && thinking_is_on(thinking) {
         thinking.display = Some(ANTHROPIC_THINKING_DISPLAY_SUMMARIZED.to_owned());
     }
 }
@@ -620,12 +752,13 @@ mod tests {
 
     #[test]
     fn anthropic_thinking_from_effort_maps_tiers() {
-        let none = anthropic_thinking_from_effort("none").expect("none tier");
+        let none = anthropic_thinking_from_effort("none", "claude-opus-4-8").expect("none tier");
         assert_eq!(none.thinking.r#type, "disabled");
         assert_eq!(none.thinking.display, None);
         assert_eq!(none.output_config, None);
         for tier in ["low", "medium", "high", "xhigh", "max"] {
-            let settings = anthropic_thinking_from_effort(tier).expect("known tier");
+            let settings =
+                anthropic_thinking_from_effort(tier, "claude-opus-5-5").expect("known tier");
             assert_eq!(settings.thinking.r#type, "adaptive");
             assert_eq!(settings.thinking.budget_tokens, None);
             assert_eq!(settings.thinking.display.as_deref(), Some("summarized"));
@@ -634,8 +767,67 @@ mod tests {
     }
 
     #[test]
+    fn none_effort_uses_each_models_thinking_off_mode() {
+        for model in [
+            "claude-opus-4-8",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "custom-model",
+        ] {
+            let none = anthropic_thinking_from_effort("none", model).expect("none tier");
+            assert_eq!(none.thinking.r#type, "disabled", "{model}");
+            assert_eq!(none.output_config, None, "{model}");
+        }
+
+        let none = anthropic_thinking_from_effort("none", "claude-sonnet-5-5").expect("none tier");
+        assert_eq!(none.thinking.r#type, "between_tools");
+        assert_eq!(none.thinking.display, None);
+        assert_eq!(none.output_config, None);
+
+        for model in [
+            "claude-opus-5-5",
+            "claude-fable-5-1",
+            "claude-mythos-5-1",
+            "anthropic.claude-opus-5-5",
+        ] {
+            let none = anthropic_thinking_from_effort("none", model).expect("none tier");
+            assert_eq!(none.thinking.r#type, "adaptive", "{model}");
+            assert_eq!(none.thinking.display.as_deref(), Some("omitted"), "{model}");
+            assert_eq!(
+                none.output_config,
+                Some(json!({ "effort": "low" })),
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_5_models_think_by_default() {
+        for model in [
+            "claude-opus-5",
+            "claude-opus-5-5",
+            "claude-sonnet-5",
+            "claude-sonnet-5-5",
+            "claude-fable-5-1",
+            "claude-mythos-5-1",
+        ] {
+            assert!(anthropic_thinks_by_default(model), "{model}");
+        }
+        for model in [
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "claude-3-7-sonnet-20250219",
+            "custom-anthropic-compatible",
+        ] {
+            assert!(!anthropic_thinks_by_default(model), "{model}");
+        }
+    }
+
+    #[test]
     fn anthropic_thinking_from_effort_rejects_unknown_tier() {
-        let error = anthropic_thinking_from_effort("ultra").expect_err("unknown tier must fail");
+        let error = anthropic_thinking_from_effort("ultra", "claude-opus-5-5")
+            .expect_err("unknown tier must fail");
         assert!(matches!(
             error,
             LlmAdapterError::InvalidProviderRequest { .. }
@@ -670,6 +862,49 @@ mod tests {
         };
         default_anthropic_thinking_display(&mut disabled);
         assert_eq!(disabled.display, None);
+
+        let mut between_tools = AnthropicThinkingConfig {
+            r#type: "between_tools".to_owned(),
+            budget_tokens: None,
+            display: None,
+            extra: BTreeMap::new(),
+        };
+        default_anthropic_thinking_display(&mut between_tools);
+        assert_eq!(between_tools.display, None);
+    }
+
+    #[test]
+    fn default_anthropic_block_binding_fills_only_unset_thinking_on_modes() {
+        let thinking = |kind: &str| AnthropicThinkingConfig {
+            r#type: kind.to_owned(),
+            budget_tokens: None,
+            display: None,
+            extra: BTreeMap::new(),
+        };
+        for kind in ["adaptive", "enabled"] {
+            let mut config = thinking(kind);
+            default_anthropic_block_binding(&mut config, ThinkingPrefixMismatch::DropBlock);
+            assert_eq!(
+                config.extra.get("block_binding"),
+                Some(&json!({ "prefix_mismatch_behavior": "drop_block" }))
+            );
+        }
+        for kind in ["disabled", "between_tools"] {
+            let mut config = thinking(kind);
+            default_anthropic_block_binding(&mut config, ThinkingPrefixMismatch::DropBlock);
+            assert!(config.extra.is_empty(), "{kind} rejects block_binding");
+        }
+
+        let mut explicit = thinking("adaptive");
+        explicit.extra.insert(
+            "block_binding".to_owned(),
+            json!({ "prefix_mismatch_behavior": "error" }),
+        );
+        default_anthropic_block_binding(&mut explicit, ThinkingPrefixMismatch::DropBlock);
+        assert_eq!(
+            explicit.extra.get("block_binding"),
+            Some(&json!({ "prefix_mismatch_behavior": "error" }))
+        );
     }
 
     #[test]

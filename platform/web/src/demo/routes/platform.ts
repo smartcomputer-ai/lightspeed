@@ -2,7 +2,7 @@
 /// universe API keys. The demo user is a platform admin, so every gate the
 /// real server applies passes.
 import { Hono } from "hono";
-import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema, universeSlugSchema } from "@lightspeed/platform-shared";
+import { effectiveFeatures, featureOverridesSchema, memberUpdateSchema, mergeFeatureOverrides, slugify, universeRoleSchema, universeSlugSchema, universeUpdateSchema } from "@lightspeed/platform-shared";
 import type { MethodGroup } from "@lightspeed-ai/agent-client";
 import type { EngineUniverse, Member, Universe } from "@/api";
 import { universeApiKey, type DemoStore, type UniverseState } from "../store";
@@ -116,6 +116,10 @@ export function platformRoutes(store: DemoStore): Hono {
     const state = universeFor(store, c);
     if (!state) return notFound(c);
     const body = await readBody<Partial<Pick<Universe, "name" | "status" | "gatewayUrl"> & { features: unknown }>>(c);
+    const parsed = universeUpdateSchema.safeParse(body);
+    if (!parsed.success) return badRequest(c, "invalid universe settings");
+    if (parsed.data.icon !== undefined) state.universe.icon = parsed.data.icon;
+    if (parsed.data.iconColor !== undefined) state.universe.iconColor = parsed.data.iconColor;
     if (body.features !== undefined) {
       const features = featureOverridesSchema.safeParse(body.features);
       if (!features.success) return c.json({ error: "unknown feature" }, 400);

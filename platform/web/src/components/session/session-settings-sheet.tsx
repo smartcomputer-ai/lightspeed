@@ -323,6 +323,17 @@ function LiveSessionSetup({
                 Choose the model and its default reasoning behavior. Unset values inherit deployment or provider defaults.
               </p>
             </div>
+            {session?.activeContext?.compaction ? (
+              <div className="rounded-lg border p-3 text-xs text-muted-foreground" aria-label="Compaction status">
+                <p>Compaction: {session.activeContext.compaction.effectiveMode === "disabled" ? "disabled" : session.activeContext.compaction.effectiveMode === "providerTriggered" ? "provider triggered" : "engine managed standalone"}
+                  {session.activeContext.compaction.pending ? " · compacting" : session.activeContext.compaction.queued ? " · queued" : ""}</p>
+                <p>{session.activeContext.compaction.compactThresholdTokens != null
+                  ? `Threshold: ${session.activeContext.compaction.compactThresholdTokens.toLocaleString()} tokens`
+                  : session.activeContext.compaction.thresholdSource === "contextLengthError" ? "Recovers on context-length errors" : session.activeContext.compaction.thresholdSource === "providerDefault" ? "Uses the provider’s default threshold" : "Automatic compaction disabled"}
+                  {` · Recovery attempts: ${session.activeContext.compaction.recoveryAttempts}`}</p>
+                {session.activeContext.compaction.requestedMode !== session.activeContext.compaction.effectiveMode ? <p>Signed native context requires standalone compaction for subsequent turns.</p> : null}
+              </div>
+            ) : null}
             <SessionConfigEditor
               value={configDraft}
               onChange={(config) => {

@@ -340,6 +340,10 @@ pub struct LimitsConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextConfig {
+    /// Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
+    /// Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
 }
@@ -903,6 +907,50 @@ pub enum ContextRemoveStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ContextReplaceParams {
+    pub session_id: SessionId,
+    pub entries: Vec<ContextReplaceEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReplaceEntry {
+    /// The active entry to replace, by the `id` that `session/read` lists in
+    /// `activeContext`. Only tool results and user messages can be replaced,
+    /// and the entry keeps its kind: a tool result takes only text.
+    pub entry_id: ItemId,
+    pub item: InputItem,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReplaceResponse {
+    pub context_revision: u64,
+    pub results: Vec<ContextReplaceResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReplaceResult {
+    pub entry_id: ItemId,
+    pub status: ContextReplaceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<InputAdmissionFailureView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextReplaceStatus {
+    Replaced,
+    /// The entry already holds this content.
+    Unchanged,
+    /// Not in active context, so retries after a removal are no-ops.
+    Absent,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionReadParams {
     pub session_id: SessionId,
     /// Newest run summaries to include. Values above the server maximum are
@@ -1405,7 +1453,8 @@ pub enum SessionEventKindView {
         output: Option<crate::ContentRefView>,
     },
     /// The run ended in failure. `kind` is the engine's classification;
-    /// `message` is free text for display.
+    /// `message` is free text for display, and the provider's own message for
+    /// `request_rejected`.
     RunFailed {
         run_id: RunId,
         kind: RunFailureKindView,
@@ -1477,6 +1526,14 @@ pub enum SessionEventKindView {
         entry_ids: Vec<ItemId>,
         reason: String,
     },
+    /// Active entries replaced in place by id (`session/context/replace`).
+    /// Each keeps its id, position, and kind; the replaced content stays in
+    /// the event history.
+    ContextEntriesReplaced {
+        base_revision: u64,
+        revision: u64,
+        entries: Vec<ContextEntryView>,
+    },
     ContextKeysRemoved {
         base_revision: u64,
         revision: u64,
@@ -1500,6 +1557,10 @@ pub enum SessionEventKindView {
         trigger: String,
     },
     ContextCompactionFinished {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<LlmUsageView>,
+        #[serde(default)]
+        calls: u32,
         base_revision: u64,
         revision: u64,
         status: String,
@@ -1546,6 +1607,9 @@ pub enum SessionEventKindView {
         status: ToolItemStatus,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffectView>,
+        /// Portable immutable assets, separate from effects and native media input.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<ToolAttachmentView>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_bytes: Option<u64>,
         #[serde(default)]
@@ -1573,6 +1637,10 @@ pub enum SessionEventKindView {
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKindView {
     ModelFailure,
+    /// The provider rejected the request as invalid or larger than the model
+    /// accepts. `message` is the provider's own text, unchanged; resending the
+    /// same context fails the same way.
+    RequestRejected,
     ToolFailure,
     ContextFailure,
     LimitExceeded,

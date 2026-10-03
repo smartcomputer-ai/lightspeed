@@ -76,7 +76,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     expected, revision
                 )));
             }
-            crate::core::components::config::validate_config_update_for_state(state, config)?;
+            crate::core::components::config::validate_recorded_config_update(state, config)?;
             state.lifecycle.config = Some(config.clone());
             state.lifecycle.config_revision = *revision;
             Ok(())

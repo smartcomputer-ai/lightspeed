@@ -23,6 +23,7 @@ use crate::{
 #[derive(Clone)]
 pub struct InlineToolRuntime {
     vfs: Option<FsToolContext>,
+    vfs_attachments: Vec<vfs::ResolvedWorkspaceAttachment>,
     environment: Option<EnvironmentToolContext>,
     catalog: ToolCatalog,
     blobs: Arc<dyn BlobStore>,
@@ -51,11 +52,21 @@ impl InlineToolRuntime {
     ) -> Self {
         Self {
             vfs,
+            vfs_attachments: Vec::new(),
             environment,
             catalog,
             blobs,
             limits,
         }
+    }
+
+    /// Origin metadata from the same mounts used to construct the VFS filesystem.
+    pub fn with_vfs_attachments(
+        mut self,
+        attachments: Vec<vfs::ResolvedWorkspaceAttachment>,
+    ) -> Self {
+        self.vfs_attachments = attachments;
+        self
     }
 
     pub fn vfs_context(&self) -> Option<&crate::fs::FsToolContext> {
@@ -188,14 +199,16 @@ impl InlineToolRuntime {
             });
         }
         match tool.domain() {
-            BuiltinToolDomain::Vfs => {
-                self.vfs
-                    .as_ref()
-                    .map(BuiltinToolContext::Vfs)
-                    .ok_or_else(|| ToolError::InvalidRequest {
-                        message: "no_vfs_workspace_attachments".to_owned(),
-                    })
-            }
+            BuiltinToolDomain::Vfs => self
+                .vfs
+                .as_ref()
+                .map(|filesystem| BuiltinToolContext::Vfs {
+                    filesystem,
+                    attachments: &self.vfs_attachments,
+                })
+                .ok_or_else(|| ToolError::InvalidRequest {
+                    message: "no_vfs_workspace_attachments".to_owned(),
+                }),
             BuiltinToolDomain::Environment => {
                 let ctx = self
                     .environment
@@ -263,8 +276,9 @@ impl InlineToolRuntime {
             model_visible_context_entries: model_visible_entries(
                 &call.call_id,
                 model_visible_ref,
-                &output.media,
+                &output.attachments,
             ),
+            attachments: output.attachments,
             error_ref: None,
             effects,
         })
@@ -288,6 +302,7 @@ impl InlineToolRuntime {
             truncated: projection.truncated,
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Failed,
+            attachments: Vec::new(),
             output_ref: None,
             model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
                 &call.call_id,
@@ -323,8 +338,9 @@ impl InlineToolRuntime {
             model_visible_context_entries: model_visible_entries(
                 &call.call_id,
                 model_visible_ref,
-                &output.media,
+                &output.attachments,
             ),
+            attachments: output.attachments,
             error_ref: None,
             effects: output.effects,
         })
@@ -347,6 +363,7 @@ impl InlineToolRuntime {
             truncated: projection.truncated,
             call_id: call.call_id.clone(),
             status: ToolCallStatus::Failed,
+            attachments: Vec::new(),
             output_ref: None,
             model_visible_context_entries: vec![ToolInvocationResult::tool_result_context_entry(
                 &call.call_id,
@@ -470,15 +487,19 @@ struct ProjectedText {
 fn model_visible_entries(
     call_id: &engine::ToolCallId,
     model_visible_ref: engine::BlobRef,
-    media: &[super::ToolMediaOutput],
+    attachments: &[crate::attachments::Attachment],
 ) -> Vec<engine::ContextEntryInput> {
-    let mut entries = Vec::with_capacity(1 + media.len());
+    let mut entries = Vec::with_capacity(1 + attachments.len());
     entries.push(ToolInvocationResult::tool_result_context_entry(
         call_id,
         ToolCallStatus::Succeeded,
         model_visible_ref,
     ));
-    entries.extend(media.iter().map(super::ToolMediaOutput::context_entry));
+    entries.extend(
+        attachments
+            .iter()
+            .filter_map(crate::attachments::Attachment::context_entry),
+    );
     entries
 }
 

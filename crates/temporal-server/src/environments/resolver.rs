@@ -595,9 +595,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             failed_catalog.availability,
-            EnvironmentSkillAvailability::Unavailable
+            EnvironmentSkillAvailability::Stale
         );
-        assert!(failed_catalog.skills.is_empty());
+        assert_eq!(failed_catalog.skills.len(), 1);
+        assert_eq!(failed_skills.content, edited.content);
         assert_eq!(
             blobs
                 .read_bytes(&result.prompt_entries[&prompt_key].content.content_ref)
@@ -611,7 +612,7 @@ mod tests {
         );
         stall_skills.store(false, Ordering::SeqCst);
 
-        // An incomplete scan reports unavailable and removes obsolete catalog paths.
+        // An incomplete scan retains the last observation without appending a menu.
         std::fs::write(&skill_path, vec![b'x'; 65537]).unwrap();
         let stale = entry(refresh(Some(&edited)).await.unwrap());
         let catalog: EnvironmentSkillCatalog = serde_json::from_slice(
@@ -621,11 +622,9 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            catalog.availability,
-            EnvironmentSkillAvailability::Unavailable
-        );
-        assert!(catalog.skills.is_empty());
+        assert_eq!(catalog.availability, EnvironmentSkillAvailability::Stale);
+        assert_eq!(catalog.skills.len(), 1);
+        assert_eq!(stale.content, edited.content);
         assert!(refresh(Some(&stale)).await.unwrap().is_none());
         let result = refresh_sources(&both, Some(&edited)).await;
         assert!(result.skill_command.is_some());
@@ -668,8 +667,7 @@ mod tests {
         // Missing fs/scan is explicit unavailable discovery, with no RPC fallback.
         supported.store(false, Ordering::SeqCst);
         let before = scans.load(Ordering::SeqCst);
-        let unsupported = entry(refresh(Some(&stale)).await.unwrap());
-        assert!(refresh(Some(&unsupported)).await.unwrap().is_none());
+        assert!(refresh(Some(&stale)).await.unwrap().is_none());
         assert_eq!(scans.load(Ordering::SeqCst), before);
         supported.store(true, Ordering::SeqCst);
         std::fs::remove_file(&skill_path).unwrap();
@@ -748,8 +746,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             timed_out_catalog.availability,
-            EnvironmentSkillAvailability::Unavailable
+            EnvironmentSkillAvailability::Stale
         );
+        assert_eq!(timed_out.content, available.content);
         task.abort();
     }
 

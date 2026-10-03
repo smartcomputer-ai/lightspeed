@@ -1,21 +1,23 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use engine::{
     ContextCompactionRequest, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
     ContextEntryId, ContextEntryKind, ContextEntrySource, ContextMessageRole, ContextSnapshot,
-    LlmGenerationRequest, LlmRequest, ModelSelection, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
-    ProviderApiKind, RunId, SessionId, TurnId, storage::InMemoryBlobStore,
+    LlmGenerationRequest, LlmGenerationStatus, LlmRequest, ModelSelection,
+    OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND, ProviderApiKind, RunId, SessionId, TurnId,
+    storage::InMemoryBlobStore,
 };
 use llm_runtime::{
     LlmCompactionAdapter, LlmGenerationAdapter, OpenAiCompletionsLlmAdapter,
-    OpenAiCompletionsParams,
+    OpenAiCompletionsParams, ResolvedEndpoint, ResolvedModelProvider, ResolvedProviderAuth,
+    StaticModelProviders,
 };
 
 mod support;
 
 use support::{
-    openai_completions_live_client, openai_completions_live_model, openai_completions_params,
-    retrying_openai_completions_client,
+    deepseek_completions_live_model, env_or_dotenv_var, openai_completions_live_client,
+    openai_completions_live_model, openai_completions_params, retrying_openai_completions_client,
 };
 
 fn model() -> ModelSelection {
@@ -115,18 +117,44 @@ async fn conversation(blobs: &InMemoryBlobStore) -> ContextSnapshot {
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_completions_runtime_live_standalone_compaction_preserves_facts() {
     let blobs = Arc::new(InMemoryBlobStore::new());
+    standalone_compaction_preserves_facts(blobs.clone(), model(), adapter(blobs)).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires DEEPSEEK_API_KEY (costs real money)"]
+async fn deepseek_completions_runtime_live_standalone_compaction_preserves_facts() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    standalone_compaction_preserves_facts(blobs.clone(), deepseek_model(), deepseek_adapter(blobs))
+        .await;
+}
+
+async fn standalone_compaction_preserves_facts(
+    blobs: Arc<InMemoryBlobStore>,
+    model: ModelSelection,
+    adapter: OpenAiCompletionsLlmAdapter,
+) {
+    eprintln!(
+        "standalone compaction: provider={}, model={}",
+        model.provider_id, model.model
+    );
+    let params = (model.provider_id == "openai").then(|| {
+        openai_completions_params(&OpenAiCompletionsParams {
+            store: Some(false),
+            ..Default::default()
+        })
+    });
     let task = ContextCompactionTask {
-        model: model(),
+        covered_entry_ids: Vec::new(),
+        tools: Vec::new(),
+        input_limit_tokens: None,
+        model,
         request_fingerprint: "openai-completions-live-compact".to_owned(),
         context: conversation(&blobs).await,
         target_tokens: Some(256),
-        params: Some(openai_completions_params(&OpenAiCompletionsParams {
-            store: Some(false),
-            ..Default::default()
-        })),
+        params,
     };
 
-    let result = adapter(blobs.clone())
+    let result = adapter
         .compact_context(ContextCompactionRequest {
             session_id: SessionId::new("session-openai-completions-compact"),
             request: task,
@@ -153,20 +181,49 @@ async fn openai_completions_runtime_live_standalone_compaction_preserves_facts()
 #[ignore = "requires OPENAI_API_KEY (costs real money)"]
 async fn openai_completions_runtime_live_compacted_summary_continues_conversation() {
     let blobs = Arc::new(InMemoryBlobStore::new());
+    compacted_summary_continues_conversation(blobs.clone(), model(), adapter(blobs)).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires DEEPSEEK_API_KEY (costs real money)"]
+async fn deepseek_completions_runtime_live_compacted_summary_continues_conversation() {
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    compacted_summary_continues_conversation(
+        blobs.clone(),
+        deepseek_model(),
+        deepseek_adapter(blobs),
+    )
+    .await;
+}
+
+async fn compacted_summary_continues_conversation(
+    blobs: Arc<InMemoryBlobStore>,
+    model: ModelSelection,
+    adapter: OpenAiCompletionsLlmAdapter,
+) {
+    eprintln!(
+        "compaction continuation: provider={}, model={}",
+        model.provider_id, model.model
+    );
     let task = ContextCompactionTask {
-        model: model(),
+        covered_entry_ids: Vec::new(),
+        tools: Vec::new(),
+        input_limit_tokens: None,
+        model: model.clone(),
         request_fingerprint: "openai-completions-live-compact-continue".to_owned(),
         context: conversation(&blobs).await,
         target_tokens: Some(192),
         params: None,
     };
-    let compacted = adapter(blobs.clone())
+    let compacted = adapter
         .compact_context(ContextCompactionRequest {
             session_id: SessionId::new("session-openai-completions-compact-continue"),
             request: task,
         })
         .await
         .expect("compact context");
+    assert_eq!(compacted.status, ContextCompactionStatus::Succeeded);
+    assert_eq!(compacted.context_entries.len(), 1);
     let summary_input = &compacted.context_entries[0];
     let summary = entry(
         1,
@@ -193,7 +250,7 @@ async fn openai_completions_runtime_live_compacted_summary_continues_conversatio
         run_id: RunId::new(3),
         turn_id: TurnId::new(1),
         request: LlmRequest {
-            model: model(),
+            model,
             request_fingerprint: "openai-completions-live-after-compact".to_owned(),
             context: ContextSnapshot {
                 api_kind: ProviderApiKind::OpenAiCompletions,
@@ -213,14 +270,49 @@ async fn openai_completions_runtime_live_compacted_summary_continues_conversatio
         },
     };
 
-    let execution = adapter(blobs.clone())
+    let execution = adapter
         .generate(request)
         .await
         .expect("continue from compacted context");
+    assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
     let answer =
         support::content_text(blobs.as_ref(), &execution.result.context_entries[0].content)
             .await
             .to_lowercase();
 
     assert!(answer.contains("silver kestrel"), "answer: {answer}");
+}
+
+fn deepseek_model() -> ModelSelection {
+    ModelSelection {
+        api_kind: ProviderApiKind::OpenAiCompletions,
+        provider_id: "deepseek".to_owned(),
+        model: deepseek_completions_live_model(),
+    }
+}
+
+fn deepseek_adapter(blobs: Arc<InMemoryBlobStore>) -> OpenAiCompletionsLlmAdapter {
+    let api_key = env_or_dotenv_var("DEEPSEEK_API_KEY")
+        .expect("DEEPSEEK_API_KEY must be set in env or root .env");
+    let base_url = env_or_dotenv_var("DEEPSEEK_BASE_URL")
+        .unwrap_or_else(|_| "https://api.deepseek.com".to_owned());
+    let endpoint = ResolvedEndpoint::new(
+        &base_url,
+        &BTreeMap::new(),
+        ["openai:completions".to_owned()],
+    )
+    .expect("DeepSeek endpoint");
+    let providers = StaticModelProviders::new().with_provider(
+        "deepseek",
+        ResolvedModelProvider {
+            auth: Some(ResolvedProviderAuth::api_key(api_key)),
+            endpoint: Some(endpoint),
+        },
+    );
+    let client = llm_clients::openai::completions::Client::new(
+        llm_clients::openai::completions::Config::without_api_key(),
+    )
+    .expect("base completion client");
+    OpenAiCompletionsLlmAdapter::new(retrying_openai_completions_client(client), blobs)
+        .with_provider_key_resolver(Arc::new(providers))
 }

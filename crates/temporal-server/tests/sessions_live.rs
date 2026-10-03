@@ -30,6 +30,248 @@ use temporalio_client::{
 };
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal + Postgres + object store and OPENAI_API_KEY (costs real money)"]
+async fn temporal_live_openai_standalone_compaction_and_continuation() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    require_openai_live_env()?;
+    let model = openai_live_model();
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, |client, queue, session| {
+        run_compaction_live_client(client, queue, session, model)
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal + Postgres + object store and ANTHROPIC_API_KEY (costs real money)"]
+async fn temporal_live_anthropic_standalone_compaction_and_continuation() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    anyhow::ensure!(
+        std::env::var("ANTHROPIC_API_KEY").is_ok_and(|key| !key.trim().is_empty()),
+        "ANTHROPIC_API_KEY must be set"
+    );
+    let model = engine::ModelSelection {
+        provider_id: "anthropic".into(),
+        api_kind: engine::ProviderApiKind::AnthropicMessages,
+        model: "claude-opus-5-5".into(),
+    };
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, |client, queue, session| {
+        run_compaction_live_client(client, queue, session, model)
+    })
+    .await
+}
+
+async fn run_compaction_live_client(
+    client: Client,
+    queue: String,
+    session_id: SessionId,
+    model: engine::ModelSelection,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(queue)
+        .build();
+    let mut config = SessionConfig {
+        model: Some(model_to_api(&model)),
+        generation: Some(api::GenerationConfig {
+            max_output_tokens: Some(2048),
+            ..Default::default()
+        }),
+        context: Some(api::ContextConfig {
+            compaction: Some(api::CompactionPolicy::Disabled),
+            input_limit_tokens: None,
+        }),
+        ..Default::default()
+    };
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.to_string()),
+        display_name: None,
+        config: Some(config.clone()),
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+    api.append_context(ContextAppendParams {
+        session_id: session_id.to_string(),
+        entries: vec![ContextAppendEntry { key: "client.compaction.history".into(), item: InputItem::Text {
+            provenance_ref: None, origin: None,
+            text: "The user's release codename is ZEPHYR-42. The release uses Postgres for session logs and content-addressed blobs. Preserve that exact codename for later questions.".into(),
+        } }],
+    }).await?;
+    api.compact_context(api::ContextCompactParams {
+        session_id: session_id.to_string(),
+    })
+    .await?;
+    let view = read_session_view(&api, &session_id).await?;
+    assert_eq!(
+        view.config
+            .as_ref()
+            .unwrap()
+            .context
+            .as_ref()
+            .unwrap()
+            .compaction,
+        Some(api::CompactionPolicy::Disabled)
+    );
+    let provider_kind = if model.api_kind == engine::ProviderApiKind::AnthropicMessages {
+        engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
+    } else {
+        engine::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND
+    };
+    assert!(
+        view.active_context
+            .entries
+            .iter()
+            .any(
+                |entry| entry.content.provider_kind.as_deref() == Some(provider_kind)
+                    && entry.kind == ContextEntryKindView::ProviderOpaque
+            )
+    );
+    assert_eq!(
+        view.active_context
+            .compaction
+            .as_ref()
+            .unwrap()
+            .effective_mode,
+        "disabled"
+    );
+    let run = start_text_run(
+        &api,
+        &session_id,
+        "What is the user's release codename? Reply with just that codename.",
+    )
+    .await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.id).await?;
+    assert_eq!(run.status, api::RunStatus::Completed);
+    assert!(
+        final_assistant_text(&run)
+            .unwrap_or_default()
+            .contains("ZEPHYR-42")
+    );
+
+    // Proactive compaction uses the same hosted activity after token usage is observed.
+    config.context.as_mut().unwrap().compaction = Some(api::CompactionPolicy::ProviderStandalone {
+        compact_threshold_tokens: Some(500),
+        target_tokens: None,
+    });
+    let view = read_session_view(&api, &session_id).await?;
+    api.put_session_config(SessionConfigPutParams {
+        session_id: session_id.to_string(),
+        config,
+        expected_config_revision: Some(view.config_revision),
+    })
+    .await?;
+    api.append_context(ContextAppendParams { session_id: session_id.to_string(), entries: vec![ContextAppendEntry {
+        key: "client.compaction.reference".into(), item: InputItem::Text { provenance_ref: None, origin: None,
+            text: "Routine reference: the release has completed its documentation review and awaits approval. ".repeat(100),
+        }
+    }] }).await?;
+    let run = start_text_run(
+        &api,
+        &session_id,
+        "Recall the release codename again. Reply with just the codename.",
+    )
+    .await?;
+    let run = wait_for_terminal_run(&api, &session_id, &run.id).await?;
+    assert_eq!(run.status, api::RunStatus::Completed);
+    assert!(
+        final_assistant_text(&run)
+            .unwrap_or_default()
+            .contains("ZEPHYR-42")
+    );
+    support::live::wait_until(
+        "hosted proactive compaction to finish",
+        std::time::Duration::from_secs(60),
+        async || {
+            let view = read_session_view(&api, &session_id).await?;
+            let events = api
+                .read_session_events(SessionEventsReadParams {
+                    session_id: session_id.to_string(),
+                    direction: Default::default(),
+                    before: None,
+                    after: None,
+                    limit: Some(500),
+                    wait_ms: None,
+                })
+                .await?
+                .result
+                .events;
+            Ok(!view.active_context.compaction.as_ref().unwrap().pending
+                && events
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event.kind,
+                            api::SessionEventKindView::ContextCompactionFinished { .. }
+                        )
+                    })
+                    .count()
+                    >= 2)
+        },
+    )
+    .await?;
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            session_id: session_id.to_string(),
+            direction: Default::default(),
+            before: None,
+            after: None,
+            limit: Some(500),
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    assert!(events.iter().any(|event| matches!(&event.kind, api::SessionEventKindView::ContextCompactionRequested { trigger, .. } if trigger == "highWatermark")));
+    let finished: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            api::SessionEventKindView::ContextCompactionFinished {
+                status,
+                calls,
+                usage,
+                ..
+            } => Some((status, calls, usage)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        finished.len() >= 2,
+        "manual and proactive compaction must both finish"
+    );
+    for (status, calls, usage) in finished {
+        assert_eq!(status, "succeeded");
+        assert!(*calls >= 1);
+        assert!(
+            usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens)
+                .is_some()
+        );
+    }
+    assert!(
+        run.usage
+            .as_ref()
+            .and_then(|usage| usage.input_tokens)
+            .is_some()
+    );
+    api.close_session(api::SessionCloseParams {
+        session_id: session_id.to_string(),
+        force: false,
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn temporal_live_session_start_then_run_start_completes_fake_runs() -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
@@ -116,6 +358,19 @@ async fn temporal_live_session_start_then_run_start_completes_openai_run() -> an
 
     let activities = WorkerActivities::from_env().await?;
     run_with_live_worker(activities, run_openai_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra, Postgres, Temporal, and OPENAI_API_KEY (costs real money)"]
+async fn temporal_live_provider_rejection_then_redaction_lets_the_session_continue()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+    require_openai_live_env()?;
+
+    let activities = WorkerActivities::from_env().await?;
+    run_with_live_worker(activities, run_provider_rejection_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1637,5 +1892,164 @@ async fn run_session_metadata_live_client(
         force: true,
     })
     .await?;
+    Ok(())
+}
+
+/// An image the provider cannot process: admission sees a PNG signature, the
+/// runtime cannot read its header and sends it unchanged, and the provider
+/// rejects the whole request. The run fails as `request_rejected` and its
+/// message is the provider's own text, not a runtime wrapper.
+async fn run_provider_rejection_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client, store)
+        .with_task_queue(task_queue)
+        .build();
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: Some("Provider rejection live test".to_owned()),
+        config: Some(SessionConfig {
+            model: Some(model_to_api(&model)),
+            ..SessionConfig::default()
+        }),
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+
+    let mut corrupt = b"\x89PNG\r\n\x1a\n".to_vec();
+    corrupt.extend(std::iter::repeat_n(0x5a, 4096));
+    let blob_ref = api
+        .put_blobs(api::BlobPutParams {
+            blobs: vec![api::BlobPutItem {
+                bytes_base64: base64::engine::general_purpose::STANDARD.encode(&corrupt),
+            }],
+        })
+        .await?
+        .result
+        .blobs
+        .remove(0)
+        .blob_ref;
+    let run = api
+        .start_run(RunStartParams {
+            notify_on_terminal: None,
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            source: RunStartSource::Input {
+                items: vec![
+                    InputItem::Media {
+                        origin: None,
+                        blob_ref,
+                        mime: "image/png".to_owned(),
+                        kind: api::MediaKind::Image,
+                        name: Some("corrupt.png".to_owned()),
+                    },
+                    InputItem::Text {
+                        provenance_ref: None,
+                        origin: None,
+                        text: "Describe this image.".to_owned(),
+                    },
+                ],
+            },
+            config: None,
+        })
+        .await?;
+    let run = wait_for_terminal_run(&api, &session_id, run.result.run.id.as_str()).await?;
+    assert_eq!(run.status, api::RunStatus::Failed);
+
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            direction: Default::default(),
+            before: None,
+            session_id: session_id.as_str().to_owned(),
+            after: None,
+            limit: Some(500),
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    let (kind, message) = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            api::SessionEventKindView::RunFailed {
+                run_id,
+                kind,
+                message,
+            } if run_id.as_str() == run.id.as_str() => Some((*kind, message.clone())),
+            _ => None,
+        })
+        .expect("runFailed event");
+    assert_eq!(kind, api::RunFailureKindView::RequestRejected, "{message}");
+    assert!(!message.is_empty());
+    assert!(
+        !message.contains("core agent") && !message.contains("provider call failed"),
+        "the provider's message is kept without runtime wrapping: {message}"
+    );
+
+    // Every later run resends the image and fails the same way. Replacing it
+    // in place with a placeholder lets the session continue.
+    let image = read_session_view(&api, &session_id)
+        .await?
+        .active_context
+        .entries
+        .into_iter()
+        .find(|entry| entry.content.media_handle.is_some())
+        .expect("image entry in active context");
+    let placeholder = format!(
+        "[image · {} · removed by operator]",
+        image.content.media_handle.as_deref().unwrap_or_default()
+    );
+    let replace = api::ContextReplaceParams {
+        session_id: session_id.as_str().to_owned(),
+        entries: vec![api::ContextReplaceEntry {
+            entry_id: image.id.clone(),
+            item: InputItem::Text {
+                provenance_ref: None,
+                origin: None,
+                text: placeholder.clone(),
+            },
+        }],
+    };
+    let replaced = api.replace_context(replace.clone()).await?.result;
+    assert_eq!(
+        replaced.results,
+        vec![api::ContextReplaceResult {
+            entry_id: image.id.clone(),
+            status: api::ContextReplaceStatus::Replaced,
+            failure: None,
+        }]
+    );
+    let entry = read_session_view(&api, &session_id)
+        .await?
+        .active_context
+        .entries
+        .into_iter()
+        .find(|entry| entry.id == image.id)
+        .expect("replaced entry keeps its id");
+    assert_eq!(entry.content.media_handle, None);
+    assert_eq!(entry.text.as_deref(), Some(placeholder.as_str()));
+    let retried = api.replace_context(replace).await?.result;
+    assert_eq!(
+        retried.results[0].status,
+        api::ContextReplaceStatus::Unchanged
+    );
+    assert_eq!(retried.context_revision, replaced.context_revision);
+
+    let next = start_text_run(
+        &api,
+        &session_id,
+        "The image was removed. Reply with the single word: continued",
+    )
+    .await?;
+    let next = wait_for_terminal_run(&api, &session_id, next.id.as_str()).await?;
+    assert_eq!(next.status, api::RunStatus::Completed, "{next:?}");
     Ok(())
 }

@@ -31,14 +31,16 @@ pub use context::{
     ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
-    ContextCompactionStatus, ContextCompactionTrigger, ContextEntry, ContextEntryId,
-    ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
+    ContextCompactionPhase, ContextCompactionPlan, ContextCompactionState, ContextCompactionStatus,
+    ContextCompactionTrigger, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind,
+    ContextEntrySource, ContextEvent, ContextGenerationMetadata, ContextMessageRole,
     ContextRemovalReason, ContextRewriteReason, ContextSnapshot, ContextState,
-    OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
-    OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND, OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND,
-    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND, SUPERSEDED_CATALOG_CAP, TokenEstimate,
-    TokenEstimateQuality, current_catalog_inputs, current_context_entry,
+    ContextUsageObservation, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND,
+    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
+    STANDALONE_COMPACTION_SOURCE, SUPERSEDED_CATALOG_CAP, TokenEstimate, TokenEstimateQuality,
+    compaction_input_limit_tokens, current_catalog_inputs, current_context_entry,
     is_supersedable_catalog_kind, is_superseded_context_entry, validate_external_context_key,
 };
 pub use environment::{
@@ -58,11 +60,11 @@ pub use promise::{
     PromiseStatus, promise_cancel_effect, promise_create_effect, promise_detach_effect,
 };
 pub use run::{
-    AcceptedRun, AcceptedRunEvent, ActiveRun, AwaitMode, AwaitSpec, JoinedWorkflowCall,
-    ParkedToolBatch, PromiseContextEntries, ResumeToolBatchCommand, RunEvent, RunFailure,
-    RunFailureKind, RunQueueState, RunRecord, RunRequestCommand, RunRequestSource, RunSource,
-    RunStatus, RunTerminalNotifyIntent, SteeringBatch, ToolBatchResumeOutput, ToolBatchSuspension,
-    WakeReason, request_run_submission_digest,
+    AcceptedRun, AcceptedRunEvent, ActiveRun, AwaitMode, AwaitSpec, ContextRecoveryState,
+    JoinedWorkflowCall, ParkedToolBatch, PromiseContextEntries, ResumeToolBatchCommand, RunEvent,
+    RunFailure, RunFailureKind, RunQueueState, RunRecord, RunRequestCommand, RunRequestSource,
+    RunSource, RunStatus, RunTerminalNotifyIntent, SteeringBatch, ToolBatchResumeOutput,
+    ToolBatchSuspension, WakeReason, request_run_submission_digest,
 };
 pub use state::*;
 pub use tooling::{

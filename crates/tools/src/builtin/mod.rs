@@ -35,6 +35,7 @@ pub use crate::fs::tools::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum BuiltinToolOperation {
+    Reference,
     ReadFile,
     WriteFile,
     EditFile,
@@ -103,7 +104,10 @@ pub struct BuiltinTool {
 
 #[derive(Clone, Copy)]
 pub enum BuiltinToolContext<'a> {
-    Vfs(&'a FsToolContext),
+    Vfs {
+        filesystem: &'a FsToolContext,
+        attachments: &'a [vfs::ResolvedWorkspaceAttachment],
+    },
     Environment(&'a EnvironmentToolContext),
     Transfer {
         vfs: &'a FsToolContext,
@@ -115,7 +119,9 @@ pub enum BuiltinToolContext<'a> {
 impl<'a> BuiltinToolContext<'a> {
     pub fn filesystem(self) -> ToolResult<&'a FsToolContext> {
         match self {
-            Self::Vfs(ctx) => Ok(ctx),
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => Ok(ctx),
             Self::Environment(ctx) => {
                 ctx.filesystem
                     .as_ref()
@@ -131,10 +137,20 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn vfs(self) -> ToolResult<&'a FsToolContext> {
         match self {
-            Self::Vfs(vfs) | Self::Transfer { vfs, .. } => Ok(vfs),
+            Self::Vfs {
+                filesystem: vfs, ..
+            }
+            | Self::Transfer { vfs, .. } => Ok(vfs),
             Self::Environment(_) => Err(ToolError::InvalidRequest {
                 message: "no_vfs_workspace_attachments".into(),
             }),
+        }
+    }
+
+    pub fn workspace_attachments(self) -> &'a [vfs::ResolvedWorkspaceAttachment] {
+        match self {
+            Self::Vfs { attachments, .. } => attachments,
+            _ => &[],
         }
     }
 
@@ -149,7 +165,7 @@ impl<'a> BuiltinToolContext<'a> {
         match self {
             Self::Environment(ctx) => Ok(ctx),
             Self::Transfer { environment, .. } => Ok(environment),
-            Self::Vfs(_) => Err(ToolError::InvalidRequest {
+            Self::Vfs { .. } => Err(ToolError::InvalidRequest {
                 message: "environment tool cannot use a VFS context".to_owned(),
             }),
         }
@@ -157,7 +173,9 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn blobs(self) -> &'a std::sync::Arc<dyn engine::storage::BlobStore> {
         match self {
-            Self::Vfs(ctx) => &ctx.blobs,
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => &ctx.blobs,
             Self::Transfer { vfs, .. } => &vfs.blobs,
             Self::Environment(ctx) => &ctx.blobs,
         }
@@ -165,7 +183,9 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn limits(self) -> crate::limits::ToolLimits {
         match self {
-            Self::Vfs(ctx) => ctx.limits,
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => ctx.limits,
             Self::Transfer { vfs, .. } => vfs.limits,
             Self::Environment(ctx) => ctx.limits,
         }
@@ -173,7 +193,9 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn drain_tool_effects(self) -> Vec<engine::ToolEffect> {
         match self {
-            Self::Vfs(ctx) => ctx.fs.drain_tool_effects(),
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => ctx.fs.drain_tool_effects(),
             Self::Environment(ctx) => ctx
                 .filesystem
                 .as_ref()
@@ -202,7 +224,9 @@ impl BuiltinTool {
     pub const fn environment(operation: BuiltinToolOperation, surface: BuiltinToolSurface) -> Self {
         assert!(!matches!(
             operation,
-            BuiltinToolOperation::Materialize | BuiltinToolOperation::Capture
+            BuiltinToolOperation::Materialize
+                | BuiltinToolOperation::Capture
+                | BuiltinToolOperation::Reference
         ));
         Self {
             domain: BuiltinToolDomain::Environment,
@@ -220,7 +244,8 @@ impl BuiltinTool {
     pub const fn vfs(operation: BuiltinToolOperation, surface: BuiltinToolSurface) -> Self {
         assert!(matches!(
             operation,
-            BuiltinToolOperation::ReadFile
+            BuiltinToolOperation::Reference
+                | BuiltinToolOperation::ReadFile
                 | BuiltinToolOperation::WriteFile
                 | BuiltinToolOperation::EditFile
                 | BuiltinToolOperation::ApplyPatch
@@ -309,6 +334,7 @@ impl BuiltinTool {
 
     pub const fn logical_id(self) -> &'static str {
         match (self.domain, self.operation) {
+            (BuiltinToolDomain::Vfs, BuiltinToolOperation::Reference) => "vfs.reference",
             (BuiltinToolDomain::Vfs, BuiltinToolOperation::ReadFile) => "vfs.read_file",
             (BuiltinToolDomain::Vfs, BuiltinToolOperation::WriteFile) => "vfs.write_file",
             (BuiltinToolDomain::Vfs, BuiltinToolOperation::EditFile) => "vfs.edit_file",
@@ -334,7 +360,9 @@ impl BuiltinTool {
             (BuiltinToolDomain::Environment, BuiltinToolOperation::JobRead) => "env.job_read",
             (
                 BuiltinToolDomain::Environment,
-                BuiltinToolOperation::Materialize | BuiltinToolOperation::Capture,
+                BuiltinToolOperation::Materialize
+                | BuiltinToolOperation::Capture
+                | BuiltinToolOperation::Reference,
             ) => unreachable!(),
             (
                 BuiltinToolDomain::Vfs,
@@ -389,6 +417,7 @@ impl BuiltinTool {
                 (BuiltinToolSurface::ClaudeCodeLike, BuiltinToolOperation::ListDir) => "VfsListDir",
                 (_, BuiltinToolOperation::Materialize) => "vfs_materialize",
                 (_, BuiltinToolOperation::Capture) => "vfs_capture",
+                (_, BuiltinToolOperation::Reference) => "vfs_reference",
                 (
                     _,
                     BuiltinToolOperation::RunProcess
@@ -446,7 +475,13 @@ impl BuiltinTool {
             (_, BuiltinToolOperation::JobSubmit, _) => {
                 crate::environment::jobs::JOB_SUBMIT_TOOL_NAME
             }
-            (_, BuiltinToolOperation::Materialize | BuiltinToolOperation::Capture, _) => {
+            (
+                _,
+                BuiltinToolOperation::Materialize
+                | BuiltinToolOperation::Capture
+                | BuiltinToolOperation::Reference,
+                _,
+            ) => {
                 unreachable!()
             }
             (_, BuiltinToolOperation::JobRun, _) => crate::environment::jobs::JOB_RUN_TOOL_NAME,
@@ -504,6 +539,10 @@ impl BuiltinTool {
             // Accept already-admitted identities from the initial transfer implementation.
             "vfs.materialize" | "env.vfs_materialize" => Self::vfs(
                 BuiltinToolOperation::Materialize,
+                BuiltinToolSurface::Canonical,
+            ),
+            "vfs.reference" => Self::vfs(
+                BuiltinToolOperation::Reference,
                 BuiltinToolSurface::Canonical,
             ),
             "vfs.capture" | "env.vfs_capture" => {
@@ -627,7 +666,8 @@ impl BuiltinTool {
 
     pub const fn parallelism(self) -> ToolParallelism {
         match self.operation {
-            BuiltinToolOperation::ReadFile
+            BuiltinToolOperation::Reference
+            | BuiltinToolOperation::ReadFile
             | BuiltinToolOperation::Grep
             | BuiltinToolOperation::Glob
             | BuiltinToolOperation::ListDir => ToolParallelism::ParallelSafe,
@@ -646,7 +686,8 @@ impl BuiltinTool {
 
     pub const fn execution_spec(self) -> ToolExecutionSpec {
         match self.operation {
-            BuiltinToolOperation::ReadFile
+            BuiltinToolOperation::Reference
+            | BuiltinToolOperation::ReadFile
             | BuiltinToolOperation::Grep
             | BuiltinToolOperation::Glob
             | BuiltinToolOperation::ListDir => ToolExecutionSpec {
@@ -746,6 +787,7 @@ impl BuiltinTool {
 impl BuiltinToolOperation {
     pub(super) fn name_for_error(self) -> &'static str {
         match self {
+            Self::Reference => "reference",
             Self::ReadFile => "read_file",
             Self::WriteFile => "write_file",
             Self::EditFile => "edit_file",

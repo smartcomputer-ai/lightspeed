@@ -1,3 +1,4 @@
+import { filesFromAttachments } from "@/lib/file-references";
 import { useContext, useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 import { MediaStrip } from "@/components/session/media";
 import { TranscriptLinksContext, type TranscriptLinks } from "@/components/session/transcript-links";
@@ -399,6 +400,8 @@ function ToolCallDetail({
   call: TranscriptToolCall;
   loadFullText?: FullTextLoader;
 }) {
+  const links = useContext(TranscriptLinksContext);
+  const files = [...filesFromAttachments(call.attachments ?? []).values()].filter((file) => file !== null);
   const input = call.argumentsJson ? prettyJson(call.argumentsJson) : null;
   const output = call.error || call.output || null;
   const effects = call.effects?.length ? JSON.stringify(call.effects, null, 2) : null;
@@ -407,6 +410,10 @@ function ToolCallDetail({
 
   return (
     <div className="mb-1.5 min-w-0 max-w-full space-y-1.5 pl-[1.875rem] pr-2">
+      {files.length > 0 && <div className="flex flex-wrap gap-2 text-xs">{files.map((file) => {
+        const href = links.blobHref?.(file.blobRef, { name: file.name, type: file.type, workspace: file.workspace, path: file.path });
+        return href ? <a key={file.handle} href={href} target="_blank" rel="noopener noreferrer" className="underline">{file.name}</a> : <span key={file.handle}>{file.name}</span>;
+      })}</div>}
       {call.media?.length ? <MediaStrip items={call.media} className="pt-1" /> : null}
       {input || output || effects ? (
         <Tabs defaultValue={defaultTab} className="min-w-0 max-w-full gap-1.5">

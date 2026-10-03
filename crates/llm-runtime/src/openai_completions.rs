@@ -26,8 +26,8 @@ use crate::{
     params::{openai_completions_params, validate_openai_reasoning_effort},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, debug_dump_request, partial_output_entries, store_debug_dumps,
-        truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
+        partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
 };
 
@@ -124,6 +124,20 @@ impl OpenAiCompletionsLlmAdapter {
     }
 
     /// Enable or disable storing raw provider request/response dumps.
+    async fn log_rejection(&self, request: &LlmGenerationRequest, message: &str) {
+        let dialect = CompletionDialect::for_provider(&request.request.model.provider_id);
+        match materialize_messages_tracked(
+            self.blobs.as_ref(),
+            &request.request.context.entries,
+            dialect,
+        )
+        .await
+        {
+            Ok((_, positions)) => log_request_rejection(request, "messages", &positions, message),
+            Err(error) => tracing::warn!(%error, "could not map a rejected Completions request"),
+        }
+    }
+
     pub fn with_debug_dumps(mut self, enabled: bool) -> Self {
         self.debug_dumps = enabled;
         self
@@ -205,7 +219,16 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
                     .and_then(|provider| provider.endpoint.as_ref())
                     .map(|endpoint| &endpoint.transport),
             )
-            .await?;
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                if let Some(rejection) = error.request_rejection() {
+                    self.log_rejection(&request, &rejection.message).await;
+                }
+                return Err(error.into());
+            }
+        };
         reject_failure_finish(&response)?;
         let mut result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
         catalog.normalize(&mut result);
@@ -226,6 +249,10 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
 
 #[async_trait]
 impl LlmCompactionAdapter for OpenAiCompletionsLlmAdapter {
+    fn blobs(&self) -> Option<&dyn BlobStore> {
+        Some(self.blobs.as_ref())
+    }
+
     async fn compact_context(
         &self,
         request: ContextCompactionRequest,
@@ -397,8 +424,21 @@ async fn materialize_messages(
     entries: &[ContextEntry],
     dialect: CompletionDialect,
 ) -> LlmAdapterResult<Vec<oai_c::CompletionMessage>> {
+    Ok(materialize_messages_tracked(blobs, entries, dialect)
+        .await?
+        .0)
+}
+
+/// [`materialize_messages`] plus the message each entry landed in.
+async fn materialize_messages_tracked(
+    blobs: &dyn BlobStore,
+    entries: &[ContextEntry],
+    dialect: CompletionDialect,
+) -> LlmAdapterResult<(Vec<oai_c::CompletionMessage>, RequestPositions)> {
     let mut messages = Vec::new();
+    let mut positions = RequestPositions::with_capacity(entries.len());
     let mut last_assistant_source: Option<ContextEntrySource> = None;
+    let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
 
     for entry in entries {
         match &entry.kind {
@@ -500,14 +540,15 @@ async fn materialize_messages(
             }
             _ => {
                 reject_foreign_provider_kind(entry)?;
-                let message = materialize_message(blobs, entry, dialect).await?;
+                let message = materialize_message(blobs, entry, dialect, &mut media).await?;
                 let assistant = message.role == "assistant";
                 push_message(&mut messages, message);
                 last_assistant_source = assistant.then(|| entry.source.clone());
             }
         }
+        positions.push((entry.entry_id, messages.len().saturating_sub(1)));
     }
-    Ok(messages)
+    Ok((messages, positions))
 }
 
 // Reasoning and visible output have distinct provenance labels, but belong
@@ -599,6 +640,7 @@ async fn materialize_message(
     blobs: &dyn BlobStore,
     entry: &ContextEntry,
     dialect: CompletionDialect,
+    media: &mut crate::media::RequestMedia,
 ) -> LlmAdapterResult<oai_c::CompletionMessage> {
     match &entry.kind {
         ContextEntryKind::Message { role } => {
@@ -641,20 +683,23 @@ async fn materialize_message(
             // in `validate_dialect_capabilities`.
             let drop_media =
                 dialect == CompletionDialect::DeepSeek && crate::blob_io::is_tool_sourced(entry);
-            let content = if let Some(mime) =
+            let content = if media.is_omitted(entry) && !drop_media {
+                oai_c::CompletionMessageContent::Text(crate::media::omission_placeholder(entry))
+            } else if let Some(mime) =
                 crate::blob_io::image_media_type(entry.content.media_type.as_deref())
             {
                 if drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else {
-                    let data =
-                        crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    let image = media.image(blobs, entry, mime).await?;
                     oai_c::CompletionMessageContent::Parts(vec![
-                        text_part(crate::blob_io::media_announcement(entry)),
+                        text_part(image.announcement(entry)),
                         part_with_extra(
                             "image_url",
                             "image_url",
-                            json!({ "url": format!("data:{mime};base64,{data}") }),
+                            json!({
+                                "url": format!("data:{};base64,{}", image.media_type, image.base64)
+                            }),
                         ),
                     ])
                 }
@@ -665,8 +710,7 @@ async fn materialize_message(
                 if document.is_pdf && drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else if document.is_pdf {
-                    let data =
-                        crate::blob_io::read_base64(blobs, &entry.content.content_ref).await?;
+                    let data = media.pdf_base64(blobs, entry).await?;
                     oai_c::CompletionMessageContent::Parts(vec![
                         text_part(crate::blob_io::media_announcement(entry)),
                         part_with_extra(
@@ -1195,6 +1239,21 @@ pub async fn result_from_compact_response(
     request: &ContextCompactionRequest,
     response: &ApiResponse<oai_c::Completion>,
 ) -> LlmAdapterResult<ContextCompactionResult> {
+    reject_failure_finish(response)?;
+    if response.parsed.choices.iter().any(|choice| {
+        finish_reason(choice.finish_reason.as_deref(), false) == LlmFinish::ContextLimit
+    }) {
+        return Err(LlmAdapterError::ContextLimit {
+            message: "compaction input exceeds the model context window".into(),
+        });
+    }
+    if response.parsed.choices.len() != 1
+        || response.parsed.choices[0].finish_reason.as_deref() != Some("stop")
+    {
+        return Err(LlmAdapterError::InvalidProviderRequest {
+            message: "Chat Completions compaction did not finish with a complete summary".into(),
+        });
+    }
     let summary = response.parsed.output_text();
     let summary = summary.trim();
     if summary.is_empty() {
@@ -1207,6 +1266,8 @@ pub async fn result_from_compact_response(
     }
     let content_ref = put_text(blobs, summary).await?;
     Ok(ContextCompactionResult {
+        usage: response.parsed.usage.as_ref().map(llm_usage),
+        calls: 1,
         session_id: request.session_id.clone(),
         context_revision: request.request.context.context_revision,
         status: ContextCompactionStatus::Succeeded,
@@ -1366,6 +1427,9 @@ fn finish_reason(reason: Option<&str>, has_tool_calls: bool) -> LlmFinish {
         Some("stop") => LlmFinish::Stop,
         Some("length") => LlmFinish::Length,
         Some("content_filter") => LlmFinish::ContentFilter,
+        Some("context_length_exceeded" | "max_input_tokens" | "max_prompt_tokens") => {
+            LlmFinish::ContextLimit
+        }
         Some(_) => LlmFinish::Unknown,
         None if has_tool_calls => LlmFinish::ToolCalls,
         None => LlmFinish::Unknown,
@@ -1758,6 +1822,9 @@ mod tests {
         assert_eq!(materialized.extra["thinking"], json!({"type":"enabled"}));
 
         let task = ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
             model: deepseek_request.model,
             request_fingerprint: "sha256:deepseek-compact".to_owned(),
             context: deepseek_request.context,
@@ -2588,6 +2655,9 @@ mod tests {
         let blobs = InMemoryBlobStore::new();
         let user_ref = blobs.insert_text("Long conversation").await;
         let task = ContextCompactionTask {
+            covered_entry_ids: Vec::new(),
+            tools: Vec::new(),
+            input_limit_tokens: None,
             model: model(),
             request_fingerprint: "sha256:compact".to_owned(),
             context: request(vec![entry(
@@ -2805,5 +2875,39 @@ mod tests {
             materialize_create_request(&blobs, &input_request).await,
             Err(LlmAdapterError::InvalidProviderRequest { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn tracked_lowering_maps_each_entry_to_its_message() {
+        let blobs = InMemoryBlobStore::new();
+        let text = blobs.insert_text("hello").await;
+        let source = ContextEntrySource::RunInput {
+            run_id: RunId::new(1),
+            input_index: 0,
+        };
+        let message = |id: u64, role: ContextMessageRole| {
+            entry(
+                id,
+                ContextEntryKind::Message { role },
+                source.clone(),
+                text.clone(),
+            )
+        };
+        let entries = vec![
+            message(1, ContextMessageRole::User),
+            message(2, ContextMessageRole::Assistant),
+            message(3, ContextMessageRole::User),
+        ];
+
+        let (messages, positions) =
+            materialize_messages_tracked(&blobs, &entries, CompletionDialect::OpenAi)
+                .await
+                .expect("materialize");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(
+            positions,
+            [(1, 0), (2, 1), (3, 2)].map(|(id, index)| (ContextEntryId::new(id), index))
+        );
     }
 }

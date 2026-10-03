@@ -87,6 +87,8 @@ pub struct SteeringBatch {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveRun {
+    #[serde(default)]
+    pub context_recovery: ContextRecoveryState,
     pub run_id: RunId,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
@@ -119,6 +121,13 @@ pub struct ActiveRun {
     pub failure: Option<RunFailure>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
+}
+
+/// Overflow retry bookkeeping belongs to one run and survives its turn boundaries.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextRecoveryState {
+    pub attempts: u32,
+    pub recovered_turn_id: Option<TurnId>,
 }
 
 impl ActiveRun {
@@ -246,6 +255,9 @@ pub enum ToolBatchResumeOutput {
         /// which reads the payloads; the reducer only validates and records.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         additional_context: Vec<crate::ContextEntryInput>,
+        /// Runtime-prepared result metadata, recorded without interpretation.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::Attachment>,
     },
     JoinedWorkflowCalls {
         /// Context per joined promise, appended after that promise's call
@@ -256,14 +268,16 @@ pub enum ToolBatchResumeOutput {
     },
 }
 
-/// Model-visible entries one resolved promise supplies beside its result,
-/// the same shape ordinary tool results carry in
-/// `model_visible_context_entries`. What they contain is the runtime's
-/// business; the reducer owns promise status, call association, and order.
+/// Context entries and metadata one resolved promise supplies beside its result.
+/// These have the same shape as ordinary tool results. Their interpretation
+/// belongs to the runtime; the reducer owns promise status, call association,
+/// and order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromiseContextEntries {
     pub promise_id: PromiseId,
     pub entries: Vec<crate::ContextEntryInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::Attachment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,6 +375,9 @@ impl RunSource {
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKind {
     ModelFailure,
+    /// The provider rejected the request as invalid or too large. The
+    /// failure message is the provider's own text.
+    RequestRejected,
     ToolFailure,
     ContextFailure,
     LimitExceeded,
@@ -378,6 +395,12 @@ pub struct RunQueueState {
 }
 
 pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
+    if state.context.compaction.is_pending()
+        || (state.context.compaction.is_queued()
+            && crate::core::components::context::compaction_safe_boundary(state))
+    {
+        return Ok(Vec::new());
+    }
     if state.lifecycle.status != CoreAgentStatus::Open {
         return Ok(Vec::new());
     }
@@ -404,7 +427,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
                 )]);
             }
             if active_run.status == RunStatus::Active
-                && let Some(proposal) = terminal_run_proposal(active_run)?
+                && let Some(proposal) = terminal_run_proposal(state, active_run)?
             {
                 return Ok(vec![proposal]);
             }
@@ -440,12 +463,40 @@ pub(crate) fn has_unconsumed_steering(active_run: &ActiveRun) -> bool {
 }
 
 fn terminal_run_proposal(
+    state: &CoreAgentState,
     active_run: &ActiveRun,
 ) -> Result<Option<CoreAgentEventProposal>, PlanningError> {
     let Some((turn_id, turn)) = active_run.turns.iter().next_back() else {
         return Ok(None);
     };
     let kind = match (&turn.status, turn.outcome.as_ref()) {
+        (
+            TurnStatus::Completed,
+            Some(TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }),
+        ) if !state.context.compaction.is_pending()
+            && active_run.context_recovery.recovered_turn_id != Some(turn.turn_id)
+            && (state.lifecycle.config.as_ref().is_none_or(|config| {
+                matches!(
+                    config.context.compaction,
+                    None | Some(crate::CompactionPolicy::Disabled)
+                )
+            }) || active_run.context_recovery.attempts
+                >= crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
+                || crate::core::components::context::standalone_prefix_ids(state).is_empty()) =>
+        {
+            Some(CoreAgentEvent::Run(Event::Failed {
+                run_id: active_run.run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::ContextFailure,
+                    message_ref: match &turn.outcome {
+                        Some(TurnOutcome::ContextLimit { failure_ref }) => failure_ref
+                            .clone()
+                            .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
+                        _ => Some(crate::llm_runtime_boundary_failure_ref()),
+                    },
+                },
+            }))
+        }
         (TurnStatus::Completed, Some(TurnOutcome::FinalOutput { .. }))
             if has_unconsumed_steering(active_run) =>
         {
@@ -466,6 +517,15 @@ fn terminal_run_proposal(
                 },
             }))
         }
+        (TurnStatus::Failed, Some(TurnOutcome::Rejected { failure_ref })) => {
+            Some(CoreAgentEvent::Run(Event::Failed {
+                run_id: active_run.run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::RequestRejected,
+                    message_ref: failure_ref.clone(),
+                },
+            }))
+        }
         (TurnStatus::Cancelled, Some(TurnOutcome::Cancelled)) => {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
@@ -480,6 +540,7 @@ fn terminal_run_proposal(
             Some(
                 TurnOutcome::ToolCallsQueued
                 | TurnOutcome::ContextUpdateRequired
+                | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
         ) => None,
@@ -488,6 +549,7 @@ fn terminal_run_proposal(
             Some(
                 TurnOutcome::ToolCallsQueued
                 | TurnOutcome::ContextUpdateRequired
+                | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
         ) => {
@@ -502,6 +564,7 @@ fn terminal_run_proposal(
             Some(
                 TurnOutcome::FinalOutput { .. }
                 | TurnOutcome::Failed { .. }
+                | TurnOutcome::Rejected { .. }
                 | TurnOutcome::Cancelled,
             ),
         ) => {
@@ -555,9 +618,10 @@ fn has_unstarted_tool_call_turn(active_run: &ActiveRun) -> bool {
 }
 
 pub(crate) fn latest_turn_is_terminal_run_outcome(
+    state: &CoreAgentState,
     active_run: &ActiveRun,
 ) -> Result<bool, PlanningError> {
-    Ok(terminal_run_proposal(active_run)?.is_some())
+    Ok(terminal_run_proposal(state, active_run)?.is_some())
 }
 
 pub(crate) fn apply_event(
@@ -588,7 +652,7 @@ pub(crate) fn apply_event(
                     config_revision, state.lifecycle.config_revision
                 )));
             }
-            crate::core::components::config::validate_run_config_for_state(state, run_config)?;
+            crate::core::components::config::validate_recorded_run_config(state, run_config)?;
             let expected_run_id =
                 state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                     DomainError::InvariantViolation("run id cursor exhausted".into())
@@ -637,6 +701,7 @@ pub(crate) fn apply_event(
 
             state.runs.queued.remove(0);
             state.runs.active = Some(ActiveRun {
+                context_recovery: Default::default(),
                 run_id: *run_id,
                 status: RunStatus::Active,
                 submission_id: queued.submission_id,

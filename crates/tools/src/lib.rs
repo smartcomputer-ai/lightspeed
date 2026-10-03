@@ -4,6 +4,7 @@
 //! and protocol/runtime adapters. The deterministic `engine` core stays
 //! independent from this crate.
 
+pub mod attachments;
 pub mod builtin;
 pub mod catalog;
 pub mod concurrency;

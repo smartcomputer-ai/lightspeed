@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 type MediaLoader = NonNullable<TranscriptLinks["loadMedia"]>;
 const blobCache = new WeakMap<MediaLoader, Map<string, Promise<Blob>>>();
 
-export function useMediaUrl(media: TranscriptMedia | null): string | null {
+export function useMediaUrl(media: Pick<TranscriptMedia, "blobRef" | "mime" | "localUrl"> | null): string | null {
   const links = useContext(TranscriptLinksContext);
   const loadMedia = links.loadMedia;
   const blobRef = media?.blobRef;
@@ -117,32 +117,5 @@ export function DocumentChip({ media }: { media: TranscriptMedia }) {
     </a>
   ) : (
     <span title={mediaTitle(media)} className={cn(className, "text-muted-foreground")}>{body}</span>
-  );
-}
-
-/// An image the assistant referenced by handle in its text; the handle is
-/// resolved against the media the transcript has folded so far.
-export function MediaByHandle({ handle, alt, inline = false }: { handle: string; alt?: string; inline?: boolean }) {
-  const links = useContext(TranscriptLinksContext);
-  const media = links.mediaByHandle?.get(handle) ?? null;
-  const url = useMediaUrl(media?.kind === "image" ? media : null);
-  const page = useBlobPage(media);
-  if (!media) {
-    return (
-      <span className="rounded border border-dashed px-1 text-xs text-muted-foreground" title="This media is not part of the session">
-        {alt || handle} (not found)
-      </span>
-    );
-  }
-  if (media.kind !== "image") {
-    return <DocumentChip media={media} />;
-  }
-  if (!url) {
-    return <span className="text-xs text-muted-foreground">{alt || media.name || handle}</span>;
-  }
-  return (
-    <a href={page ?? url} target="_blank" rel="noreferrer" title={mediaTitle(media)} className={inline ? "inline-block align-middle" : "block"}>
-      <img src={url} alt={alt || media.name || handle} className="max-h-96 max-w-full rounded-lg border object-contain" loading="lazy" />
-    </a>
   );
 }
