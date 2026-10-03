@@ -134,6 +134,14 @@ afterEach(async () => {
   else Reflect.deleteProperty(navigator, "pdfViewerEnabled");
 });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
+async function waitForEditor() {
+  return vi.waitFor(async () => {
+    await act(settle);
+    const editor = container.querySelector('textarea[aria-label="File contents"]');
+    expect(editor).toBeInstanceOf(HTMLTextAreaElement);
+    return editor as HTMLTextAreaElement;
+  });
+}
 async function render(withTree = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -380,7 +388,7 @@ function WorkspaceLocation() {
   return <output data-location>{useLocation().pathname}</output>;
 }
 
-it("renames a workspace in the picker while keeping the open file and unsaved edits", async () => {
+it.each([0, 100])("renames a workspace in the picker while keeping the open file and unsaved edits (file delay: %i ms)", async (fileDelay) => {
   let workspace = {
     workspaceId: "ws",
     displayName: "Documents",
@@ -399,7 +407,10 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
       }
       if (path.endsWith("/workspaces")) return [workspace];
       if (path.endsWith("/tree")) return { ...tree(), workspace };
-      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+      if (path.includes("/files/")) {
+        await new Promise((resolve) => setTimeout(resolve, fileDelay));
+        return { bytesBase64: "eA==", bytes: 1 };
+      }
       throw new Error(`Unexpected request: ${path}`);
     },
   );
@@ -423,8 +434,7 @@ it("renames a workspace in the picker while keeping the open file and unsaved ed
       </QueryClientProvider>,
     ),
   );
-  await act(settle);
-  const editor = container.querySelector("textarea")!;
+  const editor = await waitForEditor();
   await act(async () => {
     Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
@@ -1160,9 +1170,8 @@ it.each(["file", "folder"])(
         </QueryClientProvider>,
       ),
     );
-    await act(settle);
+    const editor = await waitForEditor();
     await act(async () => {
-      const editor = container.querySelector("textarea")!;
       Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
         "value",
@@ -1246,8 +1255,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
         </QueryClientProvider>,
       ),
     );
-    await act(settle);
-    const editor = container.querySelector("textarea")!;
+    const editor = await waitForEditor();
     const pressSave = () => {
       const event = new KeyboardEvent("keydown", {
         key: "s",
@@ -1397,8 +1405,7 @@ it.each([
         </QueryClientProvider>,
       ),
     );
-    await act(settle);
-    const editor = container.querySelector("textarea")!;
+    const editor = await waitForEditor();
     const edit = async (value: string) =>
       act(async () => {
         editor.focus();
