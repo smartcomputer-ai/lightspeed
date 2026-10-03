@@ -121,7 +121,7 @@ export type EmissionBody =
       /**
        * Workflow id of the session that emitted the invocation — the
        * endpoint a receiver signals its reply to. Supplied by the
-       * substrate adapter; the engine treats it as opaque.
+       * substrate adapter; the harness treats it as opaque.
        */
       holder_workflow_id: string;
       invocation: WorkflowToolInvocation;
@@ -141,7 +141,7 @@ export type RunStatus = "active" | "parked" | "cancelling" | "completed" | "fail
 /**
  * Stable identifier for a promise: a session-scoped counter rendered as
  * `promise_<n>`, the same convention as `run_<n>`, so the model copies a
- * short handle rather than a digest. The engine hands every tool batch a
+ * short handle rather than a digest. The harness hands every tool batch a
  * base one past the session cursor (`ToolInvocationBatchRequest::
  * promise_id_base`); the executor numbers the promises it creates from
  * that base, and the reducer accepts a creation only at or above the
@@ -352,7 +352,7 @@ export interface ChatActivation {
 }
 /**
  * Durable content identity and encoding. The payload stays in CAS; consumers
- * project it outside the engine rather than assuming every output is text.
+ * project it outside the harness rather than assuming every output is text.
  *
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "ContentRef".

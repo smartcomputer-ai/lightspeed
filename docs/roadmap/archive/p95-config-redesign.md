@@ -162,7 +162,7 @@
 ### Session config and its patch machinery
 
 - Engine `SessionConfig { model, run, turn, context, tools, fleet }` —
-  `crates/engine/src/core/components/config.rs:10-20`. Stored fully inside
+  `crates/harness/src/core/components/config.rs:10-20`. Stored fully inside
   `ConfigChanged { config, revision }` lifecycle events
   (`core/components/lifecycle.rs:11-14`); `config_revision` starts at 0 and is
   bumped with `checked_add(1)` at admission (`core/admit.rs:38-83`).
@@ -173,7 +173,7 @@
   `FieldPatch<T> = Set(T) | Clear` (`sessions.rs:199-214`). The engine mirrors
   the whole patch tree (`SessionConfigPatch`, `OptionalConfigPatch<T>`,
   `config.rs:46-252`), and the gateway translates between the two
-  (`temporal-server/src/gateway/service/api_config.rs`).
+  (`temporal-runtime/src/gateway/service/api_config.rs`).
 - Defaults are applied in three places: `default_session_config` seeds the base
   at open (`temporal-workflow/src/config.rs:35-48`, `DEFAULT_MODEL`), narrow
   serde defaults on sub-structs, and lazy `effective_*` helpers at projection
@@ -584,9 +584,9 @@ the wire surface over. No shims.
    (`model`/`generation`/`limits`/`context`/`features`), delete engine patch
    types (`SessionConfigPatch`, `OptionalConfigPatch`, all `apply_to`),
    `PatchSessionConfig` → `ReplaceSessionConfig`, version pinning + validation
-   updates (`engine/src/core/components/{config,command,lifecycle}.rs`,
+   updates (`harness/src/core/components/{config,command,lifecycle}.rs`,
    `core/admit.rs`); regenerate engine fixtures. Downstream crates may not
-   compile during this slice — `cargo test -p engine` is the green bar.
+   compile during this slice — `cargo test -p harness` is the green bar.
 2. **Workspace alignment + API cutover** — fix everything against the new
    structures in one pass: `default_session_config`
    (`temporal-workflow/src/config.rs`); gateway translation + feature→toolset

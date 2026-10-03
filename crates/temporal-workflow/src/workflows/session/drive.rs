@@ -39,8 +39,8 @@ pub(super) async fn admit_and_append_command(
         || environment_attachment_catalog_publication_is_obsolete(drive.state(), &command)
         || vfs_skill_catalog_publication_is_obsolete(drive.state(), &command)
     {
-        let rejection = engine::CommandRejection::new(
-            engine::CommandRejectionKind::ActiveWork,
+        let rejection = harness::CommandRejection::new(
+            harness::CommandRejectionKind::ActiveWork,
             "context observation no longer matches the configured source",
         );
         return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
@@ -173,7 +173,7 @@ pub(super) async fn drive_until_idle(
                     Some(argument_request) => {
                         let facts =
                             call_tool_prepare_promise_controls(ctx, argument_request).await?;
-                        engine::attach_promise_control_runtime(drive.state(), request, facts)?
+                        harness::attach_promise_control_runtime(drive.state(), request, facts)?
                     }
                     None => request,
                 };
@@ -216,7 +216,7 @@ async fn auto_reject_pending_approvals(
     }
     for approval in pending {
         let response = match &approval.continuation {
-            engine::ApprovalContinuation::OpenAiMcp {
+            harness::ApprovalContinuation::OpenAiMcp {
                 provider_request_id,
             } => {
                 let response = serde_json::json!({
@@ -231,7 +231,7 @@ async fn auto_reject_pending_approvals(
                         approval_request_id: provider_request_id.clone(),
                         approve: false,
                     },
-                    content: engine::ContentRef {
+                    content: harness::ContentRef {
                         content_ref,
                         media_type: Some("application/json".to_owned()),
                         provider_kind: Some("openai.responses.mcp_approval_response".to_owned()),
@@ -242,15 +242,15 @@ async fn auto_reject_pending_approvals(
                     token_estimate: None,
                 })
             }
-            engine::ApprovalContinuation::NativeMcp { .. } => None,
+            harness::ApprovalContinuation::NativeMcp { .. } => None,
         };
         match admit_and_append_command(
             ctx,
             drive,
-            CoreAgentCommand::DecideApproval(engine::ApprovalDecisionCommand {
+            CoreAgentCommand::DecideApproval(harness::ApprovalDecisionCommand {
                 approval_id: approval.approval_id,
                 run_id,
-                decision: engine::ApprovalDecision::Rejected,
+                decision: harness::ApprovalDecision::Rejected,
                 note: Some(NOTE.to_owned()),
                 decided_by: None,
                 response,
@@ -334,20 +334,20 @@ pub(super) fn should_close_on_terminal(args: &AgentSessionArgs, state: &CoreAgen
         && !state
             .promises
             .pending()
-            .any(|promise| promise.scope == engine::PromiseScope::Session)
+            .any(|promise| promise.scope == harness::PromiseScope::Session)
 }
 
 pub(super) async fn append_events(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     expected_head: Option<SessionPosition>,
-    events: Vec<engine::storage::UncommittedStoredEvent>,
+    events: Vec<harness::storage::UncommittedStoredEvent>,
 ) -> anyhow::Result<Vec<CoreAgentEntry>> {
     if events.is_empty() {
         return Ok(Vec::new());
     }
     let appended = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::append_events,
             AppendEventsRequest {
                 session_id: drive.session_id().clone(),
@@ -392,7 +392,7 @@ pub(super) async fn append_events(
 
 #[derive(Clone, Debug)]
 struct DetachedPromiseFollowup {
-    promise_id: engine::PromiseId,
+    promise_id: harness::PromiseId,
     status: &'static str,
     content_ref: Option<BlobRef>,
 }
@@ -439,12 +439,12 @@ async fn queue_detached_promise_followups(
         // replayed follow-up is a no-op.
         ctx.state_mut(|state| {
             state.queue_admission(AgentAdmission {
-                command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                     requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: Some(submission_id),
-                    source: engine::RunRequestSource::Input { input },
-                    run_config: engine::RunConfig::default(),
+                    source: harness::RunRequestSource::Input { input },
+                    run_config: harness::RunConfig::default(),
                 }),
                 correlation_token: None,
             });
@@ -458,18 +458,18 @@ fn detached_promise_followup_for_entry(
     entry: &CoreAgentEntry,
 ) -> Option<DetachedPromiseFollowup> {
     let (promise_id, status, content_ref) = match &entry.event {
-        CoreAgentEvent::Promise(engine::PromiseEvent::Resolved {
+        CoreAgentEvent::Promise(harness::PromiseEvent::Resolved {
             promise_id,
             payload_ref,
         }) => (promise_id, "resolved", payload_ref.clone()),
-        CoreAgentEvent::Promise(engine::PromiseEvent::Failed {
+        CoreAgentEvent::Promise(harness::PromiseEvent::Failed {
             promise_id,
             error_ref,
         }) => (promise_id, "failed", error_ref.clone()),
         _ => return None,
     };
     let promise = state.core_state.promises.promises.get(promise_id)?;
-    if promise.scope != engine::PromiseScope::Session || !promise.status.is_terminal() {
+    if promise.scope != harness::PromiseScope::Session || !promise.status.is_terminal() {
         return None;
     }
     if awaits::parked_tool_batch(&state.core_state).is_some_and(|parked| {
@@ -506,7 +506,7 @@ async fn put_detached_followup_blob(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     bytes: Vec<u8>,
 ) -> anyhow::Result<BlobRef> {
-    ctx.start_activity(
+    ctx.execute_activity(
         WorkflowActivities::put_blob,
         PutBlobRequest { bytes },
         activity_options(),
@@ -515,7 +515,7 @@ async fn put_detached_followup_blob(
     .map_err(|error| anyhow::anyhow!("{error}"))
 }
 
-fn detached_promise_submission_id(promise_id: &engine::PromiseId) -> SubmissionId {
+fn detached_promise_submission_id(promise_id: &harness::PromiseId) -> SubmissionId {
     let digest = BlobRef::from_bytes(format!("detached_promise:{promise_id}").as_bytes());
     let suffix = digest
         .as_str()
@@ -532,7 +532,7 @@ fn workflow_user_message_input(content_ref: BlobRef, preview: Option<String>) ->
         kind: ContextEntryKind::Message {
             role: ContextMessageRole::User,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -592,7 +592,7 @@ pub(super) fn invalid_vfs_skill_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {
     let key = ContextEntryKey::new("runtime.catalog.skills.vfs");
-    let entry = engine::current_context_entry(state, &key)?;
+    let entry = harness::current_context_entry(state, &key)?;
     (state.lifecycle.status == CoreAgentStatus::Open
         && entry.origin.as_deref() == Some("runtime.vfs.skills")
         && !vfs_skill_discovery_enabled(state))
@@ -622,7 +622,7 @@ pub(super) fn invalid_environment_prompt_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {
     let key = ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY);
-    let entry = engine::current_context_entry(state, &key)?;
+    let entry = harness::current_context_entry(state, &key)?;
     let source = entry
         .origin
         .as_deref()?
@@ -678,7 +678,7 @@ pub(super) fn environment_prompt_publication_is_obsolete(
             .map(|id| id.as_str())
             != Some(source)
         || ((state.runs.active.is_some() || !state.runs.queued.is_empty())
-            && engine::current_context_entry(state, &ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY))
+            && harness::current_context_entry(state, &ContextEntryKey::new(ENVIRONMENT_PROMPT_KEY))
                 .is_none_or(|current| current.content != entry.content))
 }
 
@@ -699,7 +699,7 @@ pub(super) fn invalid_environment_attachment_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {
     let key = ContextEntryKey::new(ENVIRONMENT_ATTACHMENT_CATALOG_KEY);
-    let entry = engine::current_context_entry(state, &key)?;
+    let entry = harness::current_context_entry(state, &key)?;
     (state.lifecycle.status == CoreAgentStatus::Open
         && !environment_attachment_catalog_matches(state, entry.origin.as_deref()))
     .then_some(CoreAgentCommand::RemoveContext {
@@ -721,7 +721,7 @@ pub(super) fn invalid_environment_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {
     let key = ContextEntryKey::new("runtime.catalog.skills.environment");
-    let entry = engine::current_context_entry(state, &key)?;
+    let entry = harness::current_context_entry(state, &key)?;
     let source = entry
         .origin
         .as_deref()?
@@ -781,18 +781,18 @@ mod tests {
 
     #[test]
     fn detached_session_promise_resolution_produces_followup_candidate() {
-        let promise_id = engine::PromiseId::new("promise_1");
+        let promise_id = harness::PromiseId::new("promise_1");
         let payload_ref = BlobRef::from_bytes(b"child output");
         let mut workflow = AgentSessionWorkflow::default();
         workflow.core_state.lifecycle.status = CoreAgentStatus::Open;
         workflow.core_state.promises.promises.insert(
             promise_id.clone(),
-            engine::Promise {
+            harness::Promise {
                 promise_id: promise_id.clone(),
-                source: engine::PromiseSource::Timer { fire_at_ms: 1 },
-                scope: engine::PromiseScope::Session,
-                ownership: engine::PromiseOwnership::Model,
-                status: engine::PromiseStatus::Resolved,
+                source: harness::PromiseSource::Timer { fire_at_ms: 1 },
+                scope: harness::PromiseScope::Session,
+                ownership: harness::PromiseOwnership::Model,
+                status: harness::PromiseStatus::Resolved,
                 payload_ref: Some(payload_ref.clone()),
                 error_ref: None,
                 deadline_ms: None,
@@ -800,11 +800,11 @@ mod tests {
         );
         let entry = CoreAgentEntry {
             position: SessionPosition {
-                seq: engine::EventSeq::new(1),
+                seq: harness::EventSeq::new(1),
             },
             observed_at_ms: 1,
             joins: Default::default(),
-            event: CoreAgentEvent::Promise(engine::PromiseEvent::Resolved {
+            event: CoreAgentEvent::Promise(harness::PromiseEvent::Resolved {
                 promise_id: promise_id.clone(),
                 payload_ref: Some(payload_ref.clone()),
             }),

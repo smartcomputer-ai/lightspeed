@@ -5,7 +5,8 @@
 //! them on a later pass. Pages bound rows examined, including live rows.
 //! Objects have incarnation-specific keys and are removed after catalog commit.
 
-use engine::{BlobRef, storage::BlobStoreError};
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
+use harness::{BlobRef, storage::BlobStoreError};
 use object_store::{ObjectStoreExt, path::Path as ObjectPath};
 use sqlx::{PgPool, Postgres, Row, Transaction, pool::PoolConnection};
 use thiserror::Error;
@@ -160,7 +161,7 @@ impl PgStore {
         "#
         );
         let mut tx = sweep_transaction(&self.pool).await?;
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(cutoff_to_i64(cutoff_ms)?)
             .bind(digests(pinned)?)
@@ -231,7 +232,7 @@ impl PgStore {
             "#
         );
         let mut tx = sweep_transaction(&self.pool).await?;
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(cutoff_to_i64(cutoff_ms)?)
             .bind(digests(pinned)?)

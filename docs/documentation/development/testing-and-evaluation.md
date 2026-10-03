@@ -25,9 +25,9 @@ tests from the repository root. Rust tests can select a crate, a test target,
 and a name filter:
 
 ```bash
-cargo test -p engine
+cargo test -p harness
 cargo test -p temporal-workflow --lib every_checkpoint_cut_reduces_to_the_same_state
-cargo test -p temporal-server --lib checkpoint_plus_tail_matches_full_replay
+cargo test -p temporal-runtime --lib checkpoint_plus_tail_matches_full_replay
 ```
 
 The two named tests use local fixtures and in-memory state; they don't need
@@ -38,9 +38,9 @@ test output will help diagnose a failure.
 TypeScript workspaces have their own test and typecheck scripts. For example:
 
 ```bash
-npm run test --workspace @lightspeed/platform-web -- src/lib/subscriptions.test.ts
-npm run test --workspace @lightspeed-ai/agent-client
-npm run typecheck --workspace @lightspeed/connectors
+npm run test --workspace @lightspeed-ai/platform-web -- src/lib/subscriptions.test.ts
+npm run test --workspace @lightspeed-ai/sdk
+npm run typecheck --workspace @lightspeed-ai/connectors
 ```
 
 Read the nearest `package.json` before choosing a script. A package may use
@@ -62,7 +62,7 @@ message wording. If a prerequisite is missing, fail with a useful explanation;
 external and credentialed tests should be explicitly `#[ignore]`, rather
 than silently returning success when an environment variable is absent.
 
-For deterministic engine changes, include replay coverage. A useful pattern
+For deterministic harness changes, include replay coverage. A useful pattern
 is to apply commands, retain the committed events, reconstruct state from
 those events, and compare it with the original result. When checkpoints are
 involved, compare a full reduction with checkpoint-plus-tail recovery. The
@@ -70,11 +70,11 @@ existing [rehydration test](../../../crates/temporal-workflow/src/rehydrate.rs)
 checks every cut in a small opened/closed fixture. That demonstrates the
 technique; a new behavior needs a history that actually exercises it.
 
-The engine's
-[native-output replay test](../../../crates/engine/src/core/drive.rs) also
+The harness's
+[native-output replay test](../../../crates/harness/src/core/drive.rs) also
 checks that recorded provider-neutral facts reconstruct the result without
 reading provider blobs. The
-[checkpoint tests](../../../crates/temporal-server/src/checkpoint.rs) cover
+[checkpoint tests](../../../crates/temporal-runtime/src/checkpoint.rs) cover
 equivalent recovery and falling back to the authoritative log when a
 checkpoint is malformed. These correspond to the durability model explained
 in [Agent loop and durability](../how-it-works/agent-loop-and-durability.md).
@@ -156,7 +156,7 @@ a fake model provider:
 ```bash
 ./dev.sh infra
 source scripts/dev/env.sh
-cargo test -p temporal-server --test sessions_live \
+cargo test -p temporal-runtime --test sessions_live \
   temporal_live_session_start_then_run_start_completes_fake_runs \
   -- --ignored --test-threads=1 --nocapture
 ```
@@ -173,7 +173,7 @@ provider's tool presentation without a model key. On Linux or macOS, run:
 
 ```bash
 source scripts/dev/env.sh
-cargo test -p temporal-server --test vfs_transfer_live -- --ignored --test-threads=1
+cargo test -p temporal-runtime --test vfs_transfer_live -- --ignored --test-threads=1
 cargo test -p store-pg --test store_pg_live \
   pg_live_streamed_blobs_verify_ranges_reuse_and_reject_corruption \
   -- --ignored --test-threads=1

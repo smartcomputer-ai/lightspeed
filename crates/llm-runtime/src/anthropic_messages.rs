@@ -1,6 +1,6 @@
 //! Anthropic Messages adapter.
 //!
-//! Lowers the engine's provider-neutral [`LlmRequest`] intent into native
+//! Lowers the harness's provider-neutral [`LlmRequest`] intent into native
 //! Anthropic Messages API requests and maps responses back into context
 //! entries and reducer facts, mirroring the OpenAI Responses adapter.
 //!
@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
@@ -1694,7 +1694,7 @@ async fn result_from_compact_response_with_strategy(
             failure_ref: None,
             context_entries: vec![ContextEntryInput {
                 kind: ContextEntryKind::ProviderOpaque,
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: put_json(blobs, &blocks[0]).await?,
                     media_type: Some(MEDIA_TYPE_JSON.into()),
                     provider_kind: Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.into()),
@@ -1759,7 +1759,7 @@ async fn result_from_compact_response_with_strategy(
             kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some(MEDIA_TYPE_TEXT.to_owned()),
                 provider_kind: Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.to_owned()),
@@ -1806,7 +1806,7 @@ async fn text_run_context_entries(
         kind: ContextEntryKind::Message {
             role: ContextMessageRole::Assistant,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: put_json(blobs, &Value::Array(blocks)).await?,
             media_type: Some(MEDIA_TYPE_JSON.to_owned()),
             provider_kind: Some(ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND.to_owned()),
@@ -1850,7 +1850,7 @@ async fn tool_use_context(
             call_id: call_id.clone(),
             name: tool_name.clone(),
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: native_call_ref.clone(),
             media_type: Some(MEDIA_TYPE_JSON.to_owned()),
             provider_kind: Some(PROVIDER_KIND_TOOL_USE.to_owned()),
@@ -1890,7 +1890,7 @@ async fn thinking_context_entry(
     };
     Ok(ContextEntryInput {
         kind: ContextEntryKind::ReasoningState,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some(MEDIA_TYPE_JSON.to_owned()),
             provider_kind: Some(PROVIDER_KIND_THINKING.to_owned()),
@@ -1931,7 +1931,7 @@ async fn opaque_context_entry(
     let content_ref = put_json(blobs, &raw_block).await?;
     Ok(ContextEntryInput {
         kind: ContextEntryKind::ProviderOpaque,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some(MEDIA_TYPE_JSON.to_owned()),
             provider_kind: Some(provider_kind.to_owned()),
@@ -2069,7 +2069,7 @@ mod tests {
     use std::collections::{BTreeMap, VecDeque};
     use std::sync::{Arc, Mutex};
 
-    use engine::{
+    use harness::{
         BlobRef, ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm,
         FunctionToolSpec, ModelSelection, ProviderParams, RunId, SessionId, ToolParallelism,
         TurnId, storage::InMemoryBlobStore,
@@ -2580,7 +2580,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: None,
                 provider_kind: None,
@@ -2638,11 +2638,11 @@ mod tests {
                 .await
                 .expect("provider options");
         let instructions_item = ContextEntry {
-            key: Some(engine::ContextEntryKey::new("instructions.000.test")),
+            key: Some(harness::ContextEntryKey::new("instructions.000.test")),
             entry_id: ContextEntryId::new(1),
             kind: ContextEntryKind::Instructions,
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef::text(instructions_ref),
+            content: harness::ContentRef::text(instructions_ref),
             preview: None,
             origin: None,
             provenance_ref: None,
@@ -2779,7 +2779,7 @@ mod tests {
                     run_id: RunId::new(1),
                     turn_id: TurnId::new(1),
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: thinking_ref,
                     media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                     provider_kind: Some(PROVIDER_KIND_THINKING.to_owned()),
@@ -2800,7 +2800,7 @@ mod tests {
                     run_id: RunId::new(1),
                     turn_id: TurnId::new(1),
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: assistant_ref,
                     media_type: Some("text/plain".to_owned()),
                     provider_kind: Some("anthropic.messages.text".to_owned()),
@@ -2815,14 +2815,14 @@ mod tests {
                 key: None,
                 entry_id: ContextEntryId::new(4),
                 kind: ContextEntryKind::ToolCall {
-                    call_id: engine::ToolCallId::new("toolu_1"),
+                    call_id: harness::ToolCallId::new("toolu_1"),
                     name: ToolName::new("read_file"),
                 },
                 source: ContextEntrySource::AssistantOutput {
                     run_id: RunId::new(1),
                     turn_id: TurnId::new(1),
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: tool_use_ref,
                     media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                     provider_kind: Some(PROVIDER_KIND_TOOL_USE.to_owned()),
@@ -2837,7 +2837,7 @@ mod tests {
                 key: None,
                 entry_id: ContextEntryId::new(5),
                 kind: ContextEntryKind::ToolResult {
-                    call_id: engine::ToolCallId::new("toolu_1"),
+                    call_id: harness::ToolCallId::new("toolu_1"),
                     is_error: false,
                 },
                 source: ContextEntrySource::Tool {
@@ -2845,7 +2845,7 @@ mod tests {
                     turn_id: TurnId::new(1),
                     batch_id: None,
                 },
-                content: engine::ContentRef::text(tool_result_ref),
+                content: harness::ContentRef::text(tool_result_ref),
                 preview: None,
                 origin: None,
                 provenance_ref: None,
@@ -2908,11 +2908,11 @@ mod tests {
         .expect("raw message blob");
         let followup_ref = text_blob(&blobs, "What marker?").await;
         let raw_entry = ContextEntry {
-            key: Some(engine::ContextEntryKey::new("client.anthropic.raw.note")),
+            key: Some(harness::ContextEntryKey::new("client.anthropic.raw.note")),
             entry_id: ContextEntryId::new(1),
             kind: ContextEntryKind::ProviderOpaque,
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: raw_message_ref,
                 media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                 provider_kind: Some(ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND.to_owned()),
@@ -3160,7 +3160,7 @@ mod tests {
                 exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
-                auth_ref: Some(engine::SecretRef {
+                auth_ref: Some(harness::SecretRef {
                     namespace: "mcp_server".to_string(),
                     id: "echo".to_string(),
                 }),
@@ -4536,7 +4536,7 @@ mod tests {
             source: ContextEntrySource::Runtime {
                 label: "inserted-skill".to_string(),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: skill_text_ref,
                 media_type: None,
                 provider_kind: None,
@@ -4583,7 +4583,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("image/jpeg".to_owned()),
                 provider_kind: None,
@@ -4607,7 +4607,7 @@ mod tests {
             announcement["text"],
             json!(format!(
                 "[image · {} · image/jpeg]",
-                engine::media::media_handle(&entry.content.content_ref)
+                harness::media::media_handle(&entry.content.content_ref)
             ))
         );
         let block = &blocks[1];
@@ -4639,7 +4639,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("application/pdf".to_owned()),
                 provider_kind: None,
@@ -4662,7 +4662,7 @@ mod tests {
             announcement["text"],
             json!(format!(
                 "[document: offer.pdf · {} · application/pdf]",
-                engine::media::media_handle(&entry.content.content_ref)
+                harness::media::media_handle(&entry.content.content_ref)
             ))
         );
         let block = &blocks[1];
@@ -4690,7 +4690,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("text/markdown".to_owned()),
                 provider_kind: None,
@@ -4738,7 +4738,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef::text(content_ref),
+            content: harness::ContentRef::text(content_ref),
             preview: None,
             origin: None,
             provenance_ref: None,
@@ -4759,13 +4759,13 @@ mod tests {
 
     fn catalog_entry(id: u64, content_ref: BlobRef, supersedes: Option<u64>) -> ContextEntry {
         ContextEntry {
-            key: Some(engine::ContextEntryKey::new("bot:directory")),
+            key: Some(harness::ContextEntryKey::new("bot:directory")),
             entry_id: ContextEntryId::new(id),
             kind: ContextEntryKind::Catalog {
                 title: "Bot directory".to_string(),
             },
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("text/markdown".to_string()),
                 provider_kind: None,
@@ -4802,7 +4802,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: input_ref,
                 media_type: None,
                 provider_kind: None,
@@ -4880,11 +4880,11 @@ mod tests {
         .await
         .expect("schema");
         let instructions_item = ContextEntry {
-            key: Some(engine::ContextEntryKey::new("instructions.000.test")),
+            key: Some(harness::ContextEntryKey::new("instructions.000.test")),
             entry_id: ContextEntryId::new(1),
             kind: ContextEntryKind::Instructions,
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef::text(instructions_ref),
+            content: harness::ContentRef::text(instructions_ref),
             preview: None,
             origin: None,
             provenance_ref: None,
@@ -4986,7 +4986,7 @@ mod tests {
             .expect("store pdf");
         let make = |id: u64,
                     kind: ContextEntryKind,
-                    content: engine::ContentRef,
+                    content: harness::ContentRef,
                     preview: Option<&str>| {
             ContextEntry {
                 entry_id: ContextEntryId::new(id),
@@ -5008,7 +5008,7 @@ mod tests {
                     call_id: ToolCallId::try_new("call_1").expect("call id"),
                     is_error: false,
                 },
-                engine::ContentRef::text(result_ref),
+                harness::ContentRef::text(result_ref),
                 None,
             ),
             make(
@@ -5016,7 +5016,7 @@ mod tests {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                engine::ContentRef {
+                harness::ContentRef {
                     content_ref: image_ref,
                     media_type: Some("image/png".to_owned()),
                     provider_kind: None,
@@ -5028,7 +5028,7 @@ mod tests {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                engine::ContentRef {
+                harness::ContentRef {
                     content_ref: pdf_ref,
                     media_type: Some("application/pdf".to_owned()),
                     provider_kind: None,

@@ -22,7 +22,7 @@ All 521 per-file category sums reconcile exactly with the baseline `cloc` code c
 
 | Crate | Non-test | Tests and support |
 |---|---:|---:|
-| temporal-server | 33,812 | 29,897 |
+| temporal-runtime | 33,812 | 29,897 |
 | engine | 16,344 | 10,545 |
 | tools | 15,390 | 8,270 |
 | cli | 12,233 | 3,872 |
@@ -32,7 +32,7 @@ All 521 per-file category sums reconcile exactly with the baseline `cloc` code c
 | api | 7,096 | 3,913 |
 | llm-runtime | 5,700 | 16,034 |
 
-The most misleading whole-file count is [engine/core/drive.rs](/Users/lukas/dev/lightspeed/crates/engine/src/core/drive.rs): 8,081 code lines become **1,968 non-test code lines** after excluding its test module. By contrast, [gateway/service/mod.rs](/Users/lukas/dev/lightspeed/crates/temporal-server/src/gateway/service/mod.rs) remains **4,365 non-test code lines**.
+The most misleading whole-file count is [engine/core/drive.rs](/Users/lukas/dev/lightspeed/crates/harness/src/core/drive.rs): 8,081 code lines become **1,968 non-test code lines** after excluding its test module. By contrast, [gateway/service/mod.rs](/Users/lukas/dev/lightspeed/crates/temporal-runtime/src/gateway/service/mod.rs) remains **4,365 non-test code lines**.
 
 Complete crate totals, the top 20 complex functions, the largest production files, and file churn are in [inventory.md](inventory.md). Raw results are in `summary.json` and `production-functions.json`.
 
@@ -50,13 +50,13 @@ These are descriptive thresholds, not pass/fail rules. PLOC is rust-code-analysi
 |---|---:|---:|---:|---:|
 | [scan](/Users/lukas/dev/lightspeed/crates/environment-daemon/src/filesystem/scan.rs:17) | 289 | 191 | 115 | 2 |
 | [Operation::execute](/Users/lukas/dev/lightspeed/crates/environment-daemon/src/filesystem/transfer/session.rs:720) | 349 | 134 | 114 | 1 |
-| [admit_command](/Users/lukas/dev/lightspeed/crates/engine/src/core/admit.rs:15) | 820 | 130 | 164 | 15 |
-| [tool_call_completed_proposals](/Users/lukas/dev/lightspeed/crates/engine/src/core/drive.rs:1638) | 327 | 107 | 56 | 35 |
+| [admit_command](/Users/lukas/dev/lightspeed/crates/harness/src/core/admit.rs:15) | 820 | 130 | 164 | 15 |
+| [tool_call_completed_proposals](/Users/lukas/dev/lightspeed/crates/harness/src/core/drive.rs:1638) | 327 | 107 | 56 | 35 |
 | [Scanner::advance](/Users/lukas/dev/lightspeed/crates/environment-daemon/src/filesystem/transfer/session.rs:102) | 137 | 69 | 41 | 1 |
 | [TransferManager::execute](/Users/lukas/dev/lightspeed/crates/environment-daemon/src/filesystem/transfer/session.rs:409) | 253 | 67 | 82 | 1 |
-| [visible_mcp_result](/Users/lukas/dev/lightspeed/crates/temporal-server/src/worker/mcp.rs:962) | 170 | 48 | 31 | 6 |
-| [invoke_batch](/Users/lukas/dev/lightspeed/crates/temporal-server/src/worker/session_tools.rs:1435) | 233 | 38 | 59 | 54 |
-| [start_session_internal](/Users/lukas/dev/lightspeed/crates/temporal-server/src/gateway/service/mod.rs:1071) | 208 | 32 | 81 | 68 |
+| [visible_mcp_result](/Users/lukas/dev/lightspeed/crates/temporal-runtime/src/worker/mcp.rs:962) | 170 | 48 | 31 | 6 |
+| [invoke_batch](/Users/lukas/dev/lightspeed/crates/temporal-runtime/src/worker/session_tools.rs:1435) | 233 | 38 | 59 | 54 |
+| [start_session_internal](/Users/lukas/dev/lightspeed/crates/temporal-runtime/src/gateway/service/mod.rs:1071) | 208 | 32 | 81 | 68 |
 | [project_event_kind](/Users/lukas/dev/lightspeed/crates/api-projection/src/lib.rs:658) | 450 | 29 | 91 | 41 |
 
 **Maintenance priority:** gateway lifecycle handling, session tool dispatch, and core tool-result/admission handling combine substantive responsibilities with frequent containing-file changes. Filesystem scanning/transfer has the highest static complexity even though its current files have little recorded churn.
@@ -82,8 +82,8 @@ Masked files preserve original line positions using whitespace. Consequently, js
 1. **Live-test environment/client setup — high confidence.** There are 13 `dotenv_var` definitions under `llm-runtime/tests`, including an existing shared implementation in [support/mod.rs](/Users/lukas/dev/lightspeed/crates/llm-runtime/tests/support/mod.rs:66). Exact matches between Responses caching/prompts/skills setup extend to approximately 169–170 physical lines. The copies have already diverged: [the skills copy](/Users/lukas/dev/lightspeed/crates/llm-runtime/tests/openai_responses_skills_live.rs:75) uses `split_once('=')?`, so a nonempty noncomment line without `=` ends lookup before subsequent keys. The shared helper explicitly skips that line. Some copies also strip quotes differently. This is observed control-flow divergence; no real `.env` was read to investigate it.
 2. **Daemon secret-redaction helpers — high confidence.** [jobs.rs](/Users/lukas/dev/lightspeed/crates/environment-daemon/src/jobs.rs:946) and [process.rs](/Users/lukas/dev/lightspeed/crates/environment-daemon/src/process.rs:1122) repeat `redactions_for_secret_env`, `redact_bytes`, and `find_subslice`. The detector found a 32-line/246-token match. Both callers live in one crate and use the same algorithm. Sharing a private helper would make future fixes consistent without unifying process/job lifecycle logic.
 3. **Native MCP inventory policy — high confidence.** [Responses](/Users/lukas/dev/lightspeed/crates/llm-runtime/src/openai_responses.rs:588), [Completions](/Users/lukas/dev/lightspeed/crates/llm-runtime/src/openai_completions.rs:777), and [Anthropic](/Users/lukas/dev/lightspeed/crates/llm-runtime/src/anthropic_messages.rs:914) repeat inventory retrieval, ordering, exposed-name filtering, omitted-name logging, and per-request cap accounting. These are shared policy operations. The construction of native provider request types afterward should remain separate.
-4. **Worker universe resolution — high confidence, small extraction.** [bots.rs](/Users/lukas/dev/lightspeed/crates/temporal-server/src/worker/bots.rs:45) and [channels.rs](/Users/lukas/dev/lightspeed/crates/temporal-server/src/worker/channels.rs:41) repeat the fixed-versus-runtime universe resolver, wrong-universe rejection, and retryability mapping. The normalized detector reports a much larger 156-line cluster that also includes activity wrappers. Share the resolver, not the role-specific activity transport.
-5. **ID macros — real duplication, lower priority.** The two `string_id!` definitions in [engine/session/ids.rs](/Users/lukas/dev/lightspeed/crates/engine/src/session/ids.rs:6) and [engine/core/components/ids.rs](/Users/lukas/dev/lightspeed/crates/engine/src/core/components/ids.rs:9) account for the largest exact production match, about 80 lines. A private engine-local macro could serve both. Similar macros across auth/MCP/VFS/domain crates are less compelling: adding a cross-domain dependency solely to eliminate wrappers may make the architecture worse.
+4. **Worker universe resolution — high confidence, small extraction.** [bots.rs](/Users/lukas/dev/lightspeed/crates/temporal-runtime/src/worker/bots.rs:45) and [channels.rs](/Users/lukas/dev/lightspeed/crates/temporal-runtime/src/worker/channels.rs:41) repeat the fixed-versus-runtime universe resolver, wrong-universe rejection, and retryability mapping. The normalized detector reports a much larger 156-line cluster that also includes activity wrappers. Share the resolver, not the role-specific activity transport.
+5. **ID macros — real duplication, lower priority.** The two `string_id!` definitions in [engine/session/ids.rs](/Users/lukas/dev/lightspeed/crates/harness/src/session/ids.rs:6) and [engine/core/components/ids.rs](/Users/lukas/dev/lightspeed/crates/harness/src/core/components/ids.rs:9) account for the largest exact production match, about 80 lines. A private engine-local macro could serve both. Similar macros across auth/MCP/VFS/domain crates are less compelling: adding a cross-domain dependency solely to eliminate wrappers may make the architecture worse.
 6. **Prompt/skill VFS root resolution — mixed.** [prompts/vfs.rs](/Users/lukas/dev/lightspeed/crates/tools/src/prompts/vfs.rs:223) and [skills/vfs.rs](/Users/lukas/dev/lightspeed/crates/tools/src/skills/vfs.rs:222) share path-derived IDs, duplicate-ID validation, attachment selection, and snapshot/workspace inspection. However, prompt revision tracking and skill trust/scope differ. Consider sharing attachment/path primitives; do not create one generic prompt/skill subsystem just because the source looks similar.
 7. **Rust API service/client forwarding — mostly mechanical.** Large identifier-normalized matches in [api/service.rs](/Users/lukas/dev/lightspeed/crates/api/src/service.rs:84) and [cli/api_client.rs](/Users/lukas/dev/lightspeed/crates/cli/src/api_client.rs:145) include regular typed method wrappers, sometimes overlapping within one file. These could be candidates for existing-manifest-driven generation in a separate design review, but are not evidence of duplicated business policy.
 8. **OpenAI client configuration — plausible small shared helper.** Audio, Completions, and Responses clients repeat environment overrides and organization/project header construction. Endpoint defaults and request types differ. A private OpenAI header/config utility is more appropriate than merging clients.

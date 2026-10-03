@@ -8,7 +8,7 @@ import type {
   DeploymentChannelAccountView,
   DeploymentEnvironmentProviderView,
   MethodGroup,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/sdk";
 import { groupsFor } from "@/lib/method-groups";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";

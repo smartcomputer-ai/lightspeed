@@ -283,7 +283,7 @@ Never re-propose without new evidence:
 ## Implementation
 
 - [x] Consolidate hosted environment lifecycle, gateway, resolver, runtime, and
-  source discovery modules under `crates/temporal-server/src/environments/`.
+  source discovery modules under `crates/temporal-runtime/src/environments/`.
 
 - [x] Engine config types and validation: attachment lists, ladders, uniqueness,
   one `default`, one `inherit` (profiles only), snapshot links read-only.
@@ -370,10 +370,10 @@ Never re-propose without new evidence:
   native injection, and native search; invalid environment IDs returning
   errors; skipping unused default validation; and catalog invalidation,
   stale-publication rejection, and replay across selection changes.
-- Contracts regenerated; engine, tools, temporal-workflow, temporal-server,
+- Contracts regenerated; engine, tools, temporal-workflow, temporal-runtime,
   profiles, api, and platform checks green.
 
-Review fixes passed 933 unit tests across engine, temporal-server,
+Review fixes passed 933 unit tests across engine, temporal-runtime,
 temporal-workflow, and tools (one ignored), plus
 `cargo check --workspace --all-targets`.
 

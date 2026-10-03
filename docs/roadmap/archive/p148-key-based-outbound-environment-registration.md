@@ -9,7 +9,7 @@
   API; the outbound transport; lifecycle, model-tool group, and CLI; the
   Platform key management and demo. Verified by the unit suites of every
   touched crate and by the live suite
-  `crates/temporal-server/tests/environment_registration_live.rs`, which
+  `crates/temporal-runtime/tests/environment_registration_live.rs`, which
   runs an in-process `envd` against the real gateway, Postgres, and Temporal:
   first registration, two concurrent reverse-dialed routes, offline and
   identity-only reconnect, a second identity under one key, refusal of a new

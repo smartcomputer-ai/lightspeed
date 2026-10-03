@@ -353,7 +353,7 @@ session's context unbounded today. Lands when someone wants silent rooms.
    endpoint, history replay.
 3. **Conversation workflow.** Rename and cut `channelSessionWorkflowV1`;
    control plane over `chat` triggers; `emitChatEvent` activity into
-   `@lightspeed/bots` admission; receipt signal handler with the existing
+   `@lightspeed-ai/bots` admission; receipt signal handler with the existing
    fallback; accepted-session set for invocations; `#N` handle map in the
    carry, integer `replyTo`/`message` in the `message_*` schemas
    (revision 2), `chat.sent` rows on every delivered send, and the

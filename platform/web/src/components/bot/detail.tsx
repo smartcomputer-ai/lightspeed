@@ -30,7 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { activityTone, foldActivity } from "@/components/activity-dot";
-import type { SessionActivity } from "@lightspeed-ai/agent-client";
+import type { SessionActivity } from "@lightspeed-ai/sdk";
 import { cn } from "@/lib/utils";
 import { useActionPermissions } from "@/lib/permissions";
 import { BotActivity } from "./activity";

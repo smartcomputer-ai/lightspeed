@@ -1,12 +1,12 @@
-//! Live engine-loop test for direct remote MCP through the Anthropic MCP
-//! connector: the engine session carries a `RemoteMcp` tool spec, the adapter
+//! Live harness-loop test for direct remote MCP through the Anthropic MCP
+//! connector: the harness session carries a `RemoteMcp` tool spec, the adapter
 //! lowers it into the request-level `mcp_servers` field, and the connector's
 //! `mcp_tool_use`/`mcp_tool_result` blocks come back as provider-opaque
 //! context without any Lightspeed tool events.
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use engine::{
+use harness::{
     ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy, RemoteMcpToolSpec,
     RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName, ToolParallelism, ToolSpec,
@@ -109,16 +109,16 @@ async fn anthropic_messages_live_core_session_uses_public_remote_mcp() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 20,
-            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                 requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
-                source: engine::RunRequestSource::Input {
+                source: harness::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
                         kind: ContextEntryKind::Message {
                             role: ContextMessageRole::User,
                         },
-                        content: engine::ContentRef {
+                        content: harness::ContentRef {
                             content_ref: input_ref,
                             media_type: None,
                             provider_kind: None,
@@ -196,8 +196,8 @@ fn remote_mcp_tools() -> BTreeMap<ToolName, ToolSpec> {
             server_url: MCP_TEST_SERVER_URL.to_string(),
             description_ref: None,
             allowed_tools: Some(vec![MCP_TEST_TOOL.to_string()]),
-            execution: engine::RemoteMcpExecution::Provider,
-            exposure: engine::RemoteMcpExposure::Inject,
+            execution: harness::RemoteMcpExecution::Provider,
+            exposure: harness::RemoteMcpExposure::Inject,
             approval: RemoteMcpApprovalPolicy::Never,
             defer_loading: Some(true),
             auth_ref: None,
@@ -212,7 +212,7 @@ fn remote_mcp_tools() -> BTreeMap<ToolName, ToolSpec> {
 fn session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        generation: engine::GenerationConfig {
+        generation: harness::GenerationConfig {
             max_output_tokens: Some(4096),
             reasoning_effort: None,
             tool_choice: None,
@@ -244,17 +244,17 @@ fn run_config() -> RunConfig {
     }
 }
 
-async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
+async fn assistant_text(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
                 if matches!(
                     item.kind,
-                    engine::ContextEntryKind::Message {
-                        role: engine::ContextMessageRole::Assistant
+                    harness::ContextEntryKind::Message {
+                        role: harness::ContextMessageRole::Assistant
                     }
                 ) {
                     text.push_str(&support::content_text(blobs, &item.content).await);
@@ -268,19 +268,19 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
 
 async fn mcp_context_items(
     blobs: &dyn BlobStore,
-    entries: &[engine::CoreAgentEntry],
+    entries: &[harness::CoreAgentEntry],
 ) -> Vec<Value> {
     let mut items = Vec::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
                 if matches!(
                     item.content.provider_kind.as_deref(),
                     Some(
-                        engine::ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND
-                            | engine::ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND
+                        harness::ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND
+                            | harness::ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND
                     )
                 ) {
                     let bytes = blobs
@@ -297,19 +297,19 @@ async fn mcp_context_items(
 
 async fn tool_search_context_items(
     blobs: &dyn BlobStore,
-    entries: &[engine::CoreAgentEntry],
+    entries: &[harness::CoreAgentEntry],
 ) -> Vec<Value> {
     let mut items = Vec::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
                 if matches!(
                     item.content.provider_kind.as_deref(),
                     Some(
-                        engine::ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND
-                            | engine::ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND
+                        harness::ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND
+                            | harness::ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND
                     )
                 ) {
                     let bytes = blobs
@@ -324,7 +324,7 @@ async fn tool_search_context_items(
     items
 }
 
-async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState) -> String {
+async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
     let Some(run) = state.runs.completed.first() else {
         return "run did not complete".to_owned();
     };

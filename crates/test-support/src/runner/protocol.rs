@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine::{
+use harness::{
     CommandRejection, CoreAgentCommand, CoreAgentEntry, CoreAgentState, SessionId, SessionPosition,
     storage::{BlobStore, SessionStore},
 };

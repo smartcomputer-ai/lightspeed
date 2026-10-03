@@ -1,4 +1,4 @@
-import { MAX_DICTATION_AUDIO_BYTES } from "@lightspeed/platform-shared";
+import { MAX_DICTATION_AUDIO_BYTES } from "@lightspeed-ai/platform-shared";
 
 export interface AudioCapture {
   result: Promise<Blob>;

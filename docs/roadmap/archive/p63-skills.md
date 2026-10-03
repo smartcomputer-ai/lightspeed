@@ -5,7 +5,7 @@
 - Accepted direction; remaining broader target-scoped work is deferred to
   follow-up roadmap items rather than blocking P63.
 - Depends on P62 for CAS-backed skill resource trees
-- First-cut `engine` skill model types are implemented:
+- First-cut `harness` skill model types are implemented:
   `SkillState`, skill ids, skill catalog/activation context item kinds,
   and active run/session-scoped activation records.
 - First-cut engine command/event/reducer wiring is implemented for setting the
@@ -105,7 +105,7 @@ over CAS and host targets, not as engine-local process state.
 
 ## Non-Goals
 
-- Do not execute skill scripts inside `engine`.
+- Do not execute skill scripts inside `harness`.
 - Do not scan local worker filesystems for project skills in hosted mode.
 - Do not let a skill grant itself tools or permissions.
 - Do not require a Unix environment for instruction-only skills.
@@ -856,7 +856,7 @@ provider request blob is the source of truth for the exact final text.
 
 ### Catalog Lifecycle And Context Injection
 
-Skill headers are read during runtime catalog discovery, not inside `engine`.
+Skill headers are read during runtime catalog discovery, not inside `harness`.
 
 Discovery reads each candidate `SKILL.md` enough to parse YAML frontmatter
 (`name`, `description`, and optional short description) and reads optional
@@ -1159,7 +1159,7 @@ Mutating tools must still fail on read-only skill mounts.
 
 ## Discovery
 
-Discovery is a runtime operation. It should never run in `engine`.
+Discovery is a runtime operation. It should never run in `harness`.
 
 Inputs:
 
@@ -1765,7 +1765,7 @@ Essential.
 
 ### G1: Skill Model And Parser
 
-- Add skill metadata structs outside `engine`.
+- Add skill metadata structs outside `harness`.
 - Use discriminated location/source structs rather than many optional fields.
 - Parse `SKILL.md` YAML frontmatter.
 - Parse optional `agents/lightspeed.yaml`.

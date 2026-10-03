@@ -53,7 +53,7 @@ authorization decisions.
 
 ## Bootstrap without Platform
 
-Use `lightspeed-server api-key provision` on the server host after migrations
+Use `lightspeed-runtime api-key provision` on the server host after migrations
 to generate a deployment administrator key, or supply its secret through
 `LIGHTSPEED_BOOTSTRAP_API_KEY`. The command prints JSON for protected capture.
 The key uses the ordinary hash store and remains revocable. Repeated
@@ -75,12 +75,12 @@ first configure the stores and apply migrations as described in
 from the server host:
 
 ```bash
-lightspeed-server api-key create \
+lightspeed-runtime api-key create \
   --deployment --assert-actor --name "Platform"
 ```
 
-From a source checkout, replace `lightspeed-server` with
-`cargo run -p temporal-server --` in these commands.
+From a source checkout, replace `lightspeed-runtime` with
+`cargo run -p temporal-runtime --` in these commands.
 
 Omitting `--group` grants every group allowed by the scope. This is intentional
 for the Platform, which manages universes and keys as well as member requests.
@@ -98,7 +98,7 @@ then create a universe and add members as described in
 [People and roles](people-and-roles.md).
 
 If provisioning a universe directly through the server host, use
-`lightspeed-server universe create --slug acorn` and retain its
+`lightspeed-runtime universe create --slug acorn` and retain its
 printed UUID. Platform-created universes are provisioned through its deployment
 key. See [People and roles](people-and-roles.md) for account administration.
 
@@ -128,7 +128,7 @@ The host CLI provides the same controls. For example, to restrict a key to
 profile operations in an existing universe:
 
 ```bash
-lightspeed-server api-key create \
+lightspeed-runtime api-key create \
   --universe-id "<universe-uuid>" --name "Profile automation" --group profiles
 ```
 
@@ -150,7 +150,7 @@ Both CLIs support rotation by the current prefix:
 
 ```bash
 lightspeed api-key rotate "<key-prefix>"
-lightspeed-server api-key rotate "<key-prefix>"
+lightspeed-runtime api-key rotate "<key-prefix>"
 ```
 
 The first command uses the configured connection; the second accesses the
@@ -163,8 +163,8 @@ create a replacement, update and verify its consumer, then revoke the old
 key in the UI or by prefix:
 
 ```bash
-lightspeed-server api-key list
-lightspeed-server api-key revoke "<key-prefix>"
+lightspeed-runtime api-key list
+lightspeed-runtime api-key revoke "<key-prefix>"
 ```
 
 Rotation and revocation reject subsequent requests using the old secret.

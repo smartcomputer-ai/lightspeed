@@ -25,7 +25,7 @@ Build the TypeScript client and Configurator, then start the server:
 
 ```bash
 npm install
-npm run build --workspace @lightspeed/configurator-mcp
+npm run build --workspace @lightspeed-ai/configurator-mcp
 LIGHTSPEED_AUTH_MODE=single node platform/configurator-mcp/dist/bin.js
 ```
 
@@ -72,5 +72,5 @@ surface profiles, or tool approval overlay.
 ## Regenerate and verify
 
 ```bash
-npm run check --workspace @lightspeed/configurator-mcp
+npm run check --workspace @lightspeed-ai/configurator-mcp
 ```

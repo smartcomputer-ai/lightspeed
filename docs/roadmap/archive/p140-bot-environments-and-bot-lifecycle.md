@@ -79,7 +79,7 @@ environment next to the bot, exec pollers have to be handed an id, the
 Environments page can display an idle policy but not set one on an existing
 environment, the editor and CLI give no hint that the policy lives there,
 and there is no way to retire or delete a bot at all
-(`platform/server/src/routes/bots.ts` has create and patch only;
+(`platform/backend/src/routes/bots.ts` has create and patch only;
 `enabled: false` pauses).
 
 ## Today
@@ -88,7 +88,7 @@ and there is no way to retire or delete a bot at all
   (sub-agents), `provision { providerId, templateId, retention, idlePolicy?,
   credentials? }` with `requestId = "session:" + sessionId` and an optional
   `closeWithSession` trigger on `originSession`.
-- The applier (`crates/temporal-server/src/gateway/service/profiles.rs`)
+- The applier (`crates/temporal-runtime/src/gateway/service/profiles.rs`)
   activates an `existing` environment through the same status-aware
   admission as `session/environments/activate`: `provisioning`/`booting`
   and powered-down environments are admitted as intent (P125/P126),
@@ -113,7 +113,7 @@ and there is no way to retire or delete a bot at all
   `signalWithStart` (`platform/bots/src/events.ts`).
 - `session/close { force }` cancels the active run and drops queued runs;
   `session/delete` on an open session force-closes first, then removes the
-  record (`crates/temporal-server/src/gateway/service/mod.rs`).
+  record (`crates/temporal-runtime/src/gateway/service/mod.rs`).
 
 ## Design — Part A: a bot's environment is an `existing` environment
 
@@ -373,7 +373,7 @@ with the snapshot-patch trick from P135): `bots.closed_at timestamptz`,
 
 ## Runtime and platform changes
 
-- `crates/temporal-server/src/environment_resolver.rs`: `ready` +
+- `crates/temporal-runtime/src/environment_resolver.rs`: `ready` +
   `desiredPower != running` → conditional write back to `running`.
 - `crates/cli` `profiles check`: `existing` idle-policy / external / closed
   hints.
@@ -384,7 +384,7 @@ with the snapshot-patch trick from P135): `bots.closed_at timestamptz`,
   activity; poll fire resolves a missing `environmentId` from the bot
   profile; `bot_trigger_put` and its schema description accept the
   omission.
-- `platform/server`: `bots/:botId/close`, `DELETE bots/:botId`, `409` on
+- `platform/backend`: `bots/:botId/close`, `DELETE bots/:botId`, `409` on
   enabling a closed bot, `410` on webhook ingest and manual events for a
   closed bot; `signalBotConfig` carries `closed`.
 - `platform/web`: Environments page idle-policy modal and create-dialog
@@ -455,8 +455,8 @@ with the snapshot-patch trick from P135): `bots.closed_at timestamptz`,
   trigger, row cascade); `PATCH` labels-only on a closed bot; web
   Lifecycle block with Close/Delete confirms, "Closed" on list/detail,
   "bot closed" on trigger cards.
-- **Verified**: `cargo test -p temporal-server --lib environment_resolver`,
-  `cargo clippy -p temporal-server -p cli --all-targets`, `npm run
+- **Verified**: `cargo test -p temporal-runtime --lib environment_resolver`,
+  `cargo clippy -p temporal-runtime -p cli --all-targets`, `npm run
   typecheck/test/build`, `check:identity`, `test:migrations` against a
   scratch platform database, bots Temporal integration 18/18 including
   the new close scenario (pending event archived `bot_closed`, forced

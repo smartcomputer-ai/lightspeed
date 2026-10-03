@@ -2,7 +2,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, RotateCw, ShieldOff } from "lucide-react";
-import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/agent-client";
+import type { DeploymentApiKeyCreateResponse, DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { GroupSummary, KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { RotateKeyDialog } from "@/components/api-keys/rotate-key-dialog";
 import { ApiKeySecret } from "@/components/api-keys/secret-once";

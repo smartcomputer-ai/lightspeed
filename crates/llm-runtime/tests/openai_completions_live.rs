@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, FunctionToolSpec, LlmFinish, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, ModelSelection, ProviderApiKind, RunId, SessionId, ToolChoice,
@@ -45,7 +45,7 @@ fn entry(
         key: None,
         kind,
         source,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -194,7 +194,7 @@ async fn openai_completions_runtime_live_fast_mode_reports_effective_service_tie
         env_or_dotenv_var("OPENAI_FAST_MODE_MODEL").unwrap_or_else(|_| "gpt-5.6-sol".to_owned());
     request.request.reasoning_effort = Some("none".to_owned());
     request.request.output_limit = Some(64);
-    request.request.processing_tier = Some(engine::ModelProcessingTier::Fast);
+    request.request.processing_tier = Some(harness::ModelProcessingTier::Fast);
     request.request.params = Some(openai_completions_params(&OpenAiCompletionsParams {
         store: Some(false),
         stream: Some(false),

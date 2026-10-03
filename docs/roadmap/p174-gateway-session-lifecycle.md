@@ -52,12 +52,12 @@ missing loads, describes, retry signals, and status queries. They cover:
 
 The existing fingerprint-matching test moved beside its implementation.
 
-- `cargo check -p temporal-server --lib` passed.
-- `cargo test -p temporal-server --lib gateway::service::`: 128 tests passed.
-- `cargo test -p temporal-server --lib`: 344 tests passed; one existing test
+- `cargo check -p temporal-runtime --lib` passed.
+- `cargo test -p temporal-runtime --lib gateway::service::`: 128 tests passed.
+- `cargo test -p temporal-runtime --lib`: 344 tests passed; one existing test
   remained ignored.
 - The eight lifecycle tests passed again after a test-fixture lint cleanup.
-- `cargo clippy -p temporal-server --lib --tests --no-deps` completed with four
+- `cargo clippy -p temporal-runtime --lib --tests --no-deps` completed with four
   pre-existing diagnostics and no new warnings. Moving the lifecycle methods
   removed the previous test-module-ordering warning in `workflow.rs`.
 - Changed-file formatting and `git diff --check` passed.

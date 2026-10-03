@@ -19,7 +19,7 @@ impl AgentSessionWorkflow {
             return;
         }
         match envelope.body {
-            engine::EmissionBody::RunTerminal { .. } => {
+            harness::EmissionBody::RunTerminal { .. } => {
                 // A receiving workflow interprets the typed run output and then
                 // sends an authorized SourceResolution. Dropping its encoding
                 // here would expose provider JSON as an ordinary tool result.
@@ -28,7 +28,7 @@ impl AgentSessionWorkflow {
                         .to_owned(),
                 );
             }
-            engine::EmissionBody::SourceResolution {
+            harness::EmissionBody::SourceResolution {
                 promise_id,
                 resolution,
             } => {
@@ -42,13 +42,13 @@ impl AgentSessionWorkflow {
                         producer: envelope.producer,
                     });
             }
-            engine::EmissionBody::ToolInvocation { invocation, .. } => {
+            harness::EmissionBody::ToolInvocation { invocation, .. } => {
                 self.last_error = Some(format!(
                     "session workflow cannot receive workflow tool invocation {}",
                     invocation.invocation_id
                 ));
             }
-            engine::EmissionBody::InvocationCancellation { invocation_id, .. } => {
+            harness::EmissionBody::InvocationCancellation { invocation_id, .. } => {
                 self.last_error = Some(format!(
                     "session workflow cannot receive workflow tool cancellation {invocation_id}"
                 ));
@@ -76,8 +76,9 @@ impl AgentSessionWorkflow {
             // pushed invocation enters the same durable Temporal delivery
             // spine after its admitting append commits; pull invocations are
             // consumed later through the receiver-authorized log read.
-            if let CoreAgentEvent::WorkflowTool(engine::WorkflowToolEvent::Emitted { invocation }) =
-                &entry.event
+            if let CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
+                invocation,
+            }) = &entry.event
             {
                 let Some(binding) = self
                     .core_state
@@ -91,9 +92,9 @@ impl AgentSessionWorkflow {
                     );
                 };
                 match &binding.target {
-                    engine::WorkflowToolTarget::Bound {
+                    harness::WorkflowToolTarget::Bound {
                         receiver,
-                        dispatch: engine::BoundWorkflowToolDispatch::Push,
+                        dispatch: harness::BoundWorkflowToolDispatch::Push,
                     } => {
                         self.pending_emissions.push(PendingEmission::immediate(
                             receiver.workflow_id.clone(),
@@ -107,11 +108,11 @@ impl AgentSessionWorkflow {
                         ));
                         continue;
                     }
-                    engine::WorkflowToolTarget::Bound {
-                        dispatch: engine::BoundWorkflowToolDispatch::Pull,
+                    harness::WorkflowToolTarget::Bound {
+                        dispatch: harness::BoundWorkflowToolDispatch::Pull,
                         ..
                     } => {}
-                    engine::WorkflowToolTarget::Start { .. } => {
+                    harness::WorkflowToolTarget::Start { .. } => {
                         anyhow::bail!(
                             "emitted workflow tool invocation {} has a start-target binding",
                             invocation.invocation_id
@@ -155,7 +156,7 @@ impl AgentSessionWorkflow {
 
     pub(super) fn queue_promise_cancellations_for_entries(&mut self, entries: &[CoreAgentEntry]) {
         for entry in entries {
-            let CoreAgentEvent::Promise(engine::PromiseEvent::Cancelled { promise_id }) =
+            let CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled { promise_id }) =
                 &entry.event
             else {
                 continue;
@@ -239,7 +240,7 @@ impl AgentSessionWorkflow {
     }
 }
 
-fn terminal_run_id_for_event(event: &CoreAgentEvent) -> Option<engine::RunId> {
+fn terminal_run_id_for_event(event: &CoreAgentEvent) -> Option<harness::RunId> {
     match event {
         CoreAgentEvent::Run(
             RunEvent::Completed { run_id, .. }
@@ -284,6 +285,7 @@ pub(super) async fn flush_pending_emissions(
             .signal(
                 AgentSessionWorkflow::deliver_emission,
                 pending.envelope.clone(),
+                crate::workflows::signal_options(),
             )
             .await
             .is_ok();
@@ -292,7 +294,7 @@ pub(super) async fn flush_pending_emissions(
         }
         if !matches!(
             pending.envelope.body,
-            engine::EmissionBody::ToolInvocation { .. }
+            harness::EmissionBody::ToolInvocation { .. }
         ) {
             continue;
         }
@@ -316,7 +318,7 @@ async fn terminal_tool_invocation_delivery_failure(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     pending: &PendingEmission,
 ) -> anyhow::Result<()> {
-    let engine::EmissionBody::ToolInvocation { invocation, .. } = &pending.envelope.body else {
+    let harness::EmissionBody::ToolInvocation { invocation, .. } = &pending.envelope.body else {
         return Ok(());
     };
     let message = format!(
@@ -324,7 +326,7 @@ async fn terminal_tool_invocation_delivery_failure(
         invocation.invocation_id, pending.receiver_workflow_id, pending.attempts
     );
     let error_ref = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::put_blob,
             PutBlobRequest {
                 bytes: message.into_bytes(),

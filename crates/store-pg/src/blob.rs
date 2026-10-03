@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use engine::{
+use harness::{
     BlobRef,
     storage::{BlobEdge, BlobGraphStore, BlobInfo, BlobStore, BlobStoreError},
 };
@@ -275,7 +275,7 @@ impl BlobStore for PgStore {
         &self,
         expected: &BlobRef,
         size: u64,
-        source: &mut dyn engine::storage::BlobSource,
+        source: &mut dyn harness::storage::BlobSource,
     ) -> Result<BlobRef, BlobStoreError> {
         let digest = sha256_hex(expected)?;
         // Admission renews existing content without downloading or re-uploading it.

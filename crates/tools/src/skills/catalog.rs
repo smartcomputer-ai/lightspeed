@@ -4,7 +4,7 @@ use super::SkillId;
 use crate::catalog::{
     SKILL_CATALOG_CONTEXT_KEY, catalog_context_input, catalog_publication_command,
 };
-use engine::{
+use harness::{
     BlobRef, ContextEntryInput, CoreAgentCommand,
     storage::{BlobGraphStore, BlobStore, BlobStoreError, record_contains_edges},
 };
@@ -534,7 +534,7 @@ impl RootReadDirectory for SkillCatalogRoot {
 mod tests {
     use std::sync::Arc;
 
-    use engine::{
+    use harness::{
         BlobRef,
         storage::{BlobStore, InMemoryBlobStore},
     };
@@ -639,7 +639,7 @@ mod tests {
         .await
         .expect("build catalog");
 
-        let embedded = engine::storage::collect_blob_refs(
+        let embedded = harness::storage::collect_blob_refs(
             &serde_json::from_slice(&build.catalog_bytes).expect("catalog json"),
         );
         let recorded: std::collections::BTreeSet<BlobRef> = blobs
@@ -882,7 +882,7 @@ mod tests {
         assert_eq!(key.as_str(), SKILL_CATALOG_CONTEXT_KEY);
         assert_eq!(
             entry.kind,
-            engine::ContextEntryKind::Catalog {
+            harness::ContextEntryKind::Catalog {
                 title: "VFS skill catalog".to_owned()
             }
         );

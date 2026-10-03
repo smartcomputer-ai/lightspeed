@@ -9,6 +9,7 @@ use crossterm::style::{
     SetForegroundColor,
 };
 use crossterm::terminal::{Clear, ClearType};
+use ratatui::backend::IntoCrossterm;
 use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 
@@ -186,11 +187,11 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line<'_>, wrap_width: usi
         SetColors(Colors::new(
             line.style
                 .fg
-                .map(Into::into)
+                .map(IntoCrossterm::into_crossterm)
                 .unwrap_or(CrosstermColor::Reset),
             line.style
                 .bg
-                .map(Into::into)
+                .map(IntoCrossterm::into_crossterm)
                 .unwrap_or(CrosstermColor::Reset),
         )),
         Clear(ClearType::UntilNewLine)
@@ -232,7 +233,10 @@ where
         if next_fg != fg || next_bg != bg {
             queue!(
                 writer,
-                SetColors(Colors::new(next_fg.into(), next_bg.into()))
+                SetColors(Colors::new(
+                    next_fg.into_crossterm(),
+                    next_bg.into_crossterm()
+                ))
             )?;
             fg = next_fg;
             bg = next_bg;

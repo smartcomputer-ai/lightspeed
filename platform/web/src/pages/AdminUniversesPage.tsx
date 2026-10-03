@@ -1,4 +1,4 @@
-import { universeSlugSchema } from "@lightspeed/platform-shared";
+import { universeSlugSchema } from "@lightspeed-ai/platform-shared";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

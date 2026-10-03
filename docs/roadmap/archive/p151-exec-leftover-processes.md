@@ -167,7 +167,7 @@ The polling has a second cause: the handle path does not work end to end.
   calls are unreachable.
 - The read cursor does not survive a tool batch. The hosted worker opens a
   fresh data-plane connection per tool activity
-  (`crates/temporal-server/src/worker/session_tools.rs`,
+  (`crates/temporal-runtime/src/worker/session_tools.rs`,
   `runtime_environment_for_resource`) and closes it after the batch. The
   `RemoteProcessExecutor` built from it keeps the per-handle `next_seq` in
   memory, so a handle used in a later batch reads with `after_seq: None` and
@@ -275,7 +275,7 @@ The evaluator cannot account for tool output from the event log:
 `toolCallCompleted` carries a status and effects but no output size or
 truncation flag. `runFailed` carries a free-text message, although the engine
 already classifies the failure: `RunFailure.kind` in
-`crates/engine/src/core/components/run.rs` is one of `model_failure`,
+`crates/harness/src/core/components/run.rs` is one of `model_failure`,
 `tool_failure`, `context_failure`, `limit_exceeded`, `cancelled`, `internal`,
 and the API event in `crates/api/src/sessions.rs` drops it.
 

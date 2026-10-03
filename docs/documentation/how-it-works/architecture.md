@@ -44,7 +44,8 @@ wake-up where the provider supports it; an offline registered machine must
 reconnect. Closing or deleting the session leaves the environment available
 for other work.
 
-The core represents a session as events reduced into state. Admission checks
+The `harness` crate is the deterministic agent core. It represents a session
+as events reduced into state. Admission checks
 whether a command is valid against that state. Planning decides which fact or
 effect comes next. The effect might be a model request, a tool invocation, or
 context compaction. The core emits an intent describing the work; an adapter
@@ -56,7 +57,7 @@ result reconstructs the state from which the next decision was made. This also m
 possible to test the agent loop with controlled effect results, independently
 of a provider or workflow service.
 
-The [core drive machine](../../../crates/engine/src/core/drive.rs) expresses
+The [core drive machine](../../../crates/harness/src/core/drive.rs) expresses
 this separation in code: it asks the host to append events or execute effects,
 then resumes from the committed entries or results.
 
@@ -136,7 +137,7 @@ A bot adds continuing behavior around the session loop. It receives events,
 applies routing and admission policy, and creates or drives sessions for work.
 A channel conversation handles a chat's pairing, inbound messages, and
 outbound delivery. Neither responsibility has to become another branch inside
-the deterministic session engine.
+the deterministic session harness.
 
 Controllers instead communicate through workflow starts and signals.
 Workflow-backed tools let a session ask another workflow to do work and receive
@@ -190,7 +191,7 @@ and operate those resources.
 
 ## Share infrastructure through runtime roles
 
-The hosted runtime remains one executable, `lightspeed-server`, with selectable
+The hosted runtime remains one executable, `lightspeed-runtime`, with selectable
 roles. Combining roles in one process is convenient for a first installation;
 separating them lets the deployment give different work different capacity.
 
@@ -225,8 +226,8 @@ The important source boundaries follow the same model:
 
 | Responsibility | Starting point |
 | --- | --- |
-| Deterministic state and decisions | [Engine](../../../crates/engine/README.md) |
-| Durable orchestration and effect execution | [Workflow code](../../../crates/temporal-workflow/src/lib.rs) and [runtime composition](../../../crates/temporal-server/src/main.rs) |
+| Deterministic state and decisions | [Harness](../../../crates/harness/README.md) |
+| Durable orchestration and effect execution | [Workflow code](../../../crates/temporal-workflow/src/lib.rs) and [runtime composition](../../../crates/temporal-runtime/src/main.rs) |
 | Provider-native requests and results | [LLM runtime](../../../crates/llm-runtime/src/lib.rs) and [provider clients](../../../crates/llm-clients/README.md) |
 | Persistent records and payloads | [PostgreSQL store](../../../crates/store-pg/src/lib.rs) and [VFS](../../../crates/vfs/src/lib.rs) |
 | Client contracts and display projections | [API crate](../../../crates/api/src/lib.rs) and [API projections](../../../crates/api-projection/src/lib.rs) |

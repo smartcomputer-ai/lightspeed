@@ -47,10 +47,10 @@ import type {
   ToolCallDisplayView,
   WebhookPreset,
   WebhookVerification,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/sdk";
 import { DEFAULT_MODEL, newSession } from "../engine";
 import type { DemoStore, DemoToolCall, SessionRecord, UniverseState } from "../store";
-import type { UniverseRole } from "@lightspeed/platform-shared";
+import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import { INCUS_PROVIDER_ID } from "./platform";
 
 // ---------------------------------------------------------------------------

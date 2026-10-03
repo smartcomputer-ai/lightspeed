@@ -3,7 +3,7 @@ import {
   Mountain, Leaf, Flame, Heart, Code, Briefcase, House, Music, Shield, Bot, type LucideIcon,
   Anchor, Book, Camera, Coffee, Crown, Gem, Palette, Puzzle, Telescope, Cpu,
 } from "lucide-react";
-import type { UniverseIconName, UniverseIconColor } from "@lightspeed/platform-shared";
+import type { UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
 import { cn } from "@/lib/utils";
 import { UNIVERSE_ICON_BACKGROUNDS } from "@/lib/identity-colors";
 

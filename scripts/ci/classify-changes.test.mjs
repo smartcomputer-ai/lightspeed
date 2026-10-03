@@ -23,7 +23,7 @@ test('manual, styles, assets, and included references select docs checks', () =>
 });
 
 test('unrelated code and internal prose do not run docs checks', () => {
-  assert.deepEqual(classifyPaths(['crates/engine/src/lib.rs']), { ...none, rust: true });
+  assert.deepEqual(classifyPaths(['crates/harness/src/lib.rs']), { ...none, rust: true });
   assert.deepEqual(classifyPaths(['crates/api/src/lib.rs']), { ...none, rust: true, consumers: true });
   assert.deepEqual(classifyPaths(['platform/web/src/main.tsx', 'clients/typescript/src/index.ts']),
     { ...none, consumers: true });
@@ -64,7 +64,7 @@ test('git classification covers pushed ranges, PR merge bases, removals, and ren
   git('init', '-q');
   write('docs/documentation/guide with spaces.md', '# Guide\n');
   const baseSha = commit('Initial manual');
-  write('crates/engine/src/lib.rs', '// main branch change\n');
+  write('crates/harness/src/lib.rs', '// main branch change\n');
   const mainSha = commit('Advance main');
   git('checkout', '-q', '--detach', baseSha);
   mkdirSync(join(cwd, 'docs/internal'), { recursive: true });

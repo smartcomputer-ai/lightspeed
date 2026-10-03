@@ -1,4 +1,4 @@
-use engine::{
+use harness::{
     BlobRef,
     storage::{BlobGraphStore, BlobStore, record_contains_edges},
 };
@@ -799,7 +799,7 @@ fn path_starts_with(path: &VfsPath, base: &VfsPath) -> bool {
 mod tests {
     use super::*;
     use crate::manifest::{VFS_SNAPSHOT_SCHEMA_VERSION, VfsTotals};
-    use engine::{
+    use harness::{
         BlobRef,
         storage::{BlobStore, InMemoryBlobStore},
     };
@@ -869,7 +869,7 @@ mod tests {
             .await
             .unwrap();
         let embedded =
-            engine::storage::collect_blob_refs(&serde_json::to_value(&result.manifest).unwrap());
+            harness::storage::collect_blob_refs(&serde_json::to_value(&result.manifest).unwrap());
         let recorded = recorded_children(&blobs, &result.snapshot_ref);
         assert_eq!(recorded, embedded);
         assert_eq!(recorded.len(), 2);
@@ -890,7 +890,7 @@ mod tests {
             .await
             .unwrap();
         let embedded =
-            engine::storage::collect_blob_refs(&serde_json::to_value(&manifest).unwrap());
+            harness::storage::collect_blob_refs(&serde_json::to_value(&manifest).unwrap());
         assert_eq!(recorded_children(&blobs, &committed.snapshot_ref), embedded);
         assert_eq!(embedded.len(), 3);
     }

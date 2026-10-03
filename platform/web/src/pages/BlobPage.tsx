@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Download, FileQuestion, Link2 } from "lucide-react";
-import { validWorkspaceTransferPath } from "@lightspeed/platform-shared";
+import { validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
 import { api, type SessionView, type WorkspaceTree, type VfsTreeEntry } from "@/api";
 import { LoadingNote, UniverseNotFound } from "@/components/page";
 import { ReadError } from "@/components/read-error";

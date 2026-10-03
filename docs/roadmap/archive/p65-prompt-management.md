@@ -39,9 +39,9 @@ Lightspeed's live instructions path is context-entry based:
 
 - `temporal-workflow` opens a session and upserts default instructions as
   `instructions.000.default`.
-- `engine` accepts external instruction context edits only under
+- `harness` accepts external instruction context edits only under
   `instructions.*` keys.
-- `engine` plans instruction entries first, sorted by key.
+- `harness` plans instruction entries first, sorted by key.
 - `llm-runtime` materializes OpenAI Responses instruction entries into the
   provider top-level `instructions` field by concatenating their text.
 - Skills use a different lane: `SkillCatalog` and `SkillActivation` context
@@ -95,7 +95,7 @@ or deleted entries under the managed prefix in one deterministic context event.
 ## Non-Goals
 
 - Do not put VFS reads, host filesystem reads, file watches, or prompt assembly
-  in `engine`.
+  in `harness`.
 - Do not reintroduce `ContextConfig.instructions_ref`.
 - Do not add generic developer-message prompt files in G1.
 - Do not force heartbeat, bootstrap, or memory content into permanent session
@@ -387,7 +387,7 @@ which provider paths actually receive instruction entries.
 
 ### G4: Gateway Pre-Run Refresh
 
-- Add idle pre-run refresh helper in `temporal-server`.
+- Add idle pre-run refresh helper in `temporal-runtime`.
 - Refresh prompts and skill catalog before `run/start` when idle.
 - Leave active/queued sessions unchanged in G1.
 - Add gateway tests for changed prompt files affecting the next run.

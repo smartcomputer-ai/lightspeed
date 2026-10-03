@@ -71,7 +71,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::{

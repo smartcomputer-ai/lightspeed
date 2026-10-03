@@ -40,7 +40,7 @@ message would require inventing a common representation for all of that data,
 then reconstructing the provider's representation later.
 
 Lightspeed keeps the native payload and extracts the smaller facts needed by
-the core. The engine needs to know that generation completed, which tool calls
+the core. The harness needs to know that generation completed, which tool calls
 were admitted, and what context entries resulted. The provider adapter owns
 the decoding and request construction.
 
@@ -63,7 +63,7 @@ API kinds. A session's API kind is fixed; start a new session to change it.
 
 Durable model selection contains the provider ID, API kind, and model name.
 The endpoint, authentication, and transport headers are resolved outside the
-engine immediately before provider I/O. This allows credentials to change
+harness immediately before provider I/O. This allows credentials to change
 without storing their secret values in the session's deterministic state.
 See [Models and credentials](../using-lightspeed/models-and-credentials.md)
 for the resolution rules.

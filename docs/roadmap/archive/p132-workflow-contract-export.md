@@ -4,7 +4,7 @@
 
 - Implemented 2026-08-25. Rust now exports and staleness-checks the schema,
   manifest/vectors, and integrator reference; the TypeScript client ships the
-  pure `@lightspeed-ai/agent-client/workflow` subpath; Bots and Channels consume
+  pure `@lightspeed-ai/sdk/workflow` subpath; Bots and Channels consume
   it and their handwritten emission contracts and workflow-id ports are gone.
   The client vector suite, both platform unit suites, and the Bots/Channels
   Temporal integration suites pass after cutover.
@@ -31,8 +31,8 @@ resolutions from anyone else (`process_pending_source_resolutions` in
 transport stays.
 
 What is wrong is where the contract lives. The envelope is `engine::emission`
-plus `temporal_workflow::types`; the `api` crate does not depend on `engine`
-(clients stay on `api` by design) and `engine` has no `schemars`, so none of
+plus `temporal_workflow::types`; the `api` crate does not depend on `harness`
+(clients stay on `api` by design) and `harness` has no `schemars`, so none of
 it reaches `crates/api/contract/` or the generated TypeScript client. Every
 TypeScript receiver therefore hand-mirrors it:
 
@@ -78,10 +78,10 @@ carry it), so receivers stop composing the session workflow id themselves.
 ### 1. Rust is the source of truth
 
 Derive `JsonSchema` on the exported types where they are defined, so the
-schema *is* the serde shape and cannot drift. `engine` gains `schemars`
+schema *is* the serde shape and cannot drift. `harness` gains `schemars`
 behind a cargo feature `contract` (a derive, no runtime behaviour; the
 determinism rule is about side effects, not derives). `temporal-workflow`
-enables `engine/contract`, derives on its own contract types, and exposes
+enables `harness/contract`, derives on its own contract types, and exposes
 `workflow_contract::export()` built the way `api::export_schemas()` is: a
 Draft-07 generator, every type under `definitions`, plus a small constants
 manifest and a generated reference. Mirror DTOs inside Rust were considered
@@ -112,7 +112,7 @@ stale, exactly as `cargo test -p api` does for the API contract.
 
 `clients/typescript/scripts/generate.mjs` additionally compiles
 `workflow.schema.json` into `src/generated/workflow-types.ts`, and the
-client ships a `./workflow` subpath (`@lightspeed-ai/agent-client/workflow`):
+client ships a `./workflow` subpath (`@lightspeed-ai/sdk/workflow`):
 
 - the generated types;
 - `DELIVER_EMISSION_SIGNAL`, `WORKFLOW_TOOL_RECOVERY_QUERY`, recipe

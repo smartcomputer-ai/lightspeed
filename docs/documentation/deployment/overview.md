@@ -13,10 +13,10 @@ roles when you need to scale or operate them independently.
 
 | Component | Responsibility | Needed for |
 | --- | --- | --- |
-| `lightspeed-server` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
+| `lightspeed-runtime` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
-| Platform server and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
+| Platform backend and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
 | Platform PostgreSQL database | Accounts, memberships, roles, and universe display/routing records | The Platform |
 | S3-compatible object storage | Stores blobs larger than the 64 KiB inline limit | Required for larger payloads; small blobs remain in PostgreSQL |
 | Configurator MCP | Exposes Lightspeed management operations to an MCP client | Managing Lightspeed through MCP |
@@ -30,7 +30,7 @@ persistence requirements, managed as part of the Temporal deployment.
 ```mermaid
 flowchart TD
   Browser[Browser] --> Edge[HTTPS reverse proxy]
-  Edge --> Platform[Platform server and web app]
+  Edge --> Platform[Platform backend and web app]
   Platform --> PlatformDB[(Platform PostgreSQL)]
   Platform --> Runtime[Private Lightspeed runtime]
   Runtime <--> Temporal[Temporal service]
@@ -69,7 +69,7 @@ for shared infrastructure and isolation limits.
 
 ## Runtime roles and scaling
 
-One `lightspeed-server` executable supplies five roles:
+One `lightspeed-runtime` executable supplies five roles:
 
 | Role | Work it owns |
 | --- | --- |
@@ -79,8 +79,9 @@ One `lightspeed-server` executable supplies five roles:
 | `bots` | Bot controllers, trigger work, and bot activities |
 | `channels` | Chat conversation workflows and core channel activities |
 
-By default, all five run in one process. Worker roles use their own task queues,
-and a role can be split further into workflow and activity workers.
+By default, all five run in one process. Each worker role runs its workflows
+and activities together on its own task queue. Select roles to deploy them
+separately and add replicas of the worker roles that need more capacity.
 Cross-component work reaches other workflows through starts and signals.
 
 Run exactly one `environment-gateway` process per deployment. It owns live

@@ -3,6 +3,7 @@
 //! universe: a presented secret selects the universe of its key, and a
 //! known daemon public key selects the universe of its environment.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use async_trait::async_trait;
 use environments::{
     CreateEnvironmentRegistrationKey, EnvironmentRegistrationKeyId,
@@ -44,7 +45,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
             RETURNING {KEY_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.registration_key_id.as_str())
             .bind(&record.display_name)
@@ -77,7 +78,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
         let query = format!(
             "SELECT {KEY_COLUMNS} FROM environment_registration_keys WHERE universe_id = $1 AND registration_key_id = $2"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(registration_key_id.as_str())
             .fetch_optional(&self.pool)
@@ -93,7 +94,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
         let query = format!(
             "SELECT {KEY_COLUMNS} FROM environment_registration_keys WHERE universe_id = $1 ORDER BY created_at_ms, registration_key_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -116,7 +117,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
             RETURNING {KEY_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.registration_key_id.as_str())
             .bind(request.revoked_at_ms)
@@ -136,7 +137,7 @@ impl EnvironmentRegistrationKeyStore for PgStore {
         let query = format!(
             "SELECT {KEY_COLUMNS} FROM environment_registration_keys WHERE universe_id = $1 AND secret_hash = $2"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(secret_hash)
             .fetch_optional(&self.pool)
@@ -189,7 +190,7 @@ pub(crate) async fn lock_registration_key(
     let query = format!(
         "SELECT {KEY_COLUMNS} FROM environment_registration_keys WHERE universe_id = $1 AND registration_key_id = $2 FOR UPDATE"
     );
-    let row = sqlx::query(&query)
+    let row = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(universe_id)
         .bind(registration_key_id.as_str())
         .fetch_optional(&mut **tx)

@@ -60,8 +60,8 @@ The following function runs in an application process or Temporal activity,
 using a `LightspeedClient` with `session` and `blobs/put` access in that universe:
 
 ```ts
-import { LightspeedClient } from "@lightspeed-ai/agent-client";
-import { recipeFingerprint } from "@lightspeed-ai/agent-client/workflow";
+import { LightspeedClient } from "@lightspeed-ai/sdk";
+import { recipeFingerprint } from "@lightspeed-ai/sdk/workflow";
 
 export async function createReviewSession(client: LightspeedClient) {
   async function putJsonBytes(json: string): Promise<string> {
@@ -151,7 +151,7 @@ import {
   WORKFLOW_TOOL_RECOVERY_QUERY, replyPromiseId, sourceResolutionEnvelope,
   type PromiseResolution, type WorkflowToolRecoveryResult,
   type WorkflowToolStartArgs,
-} from "@lightspeed-ai/agent-client/workflow";
+} from "@lightspeed-ai/sdk/workflow";
 
 const activities = proxyActivities<{
   reviewRelease(input: {

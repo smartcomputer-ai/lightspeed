@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     ApprovalContinuation, ApprovalSubject, BlobRef, CompactionPolicy, ContextCompactionRequest,
     ContextCompactionResult, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
     ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts,
@@ -317,7 +317,7 @@ impl OpenAiResponsesLlmAdapter {
                 kind: ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: crate::blob_io::put_text(self.blobs.as_ref(), &text).await?,
                     media_type: Some(MEDIA_TYPE_TEXT.into()),
                     provider_kind: Some("openai.responses.compaction_summary_text".into()),
@@ -1223,7 +1223,7 @@ pub async fn result_from_compact_response(
         } else {
             context_entries.push(ContextEntryInput {
                 kind: ContextEntryKind::ProviderOpaque,
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: put_json(blobs, &raw_item).await?,
                     media_type: Some(MEDIA_TYPE_JSON.into()),
                     provider_kind: Some("openai.responses.compacted_window_item".into()),
@@ -1368,7 +1368,7 @@ async fn assistant_context_entries(
         kind: ContextEntryKind::Message {
             role: ContextMessageRole::Assistant,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: if native {
                 put_json(blobs, &raw_item).await?
             } else {
@@ -1440,7 +1440,7 @@ async fn function_call_context(
             call_id: call_id.clone(),
             name: tool_name.clone(),
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: native_call_ref.clone(),
             media_type: Some(MEDIA_TYPE_JSON.to_string()),
             provider_kind: Some(PROVIDER_KIND_FUNCTION_CALL.to_string()),
@@ -1471,7 +1471,7 @@ async fn reasoning_context_entry(
     let content_ref = put_json(blobs, &raw_item).await?;
     Ok(Some(ContextEntryInput {
         kind: ContextEntryKind::ReasoningState,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some(MEDIA_TYPE_JSON.to_string()),
             provider_kind: Some(
@@ -1499,7 +1499,7 @@ async fn compaction_context_entry(
     let content_ref = put_json(blobs, &raw_item).await?;
     Ok(ContextEntryInput {
         kind: ContextEntryKind::ProviderOpaque,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some(MEDIA_TYPE_JSON.to_string()),
             provider_kind: Some(OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND.to_string()),
@@ -1518,7 +1518,7 @@ async fn web_search_call_context_entry(
     let content_ref = put_json(blobs, &raw_item).await?;
     Ok(ContextEntryInput {
         kind: ContextEntryKind::ProviderOpaque,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some(MEDIA_TYPE_JSON.to_string()),
             provider_kind: Some(OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND.to_string()),
@@ -1548,7 +1548,7 @@ async fn mcp_context_entry(
     let content_ref = put_json(blobs, &raw_item).await?;
     Ok(ContextEntryInput {
         kind: ContextEntryKind::ProviderOpaque,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some(MEDIA_TYPE_JSON.to_string()),
             provider_kind: Some(provider_kind.to_string()),
@@ -1650,7 +1650,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    use engine::{
+    use harness::{
         ContextCompactionTask, ContextEntryId, ContextEntrySource, ContextSnapshot, CoreAgentLlm,
         FunctionToolSpec, LlmGenerationRequest, LlmRequest, ModelSelection, ProviderParams, RunId,
         SessionId, ToolParallelism, TurnId, storage::InMemoryBlobStore,
@@ -1960,11 +1960,11 @@ mod tests {
                 .await
                 .expect("provider options");
         let instructions_item = ContextEntry {
-            key: Some(engine::ContextEntryKey::new("instructions.000.test")),
+            key: Some(harness::ContextEntryKey::new("instructions.000.test")),
             entry_id: ContextEntryId::new(1),
             kind: ContextEntryKind::Instructions,
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef::text(instructions_ref),
+            content: harness::ContentRef::text(instructions_ref),
             preview: None,
             origin: None,
             provenance_ref: None,
@@ -1981,7 +1981,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: input_ref,
                 media_type: None,
                 provider_kind: None,
@@ -2013,7 +2013,7 @@ mod tests {
         request.compaction = Some(CompactionPolicy::ProviderTriggered {
             compact_threshold_tokens: Some(120_000),
         });
-        request.processing_tier = Some(engine::ModelProcessingTier::Flex);
+        request.processing_tier = Some(harness::ModelProcessingTier::Flex);
         request.params = Some(openai_params(&OpenAiResponsesParams {
             reasoning: Some(OpenAiReasoningConfig {
                 effort: Some("medium".to_string()),
@@ -2093,17 +2093,17 @@ mod tests {
         .expect("enabled web search");
 
         let mut request = intent_request(Vec::new());
-        request.tools = vec![engine::ToolSpec {
-            name: engine::ToolName::new("web_search"),
-            kind: engine::ToolKind::ProviderNative(engine::ProviderNativeToolSpec {
+        request.tools = vec![harness::ToolSpec {
+            name: harness::ToolName::new("web_search"),
+            kind: harness::ToolKind::ProviderNative(harness::ProviderNativeToolSpec {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 native_tool_ref: blobs
                     .put_bytes(serde_json::to_vec(&native).expect("native json"))
                     .await
                     .expect("native definition"),
-                execution: engine::ProviderNativeToolExecution::ProviderHosted,
+                execution: harness::ProviderNativeToolExecution::ProviderHosted,
             }),
-            parallelism: engine::ToolParallelism::ParallelSafe,
+            parallelism: harness::ToolParallelism::ParallelSafe,
             execution: Default::default(),
         }];
         request.tool_choice = Some(ToolChoice::Auto);
@@ -2222,9 +2222,9 @@ mod tests {
             },
             source: ContextEntrySource::ApprovalDecision {
                 run_id: RunId::new(1),
-                approval_id: engine::ApprovalId::try_new("approval_1").expect("approval id"),
+                approval_id: harness::ApprovalId::try_new("approval_1").expect("approval id"),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: response_ref,
                 media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                 provider_kind: None,
@@ -2259,7 +2259,7 @@ mod tests {
                 exposure: RemoteMcpExposure::Inject,
                 approval: RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
-                auth_ref: Some(engine::SecretRef {
+                auth_ref: Some(harness::SecretRef {
                     namespace: "mcp_server".to_string(),
                     id: "echo".to_string(),
                 }),
@@ -2562,7 +2562,7 @@ mod tests {
             source: ContextEntrySource::Runtime {
                 label: "runtime.catalog.skills.vfs".to_string(),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: catalog_ref,
                 media_type: None,
                 provider_kind: None,
@@ -2583,7 +2583,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: input_ref,
                 media_type: None,
                 provider_kind: None,
@@ -2603,7 +2603,7 @@ mod tests {
             source: ContextEntrySource::Runtime {
                 label: "inserted-skill".to_string(),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: skill_text_ref,
                 media_type: None,
                 provider_kind: None,
@@ -2653,7 +2653,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: input_ref,
                 media_type: None,
                 provider_kind: None,
@@ -2822,7 +2822,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: input_ref,
                 media_type: None,
                 provider_kind: None,
@@ -3401,15 +3401,15 @@ mod tests {
         }
         assert_eq!(
             result.context_entries[0].content.provider_kind.as_deref(),
-            Some(engine::OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND)
+            Some(harness::OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND)
         );
         assert_eq!(
             result.context_entries[1].content.provider_kind.as_deref(),
-            Some(engine::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
+            Some(harness::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
         );
         assert_eq!(
             result.context_entries[2].content.provider_kind.as_deref(),
-            Some(engine::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND)
+            Some(harness::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND)
         );
         assert_eq!(
             result.context_entries[1].preview.as_deref(),
@@ -3480,7 +3480,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: id as u32 - 1,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: media_type.map(str::to_owned),
                 provider_kind: None,
@@ -3536,7 +3536,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: pdf_ref,
                 media_type: Some("application/pdf".to_owned()),
                 provider_kind: None,
@@ -3558,7 +3558,7 @@ mod tests {
             value["content"][0]["text"],
             json!(format!(
                 "[document: offer.pdf · {} · application/pdf]",
-                engine::media::media_handle(&BlobRef::from_bytes(b"%PDF-1.4 fake"))
+                harness::media::media_handle(&BlobRef::from_bytes(b"%PDF-1.4 fake"))
             ))
         );
         assert_eq!(value["content"][1]["type"], json!("input_file"));
@@ -3584,7 +3584,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: doc_ref,
                 media_type: Some("text/markdown".to_owned()),
                 provider_kind: None,
@@ -3770,7 +3770,7 @@ mod tests {
                 run_id: RunId::new(1),
                 turn_id: TurnId::new(1),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: None,
                 provider_kind: None,
@@ -3816,7 +3816,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("image/png".to_owned()),
                 provider_kind: None,
@@ -3839,7 +3839,7 @@ mod tests {
             value["content"][0]["text"],
             json!(format!(
                 "[image: photo.png · {} · image/png]",
-                engine::media::media_handle(&entry.content.content_ref)
+                harness::media::media_handle(&entry.content.content_ref)
             ))
         );
         assert_eq!(value["content"][1]["type"], json!("input_image"));
@@ -3857,13 +3857,13 @@ mod tests {
 
     fn catalog_entry(id: u64, content_ref: BlobRef, supersedes: Option<u64>) -> ContextEntry {
         ContextEntry {
-            key: Some(engine::ContextEntryKey::new("bot:directory")),
+            key: Some(harness::ContextEntryKey::new("bot:directory")),
             entry_id: ContextEntryId::new(id),
             kind: ContextEntryKind::Catalog {
                 title: "Bot directory".to_string(),
             },
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("text/markdown".to_string()),
                 provider_kind: None,
@@ -3900,7 +3900,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: input_ref,
                 media_type: None,
                 provider_kind: None,
@@ -3973,7 +3973,7 @@ mod tests {
             .expect("store pdf");
         let make = |id: u64,
                     kind: ContextEntryKind,
-                    content: engine::ContentRef,
+                    content: harness::ContentRef,
                     preview: Option<&str>| {
             ContextEntry {
                 entry_id: ContextEntryId::new(id),
@@ -3995,7 +3995,7 @@ mod tests {
                     call_id: ToolCallId::try_new("call_1").expect("call id"),
                     is_error: false,
                 },
-                engine::ContentRef::text(result_ref),
+                harness::ContentRef::text(result_ref),
                 None,
             ),
             make(
@@ -4003,7 +4003,7 @@ mod tests {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                engine::ContentRef {
+                harness::ContentRef {
                     content_ref: image_ref,
                     media_type: Some("image/png".to_owned()),
                     provider_kind: None,
@@ -4015,7 +4015,7 @@ mod tests {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                engine::ContentRef {
+                harness::ContentRef {
                     content_ref: pdf_ref,
                     media_type: Some("application/pdf".to_owned()),
                     provider_kind: None,
@@ -4072,7 +4072,7 @@ mod tests {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef::text(text.clone()),
+            content: harness::ContentRef::text(text.clone()),
             preview: None,
             origin: None,
             provenance_ref: None,

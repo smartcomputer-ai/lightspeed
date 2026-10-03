@@ -25,14 +25,14 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use engine::{
+use futures::{FutureExt, pin_mut, select};
+use harness::{
     BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextMessageRole, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
     CoreAgentEntry, CoreAgentEvent, CoreAgentState, CoreAgentStatus, EmissionEnvelope,
     LlmGenerationRequest, RunEvent, RunStatus, SessionId, SessionPosition, SubmissionId,
     ToolInvocationBatchRequest,
 };
-use futures::{FutureExt, pin_mut, select};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
@@ -63,7 +63,7 @@ use session_state::flush_pending_emissions;
 use wait_loop::{can_continue_as_new, wait_for_workflow_work, workflow_state_should_complete};
 use watchdog::{process_cancelling_watchdog, reconcile_cancelling_watchdog};
 
-#[workflow(name = "AgentSessionWorkflow")]
+#[workflow]
 pub struct AgentSessionWorkflow {
     universe_id: Option<uuid::Uuid>,
     session_id: Option<SessionId>,
@@ -130,21 +130,23 @@ impl Default for AgentSessionWorkflow {
 
 #[workflow_methods]
 impl AgentSessionWorkflow {
-    #[run]
+    #[run(name = "AgentSessionWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: AgentSessionArgs,
     ) -> WorkflowResult<()> {
         if let Err(error) = initialize(ctx, args.clone()).await {
             record_bootstrap_error(ctx, &error);
-            return Err(anyhow::anyhow!("{error}").into());
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!("{error}")).into());
         }
 
         let preparation_ctx = ctx.clone();
         let preparation = preparation::run_preparation_loop(preparation_ctx).fuse();
         let session = async {
             loop {
-                preparation::prepare_initial_session(ctx, &args).await?;
+                preparation::prepare_initial_session(ctx, &args)
+                    .await
+                    .map_err(temporalio_sdk::ApplicationFailure::new)?;
                 if workflow_state_should_complete(ctx) {
                     return Ok(());
                 }
@@ -153,24 +155,39 @@ impl AgentSessionWorkflow {
                 wait_for_workflow_work(ctx).await;
                 if let Err(error) = flush_pending_emissions(ctx).await {
                     record_error(ctx, &error, "pending_emission");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 if let Err(error) = promise_sources::process_pending_source_resolutions(ctx).await {
                     record_error(ctx, &error, "promise_source_resolution");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 if let Err(error) = workflow_starts::process_pending_starts(ctx).await {
                     record_error(ctx, &error, "workflow_start");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 if let Err(error) = promise_sources::flush_pending_promise_cancellations(ctx).await
                 {
                     record_error(ctx, &error, "promise_cancellation");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 if let Err(error) = workflow_starts::process_execution_cancels(ctx).await {
                     record_error(ctx, &error, "workflow_execution_cancel");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 match process_cancelling_watchdog(ctx, &args).await {
                     Ok(DriveOutcome::ContinueAsNew) => {
@@ -179,17 +196,26 @@ impl AgentSessionWorkflow {
                     Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
                     Err(error) => {
                         record_error(ctx, &error, "cancellation_watchdog");
-                        return Err(anyhow::anyhow!("{error}").into());
+                        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                            "{error}"
+                        ))
+                        .into());
                     }
                 }
                 if let Err(error) = awaits::process_satisfied_await(ctx).await {
                     record_error(ctx, &error, "await_resolution");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 promise_sources::process_due_promise_deadlines(ctx);
                 if let Err(error) = promise_sources::process_due(ctx).await {
                     record_error(ctx, &error, "promise_source_poll");
-                    return Err(anyhow::anyhow!("{error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "{error}"
+                    ))
+                    .into());
                 }
                 match process_pending_tool_batch_resumes(ctx, &args).await {
                     Ok(DriveOutcome::ContinueAsNew) => {
@@ -198,17 +224,26 @@ impl AgentSessionWorkflow {
                     Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
                     Err(error) => {
                         record_error(ctx, &error, "tool_batch_resume");
-                        return Err(anyhow::anyhow!("{error}").into());
+                        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                            "{error}"
+                        ))
+                        .into());
                     }
                 }
-                let mut admission_drive = drive_from_state(ctx)?;
-                admissions::drain_pending_admissions(ctx, &mut admission_drive).await?;
+                let mut admission_drive =
+                    drive_from_state(ctx).map_err(temporalio_sdk::ApplicationFailure::new)?;
+                admissions::drain_pending_admissions(ctx, &mut admission_drive)
+                    .await
+                    .map_err(temporalio_sdk::ApplicationFailure::new)?;
                 if wait_loop::workflow_state_needs_core_drive(ctx) {
                     let mut drive = match drive_from_state(ctx) {
                         Ok(drive) => drive,
                         Err(error) => {
                             record_error(ctx, &error, "drive_rehydrate");
-                            return Err(anyhow::anyhow!("{error}").into());
+                            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                                "{error}"
+                            ))
+                            .into());
                         }
                     };
                     match drive_until_idle(ctx, &args, &mut drive).await {
@@ -218,7 +253,10 @@ impl AgentSessionWorkflow {
                         Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
                         Err(error) => {
                             record_error(ctx, &error, "core_drive");
-                            return Err(anyhow::anyhow!("{error}").into());
+                            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                                "{error}"
+                            ))
+                            .into());
                         }
                     }
                 }
@@ -281,7 +319,7 @@ impl AgentSessionWorkflow {
 
     /// Fixed inbound funnel for cross-workflow facts. Promise-bearing
     /// emissions become ordinary `ResolvePromise` admissions, preserving the
-    /// engine's idempotent first-writer-wins semantics.
+    /// harness's idempotent first-writer-wins semantics.
     #[signal(name = "deliver_emission")]
     pub fn deliver_emission(
         &mut self,

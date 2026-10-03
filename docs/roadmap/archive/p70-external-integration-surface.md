@@ -64,7 +64,7 @@ Consequences worth stating as product contract:
   No wait/long-poll parameter, no SSE/WebSocket.
 - `RunStartParams` has no client-supplied idempotency key. The engine already
   threads `Option<SubmissionId>` through `CoreAgentCommand::RequestRun` into
-  `RunEvent::Accepted` (`crates/engine/src/core/admit.rs`), but the gateway
+  `RunEvent::Accepted` (`crates/harness/src/core/admit.rs`), but the gateway
   never sets it and nothing deduplicates on it.
 - The gateway has no per-request auth. For this deployment the network
   boundary (Tailscale ACLs) is the access control; see Non-Goals.
@@ -294,7 +294,7 @@ work: Python client, opt-in gateway smoke tests, and CI drift checks.
 
 Messaging bridge overlay implemented 2026-06-11: `interop/messaging/` contains
 a private Node package for Telegram and WhatsApp. It depends on
-`@lightspeed-ai/agent-client` via `file:../ts-client`, maps each chat/thread to a
+`@lightspeed-ai/sdk` via `file:../ts-client`, maps each chat/thread to a
 stable Lightspeed session, uses stable submission ids for channel message retries,
 long-polls run completion through the JSON-RPC API, and keeps channel
 state/dedupe in a local JSON store. This does not change the gateway contract;
@@ -326,7 +326,7 @@ selecting a gateway base URL.
   universe's sessions against the wrong store; deriving the queue from the
   universe makes that isolation impossible to misconfigure silently. Gateway
   and worker derive the same default from the shared config path.
-  Implemented 2026-06-11 (`task_queue_from_env` in `temporal-server`).
+  Implemented 2026-06-11 (`task_queue_from_env` in `temporal-runtime`).
 
 ## Non-Goals
 

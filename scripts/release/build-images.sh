@@ -27,13 +27,13 @@ container_id="$(docker create "${tag}-runtime" --version)"
 trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 tmp_dir="$(mktemp -d)"
 trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true; rm -rf "$tmp_dir"' EXIT
-docker cp "$container_id:/usr/local/bin/lightspeed-server" "$tmp_dir/lightspeed-server"
-cmp dist/bin/lightspeed-server "$tmp_dir/lightspeed-server"
+docker cp "$container_id:/usr/local/bin/lightspeed-runtime" "$tmp_dir/lightspeed-runtime"
+cmp dist/bin/lightspeed-runtime "$tmp_dir/lightspeed-runtime"
 docker run --rm "${tag}-runtime" --version
 docker run --rm --entrypoint node "${tag}-configurator-mcp" \
   --input-type=module -e 'await import("/app/dist/index.js")'
 docker run --rm --entrypoint node "${tag}-platform" -e \
-  'for (const file of ["/app/platform/server/src/main.ts", "/app/platform/web/dist/index.html"]) require("node:fs").accessSync(file)'
+  'for (const file of ["/app/platform/backend/src/main.ts", "/app/platform/web/dist/index.html"]) require("node:fs").accessSync(file)'
 for image in runtime platform platform-workers; do
   test "$(docker image inspect "${tag}-${image}" \
     --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$git_sha"
@@ -45,7 +45,7 @@ docker run --rm --entrypoint node "${tag}-platform-workers" -e \
 docker run --rm --entrypoint node "${tag}-platform-workers" \
   --import tsx --input-type=module -e '
     const { parseHostConfig } = await import("./platform/connectors/src/host/config.ts");
-    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/agent-client/workflow");
+    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/sdk/workflow");
     const config = parseHostConfig({ LIGHTSPEED_API_URL: "http://runtime:18080/rpc", LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram" });
     if (config.providers.join(",") !== "telegram") process.exit(1);
     const vector = WORKFLOW_CONTRACT_VECTORS.channels;

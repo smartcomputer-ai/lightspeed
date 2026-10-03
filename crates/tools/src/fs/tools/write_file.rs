@@ -50,7 +50,7 @@ pub async fn invoke_write_file(
 mod tests {
     use std::sync::Arc;
 
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::{

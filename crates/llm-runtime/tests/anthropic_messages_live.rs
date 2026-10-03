@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine::{
+use harness::{
     ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
@@ -46,7 +46,7 @@ fn user_entry(entry_id: u64, content_ref: BlobRef) -> ContextEntry {
             run_id: RunId::new(1),
             input_index: 0,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -158,18 +158,18 @@ fn retained_context_entry(index: usize, item: &ContextEntryInput) -> ContextEntr
     }
 }
 
-fn weather_tool_spec(schema_ref: BlobRef, description_ref: BlobRef) -> engine::ToolSpec {
-    engine::ToolSpec {
+fn weather_tool_spec(schema_ref: BlobRef, description_ref: BlobRef) -> harness::ToolSpec {
+    harness::ToolSpec {
         name: ToolName::new("get_weather"),
         execution: Default::default(),
-        kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+        kind: harness::ToolKind::Function(harness::FunctionToolSpec {
             description_ref: Some(description_ref),
             input_schema_ref: schema_ref,
             output_schema_ref: None,
             strict: None,
             provider_options_ref: None,
         }),
-        parallelism: engine::ToolParallelism::ParallelSafe,
+        parallelism: harness::ToolParallelism::ParallelSafe,
     }
 }
 
@@ -346,7 +346,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_search() {
     let tool = tools::definitions::register(
         "web.search",
         Default::default(),
-        engine::ToolParallelism::ParallelSafe,
+        harness::ToolParallelism::ParallelSafe,
         Default::default(),
     );
     let input_ref = text_blob(
@@ -411,7 +411,7 @@ async fn anthropic_messages_live_adapter_uses_hosted_web_fetch() {
     let tool = tools::definitions::register(
         "web.fetch",
         Default::default(),
-        engine::ToolParallelism::ParallelSafe,
+        harness::ToolParallelism::ParallelSafe,
         Default::default(),
     );
     let input_ref = text_blob(
@@ -711,7 +711,7 @@ async fn anthropic_messages_live_adapter_runs_tool_round_trip() {
             turn_id: TurnId::new(1),
             batch_id: None,
         },
-        content: engine::ContentRef::text(tool_output_ref),
+        content: harness::ContentRef::text(tool_output_ref),
         preview: None,
         origin: None,
         provenance_ref: None,
@@ -986,7 +986,7 @@ async fn anthropic_messages_live_adapter_thinks_across_tool_round_trip() {
             turn_id: TurnId::new(1),
             batch_id: None,
         },
-        content: engine::ContentRef::text(tool_output_ref),
+        content: harness::ContentRef::text(tool_output_ref),
         preview: None,
         origin: None,
         provenance_ref: None,
@@ -1757,7 +1757,7 @@ async fn anthropic_messages_live_adapter_sees_oversized_image() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
 async fn anthropic_messages_live_runtime_reports_provider_rejections() {
-    use engine::{CoreAgentIoError, CoreAgentLlm as _};
+    use harness::{CoreAgentIoError, CoreAgentLlm as _};
     let blobs = Arc::new(InMemoryBlobStore::new());
     let mut corrupt = b"\x89PNG\r\n\x1a\n".to_vec();
     corrupt.extend(std::iter::repeat_n(0x5a, 4096));

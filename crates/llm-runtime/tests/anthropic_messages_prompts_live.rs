@@ -1,4 +1,4 @@
-//! Live engine-loop test proving VFS prompt instructions flow into the
+//! Live harness-loop test proving VFS prompt instructions flow into the
 //! Anthropic Messages request as the system prompt.
 
 use std::{
@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RunConfig, RunStatus, SessionConfig,
     SessionId, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget,
@@ -226,16 +226,16 @@ async fn anthropic_messages_live_uses_vfs_prompt_instructions() {
         .drive_command(DriveCommand {
             session_id,
             observed_at_ms: 20,
-            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                 requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
-                source: engine::RunRequestSource::Input {
+                source: harness::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
                         kind: ContextEntryKind::Message {
                             role: ContextMessageRole::User,
                         },
-                        content: engine::ContentRef {
+                        content: harness::ContentRef {
                             content_ref: input_ref,
                             media_type: None,
                             provider_kind: None,
@@ -284,7 +284,7 @@ fn session_config(
 ) -> SessionConfig {
     SessionConfig {
         model,
-        generation: engine::GenerationConfig {
+        generation: harness::GenerationConfig {
             max_output_tokens: Some(4096),
             reasoning_effort: None,
             tool_choice: None,
@@ -297,13 +297,13 @@ fn session_config(
             input_limit_tokens: None,
             compaction: None,
         },
-        features: engine::FeaturesConfig {
-            vfs: Some(engine::VfsFeature {
+        features: harness::FeaturesConfig {
+            vfs: Some(harness::VfsFeature {
                 workspaces: workspace_attachments,
-                prompts: Some(engine::VfsPromptsConfig::default()),
-                ..engine::VfsFeature::default()
+                prompts: Some(harness::VfsPromptsConfig::default()),
+                ..harness::VfsFeature::default()
             }),
-            ..engine::FeaturesConfig::default()
+            ..harness::FeaturesConfig::default()
         },
     }
 }
@@ -323,17 +323,17 @@ fn run_config() -> RunConfig {
     }
 }
 
-async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
+async fn assistant_text(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
                 if matches!(
                     item.kind,
-                    engine::ContextEntryKind::Message {
-                        role: engine::ContextMessageRole::Assistant
+                    harness::ContextEntryKind::Message {
+                        role: harness::ContextMessageRole::Assistant
                     }
                 ) {
                     text.push_str(&support::content_text(blobs, &item.content).await);
@@ -345,7 +345,7 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
     text
 }
 
-async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState) -> String {
+async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
     let Some(run) = state.runs.completed.first() else {
         return "run did not complete".to_owned();
     };

@@ -1,6 +1,6 @@
 import type { Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { LightspeedRpcError, LightspeedTransportError } from "@lightspeed-ai/agent-client";
+import { LightspeedRpcError, LightspeedTransportError } from "@lightspeed-ai/sdk";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import express, {

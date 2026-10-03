@@ -19,7 +19,9 @@ async fn embedded_migrations_are_locked_idempotent_and_checksum_guarded() {
         .expect("connect to live Postgres");
     let schema = format!("lightspeed_migration_test_{}", Uuid::new_v4().simple());
     admin
-        .execute(format!(r#"CREATE SCHEMA "{schema}""#).as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            r#"CREATE SCHEMA "{schema}""#
+        ))))
         .await
         .expect("create isolated migration schema");
 
@@ -35,7 +37,9 @@ async fn embedded_migrations_are_locked_idempotent_and_checksum_guarded() {
     let result = exercise_migrator(&pool).await;
     pool.close().await;
     admin
-        .execute(format!(r#"DROP SCHEMA "{schema}" CASCADE"#).as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            r#"DROP SCHEMA "{schema}" CASCADE"#
+        ))))
         .await
         .expect("drop isolated migration schema");
     result.unwrap_or_else(|message| panic!("migration acceptance failed: {message}"));

@@ -1,7 +1,7 @@
 # Build and release
 
 Lightspeed owns and publishes a coherent release containing the hosted runtime,
-the Incus provider, envd, the CLI, Configurator MCP, the platform server/web
+the Incus provider, envd, the CLI, Configurator MCP, the platform backend/web
 image, the connector-host image (published as `platform-workers`), the generated
 TypeScript client, the static in-browser demo and documentation site, API
 contracts, checksums, an SPDX SBOM, and a release manifest. A consumer should
@@ -15,13 +15,13 @@ retains the detailed packaging and publication procedures.
 
 ## Database migrations
 
-PostgreSQL migrations are embedded in `lightspeed-server`. Apply them before
+PostgreSQL migrations are embedded in `lightspeed-runtime`. Apply them before
 starting any gateway or worker process:
 
 ```bash
-lightspeed-server migrate
-lightspeed-server schema-version
-lightspeed-server
+lightspeed-runtime migrate
+lightspeed-runtime schema-version
+lightspeed-runtime
 ```
 
 The migrate command uses `LIGHTSPEED_POSTGRES_URL` (falling back to the test
@@ -48,7 +48,7 @@ LIGHTSPEED_ALLOW_UNLEDGERED_SCHEMA=true
 This permits gateway and worker startup only when Lightspeed detects its tables
 without ledger entries. It emits a warning and makes the operator responsible
 for schema compatibility. It does not fabricate migration records, bypass a
-stale or corrupted ledger, or make `lightspeed-server migrate` accept an
+stale or corrupted ledger, or make `lightspeed-runtime migrate` accept an
 unledgered database.
 
 Never edit a migration after an official release. Add the next contiguous SQL
@@ -57,7 +57,7 @@ file under `crates/store-pg/migrations/`, register it in
 `release/metadata.env`.
 
 The TypeScript platform owns a separate Drizzle migration history under
-`platform/db/migrations/` and applies it when the platform server starts. CI
+`platform/db/migrations/` and applies it when the platform backend starts. CI
 tests both an empty installation and an upgrade from the supported baseline in
 `LIGHTSPEED_PLATFORM_UPGRADE_FROM` against real PostgreSQL. The manifest
 records that baseline and `LIGHTSPEED_PLATFORM_SCHEMA_REVISION`. Run the same
@@ -115,13 +115,14 @@ invoke Cargo or rebuild the web UI. The `platform-workers` image is the
 connector host (`platform/connectors`) with every provider dependency; it
 keeps its name so image references and manifest keys stay stable while Bots
 and Channels core run inside the `runtime` image. Image smoke tests compare
-the runtime's `lightspeed-server` executable byte-for-byte, start the platform
+the runtime's `lightspeed-runtime` executable byte-for-byte, start the platform
 image against PostgreSQL, check its health and SPA, and load the connector
 host's configuration and task-queue derivation from the staged runtime.
 
 The Rust container is named `runtime` because it is the hosted product core,
-not merely an HTTP server. Its executable and standalone archive remain named
-`lightspeed-server` and `server-bundle` during the compatibility window.
+not merely an HTTP server. Its executable is `lightspeed-runtime`; standalone
+archives use
+`lightspeed-runtime-<version>-<target>.tar.gz` and publish as `runtime-bundle`.
 
 The runtime tarballs are intermediate image inputs and are removed before the
 release bundle is finalized; the published images carry their own digest,

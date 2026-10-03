@@ -52,10 +52,12 @@ impl From<&str> for SecretValue {
 /// kinds have the same entropy, hashing, and display conventions.
 pub fn generate_prefixed_secret(prefix: &str) -> String {
     use base64::Engine as _;
-    use rand::RngCore;
+    use rand::TryRng;
 
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS random source unavailable");
     format!(
         "{prefix}{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)

@@ -18,6 +18,7 @@
 //! workflow's tool batches follow. Everything that needs no I/O lives in
 //! [`channels::state`] or in the pure functions at the end of this file.
 
+use crate::workflows::WorkflowContextExt as _;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
@@ -41,12 +42,12 @@ use channels::state::{
     InvocationStatus, MessageStatus, PolicyResponse, PolicyResponseKind, PolicyResponseStatus,
     ReceiptEffect, ReceivedMessage,
 };
-use engine::{
+use futures::future::{join_all, poll_fn};
+use futures::{pin_mut, select};
+use harness::{
     BlobRef, EmissionBody, EmissionEnvelope, EmissionProducer, PromiseId, PromiseResolution,
     REPLY_COMPLETION_KEY, WorkflowEndpointRef, WorkflowToolInvocation,
 };
-use futures::future::{join_all, poll_fn};
-use futures::{pin_mut, select};
 use serde::{Deserialize, Serialize};
 use temporalio_common::ActivityDefinition;
 use temporalio_macros::{workflow, workflow_methods};
@@ -80,7 +81,7 @@ pub struct ChannelConversationArgs {
 /// steer the conversation; groups stay silent.
 const DENIED_TEXT: &str = "This channel identity is not authorized for this Lightspeed universe.";
 
-#[workflow(name = "ChannelConversationWorkflow")]
+#[workflow]
 pub struct ChannelConversationWorkflow {
     start: ConversationStart,
     state: ConversationState,
@@ -126,7 +127,7 @@ impl ChannelConversationWorkflow {
         }
     }
 
-    #[run]
+    #[run(name = "ChannelConversationWorkflow")]
     pub async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         run_conversation(ctx).await
     }
@@ -210,12 +211,15 @@ impl ChannelConversationWorkflow {
 async fn run_conversation(ctx: &mut Ctx) -> WorkflowResult<()> {
     let ctx: &Ctx = &*ctx;
     if let Some(message) = ctx.state(|wf| wf.start_error.clone()) {
-        return Err(anyhow::anyhow!("conversation start rejected: {message}").into());
+        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+            "conversation start rejected: {message}"
+        ))
+        .into());
     }
     if ctx.state(|wf| wf.start.workflow_id()) != ctx.workflow_id() {
-        return Err(anyhow::anyhow!(
+        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
             "conversation workflow id does not match the conversation it was started for"
-        )
+        ))
         .into());
     }
     ensure_tool_declarations(ctx).await?;
@@ -252,7 +256,11 @@ async fn ensure_tool_declarations(ctx: &Ctx) -> Result<(), WorkflowTermination> 
         channel_activity_options(),
     )
     .await
-    .map_err(|message| anyhow::anyhow!("store chat tool declarations: {message}"))?;
+    .map_err(|message| {
+        temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+            "store chat tool declarations: {message}"
+        ))
+    })?;
     ctx.state_mut(|wf| wf.state.tools_ref = Some(declared.tools_ref));
     Ok(())
 }
@@ -261,13 +269,13 @@ async fn ensure_tool_declarations(ctx: &Ctx) -> Result<(), WorkflowTermination> 
 /// cancellation. Lanes keep running underneath.
 async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) -> Result<(), WorkflowTermination> {
     let tick = ctx.state(|wf| wf.lane_tick);
-    let wait = ctx.wait_condition(move |wf| wf.wake_ready(tick));
+    let wait = ctx.wait_for_state(move |wf| wf.wake_ready(tick));
     let cancelled = ctx.cancelled();
     with_lanes(lanes, async move {
         pin_mut!(wait, cancelled);
         select! {
             _ = wait => Ok(()),
-            _ = cancelled => Err(WorkflowTermination::Cancelled),
+            _ = cancelled => Err(WorkflowTermination::cancelled()),
         }
     })
     .await
@@ -304,7 +312,7 @@ fn request_continue_as_new(ctx: &Ctx) -> WorkflowResult<()> {
         start: wf.start.clone(),
         carry: Some(wf.state.compact_state()),
     });
-    match ctx.continue_as_new(&args, ContinueAsNewOptions::default()) {
+    match ctx.continue_as_new(args, ContinueAsNewOptions::default()) {
         Ok(never) => match never {},
         Err(termination) => Err(termination),
     }
@@ -327,7 +335,7 @@ async fn activity<AD: ActivityDefinition>(
     input: AD::Input,
     options: ActivityOptions,
 ) -> Result<AD::Output, String> {
-    ctx.start_activity(definition, input, options)
+    ctx.execute_activity(definition, input, options)
         .await
         .map_err(|error| error.to_string())
 }
@@ -360,7 +368,7 @@ async fn step<T, F>(
     start: impl FnOnce() -> F,
 ) -> Result<T, StepError>
 where
-    F: CancellableFuture<Result<T, ActivityExecutionError>>,
+    F: CancellableFuture<Output = Result<T, ActivityExecutionError>>,
 {
     let Some(invocation_id) = watch else {
         return start()
@@ -371,7 +379,7 @@ where
         return Err(StepError::Cancelled);
     }
     let activity = start();
-    let cancelled = ctx.wait_condition(|wf| wf.state.is_cancelled(invocation_id));
+    let cancelled = ctx.wait_for_state(|wf| wf.state.is_cancelled(invocation_id));
     pin_mut!(activity, cancelled);
     select! {
         result = activity => result.map_err(|error| StepError::Failed(error.to_string())),
@@ -394,7 +402,7 @@ async fn assert_trigger_active(ctx: &Ctx, watch: Option<&str>) -> Result<(), Ste
         scope: wf.start.scope,
     });
     match step(ctx, watch, || {
-        ctx.start_activity(
+        ctx.execute_activity(
             ChannelActivities::assert_trigger_active,
             request,
             channel_assert_active_options(),
@@ -430,7 +438,7 @@ async fn deliver_planned(
     let mut message_ids = Vec::new();
     for command in commands {
         let result = step(ctx, watch, || {
-            ctx.start_activity(
+            ctx.execute_activity(
                 ConnectorActivities::deliver_channel_message,
                 command,
                 connector_delivery_options(queue.clone()),
@@ -481,7 +489,11 @@ async fn resolve_promise(
     let emission_id = envelope.emission_id.as_str().to_owned();
     match ctx
         .external_workflow(holder_workflow_id.to_owned(), None)
-        .signal(AgentSessionWorkflow::deliver_emission, envelope)
+        .signal(
+            AgentSessionWorkflow::deliver_emission,
+            envelope,
+            crate::workflows::signal_options(),
+        )
         .await
     {
         Ok(_) => vec![emission_id],
@@ -489,7 +501,7 @@ async fn resolve_promise(
             ctx.state_mut(|wf| {
                 wf.state.protocol_errors.push(format!(
                     "resolve invocation at {holder_workflow_id}: {}",
-                    failure.message
+                    failure
                 ))
             });
             Vec::new()
@@ -620,7 +632,8 @@ async fn prepare_message_media(
             match view.status {
                 api::TranscriptionStatus::Pending | api::TranscriptionStatus::Running => {
                     let cancelled = {
-                        let timer = ctx.timer(std::time::Duration::from_secs(2));
+                        let timer =
+                            ctx.timer_with_manual_cancellation(std::time::Duration::from_secs(2));
                         let cancelled = ctx.cancelled();
                         pin_mut!(timer, cancelled);
                         select! { _ = timer => false, _ = cancelled => true }
@@ -631,7 +644,11 @@ async fn prepare_message_media(
                                 format!("{}/{}", request.active.universe_id, view.transcription_id),
                                 None,
                             )
-                            .signal(crate::TranscriptionWorkflow::cancel, ())
+                            .signal(
+                                crate::TranscriptionWorkflow::cancel,
+                                (),
+                                crate::workflows::signal_options(),
+                            )
                             .await;
                         return Err("Audio preparation cancelled.".into());
                     }
@@ -675,7 +692,7 @@ async fn prepare_media(
     // with this task's context (no internal wakers below its small-set
     // threshold).
     let prepared = join_all(media.iter().map(|item| {
-        ctx.start_activity(
+        ctx.execute_activity(
             ConnectorActivities::prepare_channel_media,
             PrepareChannelMediaInput {
                 universe_id,
@@ -1024,7 +1041,7 @@ async fn deliver_invocation(
     assert_trigger_active(ctx, watch).await?;
     let universe_id = ctx.state(|wf| wf.start.universe_id);
     let arguments = step(ctx, watch, || {
-        ctx.start_activity(
+        ctx.execute_activity(
             ChannelActivities::read_json_blob,
             ChatReadJsonBlobRequest {
                 universe_id,
@@ -1059,7 +1076,7 @@ async fn deliver_invocation(
                 reply_to,
             });
             let stored = step(ctx, None, || {
-                ctx.start_activity(
+                ctx.execute_activity(
                     ChannelActivities::store_chat_sent,
                     request,
                     channel_activity_options(),
@@ -1105,7 +1122,7 @@ async fn resolve_handle(ctx: &Ctx, watch: Option<&str>, seq: u64) -> Result<Chat
         seq,
     });
     let resolved = step(ctx, watch, || {
-        ctx.start_activity(
+        ctx.execute_activity(
             ChannelActivities::resolve_chat_handle,
             request,
             channel_activity_options(),
@@ -1183,12 +1200,12 @@ fn process_receipts(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) {
 /// the `finished` receipt (recorded in state) cancels the activity.
 async fn run_typing(ctx: Ctx, delivery_id: String) {
     let (route, queue) = ctx.state(|wf| (wf.start.route(), wf.start.connector_task_queue.clone()));
-    let typing = ctx.start_activity(
+    let typing = ctx.execute_activity(
         ConnectorActivities::maintain_channel_typing,
         MaintainChannelTypingInput { route },
         connector_typing_options(queue),
     );
-    let finished = ctx.wait_condition(|wf| !typing_wanted(&wf.state, &delivery_id));
+    let finished = ctx.wait_for_state(|wf| !typing_wanted(&wf.state, &delivery_id));
     pin_mut!(typing, finished);
     select! {
         result = typing => match result {
@@ -1445,7 +1462,7 @@ fn refusal_reason_name(reason: ChatRefusalReason) -> &'static str {
     }
 }
 
-/// Project the engine envelope onto the facts the conversation state
+/// Project the harness envelope onto the facts the conversation state
 /// records, keeping the full invocation (and its holder) for the lane.
 fn project_emission(
     envelope: EmissionEnvelope,
@@ -1655,7 +1672,7 @@ mod tests {
     use channels::inbound::{ChannelAuthorization, NormalizedInbound};
     use channels::state::MAX_CHANNEL_INBOUND_INBOX;
     use channels::tools::{CHANNEL_EDIT_TOOL_ID, CHANNEL_SEND_TOOL_ID};
-    use engine::{
+    use harness::{
         EventSeq, RunId, SessionId, ToolBatchId, ToolCallId, TurnId, WorkflowToolId,
         WorkflowToolInvocationId,
     };
@@ -2014,7 +2031,7 @@ mod tests {
     }
 
     #[test]
-    fn projects_engine_envelopes_onto_conversation_emissions() {
+    fn projects_harness_envelopes_onto_conversation_emissions() {
         let pushed = EmissionEnvelope::tool_invocation(
             UNIVERSE,
             SessionId::new(SESSION_ID),

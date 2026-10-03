@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextEntrySource, ContextMessageRole, ContextSnapshot, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, LlmUsage, ModelSelection, ProviderApiKind, RunId, SessionId,
@@ -41,7 +41,7 @@ fn entry(
         entry_id: ContextEntryId::new(id),
         kind,
         source,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -156,7 +156,7 @@ async fn generate(
 ) -> (
     LlmUsage,
     Vec<ContextEntryInput>,
-    Vec<engine::ObservedToolCall>,
+    Vec<harness::ObservedToolCall>,
 ) {
     let execution = adapter
         .generate(generation_request(turn_id, request))
@@ -220,14 +220,14 @@ async fn weather_tool(blobs: &InMemoryBlobStore) -> ToolSpec {
     ToolSpec {
         name: ToolName::new("get_weather"),
         execution: Default::default(),
-        kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+        kind: harness::ToolKind::Function(harness::FunctionToolSpec {
             description_ref: Some(description_ref),
             input_schema_ref: schema_ref,
             output_schema_ref: None,
             strict: None,
             provider_options_ref: None,
         }),
-        parallelism: engine::ToolParallelism::ParallelSafe,
+        parallelism: harness::ToolParallelism::ParallelSafe,
     }
 }
 

@@ -4,7 +4,7 @@
 
 use api::{BotEventOutcome, BotId, BotTriggerId, LlmUsageView, ProfileId};
 use bots::{BotDeliveryPhase, BotEvent};
-use engine::WorkflowEndpointRef;
+use harness::WorkflowEndpointRef;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

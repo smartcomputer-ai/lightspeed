@@ -17,7 +17,7 @@ use channels::{
     ChannelAccountStore, ChannelError, ChannelPairingFilter, ChannelPairingRecord,
     ChannelPairingStore,
 };
-use engine::{BlobRef, storage::BlobStore};
+use harness::{BlobRef, storage::BlobStore};
 use sqlx::postgres::PgPoolOptions;
 use store_pg::{PgStore, PgStoreConfig};
 use uuid::Uuid;

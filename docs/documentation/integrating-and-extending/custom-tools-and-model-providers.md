@@ -71,9 +71,9 @@ These code locations explain how the existing paths fit together:
 | [Toolset](../../../crates/tools/src/toolset.rs) | Construct the selected tool surface and provider-specific presentation. |
 | [Tool runtime interfaces](../../../crates/tools/src/runtime/mod.rs) | Typed invocation/output helpers and runtime contracts. |
 | [Inline dispatch](../../../crates/tools/src/runtime/inline.rs) | Execute supported compiled operations with the correct context. |
-| [Session tool preparation](../../../crates/temporal-server/src/gateway/service/session_preparation.rs) | Materialize the desired tools from session capabilities and current registry records. |
+| [Session tool preparation](../../../crates/temporal-runtime/src/gateway/service/session_preparation.rs) | Materialize the desired tools from session capabilities and current registry records. |
 | [Workflow preparation](../../../crates/temporal-workflow/src/workflows/session/preparation.rs) | Order preparation and publish tool changes at safe session boundaries. |
-| [Hosted tool execution](../../../crates/temporal-server/src/worker/session_tools.rs) | Assemble runtime adapters for session tool batches. |
+| [Hosted tool execution](../../../crates/temporal-runtime/src/worker/session_tools.rs) | Assemble runtime adapters for session tool batches. |
 
 The provider-facing function name is not necessarily the logical ID. Existing
 tool presentations differ by model API, and returned model calls must resolve
@@ -101,11 +101,11 @@ necessary. Cancellation can stop waiting or interrupt an activity without
 undoing effects already completed. Return enough structured information for
 the caller to reconcile an ambiguous outcome.
 
-The deterministic engine records facts and emits intents; it performs no
+The deterministic harness records facts and emits intents; it performs no
 network, shell, filesystem, database, or workflow I/O. If a new capability
 requires reducer-visible state or branching, keep that state provider-neutral
 and add replay coverage. A tool that can use existing execution semantics
-does not need a new engine-specific transport.
+does not need a new harness-specific transport.
 
 ## Configure another compatible model service
 
@@ -180,8 +180,8 @@ Use the existing implementation layers as the source map:
 | [Runtime executor](../../../crates/llm-runtime/src/executor.rs) | Generation and compaction adapter implementations and retry classification. |
 | [Provider credentials](../../../crates/llm-runtime/src/provider_keys.rs) and [endpoint admission](../../../crates/auth/src/providers.rs) | Admit supported endpoint/API kinds and resolve the configured connection and credentials at the effectful boundary. |
 | [Tool catalog materialization](../../../crates/llm-runtime/src/tool_catalog.rs) | Render admitted tool definitions and map model calls back to their identities. |
-| [API route conversion](../../../crates/temporal-server/src/gateway/service/api_config.rs) | Validate the public model route against supported kinds. |
-| [Hosted adapter assembly](../../../crates/temporal-server/src/worker/activities/state.rs) | Register generation and compaction implementations used by workers. |
+| [API route conversion](../../../crates/temporal-runtime/src/gateway/service/api_config.rs) | Validate the public model route against supported kinds. |
+| [Hosted adapter assembly](../../../crates/temporal-runtime/src/worker/activities/state.rs) | Register generation and compaction implementations used by workers. |
 
 The compiled `ProviderApiKind` and public/generated consumers must agree with
 the new kind. Custom endpoint admission currently permits only Responses and
@@ -193,9 +193,9 @@ a new kind solely for another service endpoint.
 
 Preserve native assistant, tool, and reasoning payloads in CAS. The runtime
 loads context and tool definitions, builds the provider request, sends it,
-stores native output, and returns only the facts the deterministic engine
+stores native output, and returns only the facts the deterministic harness
 needs to branch. Endpoints, keys, and transport headers belong outside durable
-session state and provider-neutral engine facts.
+session state and provider-neutral harness facts.
 
 Define behavior for tool results, multimodal input, usage, prompt caching,
 compaction, and failures. If a feature is unsupported, make that explicit
@@ -217,7 +217,7 @@ For a tool, test rejected arguments, missing grants, bounded output, retry
 policy, and provider name mapping. For a model integration, use captured
 request/response fixtures to check native payload preservation, tool-call
 admission, endpoint selection, credential isolation, and failure classification.
-Add engine replay coverage if deterministic behavior changes.
+Add harness replay coverage if deterministic behavior changes.
 
 The existing tool-definition, provider-key, catalog-parity, materialization,
 and endpoint-override tests provide focused starting points. Use local fixtures

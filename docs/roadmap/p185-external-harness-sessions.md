@@ -84,10 +84,10 @@ universal definition of run completion.
 
 ## Current repository boundary
 
-- [StoredEvent](../../crates/engine/src/session/stored.rs) already has a generic
+- [StoredEvent](../../crates/harness/src/session/stored.rs) already has a generic
   `kind`, `version`, and `payload` envelope. The session store supports ordered
   appends with an expected head and retains referenced content.
-- [Session storage projections](../../crates/engine/src/storage/session.rs)
+- [Session storage projections](../../crates/harness/src/storage/session.rs)
   recognize native core lifecycle and run events. Generic storage does not yet
   make sessions independent of the engine.
 - [API projections](../../crates/api-projection/src/lib.rs) consume native core
@@ -201,9 +201,9 @@ modules within the crates that already own each boundary:
 | `environment-protocol` | Harness capability, request/response types, observation envelopes, and typed errors |
 | `environment-client` | Typed calls over existing connections and an executable validation example |
 | `environment-daemon` | Harness supervisor, ACP driver, local journal, and process cleanup |
-| `engine` | Shared deterministic session/log types in existing session/storage modules, separate from the native core reducer |
+| `harness` | Shared deterministic session/log types in existing session/storage modules, separate from the native core reducer |
 | `temporal-workflow` | External-session state machine and workflow, added after bridge validation |
-| `temporal-server` | Runtime activities, admission, and backend dispatch, added after bridge validation |
+| `temporal-runtime` | Runtime activities, admission, and backend dispatch, added after bridge validation |
 | `store-pg` / `store-fs` | Existing session-log persistence and backend-aware projections |
 | `api` / `api-projection` | Public session capabilities and views for both backends |
 
@@ -284,10 +284,10 @@ become a feature-specific branch in the stable native session worker.
 
 Separate shared session identity, lifecycle, storage contracts, and public
 facts from native core execution within the existing session/storage modules
-in `engine`. Do not create a new session-domain crate. The external workflow
+in `harness`. Do not create a new session-domain crate. The external workflow
 may reuse those deterministic types without driving the native core reducer
 or requiring a populated `CoreAgentState`; it has its own reducer and
-checkpoint format. envd remains independent of `engine` and session storage.
+checkpoint format. envd remains independent of `harness` and session storage.
 
 Retain one ordered session log with backend-aware event families:
 

@@ -131,7 +131,7 @@ whole-document MCP server record and changes through `mcp/servers/put` with
 
 ## Session Config And Profiles
 
-Remove `authGrantId` from `McpServerLink` in both `engine` and `api`. The final
+Remove `authGrantId` from `McpServerLink` in both `harness` and `api`. The final
 session declaration is:
 
 ```text
@@ -394,7 +394,7 @@ stale clients fail clearly.
 
 Delete or rewrite:
 
-- `McpServerLink.auth_grant_id` in `engine` and `api`;
+- `McpServerLink.auth_grant_id` in `harness` and `api`;
 - config validation for non-empty link grant ids;
 - API projection and config conversion of the link field;
 - gateway loading of grants from session MCP links;

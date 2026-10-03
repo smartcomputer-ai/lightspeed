@@ -54,7 +54,7 @@ pub async fn invoke_apply_patch(
 mod tests {
     use std::sync::Arc;
 
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::fs::{FileSystem, InMemoryFileSystem};

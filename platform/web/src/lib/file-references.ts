@@ -1,4 +1,4 @@
-import { validWorkspaceTransferPath } from "@lightspeed/platform-shared";
+import { validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
 import { blobDigest } from "./blob-view";
 import type { SessionEventsPage, ToolAttachmentView } from "@/api";
 import type { TranscriptEntry } from "./sessions/transcript";

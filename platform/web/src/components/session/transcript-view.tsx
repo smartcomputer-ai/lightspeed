@@ -1,6 +1,6 @@
 import { useContext, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Check, Inbox, Loader2, ShieldQuestion, TriangleAlert, X } from "lucide-react";
-import type { PendingApprovalView } from "@lightspeed-ai/agent-client";
+import type { PendingApprovalView } from "@lightspeed-ai/sdk";
 import { BotIcon } from "@/components/icons/bot";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";

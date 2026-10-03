@@ -1,8 +1,9 @@
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use engine::storage::SessionActivity;
-use engine::{
+use harness::storage::SessionActivity;
+use harness::{
     BlobRef,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
     storage::{
@@ -69,7 +70,7 @@ impl PgStore {
             FOR UPDATE
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
             .fetch_optional(&mut *tx)
@@ -486,7 +487,7 @@ impl PgStore {
             LIMIT $5
             "#,
         );
-        let sql = sqlx::query(&query)
+        let sql = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(cursor_updated_at_ms)
             .bind(cursor_session_id)
@@ -635,7 +636,7 @@ impl SessionStore for PgStore {
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
             .bind(request.display_name.as_deref())
@@ -676,7 +677,7 @@ impl SessionStore for PgStore {
             WHERE universe_id = $1 AND session_id = $2
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(session_id.as_str())
             .fetch_optional(&self.pool)
@@ -716,7 +717,7 @@ impl SessionStore for PgStore {
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(session_id.as_str())
             .bind(display_name.as_deref())
@@ -745,7 +746,7 @@ impl SessionStore for PgStore {
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(session_id.as_str())
             .bind(metadata_json(&metadata)?)
@@ -797,7 +798,7 @@ impl SessionStore for PgStore {
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(session_id.as_str())
             .bind(optional_u64_to_i64(
@@ -835,7 +836,7 @@ impl SessionStore for PgStore {
             LIMIT $3
             "#,
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(u64_to_i64(now_ms, "retention now_ms")?)
             .bind(usize_to_session_i64(limit, "retention limit")?)
@@ -929,7 +930,7 @@ impl SessionStore for PgStore {
             FOR UPDATE
             "#,
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(&selected_ids)
             .fetch_all(&mut *tx)
@@ -1024,7 +1025,7 @@ impl SessionStore for PgStore {
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
             .bind(request.source_session_id.as_str())
@@ -1142,7 +1143,7 @@ impl SessionStore for PgStore {
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.session_id.as_str())
             .bind(session_lifecycle_status_str(lifecycle_status))
@@ -1270,7 +1271,7 @@ impl SessionStore for PgStore {
             .try_get("state_digest")
             .map_err(|error| session_sql_error("decode checkpoint digest", error))?;
         let state_ref =
-            engine::BlobRef::parse(format!("sha256:{state_digest}")).map_err(|error| {
+            harness::BlobRef::parse(format!("sha256:{state_digest}")).map_err(|error| {
                 SessionStoreError::Store {
                     message: format!("decode checkpoint blob ref: {error}"),
                 }
@@ -1675,7 +1676,7 @@ async fn lock_session(
         FOR UPDATE
         "#,
     );
-    let row = sqlx::query(&query)
+    let row = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(universe_id)
         .bind(session_id.as_str())
         .fetch_optional(&mut **tx)

@@ -1,5 +1,6 @@
-use temporalio_common::{error::IncomingError, protos::temporal::api::enums::v1::TimeoutType};
+use temporalio_common::error::IncomingError;
 use temporalio_sdk::ActivityExecutionError;
+use temporalio_sdk::TimeoutType;
 
 use super::*;
 
@@ -19,16 +20,16 @@ const MAX_LLM_BOUNDARY_ERROR_BYTES: usize = 16 * 1024;
 ///
 /// Run the generation activity while client admissions keep landing.
 /// A cancel that makes the turn obsolete preempts the call; the
-/// engine has already cancelled the turn by then.
+/// harness has already cancelled the turn by then.
 pub(super) async fn call_llm_generate(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: LlmGenerationRequest,
-) -> anyhow::Result<control::Raced<engine::LlmGenerationResult>> {
+) -> anyhow::Result<control::Raced<harness::LlmGenerationResult>> {
     let run_id = request.run_id;
     let turn_id = request.turn_id;
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::llm_generate,
         LlmGenerateActivityRequest { request },
         crate::llm_activity_options(),
@@ -47,16 +48,16 @@ pub(super) async fn call_llm_generate(
             Some(failure) => {
                 let failure_ref =
                     put_llm_boundary_error_blob(ctx, "LLM generation", &failure).await;
-                Ok(control::Raced::Completed(engine::LlmGenerationResult {
+                Ok(control::Raced::Completed(harness::LlmGenerationResult {
                     run_id,
                     turn_id,
-                    status: engine::LlmGenerationStatus::Failed,
+                    status: harness::LlmGenerationStatus::Failed,
                     failure_ref: Some(failure_ref),
                     context_entries: Vec::new(),
-                    facts: engine::LlmGenerationFacts {
+                    facts: harness::LlmGenerationFacts {
                         duration_ms: None,
                         provider_response_id: None,
-                        finish: engine::LlmFinish::Failed,
+                        finish: harness::LlmFinish::Failed,
                         usage: None,
                         tool_calls: Vec::new(),
                         approval_requests: Vec::new(),
@@ -72,8 +73,8 @@ pub(super) async fn call_llm_generate(
 pub(super) async fn call_context_compact(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
-    request: engine::ContextCompactionRequest,
-) -> anyhow::Result<control::Raced<engine::ContextCompactionResult>> {
+    request: harness::ContextCompactionRequest,
+) -> anyhow::Result<control::Raced<harness::ContextCompactionResult>> {
     let session_id = request.session_id.clone();
     let context_revision = request.request.context.context_revision;
     let run_id = drive
@@ -83,7 +84,7 @@ pub(super) async fn call_context_compact(
         .pending_plan()
         .and_then(|plan| plan.run_id);
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::context_compact,
         crate::ContextCompactActivityRequest { request },
         crate::llm_activity_options(),
@@ -109,15 +110,17 @@ pub(super) async fn call_context_compact(
             Some(failure) => {
                 let failure_ref =
                     put_llm_boundary_error_blob(ctx, "context compaction", &failure).await;
-                Ok(control::Raced::Completed(engine::ContextCompactionResult {
-                    usage: None,
-                    calls: 0,
-                    session_id,
-                    context_revision,
-                    status: engine::ContextCompactionStatus::Failed,
-                    failure_ref: Some(failure_ref),
-                    context_entries: Vec::new(),
-                }))
+                Ok(control::Raced::Completed(
+                    harness::ContextCompactionResult {
+                        usage: None,
+                        calls: 0,
+                        session_id,
+                        context_revision,
+                        status: harness::ContextCompactionStatus::Failed,
+                        failure_ref: Some(failure_ref),
+                        context_entries: Vec::new(),
+                    },
+                ))
             }
             None => Err(anyhow::anyhow!("{error}")),
         },
@@ -192,6 +195,7 @@ fn timeout_type_label(timeout_type: TimeoutType) -> &'static str {
         TimeoutType::ScheduleToClose => "schedule-to-close",
         TimeoutType::Heartbeat => "heartbeat",
         TimeoutType::Unspecified => "unspecified",
+        _ => "unknown",
     }
 }
 
@@ -230,7 +234,7 @@ fn llm_boundary_error_message(operation: &str, failure: &LlmBoundaryFailure) -> 
 }
 
 /// Materialize the boundary failure text with bounded attempts; fall back
-/// to the well-known engine blob so the failure path itself can never retry
+/// to the well-known harness blob so the failure path itself can never retry
 /// unbounded.
 async fn put_llm_boundary_error_blob(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
@@ -238,7 +242,7 @@ async fn put_llm_boundary_error_blob(
     failure: &LlmBoundaryFailure,
 ) -> BlobRef {
     let message = llm_boundary_error_message(operation, failure);
-    ctx.start_activity(
+    ctx.execute_activity(
         WorkflowActivities::put_blob,
         PutBlobRequest {
             bytes: message.into_bytes(),
@@ -246,14 +250,14 @@ async fn put_llm_boundary_error_blob(
         crate::boundary_error_blob_activity_options(),
     )
     .await
-    .unwrap_or_else(|_| engine::llm_runtime_boundary_failure_ref())
+    .unwrap_or_else(|_| harness::llm_runtime_boundary_failure_ref())
 }
 
 pub(super) async fn call_tool_prepare_promise_controls(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    request: engine::PromiseControlArgumentRequest,
-) -> anyhow::Result<engine::PromiseControlArgumentFacts> {
-    ctx.start_activity(
+    request: harness::PromiseControlArgumentRequest,
+) -> anyhow::Result<harness::PromiseControlArgumentFacts> {
+    ctx.execute_activity(
         WorkflowActivities::tool_prepare_promise_controls,
         ToolPreparePromiseControlsActivityRequest { request },
         activity_options(),
@@ -283,14 +287,14 @@ mod tests {
     /// Decode a proto failure exactly the way the SDK does for an activity
     /// resolution, so the recognizer is exercised against the real shape.
     fn activity_error(failure: Failure) -> ActivityExecutionError {
-        let incoming = DefaultFailureConverter
+        let incoming = DefaultFailureConverter::default()
             .to_error(
                 failure,
                 &PayloadConverter::default(),
                 &SerializationContextData::None,
             )
             .expect("failure decodes");
-        ActivityExecutionDecodeHint { cancelled: false }.adapt(incoming)
+        ActivityExecutionDecodeHint::new(false).adapt(incoming)
     }
 
     fn activity_failure(retry_state: RetryState, cause: Failure) -> Failure {
@@ -307,11 +311,21 @@ mod tests {
     }
 
     fn timeout_failure(timeout_type: TimeoutType, cause: Option<Failure>) -> Failure {
+        use temporalio_common::protos::temporal::api::enums::v1::TimeoutType as WireTimeoutType;
+
         Failure {
             message: format!("activity {} timeout", timeout_type_label(timeout_type)),
             cause: cause.map(Box::new),
             failure_info: Some(FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
-                timeout_type: timeout_type.into(),
+                timeout_type: match timeout_type {
+                    TimeoutType::Unspecified => WireTimeoutType::Unspecified,
+                    TimeoutType::StartToClose => WireTimeoutType::StartToClose,
+                    TimeoutType::ScheduleToStart => WireTimeoutType::ScheduleToStart,
+                    TimeoutType::ScheduleToClose => WireTimeoutType::ScheduleToClose,
+                    TimeoutType::Heartbeat => WireTimeoutType::Heartbeat,
+                    _ => panic!("test requires a known timeout type"),
+                }
+                .into(),
                 last_heartbeat_details: None,
             })),
             ..Default::default()
@@ -405,8 +419,8 @@ mod tests {
 
     #[test]
     fn cancellation_and_unknown_application_failures_propagate() {
-        let cancelled = ActivityExecutionDecodeHint { cancelled: true }.adapt(
-            DefaultFailureConverter
+        let cancelled = ActivityExecutionDecodeHint::new(true).adapt(
+            DefaultFailureConverter::default()
                 .to_error(
                     Failure {
                         message: "cancelled".to_owned(),

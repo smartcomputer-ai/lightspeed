@@ -1,6 +1,6 @@
 # Lightspeed Workflow Contract
 
-Generated from the Rust contract types in `engine` and `temporal-workflow`.
+Generated from the Rust contract types in `harness` and `temporal-workflow`.
 Type shapes live in `workflow.schema.json`; constants and known-answer vectors
 live in `workflow.json`. Regenerate both artifacts and this reference with:
 

@@ -1,4 +1,4 @@
-import type { MethodGroup } from "@lightspeed-ai/agent-client";
+import type { MethodGroup } from "@lightspeed-ai/sdk";
 
 /**
  * What each core method group lets a key call. Deployment groups address the

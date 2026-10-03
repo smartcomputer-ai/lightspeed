@@ -298,7 +298,7 @@ async fn download_archive(
     file.as_file_mut()
         .rewind()
         .context("rewind temporary envd archive")?;
-    Ok((file, format!("{:x}", sha.finalize())))
+    Ok((file, hex::encode(sha.finalize())))
 }
 
 fn extract_binary(
@@ -539,7 +539,7 @@ mod tests {
             release_info::TARGET
         );
         let archive = envd_archive(script.as_bytes());
-        let archive_sha = format!("{:x}", Sha256::digest(&archive));
+        let archive_sha = hex::encode(Sha256::digest(&archive));
         let (origin, server) = serve_upgrade_with_document(archive, |origin| {
             discovery_json(origin, &archive_sha, &git_sha, 3)
         })

@@ -1,5 +1,5 @@
 import { Bot, GrammyError, type Context } from "grammy";
-import type { LightspeedClient } from "@lightspeed-ai/agent-client";
+import type { LightspeedClient } from "@lightspeed-ai/sdk";
 import type { TokenSource } from "../../core/leases.js";
 import type {
   ConnectorActivities,

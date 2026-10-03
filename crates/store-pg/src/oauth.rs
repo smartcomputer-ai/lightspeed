@@ -7,6 +7,7 @@
 //! lock keyed by universe and grant, so refresh single-flight holds across
 //! worker processes.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use api::Attribution;
 use async_trait::async_trait;
 use auth::{
@@ -102,7 +103,7 @@ impl OAuthClientStore for PgStore {
             RETURNING {OAUTH_CLIENT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.client_id.as_str())
             .bind(&record.provider_id)
@@ -144,7 +145,7 @@ impl OAuthClientStore for PgStore {
             WHERE universe_id = $1 AND client_id = $2
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(client_id.as_str())
             .fetch_optional(&self.pool)
@@ -168,7 +169,7 @@ impl OAuthClientStore for PgStore {
             ORDER BY client_id
             "#
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -187,7 +188,7 @@ impl OAuthClientStore for PgStore {
             RETURNING {OAUTH_CLIENT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(client_id.as_str())
             .fetch_optional(&self.pool)
@@ -240,7 +241,7 @@ impl AuthFlowStore for PgStore {
             RETURNING {AUTH_FLOW_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.flow_id.as_str())
             .bind(record.client_id.as_str())
@@ -277,7 +278,7 @@ impl AuthFlowStore for PgStore {
             WHERE universe_id = $1 AND flow_id = $2
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(flow_id.as_str())
             .fetch_optional(&self.pool)
@@ -303,7 +304,7 @@ impl AuthFlowStore for PgStore {
             WHERE universe_id = $1 AND state_hash = $2
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(state_hash)
             .fetch_optional(&self.pool)
@@ -328,7 +329,7 @@ impl AuthFlowStore for PgStore {
             RETURNING {AUTH_FLOW_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(flow_id.as_str())
             .bind(now_ms)
@@ -370,7 +371,7 @@ impl AuthFlowStore for PgStore {
             RETURNING {AUTH_FLOW_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(flow_id.as_str())
             .bind(outcome.grant_id.as_ref().map(AuthGrantId::as_str))

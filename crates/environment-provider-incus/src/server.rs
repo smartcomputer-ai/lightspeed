@@ -49,7 +49,7 @@ pub async fn serve<B: IncusBackend>(config: Config, backend: B) -> anyhow::Resul
         .route("/health", get(health::<B>))
         .route("/control", get(upgrade::<B>))
         .route(
-            "/routes/:universe/:binding/:environment/:incarnation/:target",
+            "/routes/{universe}/{binding}/{environment}/{incarnation}/{target}",
             get(data_upgrade::<B>),
         )
         .with_state(App {
@@ -125,7 +125,7 @@ async fn connection<B: IncusBackend>(app: App<B>, mut socket: WebSocket) {
             Message::Text(text) => {
                 let response = dispatch(&app, &text).await;
                 if socket
-                    .send(Message::Text(response.to_string()))
+                    .send(Message::Text(response.to_string().into()))
                     .await
                     .is_err()
                 {

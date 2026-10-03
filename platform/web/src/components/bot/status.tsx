@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
-import type { SessionActivity } from "@lightspeed-ai/agent-client";
+import type { SessionActivity } from "@lightspeed-ai/sdk";
 import type { BotControllerSnapshot, BotControllerStatus, BotView } from "@/api";
 import { cn } from "@/lib/utils";
 

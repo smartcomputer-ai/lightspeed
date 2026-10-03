@@ -1,4 +1,4 @@
-import type { UniverseIconColor } from "@lightspeed/platform-shared";
+import type { UniverseIconColor } from "@lightspeed-ai/platform-shared";
 
 /// Shared lightness and saturation keep identity badges visually consistent.
 export function identityColor(hue: number, chroma = 0.11): string {

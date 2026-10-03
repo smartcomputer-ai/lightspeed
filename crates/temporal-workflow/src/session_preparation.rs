@@ -1,6 +1,6 @@
 //! Durable session preparation requests. These carry intent and references,
 //! never credentials or provider transport payloads.
-use engine::{
+use harness::{
     CoreAgentState, SessionConfig, SessionId, ToolName, ToolSpec, WorkflowToolBinding,
     WorkflowToolDeclaration, WorkflowToolId,
 };
@@ -33,16 +33,16 @@ impl SessionToolsetSource {
 /// attaches, in document order and without repeats: what must exist in the
 /// universe when the configuration is admitted. A snapshot attachment names
 /// immutable content, not a resource, and is admitted as content instead.
-pub fn attached_resources(features: &engine::FeaturesConfig) -> Vec<api::ResourceRef> {
+pub fn attached_resources(features: &harness::FeaturesConfig) -> Vec<api::ResourceRef> {
     let workspaces = features
         .vfs
         .iter()
         .flat_map(|vfs| &vfs.workspaces)
         .filter_map(|attachment| match &attachment.target {
-            engine::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
+            harness::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
                 Some(api::ResourceRef::Workspace(workspace_id.clone()))
             }
-            engine::WorkspaceAttachmentTarget::Snapshot { .. } => None,
+            harness::WorkspaceAttachmentTarget::Snapshot { .. } => None,
         });
     let environments = features
         .environments
@@ -72,7 +72,7 @@ pub struct SessionToolsetPreparation {
 
 /// The resolved profile is captured at submission so workflow retries do not
 /// reread a mutable named profile. Configuration has already been translated
-/// into the engine's provider-neutral document.
+/// into the harness's provider-neutral document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionProfileIntent {
     pub config: Option<SessionConfig>,
@@ -80,7 +80,7 @@ pub struct SessionProfileIntent {
     /// The environment to activate when the session has none after the
     /// configuration is applied: the config's default attachment, or a
     /// creation-time override. Never overrides a live selection.
-    pub environment: Option<engine::EnvironmentId>,
+    pub environment: Option<harness::EnvironmentId>,
 }
 
 impl SessionProfileIntent {
@@ -90,7 +90,7 @@ impl SessionProfileIntent {
     pub(crate) fn environment_to_prepare(
         &self,
         state: &CoreAgentState,
-    ) -> Option<engine::EnvironmentId> {
+    ) -> Option<harness::EnvironmentId> {
         let config = self.config.as_ref().or(state.lifecycle.config.as_ref());
         let retains_active = state
             .environment
@@ -217,16 +217,16 @@ pub struct SessionProfilePreparationRequest {
     pub instructions: Option<api::ProfileInstructions>,
     /// Candidate to fill an empty active pointer; must be attached in the
     /// source configuration and selectable in the registry.
-    pub environment: Option<engine::EnvironmentId>,
+    pub environment: Option<harness::EnvironmentId>,
     pub source: SessionToolsetSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionProfilePreparation {
     pub toolset: SessionToolsetPreparation,
-    pub instructions: BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>,
+    pub instructions: BTreeMap<harness::ContextEntryKey, harness::ContextEntryInput>,
     /// The validated fill candidate; applied only while nothing is active.
-    pub environment_id: Option<engine::EnvironmentId>,
+    pub environment_id: Option<harness::EnvironmentId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,10 +237,10 @@ pub struct SessionToolsetRequest {
 
 /// Compute a minimal patch from the currently published tools to an observed desired set.
 pub fn session_toolset_patch(
-    active: &BTreeMap<engine::ToolName, engine::ToolSpec>,
-    desired: &BTreeMap<engine::ToolName, engine::ToolSpec>,
-) -> engine::ToolPatch {
-    engine::ToolPatch {
+    active: &BTreeMap<harness::ToolName, harness::ToolSpec>,
+    desired: &BTreeMap<harness::ToolName, harness::ToolSpec>,
+) -> harness::ToolPatch {
+    harness::ToolPatch {
         remove: active
             .keys()
             .filter(|name| !desired.contains_key(*name))
@@ -257,22 +257,22 @@ pub fn session_toolset_patch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::BlobRef;
+    use harness::BlobRef;
 
     #[test]
     fn profile_preparation_omits_unused_defaults_and_prepares_replacements() {
-        let mut config = crate::default_session_config(engine::ModelSelection {
-            api_kind: engine::ProviderApiKind::OpenAiResponses,
+        let mut config = crate::default_session_config(harness::ModelSelection {
+            api_kind: harness::ProviderApiKind::OpenAiResponses,
             provider_id: "openai".into(),
             model: "test".into(),
         });
-        config.features.environments = Some(engine::EnvironmentsFeature {
+        config.features.environments = Some(harness::EnvironmentsFeature {
             environments: ["active", "default"]
                 .into_iter()
-                .map(|id| engine::EnvironmentAttachment {
+                .map(|id| harness::EnvironmentAttachment {
                     environment_id: id.into(),
                     default: id == "default",
-                    access: engine::EnvironmentAccess::Read,
+                    access: harness::EnvironmentAccess::Read,
                     working_directory: None,
                 })
                 .collect(),
@@ -280,13 +280,13 @@ mod tests {
         });
         let mut state = CoreAgentState::new();
         state.lifecycle.config = Some(config.clone());
-        state.environment.active_environment_id = Some(engine::EnvironmentId::new("active"));
+        state.environment.active_environment_id = Some(harness::EnvironmentId::new("active"));
         let mut profile = SessionProfileIntent {
             config: Some(config),
             instructions: Some(api::ProfileInstructions::Text {
                 text: "updated instructions".into(),
             }),
-            environment: Some(engine::EnvironmentId::new("default")),
+            environment: Some(harness::EnvironmentId::new("default")),
         };
         // The preparation activity receives no candidate, so it cannot try
         // to select a closed or missing default when the active item survives.
@@ -314,44 +314,44 @@ mod tests {
 
     #[test]
     fn attached_resources_name_each_workspace_environment_and_server_once() {
-        let features = engine::FeaturesConfig {
-            vfs: Some(engine::VfsFeature {
+        let features = harness::FeaturesConfig {
+            vfs: Some(harness::VfsFeature {
                 workspaces: vec![
-                    engine::WorkspaceAttachment {
+                    harness::WorkspaceAttachment {
                         path: "/repo".into(),
-                        target: engine::WorkspaceAttachmentTarget::Workspace {
+                        target: harness::WorkspaceAttachmentTarget::Workspace {
                             workspace_id: "repo".into(),
                         },
-                        access: engine::WorkspaceAccess::Edit,
+                        access: harness::WorkspaceAccess::Edit,
                     },
-                    engine::WorkspaceAttachment {
+                    harness::WorkspaceAttachment {
                         path: "/pinned".into(),
-                        target: engine::WorkspaceAttachmentTarget::Snapshot {
+                        target: harness::WorkspaceAttachmentTarget::Snapshot {
                             snapshot_ref: format!("sha256:{}", "a".repeat(64)),
                         },
-                        access: engine::WorkspaceAccess::Read,
+                        access: harness::WorkspaceAccess::Read,
                     },
-                    engine::WorkspaceAttachment {
+                    harness::WorkspaceAttachment {
                         path: "/repo-again".into(),
-                        target: engine::WorkspaceAttachmentTarget::Workspace {
+                        target: harness::WorkspaceAttachmentTarget::Workspace {
                             workspace_id: "repo".into(),
                         },
-                        access: engine::WorkspaceAccess::Read,
+                        access: harness::WorkspaceAccess::Read,
                     },
                 ],
                 ..Default::default()
             }),
-            environments: Some(engine::EnvironmentsFeature {
-                environments: vec![engine::EnvironmentAttachment {
+            environments: Some(harness::EnvironmentsFeature {
+                environments: vec![harness::EnvironmentAttachment {
                     environment_id: "prod-1".into(),
                     default: true,
-                    access: engine::EnvironmentAccess::Read,
+                    access: harness::EnvironmentAccess::Read,
                     working_directory: None,
                 }],
                 ..Default::default()
             }),
-            mcp: Some(engine::McpFeature {
-                servers: vec![engine::McpServerAttachment {
+            mcp: Some(harness::McpFeature {
+                servers: vec![harness::McpServerAttachment {
                     server_id: "crm".into(),
                     tools: None,
                 }],
@@ -369,7 +369,7 @@ mod tests {
                 api::ResourceRef::McpServer("crm".into()),
             ]
         );
-        assert!(attached_resources(&engine::FeaturesConfig::default()).is_empty());
+        assert!(attached_resources(&harness::FeaturesConfig::default()).is_empty());
     }
 
     fn operation(id: usize, submitted_at_ms: u64) -> SessionOperationRequest {
@@ -555,19 +555,19 @@ mod tests {
         let call_tool_name = ToolName::new("mcp_call");
 
         let mut inject_all = test_remote_mcp_tool(remote_tool_name.clone());
-        let engine::ToolKind::RemoteMcp(spec) = &mut inject_all.kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &mut inject_all.kind else {
             unreachable!("test helper must produce a remote MCP tool");
         };
-        spec.execution = engine::RemoteMcpExecution::Native;
+        spec.execution = harness::RemoteMcpExecution::Native;
         let mut active = BTreeMap::from([(remote_tool_name.clone(), inject_all)]);
 
         let mut search_selected = test_remote_mcp_tool(remote_tool_name.clone());
-        let engine::ToolKind::RemoteMcp(spec) = &mut search_selected.kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &mut search_selected.kind else {
             unreachable!("test helper must produce a remote MCP tool");
         };
         spec.record_revision = 2;
-        spec.execution = engine::RemoteMcpExecution::Native;
-        spec.exposure = engine::RemoteMcpExposure::Search;
+        spec.execution = harness::RemoteMcpExecution::Native;
+        spec.exposure = harness::RemoteMcpExposure::Search;
         spec.allowed_tools = Some(vec!["lookup_customer".to_owned()]);
         let desired = BTreeMap::from([
             (remote_tool_name.clone(), search_selected),
@@ -585,14 +585,14 @@ mod tests {
             .expect("switch inject-all to search-selected");
         assert!(active.contains_key(&find_tool_name));
         assert!(active.contains_key(&call_tool_name));
-        let engine::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
             panic!("expected remote MCP tool");
         };
-        assert_eq!(spec.exposure, engine::RemoteMcpExposure::Search);
+        assert_eq!(spec.exposure, harness::RemoteMcpExposure::Search);
         assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
 
         let mut search_other_selection = active[&remote_tool_name].clone();
-        let engine::ToolKind::RemoteMcp(spec) = &mut search_other_selection.kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &mut search_other_selection.kind else {
             unreachable!("expected remote MCP tool");
         };
         spec.record_revision = 3;
@@ -605,17 +605,17 @@ mod tests {
         active = session_toolset_patch(&active, &desired)
             .apply_to(&active)
             .expect("change selected search tools");
-        let engine::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
             panic!("expected remote MCP tool");
         };
         assert_eq!(spec.allowed_tools, Some(vec!["create_customer".to_owned()]));
 
         let mut inject_selected = active[&remote_tool_name].clone();
-        let engine::ToolKind::RemoteMcp(spec) = &mut inject_selected.kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &mut inject_selected.kind else {
             unreachable!("expected remote MCP tool");
         };
         spec.record_revision = 4;
-        spec.exposure = engine::RemoteMcpExposure::Inject;
+        spec.exposure = harness::RemoteMcpExposure::Inject;
         let desired = BTreeMap::from([(remote_tool_name.clone(), inject_selected)]);
         active = session_toolset_patch(&active, &desired)
             .apply_to(&active)
@@ -624,7 +624,7 @@ mod tests {
         assert!(!active.contains_key(&call_tool_name));
 
         let mut inject_all = active[&remote_tool_name].clone();
-        let engine::ToolKind::RemoteMcp(spec) = &mut inject_all.kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &mut inject_all.kind else {
             unreachable!("expected remote MCP tool");
         };
         spec.record_revision = 5;
@@ -633,48 +633,48 @@ mod tests {
         active = session_toolset_patch(&active, &desired)
             .apply_to(&active)
             .expect("switch inject-selected to inject-all");
-        let engine::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
+        let harness::ToolKind::RemoteMcp(spec) = &active[&remote_tool_name].kind else {
             panic!("expected remote MCP tool");
         };
-        assert_eq!(spec.exposure, engine::RemoteMcpExposure::Inject);
+        assert_eq!(spec.exposure, harness::RemoteMcpExposure::Inject);
         assert_eq!(spec.allowed_tools, None);
     }
 
-    fn test_remote_mcp_tool(tool_name: ToolName) -> engine::ToolSpec {
-        engine::ToolSpec {
+    fn test_remote_mcp_tool(tool_name: ToolName) -> harness::ToolSpec {
+        harness::ToolSpec {
             name: tool_name,
             execution: Default::default(),
-            kind: engine::ToolKind::RemoteMcp(engine::RemoteMcpToolSpec {
+            kind: harness::ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
                 server_id: "crm".to_owned(),
                 record_revision: 1,
                 server_label: "crm".to_owned(),
                 server_url: "https://crm.example.com/mcp".to_owned(),
                 description_ref: None,
                 allowed_tools: None,
-                execution: engine::RemoteMcpExecution::Provider,
-                exposure: engine::RemoteMcpExposure::Inject,
-                approval: engine::RemoteMcpApprovalPolicy::Never,
+                execution: harness::RemoteMcpExecution::Provider,
+                exposure: harness::RemoteMcpExposure::Inject,
+                approval: harness::RemoteMcpApprovalPolicy::Never,
                 defer_loading: None,
                 auth_ref: None,
                 auth_required: false,
                 allow_private_network: false,
             }),
-            parallelism: engine::ToolParallelism::ParallelSafe,
+            parallelism: harness::ToolParallelism::ParallelSafe,
         }
     }
 
-    fn test_function_tool(tool_name: ToolName) -> engine::ToolSpec {
-        engine::ToolSpec {
+    fn test_function_tool(tool_name: ToolName) -> harness::ToolSpec {
+        harness::ToolSpec {
             name: tool_name,
             execution: Default::default(),
-            kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+            kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                 description_ref: None,
                 input_schema_ref: BlobRef::from_bytes(b"schema"),
                 output_schema_ref: None,
                 strict: Some(true),
                 provider_options_ref: None,
             }),
-            parallelism: engine::ToolParallelism::Exclusive,
+            parallelism: harness::ToolParallelism::Exclusive,
         }
     }
 }

@@ -35,7 +35,7 @@ The implementation landed as the greenfield breaking refactor described here:
 - MCP discovery maps SDK-parsed `invalid_token` and `insufficient_scope`
   challenges to `grantNeedsReauth` and `additionalConsentRequired`; suggested
   scopes are diagnostics and never mutate authored consent.
-- The generated API/TypeScript contracts and the Platform server editor expose
+- The generated API/TypeScript contracts and the Platform backend editor expose
   current advertised scopes and typed additional-consent diagnostics. Manual
   preregistration remains available through the API and CLI.
 
@@ -44,9 +44,9 @@ Verification completed locally:
 - `cargo test -p auth` (85 passed);
 - `cargo test -p api` (82 passed, including generated-contract freshness);
 - `cargo test -p store-pg` (unit suite passed; database tests remain opt-in);
-- `cargo test -p temporal-server --lib` (249 passed, one unrelated ffmpeg
+- `cargo test -p temporal-runtime --lib` (249 passed, one unrelated ffmpeg
   smoke test ignored), plus the scope-upgrade transport fixture;
-- `cargo test -p temporal-server --test mcp_oauth_live -- --ignored
+- `cargo test -p temporal-runtime --test mcp_oauth_live -- --ignored
   --test-threads=1` (database-backed OAuth/MCP round trip passed);
 - `cargo check --workspace --tests`;
 - TypeScript generation, typechecking, 206 tests, and live/demo production
@@ -155,7 +155,7 @@ component and adapt it to `rmcp`'s OAuth HTTP-client seam:
   later for P145 without weakening the public control-plane default.
 
 Both P143 tool discovery and P143b OAuth discovery should use this component.
-It remains outside `engine`, workflows, and the provider adapters.
+It remains outside `harness`, workflows, and the provider adapters.
 
 ### Discovery and client registration
 

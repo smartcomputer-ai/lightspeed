@@ -1,11 +1,11 @@
-//! Live engine-loop compaction tests for the Anthropic Messages adapter.
+//! Live harness-loop compaction tests for the Anthropic Messages adapter.
 //!
 //! Provider-triggered tests exercise native summaries, pruning, and recall.
-//! Standalone tests exercise summarization requests planned by the engine.
+//! Standalone tests exercise summarization requests planned by the harness.
 
 use std::sync::Arc;
 
-use engine::{
+use harness::{
     ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, BlobRef, CompactionPolicy,
     ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntryInput,
     ContextEntryKey, ContextEntryKind, ContextMessageRole, ContextRemovalReason, CoreAgentCommand,
@@ -31,7 +31,7 @@ const LIVE_MARKER: &str = "LIGHTSPEED-ANTHROPIC-COMPACTION-LIVE-4217";
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ANTHROPIC_API_KEY and a compaction-capable Anthropic model (costs real money)"]
-async fn anthropic_messages_live_engine_prunes_and_reuses_provider_compaction() {
+async fn anthropic_messages_live_harness_prunes_and_reuses_provider_compaction() {
     const NEWSLETTER_TITLE: &str = "Spring Garden Notes: April Edition";
     let session_id = SessionId::new("session-live-anthropic-provider-compaction");
     let (runner, blobs) = live_runner(&session_id).await;
@@ -164,16 +164,16 @@ async fn anthropic_messages_live_engine_prunes_and_reuses_provider_compaction() 
 }
 
 fn provider_compaction_run(content_ref: BlobRef) -> CoreAgentCommand {
-    CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+    CoreAgentCommand::RequestRun(harness::RunRequestCommand {
         requested_by: None,
         notify_on_terminal: Vec::new(),
         submission_id: None,
-        source: engine::RunRequestSource::Input {
+        source: harness::RunRequestSource::Input {
             input: vec![ContextEntryInput {
                 kind: ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref,
                     media_type: None,
                     provider_kind: None,
@@ -300,16 +300,16 @@ async fn anthropic_messages_live_manual_standalone_compaction_preserves_marker()
         .drive_command(DriveCommand {
             session_id,
             observed_at_ms: 40,
-            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                 requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
-                source: engine::RunRequestSource::Input {
+                source: harness::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
                         kind: ContextEntryKind::Message {
                             role: ContextMessageRole::User,
                         },
-                        content: engine::ContentRef {
+                        content: harness::ContentRef {
                             content_ref: question_ref,
                             media_type: None,
                             provider_kind: None,
@@ -457,7 +457,7 @@ fn standalone_session_config(
 ) -> SessionConfig {
     SessionConfig {
         model,
-        generation: engine::GenerationConfig {
+        generation: harness::GenerationConfig {
             max_output_tokens: Some(2048),
             reasoning_effort: None,
             tool_choice: None,
@@ -509,7 +509,7 @@ fn anthropic_raw_context_input(
 ) -> ContextEntryInput {
     ContextEntryInput {
         kind: ContextEntryKind::ProviderOpaque,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some("application/json".to_owned()),
             provider_kind: Some(ANTHROPIC_MESSAGES_INPUT_MESSAGE_PROVIDER_KIND.to_owned()),
@@ -524,7 +524,7 @@ fn anthropic_raw_context_input(
     }
 }
 
-fn compaction_summary_entries(state: &engine::CoreAgentState) -> Vec<&engine::ContextEntry> {
+fn compaction_summary_entries(state: &harness::CoreAgentState) -> Vec<&harness::ContextEntry> {
     state
         .context
         .entries
@@ -536,7 +536,7 @@ fn compaction_summary_entries(state: &engine::CoreAgentState) -> Vec<&engine::Co
         .collect()
 }
 
-fn active_context_contains_ref(state: &engine::CoreAgentState, content_ref: &BlobRef) -> bool {
+fn active_context_contains_ref(state: &harness::CoreAgentState, content_ref: &BlobRef) -> bool {
     state
         .context
         .entries
@@ -545,13 +545,13 @@ fn active_context_contains_ref(state: &engine::CoreAgentState, content_ref: &Blo
 }
 
 fn has_compaction_requested(
-    entries: &[engine::CoreAgentEntry],
+    entries: &[harness::CoreAgentEntry],
     expected_trigger: ContextCompactionTrigger,
 ) -> bool {
     entries.iter().any(|entry| {
         matches!(
             &entry.event,
-            CoreAgentEvent::Context(engine::ContextEvent::CompactionRequested {
+            CoreAgentEvent::Context(harness::ContextEvent::CompactionRequested {
                 trigger,
                 ..
             }) if *trigger == expected_trigger
@@ -560,13 +560,13 @@ fn has_compaction_requested(
 }
 
 fn has_compaction_finished(
-    entries: &[engine::CoreAgentEntry],
+    entries: &[harness::CoreAgentEntry],
     expected_status: ContextCompactionStatus,
 ) -> bool {
     entries.iter().any(|entry| {
         matches!(
             &entry.event,
-            CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
+            CoreAgentEvent::Context(harness::ContextEvent::CompactionFinished {
                 status,
                 ..
             }) if *status == expected_status
@@ -574,11 +574,11 @@ fn has_compaction_finished(
     })
 }
 
-fn has_provider_compacted_removal(entries: &[engine::CoreAgentEntry]) -> bool {
+fn has_provider_compacted_removal(entries: &[harness::CoreAgentEntry]) -> bool {
     entries.iter().any(|entry| {
         matches!(
             &entry.event,
-            CoreAgentEvent::Context(engine::ContextEvent::EntriesRemoved {
+            CoreAgentEvent::Context(harness::ContextEvent::EntriesRemoved {
                 reason: ContextRemovalReason::ProviderCompacted,
                 ..
             })
@@ -586,10 +586,10 @@ fn has_provider_compacted_removal(entries: &[engine::CoreAgentEntry]) -> bool {
     })
 }
 
-async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
+async fn assistant_text(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
@@ -610,10 +610,10 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
 
 async fn compaction_failure_text(
     blobs: &dyn BlobStore,
-    entries: &[engine::CoreAgentEntry],
+    entries: &[harness::CoreAgentEntry],
 ) -> String {
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
+        if let CoreAgentEvent::Context(harness::ContextEvent::CompactionFinished {
             status: ContextCompactionStatus::Failed,
             failure_ref: Some(failure_ref),
             ..
@@ -628,7 +628,7 @@ async fn compaction_failure_text(
     "compaction did not finish with a failure ref".to_owned()
 }
 
-async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState) -> String {
+async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
     let Some(run) = state.runs.completed.last() else {
         return "run did not complete".to_owned();
     };
@@ -683,7 +683,7 @@ async fn anthropic_messages_live_chunked_compaction_keeps_tail_and_transitions_t
                         kind: ContextEntryKind::Message {
                             role: ContextMessageRole::User,
                         },
-                        content: engine::ContentRef::text(content_ref),
+                        content: harness::ContentRef::text(content_ref),
                         preview: None,
                         origin: None,
                         provenance_ref: None,
@@ -728,8 +728,8 @@ async fn anthropic_messages_live_chunked_compaction_keeps_tail_and_transitions_t
         .filter(|entry| {
             matches!(
                 entry.source,
-                engine::ContextEntrySource::AssistantOutput { .. }
-                    | engine::ContextEntrySource::Reasoning { .. }
+                harness::ContextEntrySource::AssistantOutput { .. }
+                    | harness::ContextEntrySource::Reasoning { .. }
             )
         })
         .collect();
@@ -760,9 +760,9 @@ async fn anthropic_messages_live_chunked_compaction_keeps_tail_and_transitions_t
         .emitted_entries
         .iter()
         .find_map(|entry| match entry.event {
-            CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished { calls, .. }) => {
-                Some(calls)
-            }
+            CoreAgentEvent::Context(harness::ContextEvent::CompactionFinished {
+                calls, ..
+            }) => Some(calls),
             _ => None,
         })
         .unwrap();

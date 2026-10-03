@@ -6,7 +6,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateSession, DeleteClosedSessions,
@@ -616,8 +616,8 @@ fn session_io_error(action: &str, path: &Path, error: io::Error) -> SessionStore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::session::{StoredEvent, StoredJoins, UncommittedStoredEvent};
-    use engine::storage::SessionStore;
+    use harness::session::{StoredEvent, StoredJoins, UncommittedStoredEvent};
+    use harness::storage::SessionStore;
 
     fn open_event(at_ms: u64) -> UncommittedStoredEvent {
         UncommittedStoredEvent {
@@ -662,8 +662,8 @@ mod tests {
                 session_id: session_id.clone(),
                 expected_head: None,
                 events: vec![
-                    lifecycle_event(10, engine::CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
-                    lifecycle_event(20, engine::CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                    lifecycle_event(10, harness::CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
+                    lifecycle_event(20, harness::CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
                 ],
             })
             .await

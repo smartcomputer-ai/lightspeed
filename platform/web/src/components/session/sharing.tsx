@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole, Users } from "lucide-react";
-import type { ResourceAccessSummary } from "@lightspeed-ai/agent-client";
+import type { ResourceAccessSummary } from "@lightspeed-ai/sdk";
 import { api } from "@/api";
 import {
   AlertDialog,

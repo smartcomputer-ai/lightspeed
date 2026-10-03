@@ -10,7 +10,7 @@
   messaging migration was demoted from committed second topology to a
   candidate with an explicit burden of proof.
 - Slice 1 transport refactor implemented 2026-07-24: the neutral,
-  universe-scoped emission envelope and deterministic ids live in `engine`;
+  universe-scoped emission envelope and deterministic ids live in `harness`;
   run-terminal and environment-job source resolutions now use the single
   `deliver_emission` signal; both promise-specific signal/DTO families and
   the promise-named outbound queue are deleted.
@@ -57,7 +57,7 @@
   Confirmed: both
   promise-specific signal families are grep-clean with no transitional dual
   funnel; envelope/ids are deterministic, domain-separated, and
-  substrate-neutral (`engine` gained no transport or Temporal dependency);
+  substrate-neutral (`harness` gained no transport or Temporal dependency);
   binding and creation fingerprints now use an explicit canonical v1 field
   encoding rather than serde output; pull reads replay the ordinary reducer,
   so durable binding, canonical id, joins, arguments ref, and successful
@@ -81,7 +81,7 @@
   `WorkflowToolEvent`, `WorkflowToolConfigEvent`/`WorkflowToolState`,
   `ToolDispatchMode::WorkflowTool`, `EmissionBody::ToolInvocation`,
   invocation ids `wti:sha256:`). Code rename executed 2026-07-26 across
-  engine/tools/temporal-workflow/temporal-server/api/api-projection/cli:
+  engine/tools/temporal-workflow/temporal-runtime/api/api-projection/cli:
   modules renamed to `workflow_tool.rs`, binding fingerprints now
   `wtb:sha256:`, fingerprint hash domains renamed to
   `lightspeed.workflow-tool.{binding,invocation}.v1` with golden digests
@@ -942,7 +942,7 @@ The first draft specified Temporal signals normatively. The contract is
 narrower than Temporal and must be stated that way, because the engine and
 this substrate are meant to outlive any single durable-workflow engine:
 
-- **Engine (substrate-neutral, `crates/engine`):** the emission envelope and
+- **Engine (substrate-neutral, `crates/harness`):** the emission envelope and
   deterministic ids, tool/binding DTOs, the `WorkflowToolEvent` and
   `WorkflowToolConfigEvent` families, deterministic reducer state, and the
   invariants above. The engine holds no transport state and performs no
@@ -954,7 +954,7 @@ this substrate are meant to outlive any single durable-workflow engine:
   I/O adapters. Receiver-side envelope helpers remain plain library code with
   no workflow-substrate dependency; the ordered-stream high-water helper is
   deferred with that mode.
-- **Temporal adapter (`temporal-workflow` / `temporal-server`):** the fixed
+- **Temporal adapter (`temporal-workflow` / `temporal-runtime`):** the fixed
   `deliver_emission` signal, endpoint resolution/ensure-start policy,
   replay-rebuilt flush queues, and continue-as-new gating. Signals target the
   stable workflow id, never a run id. A shared Temporal helper or pump may
@@ -1209,7 +1209,7 @@ workflow ids.
 Expected changes:
 
 ```text
-crates/engine/
+crates/harness/
   EmissionEnvelope / EmissionProducer / EmissionBody and deterministic ids
   workflow-tool ids, endpoint/binding DTOs
   WorkflowToolConfigEvent + WorkflowToolEvent and deterministic reducer state
@@ -1227,7 +1227,7 @@ crates/temporal-workflow/
   shared delivery-spine pump (generalized from promise notifications)
   receiver workflow integration
 
-crates/temporal-server/
+crates/temporal-runtime/
   trusted workflow-plugin managed-session creation path
   effective config/toolset materialization
   delivery retry/failure projection
@@ -1236,7 +1236,7 @@ crates/api/ and api-projection/
   read-only tool and emission views if exposed through session reads
 ```
 
-P100 does not add domain handlers to `engine`. A receiver workflow imports
+P100 does not add domain handlers to `harness`. A receiver workflow imports
 the envelope type and owns its typed payload DTO.
 
 ## Implementation Plan
@@ -1251,7 +1251,7 @@ change so no transitional dual-funnel state ever ships.
 
 - [x] Add the neutral, universe-scoped `EmissionEnvelope`,
       `EmissionProducer`, existing `EmissionBody` variants, and deterministic
-      `EmissionId` derivation in `engine`.
+      `EmissionId` derivation in `harness`.
 - [x] Replace the `resolve_promise` signal with the fixed generic
       `deliver_emission` signal carrying `RunTerminal` bodies; delete the
       promise-specific DTO/signal names.

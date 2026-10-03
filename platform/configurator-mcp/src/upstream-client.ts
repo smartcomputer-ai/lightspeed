@@ -3,7 +3,7 @@ import {
   LightspeedTransportError,
   type CallerAccess,
   type LightspeedClientOptions,
-} from "@lightspeed-ai/agent-client";
+} from "@lightspeed-ai/sdk";
 import type { RequestAuthContext } from "./request-auth.js";
 import { upstreamHeaders } from "./request-auth.js";
 

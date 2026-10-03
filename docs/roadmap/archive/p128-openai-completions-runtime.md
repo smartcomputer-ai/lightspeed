@@ -106,13 +106,13 @@ Two phases, shipped in order:
   extra }` and `validate_provider_params` accepts it, so a completions params
   body already passes admission — and then fails at generation with
   `no LLM generation adapter registered for OpenAiCompletions`.
-- `engine` already treats `OpenAiCompletions` as a first-class
+- `harness` already treats `OpenAiCompletions` as a first-class
   `ProviderApiKind`: sessions pin it, `remote_mcp_supported_by_provider`
   returns `false` for it, `validate_context_config` rejects
   `ProviderTriggered` and `ProviderStandalone` compaction for it, and
   `tools/toolset.rs` maps it to the `CodexLike` built-in surface next to
   Responses. `api-projection` maps `"openai:completions"` both ways.
-- `temporal-server/gateway/service/api_config.rs::validate_reasoning_effort`
+- `temporal-runtime/gateway/service/api_config.rs::validate_reasoning_effort`
   rejects any `reasoningEffort` for `openai:completions`; `models_api.rs`
   emits OpenAI models only as `openai:responses`; `worker/activities/state.rs
   ::llm_runtime_with_clients` registers Responses and Anthropic adapters
@@ -345,7 +345,7 @@ Phase 1 (in dependency order):
    (copy of the Responses pattern), constants `OPENAI_COMPLETIONS_API_KIND`
    re-export; unit tests for header/auth selection. Keep `create` as the
    `None`-auth wrapper.
-2. `engine`: allow `ProviderStandalone` compaction for `OpenAiCompletions`
+2. `harness`: allow `ProviderStandalone` compaction for `OpenAiCompletions`
    in `validate_context_config`; unit tests.
 3. `llm-runtime/src/openai_completions.rs`: `OpenAiCompletionsApi` trait
    (`create`, with `auth`), impl for `oai_c::Client`,
@@ -360,7 +360,7 @@ Phase 1 (in dependency order):
    caption); PDF; assistant+tool_calls fold; tool result; skill/VFS system
    messages; tool_choice variants; params passthrough; refusal; usage and
    finish mapping; kind mismatch errors.
-4. Registration: `temporal-server/worker/activities/state.rs`
+4. Registration: `temporal-runtime/worker/activities/state.rs`
    (`default_llm_runtime` builds a third client from
    `oai_c::Config::from_env_allow_missing_key`; `llm_runtime_with_clients`
    registers generation + compaction for `OpenAiCompletions`), `eval/main.rs`,
@@ -381,7 +381,7 @@ Phase 1 (in dependency order):
    `openai_completions_prompts_live.rs`, `openai_completions_skills_live.rs`
    — mirror the Responses files; `support/mod.rs` gains a completions
    model/client helper honouring `OPENAI_COMPLETIONS_MODEL/API_KEY/BASE_URL`.
-   `temporal-server/tests/sessions_live.rs` gets one end-to-end managed
+   `temporal-runtime/tests/sessions_live.rs` gets one end-to-end managed
    session on `openai:completions` (tool call + reply). All `#[ignore]`,
    fail loudly without keys.
 
@@ -395,7 +395,7 @@ Phase 2:
    `ModelProviderResolver`, `ResolvedModelProvider`, `ResolvedEndpoint`,
    `Static*` test resolver; keep `ProviderKeyResolver` name only if the
    diff is otherwise unwieldy — prefer the rename (greenfield).
-   `temporal-server/worker/secrets.rs::StoredProviderKeyResolver` reads
+   `temporal-runtime/worker/secrets.rs::StoredProviderKeyResolver` reads
    the row's `endpoint` and returns it alongside auth; validates the
    request's `api_kind` against `endpoint.api_kinds` (mismatch →
    `ProviderKeyError::NotUsable`).
@@ -426,12 +426,12 @@ Phase 2:
 
 Phase 1 done when:
 
-- `cargo test -p llm-clients -p llm-runtime -p engine -p temporal-server
+- `cargo test -p llm-clients -p llm-runtime -p harness -p temporal-runtime
   -p api -p eval` green; contract artifacts regenerated; `npm run check`
   green.
 - `cargo test -p llm-runtime --test openai_completions_live -- --ignored`
   (+ compaction/prompts/skills) pass against OpenAI with `OPENAI_API_KEY`.
-- `source scripts/dev/env.sh && cargo test -p temporal-server --test
+- `source scripts/dev/env.sh && cargo test -p temporal-runtime --test
   temporal_live openai_completions -- --ignored --test-threads=1` passes.
 - `models/list` returns both OpenAI kinds; a Platform session created with
   `apiKind: openai:completions` runs a tool round-trip end to end.
@@ -449,7 +449,7 @@ Phase 2 done when:
 - Removing the row makes the next generation fail with a typed
   `ProviderKeyResolution` error, not a fall-through to `api.openai.com`.
 - `openai` sessions without a row still use `OPENAI_BASE_URL` (regression
-  test in `temporal-server` unit tests with a fake resolver).
+  test in `temporal-runtime` unit tests with a fake resolver).
 
 ## Resolved questions
 

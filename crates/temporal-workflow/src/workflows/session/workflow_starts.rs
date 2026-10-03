@@ -9,9 +9,9 @@ const WORKFLOW_START_RETRY_BACKOFF_MS: u64 = 2_000;
 /// so replay and continue-as-new rebuild it without transport bookkeeping;
 /// the deterministic execution id makes re-issuing safe.
 struct StartCandidate {
-    invocation: engine::WorkflowToolInvocation,
+    invocation: harness::WorkflowToolInvocation,
     execution_id: String,
-    start: engine::WorkflowStartRef,
+    start: harness::WorkflowStartRef,
 }
 
 fn start_candidates(state: &AgentSessionWorkflow) -> Vec<StartCandidate> {
@@ -45,7 +45,7 @@ fn start_candidates(state: &AgentSessionWorkflow) -> Vec<StartCandidate> {
                         .promises
                         .promises
                         .get(promise_id)
-                        .is_some_and(|promise| promise.status == engine::PromiseStatus::Pending)
+                        .is_some_and(|promise| promise.status == harness::PromiseStatus::Pending)
                 });
             if !has_pending_promise {
                 return None;
@@ -55,12 +55,12 @@ fn start_candidates(state: &AgentSessionWorkflow) -> Vec<StartCandidate> {
                 .workflow_tools
                 .bindings
                 .get(&invocation.tool_id)?;
-            let engine::WorkflowToolTarget::Start { start } = &binding.target else {
+            let harness::WorkflowToolTarget::Start { start } = &binding.target else {
                 return None;
             };
             Some(StartCandidate {
                 invocation: invocation.clone(),
-                execution_id: engine::workflow_tool_execution_id(
+                execution_id: harness::workflow_tool_execution_id(
                     &invocation.invocation_id,
                     &start.recipe_fingerprint,
                 ),
@@ -120,7 +120,7 @@ pub(super) async fn process_pending_starts(
     for (invocation, execution_id, start) in due {
         let invocation_key = invocation.invocation_id.as_str().to_owned();
         let result = ctx
-            .start_activity(
+            .execute_activity(
                 WorkflowActivities::start_workflow_tool_execution,
                 crate::WorkflowToolStartActivityRequest {
                     execution_id,
@@ -176,7 +176,7 @@ pub(super) async fn process_pending_starts(
 
 async fn terminal_start_failure(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    invocation: &engine::WorkflowToolInvocation,
+    invocation: &harness::WorkflowToolInvocation,
     attempts: u32,
     message: String,
 ) -> anyhow::Result<()> {
@@ -185,7 +185,7 @@ async fn terminal_start_failure(
         invocation.invocation_id
     );
     let error_ref = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::put_blob,
             PutBlobRequest {
                 bytes: detail.into_bytes(),
@@ -246,10 +246,10 @@ pub(super) async fn process_execution_cancels(
                     .workflow_tools
                     .bindings
                     .get(&invocation.tool_id)?;
-                let engine::WorkflowToolTarget::Start { start } = &binding.target else {
+                let harness::WorkflowToolTarget::Start { start } = &binding.target else {
                     return None;
                 };
-                let execution_id = engine::workflow_tool_execution_id(
+                let execution_id = harness::workflow_tool_execution_id(
                     &invocation.invocation_id,
                     &start.recipe_fingerprint,
                 );
@@ -260,7 +260,7 @@ pub(super) async fn process_execution_cancels(
     });
     for execution_id in due {
         if let Err(error) = ctx
-            .start_activity(
+            .execute_activity(
                 WorkflowActivities::cancel_workflow_tool_execution,
                 crate::WorkflowToolExecutionCancelRequest {
                     execution_id: execution_id.clone(),

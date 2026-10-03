@@ -6,7 +6,7 @@ run Node commands from there.
 
 ## Components
 
-- `server/` — Hono API, better-auth integration, universe-scoped gateway
+- `backend/` — Hono API, better-auth integration, universe-scoped gateway
   passthrough, database migration startup, and static SPA hosting.
 - `web/` — Vite/React management UI served under `/app`.
 - `cli/` — `lightspeed-platform`, the platform administration CLI.
@@ -22,7 +22,7 @@ run Node commands from there.
 - `scripts/` — product-identity check and the generated profile configuration
   reference.
 - `web/src/demo/` — the in-browser demo backend: an in-memory stand-in for
-  the platform server and engine that the demo build loads instead of a
+  the platform backend and engine that the demo build loads instead of a
   real API (see "Demo build" below).
 
 The generated public API client lives separately at `clients/typescript/`.
@@ -72,7 +72,7 @@ for the user controls.
 
 The authoritative configuration reference is
 [environment-variable reference](../docs/documentation/reference/environment-variables.md), with separate sections for the
-Platform server, connector host, Configurator MCP, and development-only
+Platform backend, connector host, Configurator MCP, and development-only
 settings.
 
 The universe sidebar groups the work (Bots, Sessions), the **Setup** agents are
@@ -145,10 +145,10 @@ through the universe routes.
 
 **The gate.** The server decides before a request reaches core. Every core call
 a route makes for a member goes through one client
-(`server/src/runtime-client.ts`), which:
+(`backend/src/runtime-client.ts`), which:
 
 - requires the member's role to meet the method's role, from
-  `server/src/routes/method-roles.ts`. That table is generated from the core
+  `backend/src/routes/method-roles.ts`. That table is generated from the core
   method manifest by `node platform/scripts/generate-method-roles.mjs`, and
   `npm run check` fails when it is stale;
 - for a method that names a session, unless the member is an admin, requires the
@@ -216,13 +216,13 @@ product. For the focused Platform loop against an already running runtime at
 ./dev.sh platform
 ```
 
-The focused profile starts shared infrastructure, the Platform server on port
+The focused profile starts shared infrastructure, the Platform backend on port
 3000, and Vite on port 5173.
 
 ### Demo build
 
 The web UI has two build paths. `npm run build:web` produces the live SPA that
-the Platform server hosts under `/app`. `npm run build:demo` produces
+the Platform backend hosts under `/app`. `npm run build:demo` produces
 `platform/web/dist-demo/`: the same SPA with `web/src/demo/main.ts` as its
 entry, which installs an in-browser backend (a Hono router behind a `fetch`
 shim, seeded from `web/src/demo/fixtures/`) before loading the app. It needs no

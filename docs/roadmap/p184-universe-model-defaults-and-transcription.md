@@ -23,7 +23,7 @@ can add a slot, adapter, and operation without extending session orchestration.
 
 ## Baseline before implementation
 
-- `temporal-server/src/config.rs` resolves an omitted session model from
+- `temporal-runtime/src/config.rs` resolves an omitted session model from
   `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL`, with built-in defaults
   of `openai` and `gpt-5.5`. The API kind is fixed to OpenAI Responses.
 - Session creation, configuration replacement, and profile application use
@@ -364,7 +364,7 @@ writing. A conflict is reported without automatically retrying over a newer
 choice. `--json` returns the defaults record for each command.
 
 Before starting an upgraded runtime, apply schema revision 10 with
-`cargo run -p temporal-server -- migrate`. Remove `LIGHTSPEED_CHAT_PROVIDER`
+`cargo run -p temporal-runtime -- migrate`. Remove `LIGHTSPEED_CHAT_PROVIDER`
 and `LIGHTSPEED_CHAT_MODEL`; their presence now produces an actionable startup
 error. Select each universe explicitly in the CLI and set its intended route.
 Existing sessions remain usable with their stored models, and explicit-model
@@ -520,7 +520,7 @@ maps supported file-transcription families to the audio protocol, bypasses the
 agent-only age filter for those routes, and keeps them out of agent pickers.
 Custom providers continue to use their declared API kinds and manual choices.
 
-Validation passed: 572 web tests, 162 Platform server tests, 13 Rust model
+Validation passed: 572 web tests, 162 Platform backend tests, 13 Rust model
 discovery tests, eight API contract tests, TypeScript checks, and production
 and demo builds. Browser checks covered speech suggestions, editable transcript
 preview, clearing the default, and mobile layout. A real Chromium recorder

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine::{
+use harness::{
     BlobRef, ContextEntryId, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
     LlmGenerationResult, LlmGenerationStatus, RunId, TurnId, storage::BlobStore,
 };
@@ -129,14 +129,14 @@ pub fn truncation_failure_text(
 /// replay-safe.
 pub async fn partial_output_entries(
     blobs: &dyn BlobStore,
-    entries: Vec<engine::ContextEntryInput>,
-) -> LlmAdapterResult<Vec<engine::ContextEntryInput>> {
+    entries: Vec<harness::ContextEntryInput>,
+) -> LlmAdapterResult<Vec<harness::ContextEntryInput>> {
     let mut partial = Vec::new();
     for mut entry in entries {
         if !matches!(
             entry.kind,
-            engine::ContextEntryKind::Message {
-                role: engine::ContextMessageRole::Assistant
+            harness::ContextEntryKind::Message {
+                role: harness::ContextMessageRole::Assistant
             }
         ) {
             continue;
@@ -144,10 +144,10 @@ pub async fn partial_output_entries(
         if entry.content.media_type.as_deref() == Some("application/json") {
             let raw = crate::blob_io::read_json(blobs, &entry.content.content_ref).await?;
             let text = match entry.content.provider_kind.as_deref() {
-                Some(engine::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
+                Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
                     llm_clients::content::anthropic_text_blocks(&raw)
                 }
-                Some(engine::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
+                Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
                     llm_clients::content::openai_response_message(&raw)
                 }
                 Some(llm_clients::content::OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND) => {

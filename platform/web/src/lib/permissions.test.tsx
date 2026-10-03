@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { UNIVERSE_ROLES } from "@lightspeed/platform-shared";
+import { UNIVERSE_ROLES } from "@lightspeed-ai/platform-shared";
 import { allowsAction, PermissionIdentityProvider, useActionPermissions, type PermissionAction } from "./permissions";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));

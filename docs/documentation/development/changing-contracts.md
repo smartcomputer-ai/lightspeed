@@ -15,7 +15,7 @@ before choosing an exporter or changing a version.
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
 | Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript client, Configurator tools, Platform method-role map, and profile-editor reference. |
-| Workflow integration | Engine emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
+| Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
 | Environment control and data | `crates/environment-protocol` | Rust serde fixtures, daemon and provider implementations, and explicit protocol versions. There is no schema exporter for this boundary today. |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
 | Platform database | Schema modules and Drizzle configuration in `platform/db` | SQL migrations, snapshots, journal, and the separate Platform release revision and upgrade baseline. |
@@ -111,8 +111,8 @@ consumers:
 ```bash
 cargo run -p api --bin export-schema
 npm install
-npm run generate --workspace @lightspeed-ai/agent-client
-npm run generate --workspace @lightspeed/configurator-mcp
+npm run generate --workspace @lightspeed-ai/sdk
+npm run generate --workspace @lightspeed-ai/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
 node platform/scripts/generate-method-roles.mjs
 ```
@@ -130,7 +130,7 @@ and schema copies under `clients/typescript/schema/`. Configurator generates
 uses to describe configuration fields. Generate the client before that
 reference so its installed schema is current.
 
-The method-role generator updates `platform/server/src/routes/method-roles.ts`:
+The method-role generator updates `platform/backend/src/routes/method-roles.ts`:
 minimum member roles, session-target checks, and methods unavailable to member
 calls. Keep this generated policy map with the API change.
 
@@ -163,7 +163,7 @@ that boundary with:
 
 ```bash
 cargo run -p temporal-workflow --bin export-workflow-contract
-npm run generate --workspace @lightspeed-ai/agent-client
+npm run generate --workspace @lightspeed-ai/sdk
 ```
 
 This writes `workflow.schema.json`, `workflow.json`, and
@@ -179,7 +179,7 @@ workflow helpers are therefore tested against the generated vectors:
 
 ```bash
 cargo test -p temporal-workflow --test workflow_contract
-npm run test --workspace @lightspeed-ai/agent-client -- test/workflow.test.ts
+npm run test --workspace @lightspeed-ai/sdk -- test/workflow.test.ts
 ```
 
 `WORKFLOW_CONTRACT_VERSION` versions the manifest layout. It does not
@@ -197,7 +197,7 @@ explains the two histories involved, and
 external receiver and controller contract.
 
 Channel delivery and prepared-media DTOs are included in the workflow export
-and reach connectors through `@lightspeed-ai/agent-client/workflow`. Some
+and reach connectors through `@lightspeed-ai/sdk/workflow`. Some
 checks remain authored on both sides: `CHANNEL_DELIVERY_VERSION` exists in
 [`crates/channels/src/delivery.rs`](../../../crates/channels/src/delivery.rs)
 and the connector's
@@ -268,8 +268,8 @@ Normal Rust startup verifies the ledger. Apply migrations explicitly before
 starting the upgraded runtime:
 
 ```bash
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server -- schema-version
+cargo run -p temporal-runtime -- migrate
+cargo run -p temporal-runtime -- schema-version
 ```
 
 `schema-version` is diagnostic; it does not apply changes. The local launcher
@@ -292,7 +292,7 @@ Edit the appropriate schema module under `platform/db/src/schema/`, then
 generate the migration:
 
 ```bash
-npm run generate --workspace @lightspeed/platform-db
+npm run generate --workspace @lightspeed-ai/platform-db
 ```
 
 Review and commit the SQL, snapshot, and Drizzle journal together. Platform

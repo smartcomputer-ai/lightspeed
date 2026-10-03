@@ -3,7 +3,7 @@
 /// installation. Secret values are accepted and dropped; only the non-secret
 /// views the real gateway returns are kept.
 import { Hono } from "hono";
-import { modelDefaultsPutSchema } from "@lightspeed/platform-shared";
+import { modelDefaultsPutSchema } from "@lightspeed-ai/platform-shared";
 import type {
   GitHubApp,
   GitHubInstallation,
@@ -16,7 +16,7 @@ import type {
   SecretProvider,
   UniverseSetup,
 } from "@/api";
-import type { MethodGroup } from "@lightspeed-ai/agent-client";
+import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { base64ToText, universeApiKey, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 

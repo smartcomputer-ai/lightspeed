@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, ListPlus, LoaderCircle, Lock, Plus, Square, TriangleAlert, X } from "lucide-react";
-import { ATTACHMENT_ACCEPT, ATTACHMENT_SUMMARY, type MessageRunOptions } from "@lightspeed/platform-shared";
+import { ATTACHMENT_ACCEPT, ATTACHMENT_SUMMARY, type MessageRunOptions } from "@lightspeed-ai/platform-shared";
 import type { ModelOption } from "@/api";
 import { useDictation } from "@/lib/use-dictation";
 import { isDemoDictation } from "@/lib/audio-capture";

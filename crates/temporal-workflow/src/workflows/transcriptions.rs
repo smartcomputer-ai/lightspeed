@@ -1,5 +1,6 @@
 //! Session-independent transcription. Temporal owns request identity and state;
 //! activities store audio and transcript content in CAS.
+use crate::workflows::WorkflowContextExt as _;
 use api::{
     Attribution, ModelConfig, TranscriptionFailure, TranscriptionFailureKind,
     TranscriptionStartParams, TranscriptionStatus, TranscriptionView,
@@ -69,7 +70,7 @@ impl TranscriptionWorkflowArgs {
     }
 }
 
-#[workflow(name = "TranscriptionWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TranscriptionWorkflow {
     snapshot: Option<TranscriptionSnapshot>,
@@ -78,13 +79,16 @@ pub struct TranscriptionWorkflow {
 
 #[workflow_methods]
 impl TranscriptionWorkflow {
-    #[run]
+    #[run(name = "TranscriptionWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: TranscriptionWorkflowArgs,
     ) -> WorkflowResult<()> {
         if ctx.workflow_id() != transcription_workflow_id(&args) {
-            return Err(anyhow::anyhow!("transcription workflow identity mismatch").into());
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                "transcription workflow identity mismatch"
+            ))
+            .into());
         }
         let mut view = args.pending();
         view.status = TranscriptionStatus::Running;
@@ -94,27 +98,29 @@ impl TranscriptionWorkflow {
                 view,
             })
         });
-        let options = ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
-            start_to_close: Duration::from_secs(360),
-            schedule_to_close: Duration::from_secs(900),
-        })
-        .heartbeat_timeout(Duration::from_secs(15))
-        .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
-        .retry_policy(RetryPolicy {
-            initial_interval: Some(Duration::from_secs(2).try_into().unwrap()),
-            maximum_interval: Some(Duration::from_secs(15).try_into().unwrap()),
-            backoff_coefficient: 2.0,
-            maximum_attempts: 3,
-            non_retryable_error_types: vec![],
-        })
-        .build();
-        let mut activity = ctx.start_activity(
+        let options =
+            ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
+                start_to_close: Duration::from_secs(360),
+                schedule_to_close: Duration::from_secs(900),
+            })
+            .heartbeat_timeout(Duration::from_secs(15))
+            .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
+            .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+            .retry_policy(RetryPolicy {
+                initial_interval: Some(Duration::from_secs(2).try_into().unwrap()),
+                maximum_interval: Some(Duration::from_secs(15).try_into().unwrap()),
+                backoff_coefficient: 2.0,
+                maximum_attempts: 3,
+                non_retryable_error_types: vec![],
+            })
+            .build();
+        let mut activity = ctx.execute_activity(
             crate::WorkflowActivities::execute_transcription,
             args,
             options,
         );
         let result = {
-            let cancellation = ctx.wait_condition(|state| state.cancel_requested).fuse();
+            let cancellation = ctx.wait_for_state(|state| state.cancel_requested).fuse();
             let external_cancel = ctx.cancelled().fuse();
             let mut work = (&mut activity).fuse();
             futures::pin_mut!(cancellation, external_cancel);

@@ -19,7 +19,9 @@ async fn universe_defaults_are_revision_safe_and_isolated() {
         .expect("connect to live Postgres");
     let schema = format!("lightspeed_model_defaults_test_{}", Uuid::new_v4().simple());
     admin
-        .execute(format!("CREATE SCHEMA \"{schema}\"").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA \"{schema}\""
+        ))))
         .await
         .expect("create isolated schema");
     let pool = PgPoolOptions::new()
@@ -34,7 +36,9 @@ async fn universe_defaults_are_revision_safe_and_isolated() {
     let outcome = AssertUnwindSafe(exercise(&pool)).catch_unwind().await;
     pool.close().await;
     admin
-        .execute(format!("DROP SCHEMA \"{schema}\" CASCADE").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        ))))
         .await
         .expect("drop isolated schema");
     admin.close().await;

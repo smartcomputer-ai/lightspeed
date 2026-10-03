@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use engine::{
+use harness::{
     ContextCompactionRequest, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
     ContextEntryId, ContextEntryKind, ContextEntrySource, ContextMessageRole, ContextSnapshot,
     LlmGenerationRequest, LlmGenerationStatus, LlmRequest, ModelSelection,
@@ -32,14 +32,14 @@ fn entry(
     id: u64,
     role: ContextMessageRole,
     source: ContextEntrySource,
-    content_ref: engine::BlobRef,
+    content_ref: harness::BlobRef,
 ) -> ContextEntry {
     ContextEntry {
         entry_id: ContextEntryId::new(id),
         key: None,
         kind: ContextEntryKind::Message { role },
         source,
-        content: engine::ContentRef::text(content_ref),
+        content: harness::ContentRef::text(content_ref),
         preview: None,
         origin: None,
         provenance_ref: None,

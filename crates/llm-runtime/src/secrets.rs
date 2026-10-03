@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use async_trait::async_trait;
-use engine::SecretRef;
+use harness::SecretRef;
 use thiserror::Error;
 
 pub const SECRET_NAMESPACE_ENV: &str = "env";

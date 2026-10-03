@@ -62,7 +62,7 @@ provide starting points. Reuse the shared account runner and admission code
 instead of creating a separate worker supervision or routing system.
 
 If the Platform should offer a first-class connection form, extend its
-[account setup route](../../../platform/server/src/routes/channel-accounts.ts)
+[account setup route](../../../platform/backend/src/routes/channel-accounts.ts)
 and [Channels page](../../../platform/web/src/pages/ChannelsPage.tsx) as well.
 That flow should validate the provider account identity and store credentials
 through the credential API. A new core wire field or operation requires contract
@@ -136,7 +136,7 @@ Import their names from `CHANNEL_CONNECTOR_ACTIVITIES` and derive the account
 queue with the shared helper, rather than copying the hashing algorithm:
 
 ```ts
-import { connectorTaskQueue } from "@lightspeed-ai/agent-client/workflow";
+import { connectorTaskQueue } from "@lightspeed-ai/sdk/workflow";
 
 const queue = connectorTaskQueue(
   "00000000-0000-0000-0000-000000000001",
@@ -219,7 +219,7 @@ cancellation, reconnects, and account revision changes. The existing suite
 runs without real chat credentials:
 
 ```bash
-npm run test --workspace @lightspeed/connectors
+npm run test --workspace @lightspeed-ai/connectors
 ```
 
 Then enable one controlled account. Verify discovery and readiness, pairing,

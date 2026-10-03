@@ -1,3 +1,4 @@
+use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
 use futures::{FutureExt, pin_mut, select};
@@ -15,7 +16,7 @@ use crate::{
     WorkflowToolRecoveryResult, compose_environment_job_workflow_id,
 };
 
-#[workflow(name = "EnvironmentJobWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct EnvironmentJobWorkflow {
     snapshot: EnvironmentJobWorkflowSnapshot,
@@ -27,7 +28,7 @@ pub struct EnvironmentJobWorkflow {
 
 #[workflow_methods]
 impl EnvironmentJobWorkflow {
-    #[run]
+    #[run(name = "EnvironmentJobWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         input: EnvironmentJobWorkflowInput,
@@ -38,18 +39,22 @@ impl EnvironmentJobWorkflow {
                 if ctx.workflow_id() != start.execution_id
                     || start.universe_id != start.invocation.session_universe_id
                 {
-                    return Err(anyhow::anyhow!(
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                         "environment job workflow-tool execution identity is invalid"
-                    )
+                    ))
                     .into());
                 }
-                ctx.start_local_activity(
+                ctx.execute_local_activity(
                     WorkflowActivities::environment_job_prepare_workflow_tool,
                     crate::EnvironmentJobPrepareWorkflowToolRequest { start },
                     environment_job_activity_options(),
                 )
                 .await
-                .map_err(|error| anyhow::anyhow!("prepare environment job workflow: {error}"))?
+                .map_err(|error| {
+                    temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "prepare environment job workflow: {error}"
+                    ))
+                })?
             }
         };
         let expected_workflow_id = args
@@ -64,11 +69,11 @@ impl EnvironmentJobWorkflow {
                 )
             });
         if args.start.universe_id != args.universe_id || ctx.workflow_id() != expected_workflow_id {
-            return Err(anyhow::anyhow!(
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "environment job workflow id does not match its universe and job identity: workflow_id={} expected={}",
                 ctx.workflow_id(),
                 expected_workflow_id
-            )
+            ))
             .into());
         }
         ctx.state_mut(|state| {
@@ -90,7 +95,7 @@ impl EnvironmentJobWorkflow {
 
         if !ctx.state(|state| state.snapshot.started) {
             match ctx
-                .start_local_activity(
+                .execute_local_activity(
                     WorkflowActivities::environment_job_start,
                     args.start.clone(),
                     environment_job_activity_options(),
@@ -107,7 +112,10 @@ impl EnvironmentJobWorkflow {
                 }
                 Err(error) => {
                     ctx.state_mut(|state| state.snapshot.last_error = Some(error.to_string()));
-                    return Err(anyhow::anyhow!("environment job start failed: {error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "environment job start failed: {error}"
+                    ))
+                    .into());
                 }
             }
         }
@@ -116,7 +124,7 @@ impl EnvironmentJobWorkflow {
             let cancels = ctx.state_mut(|state| std::mem::take(&mut state.pending_cancels));
             for cancel in cancels {
                 match ctx
-                    .start_local_activity(
+                    .execute_local_activity(
                         WorkflowActivities::environment_job_cancel,
                         EnvironmentJobCancelActivityRequest {
                             universe_id: args.universe_id,
@@ -150,7 +158,7 @@ impl EnvironmentJobWorkflow {
 
             if !ctx.state(|state| state.snapshot.terminal) {
                 match ctx
-                    .start_local_activity(
+                    .execute_local_activity(
                         WorkflowActivities::environment_job_poll,
                         EnvironmentJobPollActivityRequest {
                             universe_id: args.universe_id,
@@ -199,7 +207,7 @@ impl EnvironmentJobWorkflow {
                 });
                 next.poll_attempt = next.poll_attempt.saturating_add(1);
                 ctx.continue_as_new(
-                    &EnvironmentJobWorkflowInput::Job(next),
+                    EnvironmentJobWorkflowInput::Job(next),
                     ContinueAsNewOptions::default(),
                 )?;
             }
@@ -207,9 +215,9 @@ impl EnvironmentJobWorkflow {
             ctx.state_mut(|state| state.nudged = false);
             let was_cancelled = {
                 let wait =
-                    ctx.wait_condition(|state| state.nudged || !state.pending_cancels.is_empty());
+                    ctx.wait_for_state(|state| state.nudged || !state.pending_cancels.is_empty());
                 let timer = ctx
-                    .timer(Duration::from_millis(args.poll_ms.max(250)))
+                    .timer_with_manual_cancellation(Duration::from_millis(args.poll_ms.max(250)))
                     .fuse();
                 let cancelled = ctx.cancelled().fuse();
                 pin_mut!(wait, timer, cancelled);
@@ -221,7 +229,7 @@ impl EnvironmentJobWorkflow {
             };
             if was_cancelled {
                 cancel_workflow_jobs(ctx, &args).await;
-                return Err(temporalio_sdk::WorkflowTermination::Cancelled);
+                return Err(temporalio_sdk::WorkflowTermination::cancelled());
             }
         }
     }
@@ -241,7 +249,7 @@ impl EnvironmentJobWorkflow {
     pub fn deliver_emission(
         &mut self,
         _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: engine::EmissionEnvelope,
+        envelope: harness::EmissionEnvelope,
     ) {
         queue_workflow_tool_cancellation(self, envelope);
     }
@@ -284,7 +292,7 @@ async fn cancel_workflow_jobs(
         return;
     }
     let _ = ctx
-        .start_local_activity(
+        .execute_local_activity(
             WorkflowActivities::environment_job_cancel,
             EnvironmentJobCancelActivityRequest {
                 universe_id: args.universe_id,
@@ -303,29 +311,29 @@ async fn cancel_workflow_jobs(
 /// run as local activities: Temporal still records completion and retries, but
 /// does not route the calls through a separately versioned activity worker.
 fn environment_job_activity_options() -> LocalActivityOptions {
-    LocalActivityOptions {
-        schedule_to_close_timeout: Some(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT),
-        start_to_close_timeout: Some(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT),
-        ..Default::default()
-    }
+    LocalActivityOptions::builder()
+        .schedule_to_close_timeout(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        .start_to_close_timeout(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+        .build()
 }
 
 fn queue_workflow_tool_cancellation(
     state: &mut EnvironmentJobWorkflow,
-    envelope: engine::EmissionEnvelope,
+    envelope: harness::EmissionEnvelope,
 ) {
     let Some(workflow_tool) = &state.workflow_tool else {
         return;
     };
     let producer_workflow_id = match &envelope.producer {
-        engine::EmissionProducer::Session {
+        harness::EmissionProducer::Session {
             universe_id,
             session_id,
             ..
         } => crate::compose_workflow_id(*universe_id, session_id),
-        engine::EmissionProducer::Workflow { .. } => return,
+        harness::EmissionProducer::Workflow { .. } => return,
     };
-    let engine::EmissionBody::InvocationCancellation {
+    let harness::EmissionBody::InvocationCancellation {
         invocation_id,
         completion_key,
         promise_id,
@@ -367,7 +375,11 @@ async fn flush_terminal_emissions(
     for (receiver_workflow_id, envelope) in emissions {
         let _ = ctx
             .external_workflow(receiver_workflow_id, None)
-            .signal(AgentSessionWorkflow::deliver_emission, envelope)
+            .signal(
+                AgentSessionWorkflow::deliver_emission,
+                envelope,
+                crate::workflows::signal_options(),
+            )
             .await;
     }
 }
@@ -376,7 +388,7 @@ fn collect_terminal_emissions(
     state: &mut EnvironmentJobWorkflow,
     universe_id: uuid::Uuid,
     workflow_id: &str,
-) -> Vec<(String, engine::EmissionEnvelope)> {
+) -> Vec<(String, harness::EmissionEnvelope)> {
     let mut emissions = Vec::new();
     for subscription in &mut state.subscriptions {
         if subscription.notified {
@@ -391,22 +403,22 @@ fn collect_terminal_emissions(
             continue;
         };
         let resolution = match result {
-            engine::PromiseSourceCheckResult::Pending => continue,
-            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                engine::PromiseResolution::Resolved { payload_ref }
+            harness::PromiseSourceCheckResult::Pending => continue,
+            harness::PromiseSourceCheckResult::Resolved { payload_ref } => {
+                harness::PromiseResolution::Resolved { payload_ref }
             }
-            engine::PromiseSourceCheckResult::Failed { error_ref } => {
-                engine::PromiseResolution::Failed { error_ref }
+            harness::PromiseSourceCheckResult::Failed { error_ref } => {
+                harness::PromiseResolution::Failed { error_ref }
             }
         };
-        let Ok(promise_id) = engine::PromiseId::try_new(subscription.promise_id.clone()) else {
+        let Ok(promise_id) = harness::PromiseId::try_new(subscription.promise_id.clone()) else {
             continue;
         };
         subscription.notified = true;
         let holder_workflow_id = subscription.holder_workflow_id.clone();
         emissions.push((
             holder_workflow_id.clone(),
-            engine::EmissionEnvelope::source_resolution(
+            harness::EmissionEnvelope::source_resolution(
                 universe_id,
                 workflow_id.to_owned(),
                 &holder_workflow_id,
@@ -425,14 +437,14 @@ fn workflow_tool_recovery(state: &EnvironmentJobWorkflow) -> WorkflowToolRecover
             continue;
         };
         let resolution = match result {
-            engine::PromiseSourceCheckResult::Pending => continue,
-            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                engine::PromiseResolution::Resolved {
+            harness::PromiseSourceCheckResult::Pending => continue,
+            harness::PromiseSourceCheckResult::Resolved { payload_ref } => {
+                harness::PromiseResolution::Resolved {
                     payload_ref: payload_ref.clone(),
                 }
             }
-            engine::PromiseSourceCheckResult::Failed { error_ref } => {
-                engine::PromiseResolution::Failed {
+            harness::PromiseSourceCheckResult::Failed { error_ref } => {
+                harness::PromiseResolution::Failed {
                     error_ref: error_ref.clone(),
                 }
             }
@@ -444,8 +456,8 @@ fn workflow_tool_recovery(state: &EnvironmentJobWorkflow) -> WorkflowToolRecover
 
 #[cfg(test)]
 mod tests {
-    use engine::{BlobRef, PromiseSourceCheckResult};
     use environment_protocol::shared::JobId;
+    use harness::{BlobRef, PromiseSourceCheckResult};
 
     use super::*;
 
@@ -472,7 +484,7 @@ mod tests {
         );
         assert!(matches!(
             workflow_tool_recovery(&workflow).resolutions.get("job_1"),
-            Some(engine::PromiseResolution::Resolved {
+            Some(harness::PromiseResolution::Resolved {
                 payload_ref: Some(actual),
             }) if actual == &payload_ref
         ));
@@ -486,16 +498,16 @@ mod tests {
         assert_eq!(first[0].0, "universe/session_1");
         assert!(matches!(
             &first[0].1.body,
-            engine::EmissionBody::SourceResolution {
+            harness::EmissionBody::SourceResolution {
                 promise_id,
-                resolution: engine::PromiseResolution::Resolved {
+                resolution: harness::PromiseResolution::Resolved {
                     payload_ref: Some(actual),
                 },
             } if promise_id.as_str() == "promise_1" && actual == &payload_ref
         ));
         assert!(matches!(
             first[0].1.producer,
-            engine::EmissionProducer::Workflow {
+            harness::EmissionProducer::Workflow {
                 universe_id: actual,
                 ref workflow_id,
             } if actual == universe_id && workflow_id == "universe/envjob-job_1"
@@ -506,9 +518,9 @@ mod tests {
     #[test]
     fn workflow_tool_cancellation_targets_only_the_matching_job() {
         let invocation_id =
-            engine::WorkflowToolInvocationId::new(format!("wti:sha256:{}", "a".repeat(64)));
+            harness::WorkflowToolInvocationId::new(format!("wti:sha256:{}", "a".repeat(64)));
         let universe_id = uuid::Uuid::from_u128(1);
-        let session_id = engine::SessionId::new("session_1");
+        let session_id = harness::SessionId::new("session_1");
         let mut workflow = EnvironmentJobWorkflow {
             workflow_tool: Some(EnvironmentJobWorkflowToolContext {
                 execution_id: "execution_1".to_owned(),
@@ -522,13 +534,13 @@ mod tests {
 
         queue_workflow_tool_cancellation(
             &mut workflow,
-            engine::EmissionEnvelope::invocation_cancellation(
+            harness::EmissionEnvelope::invocation_cancellation(
                 universe_id,
                 session_id.clone(),
-                engine::EventSeq::new(7),
+                harness::EventSeq::new(7),
                 invocation_id.clone(),
                 "job_1".to_owned(),
-                engine::PromiseId::new("promise_1"),
+                harness::PromiseId::new("promise_1"),
             ),
         );
 
@@ -538,13 +550,13 @@ mod tests {
 
         queue_workflow_tool_cancellation(
             &mut workflow,
-            engine::EmissionEnvelope::invocation_cancellation(
+            harness::EmissionEnvelope::invocation_cancellation(
                 universe_id,
                 session_id,
-                engine::EventSeq::new(8),
+                harness::EventSeq::new(8),
                 invocation_id,
                 "job_1".to_owned(),
-                engine::PromiseId::new("promise_1"),
+                harness::PromiseId::new("promise_1"),
             ),
         );
         assert_eq!(workflow.pending_cancels.len(), 1);

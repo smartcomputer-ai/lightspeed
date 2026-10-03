@@ -118,7 +118,7 @@ for (const [target, artifact] of Object.entries(discovery.artifacts)) {
 if (discovery.artifacts[value.envdTarget].sha256 !== value.binaries.envd.sha256) {
   dfail("envd checksum differs from the manifest");
 }
-if (value.typescriptClient.name !== "@lightspeed-ai/agent-client") fail("unexpected client package");
+if (value.typescriptClient.name !== "@lightspeed-ai/sdk") fail("unexpected client package");
 if (!/^[0-9a-f]{64}$/.test(value.typescriptClient.sha256)) fail("invalid client checksum");
 if (value.typescriptClient.version !== value.version) fail("client version mismatch");
 const clientFiles = fs.readdirSync("dist/npm").filter((entry) => entry.endsWith(".tgz"));

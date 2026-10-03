@@ -1,4 +1,4 @@
-import type { LlmUsageView, ToolItemStatus } from "@lightspeed-ai/agent-client";
+import type { LlmUsageView, ToolItemStatus } from "@lightspeed-ai/sdk";
 import type { SessionEvent, SessionItem, SessionRunView, ToolCallDisplay, ToolAttachmentView } from "@/api";
 
 /// Folded chat model for a session. The event log is the source of truth;

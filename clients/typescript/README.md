@@ -1,6 +1,6 @@
-# Lightspeed TypeScript Client
+# Lightspeed TypeScript SDK
 
-Generated TypeScript client for the Lightspeed JSON-RPC gateway.
+TypeScript SDK for Lightspeed, with a typed JSON-RPC client and workflow helpers.
 
 The public API types and typed method map are generated from the committed
 contract artifacts in `crates/api/contract/`. The hand-written code is limited to the
@@ -14,17 +14,17 @@ Durable receivers and custom workers are covered in
 
 ## Install
 
-Tagged Lightspeed releases publish `@lightspeed-ai/agent-client` to npm. In-tree
+Tagged Lightspeed releases publish `@lightspeed-ai/sdk` to npm. In-tree
 consumers use the repository workspace directly.
 
 ```bash
-npm install @lightspeed-ai/agent-client
+npm install @lightspeed-ai/sdk
 ```
 
 ## Use
 
 ```ts
-import { LightspeedClient } from "@lightspeed-ai/agent-client";
+import { LightspeedClient } from "@lightspeed-ai/sdk";
 
 const lightspeed = new LightspeedClient("http://127.0.0.1:18080/rpc");
 
@@ -56,13 +56,13 @@ from the generated schema types.
 
 ```bash
 npm install
-npm run check --workspace @lightspeed-ai/agent-client
+npm run check --workspace @lightspeed-ai/sdk
 ```
 
 `npm run check:generated` regenerates `src/generated/*` and the packaged
 schemas, and fails if the committed generated output is stale.
 
-Workflow receivers import `@lightspeed-ai/agent-client/workflow`. That subpath
+Workflow receivers import `@lightspeed-ai/sdk/workflow`. That subpath
 contains generated emission/start-on-call types and manifest-owned constants,
 plus Temporal-sandbox-safe parsing, id derivation, workflow-id, recipe, and
 reply helpers. It has no Temporal package dependency.

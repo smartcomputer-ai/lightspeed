@@ -1,13 +1,13 @@
 //! OpenAI Chat Completions adapter.
 //!
 //! Chat Completions has a message-oriented wire format distinct from the
-//! Responses API. This adapter lowers engine context directly into native
+//! Responses API. This adapter lowers harness context directly into native
 //! messages and preserves native tool-call objects for exact replay.
 
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     CompactionPolicy, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
     ContextCompactionTask, ContextEntry, ContextEntryInput, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
@@ -1112,7 +1112,7 @@ pub async fn result_from_response(
             kind: ContextEntryKind::Message {
                 role: ContextMessageRole::Assistant,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                 provider_kind: Some(OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND.to_owned()),
@@ -1132,7 +1132,7 @@ pub async fn result_from_response(
         let content_ref = put_json(blobs, &reasoning_state).await?;
         context_entries.push(ContextEntryInput {
             kind: ContextEntryKind::ReasoningState,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                 provider_kind: Some(OPENAI_COMPLETIONS_REASONING_PROVIDER_KIND.to_owned()),
@@ -1276,7 +1276,7 @@ pub async fn result_from_compact_response(
             kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some(MEDIA_TYPE_TEXT.to_owned()),
                 provider_kind: Some(OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND.to_owned()),
@@ -1400,7 +1400,7 @@ async fn tool_call_context(
                 call_id: call_id.clone(),
                 name: tool_name.clone(),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: native_call_ref.clone(),
                 media_type: Some(MEDIA_TYPE_JSON.to_owned()),
                 provider_kind: Some(OPENAI_COMPLETIONS_TOOL_CALL_PROVIDER_KIND.to_owned()),
@@ -1470,10 +1470,10 @@ fn u64_to_u32(value: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use engine::ToolSpec;
+    use harness::ToolSpec;
     use std::sync::{Arc, Mutex};
 
-    use engine::{
+    use harness::{
         BlobRef, ContextEntryId, ContextSnapshot, FunctionToolSpec, ModelSelection, ProviderParams,
         RunId, SessionId, ToolParallelism, TurnId,
         storage::{BlobStore, InMemoryBlobStore},
@@ -1489,7 +1489,7 @@ mod tests {
     impl McpInventoryResolver for StaticMcpInventory {
         async fn list_tools(
             &self,
-            _spec: &engine::RemoteMcpToolSpec,
+            _spec: &harness::RemoteMcpToolSpec,
         ) -> Result<Vec<crate::NativeMcpTool>, crate::McpInventoryError> {
             Ok(vec![crate::NativeMcpTool {
                 remote_name: "lookup".to_owned(),
@@ -1510,7 +1510,7 @@ mod tests {
                 &tools::runtime::ToolTarget::api_kind(ProviderApiKind::OpenAiCompletions),
                 &[ToolSpec {
                     name: ToolName::try_new("mcp_internal").expect("name"),
-                    kind: ToolKind::RemoteMcp(engine::RemoteMcpToolSpec {
+                    kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
                         server_id: "internal".to_owned(),
                         record_revision: 2,
                         server_label: "internal".to_owned(),
@@ -1519,7 +1519,7 @@ mod tests {
                         allowed_tools: None,
                         execution: RemoteMcpExecution::Native,
                         exposure: RemoteMcpExposure::Inject,
-                        approval: engine::RemoteMcpApprovalPolicy::Never,
+                        approval: harness::RemoteMcpApprovalPolicy::Never,
                         defer_loading: None,
                         auth_ref: None,
                         auth_required: false,
@@ -1639,7 +1639,7 @@ mod tests {
             key: None,
             kind,
             source,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some(MEDIA_TYPE_TEXT.to_owned()),
                 provider_kind: None,
@@ -1763,7 +1763,7 @@ mod tests {
         request.output_limit = Some(321);
         request.reasoning_effort = Some("max".to_owned());
         request.parallel_tool_use = Some(false);
-        request.processing_tier = Some(engine::ModelProcessingTier::Fast);
+        request.processing_tier = Some(harness::ModelProcessingTier::Fast);
         request.tool_choice = Some(ToolChoice::RequiredAny);
         request.params = Some(ProviderParams::new(
             ProviderApiKind::OpenAiCompletions,
@@ -2016,7 +2016,7 @@ mod tests {
             parts[0]["text"],
             format!(
                 "[image · {} · image/png]",
-                engine::media::media_handle(&BlobRef::from_bytes(&[1, 2, 3]))
+                harness::media::media_handle(&BlobRef::from_bytes(&[1, 2, 3]))
             )
         );
         assert_eq!(parts[1]["type"], "image_url");
@@ -2493,8 +2493,8 @@ mod tests {
         assert!(replay[0].extra.is_empty());
         assert!(replay[0].refusal.is_none());
         let view = api_projection::CoreAgentProjector::new(&blobs)
-            .project_event_kind(&engine::CoreAgentEvent::Context(
-                engine::ContextEvent::EntriesApplied {
+            .project_event_kind(&harness::CoreAgentEvent::Context(
+                harness::ContextEvent::EntriesApplied {
                     base_revision: 0,
                     entries: vec![entry],
                 },
@@ -2747,7 +2747,7 @@ mod tests {
             .expect("store pdf");
         let make = |id: u64,
                     kind: ContextEntryKind,
-                    content: engine::ContentRef,
+                    content: harness::ContentRef,
                     preview: Option<&str>| {
             ContextEntry {
                 entry_id: ContextEntryId::new(id),
@@ -2769,7 +2769,7 @@ mod tests {
                     call_id: ToolCallId::try_new("call_1").expect("call id"),
                     is_error: false,
                 },
-                engine::ContentRef::text(result_ref),
+                harness::ContentRef::text(result_ref),
                 None,
             ),
             make(
@@ -2777,7 +2777,7 @@ mod tests {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                engine::ContentRef {
+                harness::ContentRef {
                     content_ref: image_ref,
                     media_type: Some("image/png".to_owned()),
                     provider_kind: None,
@@ -2789,7 +2789,7 @@ mod tests {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                engine::ContentRef {
+                harness::ContentRef {
                     content_ref: pdf_ref,
                     media_type: Some("application/pdf".to_owned()),
                     provider_kind: None,

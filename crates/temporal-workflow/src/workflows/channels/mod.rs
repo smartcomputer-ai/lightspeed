@@ -1,7 +1,7 @@
 //! Channels workflows: one conversation workflow per chat, the
 //! source of that conversation's bot events and the receiver of its
 //! `message_*` tools. Runs in the `channels` worker role on its own task
-//! queue; its core-side activities are implemented in `temporal-server`,
+//! queue; its core-side activities are implemented in `temporal-runtime`,
 //! its connector-side activities by the TypeScript connector host on the
 //! account's own task queue.
 
@@ -61,6 +61,7 @@ pub fn channel_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::StartToClose(
         CHANNEL_ACTIVITY_START_TO_CLOSE,
     ))
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(CHANNEL_ACTIVITY_MAX_ATTEMPTS))
     .build()
 }
@@ -69,27 +70,30 @@ pub fn channel_assert_active_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::StartToClose(
         CHANNEL_ASSERT_ACTIVE_START_TO_CLOSE,
     ))
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(3))
     .build()
 }
 
 /// Delivery on the connector's task queue.
 pub fn connector_delivery_options(task_queue: impl Into<String>) -> ActivityOptions {
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: CONNECTOR_DELIVERY_START_TO_CLOSE,
         schedule_to_close: CONNECTOR_DELIVERY_SCHEDULE_TO_CLOSE,
     })
     .task_queue(task_queue.into())
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(5))
     .build()
 }
 
 pub fn connector_media_options(task_queue: impl Into<String>) -> ActivityOptions {
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: CONNECTOR_MEDIA_START_TO_CLOSE,
         schedule_to_close: CONNECTOR_MEDIA_SCHEDULE_TO_CLOSE,
     })
     .task_queue(task_queue.into())
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(3))
     .build()
 }
@@ -100,6 +104,7 @@ pub fn connector_typing_options(task_queue: impl Into<String>) -> ActivityOption
     ))
     .task_queue(task_queue.into())
     .heartbeat_timeout(CONNECTOR_TYPING_HEARTBEAT)
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(1))
     .build()
 }

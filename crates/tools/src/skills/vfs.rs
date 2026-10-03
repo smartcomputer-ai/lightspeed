@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use engine::storage::BlobStore;
+use harness::storage::BlobStore;
 use thiserror::Error;
 use vfs::{
     ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget, VfsPath, VfsWorkspaceId,
@@ -311,7 +311,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use async_trait::async_trait;
-    use engine::{WorkspaceAccess, WorkspaceAttachmentTarget, storage::InMemoryBlobStore};
+    use harness::{WorkspaceAccess, WorkspaceAttachmentTarget, storage::InMemoryBlobStore};
     use vfs::{
         CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
         InlineFile, ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget,
@@ -530,7 +530,7 @@ mod tests {
             resolved_attachment(
                 path,
                 ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
-                    snapshot_ref: engine::BlobRef::from_bytes(b"snapshot"),
+                    snapshot_ref: harness::BlobRef::from_bytes(b"snapshot"),
                 },
                 WorkspaceAccess::Read,
             )
@@ -565,7 +565,7 @@ mod tests {
         let attachments = vec![resolved_attachment(
             "/skills/system",
             ResolvedWorkspaceAttachmentTarget::Unavailable {
-                declared_target: engine::WorkspaceAttachmentTarget::Workspace {
+                declared_target: harness::WorkspaceAttachmentTarget::Workspace {
                     workspace_id: "skills".into(),
                 },
                 reason: "deleted".into(),

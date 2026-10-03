@@ -1,6 +1,6 @@
 //! Model and provider target for model-visible tool shaping.
 
-use engine::{ModelSelection, ProviderApiKind};
+use harness::{ModelSelection, ProviderApiKind};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolTarget {

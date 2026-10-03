@@ -745,7 +745,7 @@ Reasoning:
 - a separate poller workflow would still have to signal the session workflow to
   resume the batch, adding lifecycle, cancellation, idempotency, and ownership
   surfaces without removing the need for session-side wait state;
-- the specific job logic can be kept out of `engine` and isolated in the
+- the specific job logic can be kept out of `harness` and isolated in the
   Temporal runtime as a directive handler, beside the existing Fleet wait
   handler.
 
@@ -759,7 +759,7 @@ ActiveDeferredWait
   environment_job_wait(...)    new P86 shape
 ```
 
-The deterministic `engine` still only sees a parked tool batch and a later
+The deterministic `harness` still only sees a parked tool batch and a later
 `ResumeToolBatch`.
 
 ### Active Job Wait Record
@@ -982,7 +982,7 @@ Job handle records must still avoid accidental leakage:
 - Add toolset config gate for environment jobs.
 - Start defaults through the active `env` target but supports explicit `env_id`;
   read/wait/cancel use job handles with optional `env_id` defaulting.
-- Add tool executor logic in `temporal-server` that can return deferred outcomes
+- Add tool executor logic in `temporal-runtime` that can return deferred outcomes
   for lone `job_wait` batches.
 
 ### G5. Workflow Wait Integration

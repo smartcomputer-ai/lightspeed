@@ -157,7 +157,7 @@ The session records one terminal outcome, so a late success cannot revive an
 already cancelled promise.
 
 This protocol keeps feature-specific transports out of the stable session
-worker. Adding a workflow tool does not require teaching the engine a new
+worker. Adding a workflow tool does not require teaching the harness a new
 kind of external system. The [generated workflow contract](../../../crates/temporal-workflow/contract/workflow-contract.md)
 defines the actual envelopes and signals.
 
@@ -244,7 +244,7 @@ environment inheritance require the relevant attachments; an `inherit`
 environment attachment is resolved against the parent's active machine
 captured at admission and stored on the child as a concrete id. Root-scoped limits
 constrain depth, total descendants, concurrent open descendants, and deadlines.
-These policies live around normal session execution; the engine does not
+These policies live around normal session execution; the harness does not
 need a delegation-specific transport.
 
 An independent bot contacted through federation is a different relationship.

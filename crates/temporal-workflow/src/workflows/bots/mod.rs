@@ -1,7 +1,7 @@
 //! Bot workflows: the controller that owns a bot's managed sessions
 //! and the trigger fire started by Temporal Schedules. Both run in the
 //! `bots` worker role on its own task queue; their activities are defined in
-//! [`activities`] and implemented in `temporal-server`.
+//! [`activities`] and implemented in `temporal-runtime`.
 
 pub mod activities;
 mod controller;
@@ -70,6 +70,7 @@ pub fn bot_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::StartToClose(
         BOT_ACTIVITY_START_TO_CLOSE,
     ))
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(BOT_ACTIVITY_MAX_ATTEMPTS))
     .build()
 }
@@ -78,6 +79,7 @@ pub fn bot_poll_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::StartToClose(
         BOT_POLL_START_TO_CLOSE,
     ))
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(retry(BOT_POLL_MAX_ATTEMPTS))
     .build()
 }

@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use engine::{
+use harness::{
     BlobRef, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
     CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError, CoreAgentIoError,
     CoreAgentLlm, CoreAgentState, CoreAgentTools, EventSeq, LlmFinish, LlmGenerationFacts,
@@ -66,7 +66,7 @@ impl SessionRunner {
         &self,
         drive: &mut CoreAgentDrive,
         observed_at_ms: u64,
-        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+        emitted_entries: &mut Vec<harness::CoreAgentEntry>,
     ) -> Result<(), RunnerError> {
         let Some(command) = self
             .refresh_prompt_instructions_command(drive.session_id(), drive.state())
@@ -88,7 +88,7 @@ impl SessionRunner {
         &self,
         drive: &mut CoreAgentDrive,
         observed_at_ms: u64,
-        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+        emitted_entries: &mut Vec<harness::CoreAgentEntry>,
         command: CoreAgentCommand,
         label: &'static str,
     ) -> Result<(), RunnerError> {
@@ -197,14 +197,14 @@ impl SessionRunner {
         }
         Ok(Some(CoreAgentCommand::ReplaceContextPrefix {
             expected_revision: Some(state.context.revision),
-            key_prefix: engine::ContextEntryKey::new("instructions"),
+            key_prefix: harness::ContextEntryKey::new("instructions"),
             entries: desired,
         }))
     }
 
     pub async fn drive_command(&self, request: DriveCommand) -> Result<DriveOutcome, RunnerError> {
         let max_steps = resolve_max_steps(request.max_steps)?;
-        engine::storage::ensure_engine_blobs(self.stores.blobs.as_ref()).await?;
+        harness::storage::ensure_harness_blobs(self.stores.blobs.as_ref()).await?;
         let mut drive = self.load_drive(&request.session_id).await?;
         let mut emitted_entries = Vec::new();
 
@@ -231,7 +231,7 @@ impl SessionRunner {
 
         let action = match drive.admit_command(request.command, request.observed_at_ms) {
             Ok(action) => action,
-            Err(CoreAgentDriveError::Command(engine::CommandError::Rejected(rejection))) => {
+            Err(CoreAgentDriveError::Command(harness::CommandError::Rejected(rejection))) => {
                 let quiescence = classify_quiescence(drive.state());
                 return Ok(DriveOutcome {
                     session_id: request.session_id,
@@ -271,7 +271,7 @@ impl SessionRunner {
         &self,
         drive: &mut CoreAgentDrive,
         observed_at_ms: u64,
-        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+        emitted_entries: &mut Vec<harness::CoreAgentEntry>,
     ) -> Result<(), RunnerError> {
         let commands = self
             .refresh_environment_projection_commands(drive.session_id(), drive.state())
@@ -318,7 +318,7 @@ impl SessionRunner {
                 })
                 .then(|| CoreAgentCommand::RemoveContext {
                     expected_revision: None,
-                    key: engine::ContextEntryKey::new(VFS_CATALOG_CONTEXT_KEY),
+                    key: harness::ContextEntryKey::new(VFS_CATALOG_CONTEXT_KEY),
                 })
                 .into_iter()
                 .collect());
@@ -331,8 +331,8 @@ impl SessionRunner {
         let publication = prepare_vfs_catalog_publication(
             self.stores.blobs.as_ref(),
             None,
-            engine::current_catalog_inputs(state)
-                .get(&engine::ContextEntryKey::new(VFS_CATALOG_CONTEXT_KEY)),
+            harness::current_catalog_inputs(state)
+                .get(&harness::ContextEntryKey::new(VFS_CATALOG_CONTEXT_KEY)),
             catalog,
         )
         .await
@@ -346,7 +346,7 @@ impl SessionRunner {
         &self,
         drive: &mut CoreAgentDrive,
         observed_at_ms: u64,
-        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+        emitted_entries: &mut Vec<harness::CoreAgentEntry>,
     ) -> Result<(), RunnerError> {
         let Some(command) = self
             .refresh_skill_catalog_command(drive.session_id(), drive.state())
@@ -369,8 +369,8 @@ impl SessionRunner {
         _session_id: &SessionId,
         state: &CoreAgentState,
     ) -> Result<Option<CoreAgentCommand>, RunnerError> {
-        let catalogs = engine::current_catalog_inputs(state);
-        let current = catalogs.get(&engine::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY));
+        let catalogs = harness::current_catalog_inputs(state);
+        let current = catalogs.get(&harness::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY));
         if current.is_some_and(|entry| entry.origin.as_deref() != Some("runtime.vfs.skills")) {
             return Ok(None);
         }
@@ -491,7 +491,7 @@ impl SessionRunner {
     pub async fn load_state(&self, session_id: &SessionId) -> Result<CoreAgentState, RunnerError> {
         let mut state = CoreAgentState::new();
         let mut after: Option<EventSeq> = None;
-        let codec = engine::CoreAgentCodec;
+        let codec = harness::CoreAgentCodec;
         loop {
             let page = self
                 .stores
@@ -504,7 +504,7 @@ impl SessionRunner {
                 .await?;
             for entry in page.entries.iter().map(|entry| codec.decode_entry(entry)) {
                 let entry = entry?;
-                engine::apply_event(&mut state, &entry)?;
+                harness::apply_event(&mut state, &entry)?;
             }
             if page.complete {
                 return Ok(state);
@@ -529,7 +529,7 @@ impl SessionRunner {
         mut action: CoreAgentAction,
         observed_at_ms: u64,
         max_steps: usize,
-        emitted_entries: &mut Vec<engine::CoreAgentEntry>,
+        emitted_entries: &mut Vec<harness::CoreAgentEntry>,
     ) -> Result<RunnerQuiescence, RunnerError> {
         loop {
             match action {
@@ -624,23 +624,23 @@ fn should_refresh_run_context_before_admitting(
 async fn effective_prompt_instruction_inputs(
     blobs: &dyn BlobStore,
     state: &CoreAgentState,
-    source_entries: BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>,
-) -> Result<BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>, RunnerError> {
+    source_entries: BTreeMap<harness::ContextEntryKey, harness::ContextEntryInput>,
+) -> Result<BTreeMap<harness::ContextEntryKey, harness::ContextEntryInput>, RunnerError> {
     let mut desired = active_instruction_inputs(state);
     desired.retain(|key, _| {
         !context_key_is_in_prefix(key, tools::prompts::PROMPT_INSTRUCTIONS_CONTEXT_KEY_PREFIX)
     });
     desired.extend(source_entries);
-    desired.remove(&engine::ContextEntryKey::new("instructions.000.default"));
+    desired.remove(&harness::ContextEntryKey::new("instructions.000.default"));
     if desired.is_empty() {
         let content_ref = blobs
             .put_bytes(TEST_PRODUCT_DEFAULT_INSTRUCTIONS.to_vec())
             .await?;
         desired.insert(
-            engine::ContextEntryKey::new("instructions.000.default"),
-            engine::ContextEntryInput {
-                kind: engine::ContextEntryKind::Instructions,
-                content: engine::ContentRef::text(content_ref),
+            harness::ContextEntryKey::new("instructions.000.default"),
+            harness::ContextEntryInput {
+                kind: harness::ContextEntryKind::Instructions,
+                content: harness::ContentRef::text(content_ref),
                 preview: None,
                 origin: None,
                 provenance_ref: None,
@@ -653,12 +653,12 @@ async fn effective_prompt_instruction_inputs(
 
 fn active_instruction_inputs(
     state: &CoreAgentState,
-) -> BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput> {
+) -> BTreeMap<harness::ContextEntryKey, harness::ContextEntryInput> {
     state
         .context
         .entries
         .iter()
-        .filter(|entry| matches!(entry.kind, engine::ContextEntryKind::Instructions))
+        .filter(|entry| matches!(entry.kind, harness::ContextEntryKind::Instructions))
         .filter_map(|entry| {
             let key = entry.key.clone()?;
             if !context_key_is_in_prefix(&key, "instructions") {
@@ -666,7 +666,7 @@ fn active_instruction_inputs(
             }
             Some((
                 key,
-                engine::ContextEntryInput {
+                harness::ContextEntryInput {
                     kind: entry.kind.clone(),
                     content: entry.content.clone(),
                     preview: entry.preview.clone(),
@@ -679,7 +679,7 @@ fn active_instruction_inputs(
         .collect()
 }
 
-fn context_key_is_in_prefix(key: &engine::ContextEntryKey, prefix: &str) -> bool {
+fn context_key_is_in_prefix(key: &harness::ContextEntryKey, prefix: &str) -> bool {
     key.as_str() == prefix
         || key
             .as_str()
@@ -698,7 +698,7 @@ fn resolve_max_steps(max_steps: Option<u32>) -> Result<usize, RunnerError> {
 }
 
 fn classify_quiescence(state: &CoreAgentState) -> RunnerQuiescence {
-    match engine::classify_core_agent_action(state) {
+    match harness::classify_core_agent_action(state) {
         CoreAgentAction::Closed => RunnerQuiescence::Closed,
         _ => RunnerQuiescence::Idle,
     }
@@ -708,7 +708,7 @@ async fn failed_generation_result_from_error(
     blobs: &dyn BlobStore,
     request: LlmGenerationRequest,
     error: CoreAgentIoError,
-) -> Result<LlmGenerationResult, engine::storage::BlobStoreError> {
+) -> Result<LlmGenerationResult, harness::storage::BlobStoreError> {
     // Mirrors the hosted activity: a rejection keeps the provider's message
     // word for word.
     let context_limit = matches!(error, CoreAgentIoError::ContextLimit { .. });
@@ -751,7 +751,7 @@ async fn failed_context_compaction_result_from_error(
     blobs: &dyn BlobStore,
     request: ContextCompactionRequest,
     error: CoreAgentIoError,
-) -> Result<ContextCompactionResult, engine::storage::BlobStoreError> {
+) -> Result<ContextCompactionResult, harness::storage::BlobStoreError> {
     let context_revision = compaction_request_context_revision(&request);
     let failure_ref = write_error_blob(
         blobs,
@@ -780,7 +780,7 @@ async fn failed_tool_batch_result(
     blobs: &dyn BlobStore,
     request: &ToolInvocationBatchRequest,
     error: impl AsRef<str>,
-) -> Result<ToolInvocationBatchResult, engine::storage::BlobStoreError> {
+) -> Result<ToolInvocationBatchResult, harness::storage::BlobStoreError> {
     let mut results = Vec::with_capacity(request.calls.len());
     for call in &request.calls {
         let error_ref = write_error_blob(
@@ -824,7 +824,7 @@ async fn failed_tool_batch_result(
 async fn write_error_blob(
     blobs: &dyn BlobStore,
     message: impl Into<String>,
-) -> Result<BlobRef, engine::storage::BlobStoreError> {
+) -> Result<BlobRef, harness::storage::BlobStoreError> {
     blobs.put_bytes(message.into().into_bytes()).await
 }
 
@@ -836,7 +836,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use engine::{
+    use harness::{
         CompactionPolicy, ContextCompactionRequest, ContextCompactionResult,
         ContextCompactionStatus, ContextConfig, ContextEntryInput, ContextEntryKey,
         ContextEntryKind, ContextMessageRole, CoreAgentCommand, CoreAgentEvent, FunctionToolSpec,
@@ -1073,7 +1073,7 @@ mod tests {
                         usage: None,
                         approval_requests: Vec::new(),
                         tool_calls: vec![ObservedToolCall {
-                            call_id: engine::ToolCallId::new("call-1"),
+                            call_id: harness::ToolCallId::new("call-1"),
                             tool_id: Some(ToolName::new("test_tool")),
                             tool_name: ToolName::new("test_tool"),
                             provider_kind: None,
@@ -1129,7 +1129,7 @@ mod tests {
                         usage: None,
                         approval_requests: Vec::new(),
                         tool_calls: vec![ObservedToolCall {
-                            call_id: engine::ToolCallId::new(self.call_id.clone()),
+                            call_id: harness::ToolCallId::new(self.call_id.clone()),
                             tool_id: Some(ToolName::new("vfs.read_file")),
                             tool_name: ToolName::new("vfs_read_file"),
                             provider_kind: None,
@@ -1168,7 +1168,7 @@ mod tests {
                 kind: ContextEntryKind::Message {
                     role: ContextMessageRole::Assistant,
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: BlobRef::from_bytes(b"assistant output"),
                     media_type: None,
                     provider_kind: None,
@@ -1195,7 +1195,7 @@ mod tests {
             kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: None,
                 provider_kind: None,
@@ -1208,11 +1208,11 @@ mod tests {
     }
 
     fn request_run_command(content_ref: BlobRef) -> CoreAgentCommand {
-        CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+        CoreAgentCommand::RequestRun(harness::RunRequestCommand {
             requested_by: None,
             notify_on_terminal: Vec::new(),
             submission_id: None,
-            source: engine::RunRequestSource::Input {
+            source: harness::RunRequestSource::Input {
                 input: user_input(content_ref),
             },
             run_config: run_config(),
@@ -1239,12 +1239,12 @@ mod tests {
 
     fn vfs_config(prompts: bool, skills: bool) -> SessionConfig {
         let mut config = config();
-        config.features.vfs = Some(engine::VfsFeature {
-            prompts: prompts.then_some(engine::VfsPromptsConfig::default()),
-            skills: skills.then_some(engine::VfsSkillsConfig {
+        config.features.vfs = Some(harness::VfsFeature {
+            prompts: prompts.then_some(harness::VfsPromptsConfig::default()),
+            skills: skills.then_some(harness::VfsSkillsConfig {
                 roots: Some(vec!["/skills/system".into()]),
             }),
-            ..engine::VfsFeature::default()
+            ..harness::VfsFeature::default()
         });
         config
     }
@@ -1303,10 +1303,10 @@ mod tests {
         }
     }
 
-    async fn runner_with(llm: Arc<dyn CoreAgentLlm>) -> (SessionRunner, engine::SessionId) {
+    async fn runner_with(llm: Arc<dyn CoreAgentLlm>) -> (SessionRunner, harness::SessionId) {
         let sessions = Arc::new(InMemorySessionStore::new());
         let stores = RunnerStores::new(sessions.clone(), Arc::new(InMemoryBlobStore::new()));
-        let session_id = engine::SessionId::new("session-a");
+        let session_id = harness::SessionId::new("session-a");
         sessions
             .create_session(CreateSession {
                 metadata: Default::default(),
@@ -1363,7 +1363,7 @@ mod tests {
                     key: ContextEntryKey::new("client.native"),
                     entry: ContextEntryInput {
                         kind: ContextEntryKind::ProviderOpaque,
-                        content: engine::ContentRef {
+                        content: harness::ContentRef {
                             content_ref: BlobRef::from_bytes(br#"{"type":"input"}"#),
                             media_type: Some("application/json".to_owned()),
                             provider_kind: None,
@@ -1393,7 +1393,7 @@ mod tests {
         assert!(!outcome.state.context.compaction.is_pending());
         assert!(outcome.emitted_entries.iter().any(|entry| matches!(
             &entry.event,
-            CoreAgentEvent::Context(engine::ContextEvent::CompactionFinished {
+            CoreAgentEvent::Context(harness::ContextEvent::CompactionFinished {
                 status: ContextCompactionStatus::Failed,
                 failure_ref: Some(_),
                 ..
@@ -1528,8 +1528,8 @@ mod tests {
             .load_state(&source_id)
             .await
             .expect("load source state");
-        let fork_seq = engine::storage::largest_safe_fork_seq_from_state(&source_state);
-        assert_eq!(fork_seq, engine::EventSeq::new(1));
+        let fork_seq = harness::storage::largest_safe_fork_seq_from_state(&source_state);
+        assert_eq!(fork_seq, harness::EventSeq::new(1));
         sessions
             .create_forked_session(CreateForkedSession {
                 source_session_id: source_id,
@@ -1564,7 +1564,7 @@ mod tests {
                 .unwrap()
                 .context
                 .compaction,
-            Some(engine::CompactionPolicy::ProviderStandalone { .. })
+            Some(harness::CompactionPolicy::ProviderStandalone { .. })
         ));
         assert!(outcome.state.runs.active.is_none());
         assert_eq!(outcome.state.runs.completed.len(), 1);
@@ -1581,7 +1581,7 @@ mod tests {
                 .expect("child emitted entries")
                 .position
                 .seq,
-            engine::EventSeq::new(2)
+            harness::EventSeq::new(2)
         );
         assert_eq!(llm.requests.lock().expect("requests").len(), 1);
     }
@@ -1603,15 +1603,15 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        state.context.entries.push(engine::ContextEntry {
-            entry_id: engine::ContextEntryId::new(1),
-            key: Some(engine::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY)),
+        state.context.entries.push(harness::ContextEntry {
+            entry_id: harness::ContextEntryId::new(1),
+            key: Some(harness::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY)),
             origin: Some("runtime.vfs.skills".into()),
             kind: ContextEntryKind::Catalog {
                 title: "Skills".into(),
             },
-            source: engine::ContextEntrySource::ContextEdit,
-            content: engine::ContentRef::text(BlobRef::from_bytes(b"menu")),
+            source: harness::ContextEntrySource::ContextEdit,
+            content: harness::ContentRef::text(BlobRef::from_bytes(b"menu")),
             preview: None,
             provenance_ref: None,
             token_estimate: None,
@@ -1619,7 +1619,7 @@ mod tests {
         });
         for vfs in [
             None,
-            Some(engine::VfsFeature {
+            Some(harness::VfsFeature {
                 prompts: Some(Default::default()),
                 ..Default::default()
             }),
@@ -1707,9 +1707,9 @@ mod tests {
             .await
             .expect("drive request");
 
-        let catalog_ref = engine::current_context_entry(
+        let catalog_ref = harness::current_context_entry(
             &outcome.state,
-            &engine::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
+            &harness::ContextEntryKey::new(SKILL_CATALOG_CONTEXT_KEY),
         )
         .expect("skill catalog")
         .provenance_ref
@@ -1735,7 +1735,7 @@ mod tests {
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,
-                CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. })
+                CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. })
                     if entries.iter().any(|entry| {
                         matches!(entry.kind, ContextEntryKind::Catalog { .. }) && entry.key.as_ref().is_some_and(|key| key.as_str() == SKILL_CATALOG_CONTEXT_KEY)
                     })
@@ -1851,7 +1851,7 @@ mod tests {
         assert!(first_outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,
-                CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
+                CoreAgentEvent::Context(harness::ContextEvent::KeyPrefixReplaced {
                     key_prefix,
                     entries,
                     ..
@@ -1920,7 +1920,7 @@ mod tests {
         assert!(second_outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,
-                CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
+                CoreAgentEvent::Context(harness::ContextEvent::KeyPrefixReplaced {
                     key_prefix,
                     entries,
                     ..
@@ -1988,7 +1988,7 @@ mod tests {
         assert!(third_outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,
-                CoreAgentEvent::Context(engine::ContextEvent::KeyPrefixReplaced {
+                CoreAgentEvent::Context(harness::ContextEvent::KeyPrefixReplaced {
                     key_prefix,
                     entries,
                     ..
@@ -2299,7 +2299,7 @@ mod tests {
             .emitted_entries
             .iter()
             .find_map(|entry| match &entry.event {
-                CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted { result, .. })
+                CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted { result, .. })
                     if result.call_id.as_str() == call_id =>
                 {
                     result.output_ref.clone()
@@ -2314,7 +2314,7 @@ mod tests {
         serde_json::from_slice(&bytes).expect("decode read_file result")
     }
 
-    fn assert_prompt_entry_metadata(entries: &[&engine::ContextEntry]) {
+    fn assert_prompt_entry_metadata(entries: &[&harness::ContextEntry]) {
         for entry in entries {
             assert!(matches!(entry.kind, ContextEntryKind::Instructions));
             assert!(entry.key.as_ref().is_some_and(|key| {
@@ -2329,7 +2329,7 @@ mod tests {
         }
     }
 
-    fn prompt_content_refs(entries: &[&engine::ContextEntry]) -> Vec<BlobRef> {
+    fn prompt_content_refs(entries: &[&harness::ContextEntry]) -> Vec<BlobRef> {
         let mut refs = entries
             .iter()
             .map(|entry| entry.content.content_ref.clone())
@@ -2338,7 +2338,7 @@ mod tests {
         refs
     }
 
-    fn prompt_report_ref_from_entries(entries: &[&engine::ContextEntry]) -> BlobRef {
+    fn prompt_report_ref_from_entries(entries: &[&harness::ContextEntry]) -> BlobRef {
         let first = entries
             .first()
             .and_then(|entry| entry.provenance_ref.as_ref())
@@ -2352,7 +2352,7 @@ mod tests {
 
     async fn prompt_entry_texts(
         blobs: &dyn BlobStore,
-        entries: &[&engine::ContextEntry],
+        entries: &[&harness::ContextEntry],
     ) -> Vec<String> {
         let mut texts = Vec::with_capacity(entries.len());
         for entry in entries {
@@ -2368,18 +2368,18 @@ mod tests {
 
     fn prompt_instruction_entries_in_request(
         request: &LlmGenerationRequest,
-    ) -> Vec<&engine::ContextEntry> {
+    ) -> Vec<&harness::ContextEntry> {
         request_context_entries(request)
             .iter()
             .filter(|entry| is_prompt_instruction_entry(entry))
             .collect()
     }
 
-    fn request_context_entries(request: &LlmGenerationRequest) -> &[engine::ContextEntry] {
+    fn request_context_entries(request: &LlmGenerationRequest) -> &[harness::ContextEntry] {
         &request.request.context.entries
     }
 
-    fn is_prompt_instruction_entry(entry: &engine::ContextEntry) -> bool {
+    fn is_prompt_instruction_entry(entry: &harness::ContextEntry) -> bool {
         matches!(entry.kind, ContextEntryKind::Instructions)
             && entry.key.as_ref().is_some_and(|key| {
                 key.as_str()
@@ -2434,7 +2434,7 @@ mod tests {
         let run = &driven.state.runs.completed[0];
         assert_eq!(run.status, RunStatus::Failed);
         let failure = run.failure.as_ref().expect("run failure");
-        assert_eq!(failure.kind, engine::RunFailureKind::RequestRejected);
+        assert_eq!(failure.kind, harness::RunFailureKind::RequestRejected);
         let message_ref = failure.message_ref.as_ref().expect("provider message");
         let message = runner
             .stores
@@ -2477,7 +2477,7 @@ mod tests {
             matches!(
                 &entry.event,
                 CoreAgentEvent::Turn(TurnEvent::Completed {
-                    outcome: engine::TurnOutcome::Failed {
+                    outcome: harness::TurnOutcome::Failed {
                         failure_ref: Some(_)
                     },
                     ..
@@ -2545,7 +2545,7 @@ mod tests {
         assert!(outcome.emitted_entries.iter().any(|entry| {
             matches!(
                 &entry.event,
-                CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted {
+                CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted {
                     result: ToolCallResult {
                         duration_ms: None,
                         output_bytes: None,

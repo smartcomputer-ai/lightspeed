@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { PowerOff } from "lucide-react";
-import { FEATURES, type FeatureKey } from "@lightspeed/platform-shared";
+import { FEATURES, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { EmptyState } from "@/components/page";
 import { useActionPermissions } from "@/lib/permissions";
 import { useActiveUniverse, useFeature } from "@/lib/universes";

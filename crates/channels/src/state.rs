@@ -401,7 +401,7 @@ impl ReceivedInvocation {
 // ── Emissions ───────────────────────────────────────────────────────────────
 
 /// The facts of a delivered emission the conversation cares about; the
-/// substrate adapter projects the engine envelope onto this.
+/// substrate adapter projects the harness envelope onto this.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationEmission {

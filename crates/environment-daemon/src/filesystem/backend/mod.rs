@@ -58,7 +58,7 @@ pub(crate) fn valid_digest(value: &str) -> bool {
     })
 }
 pub(crate) fn digest(hash: Sha256) -> String {
-    format!("sha256:{:x}", hash.finalize())
+    format!("sha256:{}", hex::encode(hash.finalize()))
 }
 pub(crate) fn relative(
     root: &Path,

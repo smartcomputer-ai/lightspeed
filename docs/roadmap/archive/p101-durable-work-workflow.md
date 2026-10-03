@@ -919,7 +919,7 @@ crates/temporal-workflow/
   generic RunTerminalNotification
   work-cycle activity DTOs
 
-crates/temporal-server/
+crates/temporal-runtime/
   workflow registration
   Work gateway service
   shared session-run request runtime beneath Fleet and Work

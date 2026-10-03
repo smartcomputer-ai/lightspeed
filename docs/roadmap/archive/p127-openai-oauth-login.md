@@ -9,7 +9,7 @@
   migration, no core method. Subscription credentials are ordinary
   `static_bearer` grants imported through `auth/grants/import` (which gained
   a generic `metadata` field) with `metadata.subscription = claudeCode |
-  codex`; Platform parses/normalises the paste (`platform/server/src/
+  codex`; Platform parses/normalises the paste (`platform/backend/src/
   subscriptions.ts`), and the worker injects the stored value verbatim. The
   Integrations cards (Anthropic, OpenAI), Codex bootstrap snippet, and the
   environment "Assign credential" env-name suggestions are in place; the
@@ -207,7 +207,7 @@ Platform:
   `model:openai` `modelApiKey` row (needs `auth/providers/update` with
   credential replace, also wanted for GitHub App key rotation).
 
-Tokens transit the Platform server in memory during the flow (as pastes do
+Tokens transit the Platform backend in memory during the flow (as pastes do
 today) and are never stored there. Refresh: Codex refreshes itself inside
 the environment; if Lightspeed's copy goes stale the card shows *Reconnect*.
 Core-side refresh is only needed if core consumes the token at runtime (D6),
@@ -286,7 +286,7 @@ loop is the API-key outcome of D3.
 ## Security Invariants
 
 1. Platform never persists tokens: pastes (and, in S3, device-flow tokens)
-   pass through the Platform server in memory only, are handed to core in
+   pass through the Platform backend in memory only, are handed to core in
    one request, and are encrypted on receipt; reads return ids/status/
    metadata only.
 2. Device `user_code` is bound to the starting universe and a TTL.
@@ -329,7 +329,7 @@ loop is the API-key outcome of D3.
 
 ### S3: OpenAI device flow + API-key outcome (Platform)
 
-- Device flow in the Platform server, polling from the server, normalise +
+- Device flow in the Platform backend, polling from the server, normalise +
   import; API-key exchange → `model:openai` (+ `auth/providers/update` in
   core, generic); card gets *Sign in with OpenAI*. Live measurement of
   refresh-token rotation → decide the D4 follow-up.

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use engine::{BlobRef, StringIdError, validate_general_string_id};
+use harness::{BlobRef, StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
@@ -235,7 +235,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vfs_workspace_id_uses_engine_string_id_rules() {
+    fn vfs_workspace_id_uses_harness_string_id_rules() {
         let id = VfsWorkspaceId::new("workspace-1");
 
         assert_eq!(id.as_str(), "workspace-1");

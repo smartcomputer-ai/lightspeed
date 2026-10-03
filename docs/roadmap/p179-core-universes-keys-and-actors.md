@@ -389,9 +389,9 @@ and UI tests, generated-client checks, and production/demo builds pass.
 
 - [API keys](../../crates/store-pg/src/api_keys.rs),
   [session store](../../crates/store-pg/src/session.rs).
-- [Gateway authentication](../../crates/temporal-server/src/gateway/authentication.rs),
-  [request context](../../crates/temporal-server/src/gateway/request_context.rs),
-  [shared-service authorization](../../crates/temporal-server/src/gateway/service/authorization.rs),
-  [controller rules](../../crates/temporal-server/src/gateway/service/controller.rs).
+- [Gateway authentication](../../crates/temporal-runtime/src/gateway/authentication.rs),
+  [request context](../../crates/temporal-runtime/src/gateway/request_context.rs),
+  [shared-service authorization](../../crates/temporal-runtime/src/gateway/service/authorization.rs),
+  [controller rules](../../crates/temporal-runtime/src/gateway/service/controller.rs).
 - [Method manifest](../../crates/api/src/rpc.rs),
   [access vocabulary and method classification](../../crates/api/src/access.rs).

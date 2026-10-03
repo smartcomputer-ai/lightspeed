@@ -6,7 +6,7 @@
 
 use api::{BotEventOutcome, BotId, BotTriggerId, ChannelAccountId, ChannelProvider, ChatScope};
 use channels::{ConversationRef, media::PreparedMediaItem, state::ChatHandle};
-use engine::WorkflowEndpointRef;
+use harness::WorkflowEndpointRef;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

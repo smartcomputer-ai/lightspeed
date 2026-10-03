@@ -1,4 +1,4 @@
-import type { ChannelInbound, ChannelInboundMedia } from "@lightspeed-ai/agent-client";
+import type { ChannelInbound, ChannelInboundMedia } from "@lightspeed-ai/sdk";
 import { mediaPlaceholder } from "../../media/inbound.js";
 import {
   MAX_AUDIO_BYTES,

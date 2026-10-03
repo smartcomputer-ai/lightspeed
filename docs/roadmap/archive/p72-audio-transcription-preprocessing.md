@@ -275,7 +275,7 @@ Completed 2026-06-16:
 
 Partial 2026-06-16:
 
-- Added `crates/temporal-server/tests/preprocess_live.rs`, an ignored live
+- Added `crates/temporal-runtime/tests/preprocess_live.rs`, an ignored live
   Temporal/Postgres admission test that submits `audio/ogg` through
   `run/start`, injects a deterministic fake transcriber, and verifies the
   admitted run input contains transcript text instead of the raw audio preview.

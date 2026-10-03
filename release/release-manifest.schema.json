@@ -56,9 +56,9 @@
     "binaries": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["server", "providerIncus", "envd", "cli"],
+      "required": ["runtime", "providerIncus", "envd", "cli"],
       "properties": {
-        "server": { "$ref": "#/$defs/binaryArtifact" },
+        "runtime": { "$ref": "#/$defs/binaryArtifact" },
         "providerIncus": { "$ref": "#/$defs/binaryArtifact" },
         "envd": { "$ref": "#/$defs/binaryArtifact" },
         "cli": { "$ref": "#/$defs/binaryArtifact" }
@@ -86,7 +86,7 @@
       "additionalProperties": false,
       "required": ["name", "version", "sha256"],
       "properties": {
-        "name": { "const": "@lightspeed-ai/agent-client" },
+        "name": { "const": "@lightspeed-ai/sdk" },
         "version": { "type": "string", "minLength": 1 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }

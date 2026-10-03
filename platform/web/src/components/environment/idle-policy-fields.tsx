@@ -1,4 +1,4 @@
-import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/agent-client";
+import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 

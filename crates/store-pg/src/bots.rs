@@ -3,6 +3,7 @@
 //! tables are the read model plus what admission needs (the `#N` counter,
 //! trigger secrets and incidents, write-once outcomes).
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use ::bots::{
     BotError, BotEventCursor, BotEventOutcomeWrite, BotEventRateScope, BotEventRecord,
     BotEventStore, BotRecord, BotRosterRow, BotStore, BotTriggerRecord, BotTriggerStore,
@@ -61,7 +62,7 @@ fn event_columns() -> String {
 
 /// `table.col AS <prefix>col, ...` for embedding the event columns beside
 /// other tables' columns.
-fn prefixed_event_columns(table: &str, prefix: &str) -> String {
+fn prefixed_event_columns(table: &'static str, prefix: &'static str) -> String {
     EVENT_COLUMN_NAMES
         .iter()
         .map(|column| format!("{table}.{column} AS {prefix}{column}"))
@@ -124,7 +125,7 @@ impl PgStore {
             ORDER BY b.bot_id
             "#
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(created_by)
             .fetch_all(&self.pool)
@@ -206,7 +207,7 @@ impl BotStore for PgStore {
             RETURNING {BOT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(json_value("serialize bot document", &document)?)
@@ -296,7 +297,7 @@ impl BotStore for PgStore {
     async fn read_bot(&self, bot_id: &BotId) -> Result<BotRecord, BotError> {
         let query =
             format!("SELECT {BOT_COLUMNS} FROM bots WHERE universe_id = $1 AND bot_id = $2");
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .fetch_optional(&self.pool)
@@ -313,7 +314,7 @@ impl BotStore for PgStore {
     async fn list_bots(&self) -> Result<Vec<BotRecord>, BotError> {
         let query =
             format!("SELECT {BOT_COLUMNS} FROM bots WHERE universe_id = $1 ORDER BY bot_id");
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -343,7 +344,7 @@ impl BotStore for PgStore {
             ORDER BY bot_id
             "#
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(profile_id.as_str())
             .fetch_all(&self.pool)
@@ -364,7 +365,7 @@ impl BotStore for PgStore {
             RETURNING {BOT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(now_ms)
@@ -418,7 +419,7 @@ impl BotStore for PgStore {
         let query = format!(
             "DELETE FROM bots WHERE universe_id = $1 AND bot_id = $2 RETURNING {BOT_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .fetch_optional(&self.pool)
@@ -476,7 +477,7 @@ impl PgStore {
             RETURNING {BOT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(u64_to_i64(revision, "revision")?)
@@ -594,7 +595,7 @@ impl BotTriggerStore for PgStore {
             "SELECT {TRIGGER_COLUMNS} FROM bot_triggers \
              WHERE universe_id = $1 AND bot_id = $2 AND trigger_id = $3"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(trigger_id.as_str())
@@ -615,7 +616,7 @@ impl BotTriggerStore for PgStore {
             "SELECT {TRIGGER_COLUMNS} FROM bot_triggers \
              WHERE universe_id = $1 AND bot_id = $2 ORDER BY trigger_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .fetch_all(&self.pool)
@@ -632,7 +633,7 @@ impl BotTriggerStore for PgStore {
             "SELECT {TRIGGER_COLUMNS} FROM bot_triggers \
              WHERE universe_id = $1 AND kind = $2 ORDER BY bot_id, trigger_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(kind.as_str())
             .fetch_all(&self.pool)
@@ -651,7 +652,7 @@ impl BotTriggerStore for PgStore {
              WHERE universe_id = $1 AND bot_id = $2 AND trigger_id = $3 \
              RETURNING {TRIGGER_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(trigger_id.as_str())
@@ -686,7 +687,7 @@ impl BotTriggerStore for PgStore {
             RETURNING {TRIGGER_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(trigger_id.as_str())
@@ -723,7 +724,7 @@ impl BotTriggerStore for PgStore {
             RETURNING {TRIGGER_COLUMNS}
             "#
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(disabled_reason_to_str(reason))
@@ -832,7 +833,7 @@ impl PgStore {
             RETURNING {TRIGGER_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(write.trigger_id.as_str())
@@ -874,7 +875,7 @@ impl PgStore {
             RETURNING {TRIGGER_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(replaced.bot_id.as_str())
             .bind(replaced.trigger_id.as_str())
@@ -932,7 +933,7 @@ impl BotEventStore for PgStore {
             "#
         );
         let row =
-            sqlx::query(&query)
+            sqlx::query(sqlx::AssertSqlSafe(query))
                 .bind(self.config.universe_id)
                 .bind(record.bot_id.as_str())
                 .bind(record.event_id.as_str())
@@ -997,7 +998,7 @@ impl BotEventStore for PgStore {
             let digests = refs
                 .iter()
                 .map(|value| {
-                    engine::BlobRef::parse(value)
+                    harness::BlobRef::parse(value)
                         .map(|blob| blob.as_str()[7..].to_owned())
                         .map_err(|error| {
                             BotError::invalid(format!("invalid bot event blob ref: {error}"))
@@ -1053,7 +1054,7 @@ impl BotEventStore for PgStore {
         let query = format!(
             "SELECT {columns} FROM bot_events WHERE universe_id = $1 AND bot_id = $2 AND seq = $3"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(u64_to_i64(seq, "seq")?)
@@ -1079,7 +1080,7 @@ impl BotEventStore for PgStore {
             "SELECT {columns} FROM bot_events \
              WHERE universe_id = $1 AND bot_id = $2 AND event_id = $3"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(event_id)
@@ -1109,7 +1110,7 @@ impl BotEventStore for PgStore {
              WHERE universe_id = $1 AND bot_id = $2 AND event_id = ANY($3::text[]) \
              ORDER BY seq"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(bot_id.as_str())
             .bind(event_ids.to_vec())
@@ -1135,7 +1136,7 @@ impl BotEventStore for PgStore {
                        AND (received_at_ms, seq) < ($3, $4) \
                      ORDER BY received_at_ms DESC, seq DESC LIMIT $5"
                 );
-                sqlx::query(&query)
+                sqlx::query(sqlx::AssertSqlSafe(query))
                     .bind(self.config.universe_id)
                     .bind(bot_id.as_str())
                     .bind(cursor.received_at_ms)
@@ -1150,7 +1151,7 @@ impl BotEventStore for PgStore {
                      WHERE universe_id = $1 AND bot_id = $2 \
                      ORDER BY received_at_ms DESC, seq DESC LIMIT $3"
                 );
-                sqlx::query(&query)
+                sqlx::query(sqlx::AssertSqlSafe(query))
                     .bind(self.config.universe_id)
                     .bind(bot_id.as_str())
                     .bind(limit)

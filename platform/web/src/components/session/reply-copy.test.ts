@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it } from "vitest";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
 import { replyFormatted, replyMarkdown } from "./reply-copy";
 
 function content(html: string) {
@@ -18,7 +20,12 @@ it("copies inline and reference-style attachments as stable viewer links, leavin
   const body = content('<a data-attachment-reference="file:report" href="/blobs/report?workspace=w&amp;path=a.md">Report</a><a data-attachment-reference="media:photo" href="/blobs/photo"><img src="blob:preview" alt="Photo"></a>');
   const copied = replyMarkdown(text, body);
   const report = new URL("/blobs/report?workspace=w&path=a.md", window.location.href).href;
-  expect(copied).toContain(`[**Report**](${report})`);
+  expect(unified().use(remarkParse).parse(copied).children[0]).toMatchObject({
+    type: "paragraph",
+    children: [{ type: "link", url: report, children: [
+      { type: "strong", children: [{ type: "text", value: "Report" }] },
+    ] }],
+  });
   expect(copied).toContain(`[Photo](${new URL("/blobs/photo", window.location.href).href})`);
   expect(copied).toContain(`[ref]: ${report} "Report"`);
   expect(copied).toContain("`[Report](file:report)`");

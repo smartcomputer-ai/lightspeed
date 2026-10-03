@@ -4,7 +4,24 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LIGHTSPEED_GIT_SHA");
     println!("cargo:rerun-if-env-changed=LIGHTSPEED_RELEASE_VERSION");
     println!("cargo:rerun-if-env-changed=LIGHTSPEED_ENVD_TARGETS");
-    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    // Resolve Git's own paths so linked worktrees and packed refs work too.
+    // HEAD alone does not change when a commit advances the current branch.
+    for name in [
+        Some("HEAD".to_owned()),
+        command_output("git", &["symbolic-ref", "-q", "HEAD"]),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(path) = command_output("git", &["rev-parse", "--git-path", &name]) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+    if let Some(path) = command_output("git", &["rev-parse", "--git-path", "packed-refs"])
+        && std::path::Path::new(&path).exists()
+    {
+        println!("cargo:rerun-if-changed={path}");
+    }
 
     let git_sha = std::env::var("LIGHTSPEED_GIT_SHA")
         .ok()

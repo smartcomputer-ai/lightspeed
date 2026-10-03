@@ -2,13 +2,13 @@ use super::*;
 
 /// The parked tool batch, if any, derived from typed core state.
 pub(super) struct ParkedToolBatch {
-    pub run_id: engine::RunId,
-    pub batch_id: engine::ToolBatchId,
-    pub suspension: engine::ToolBatchSuspension,
+    pub run_id: harness::RunId,
+    pub batch_id: harness::ToolBatchId,
+    pub suspension: harness::ToolBatchSuspension,
 }
 
 impl ParkedToolBatch {
-    pub(super) fn spec(&self) -> &engine::AwaitSpec {
+    pub(super) fn spec(&self) -> &harness::AwaitSpec {
         self.suspension.spec()
     }
 }
@@ -39,10 +39,10 @@ pub(super) fn has_satisfied_await(state: &AgentSessionWorkflow) -> bool {
         .spec()
         .deadline_at_ms
         .map_or(u64::MAX, |deadline| deadline.saturating_sub(1));
-    engine::await_wake(&state.core_state, non_timeout_ms).is_some()
+    harness::await_wake(&state.core_state, non_timeout_ms).is_some()
 }
 
-fn parked_tool_batch_batch_id(core_state: &CoreAgentState) -> Option<engine::ToolBatchId> {
+fn parked_tool_batch_batch_id(core_state: &CoreAgentState) -> Option<harness::ToolBatchId> {
     parked_tool_batch(core_state).map(|parked| parked.batch_id)
 }
 
@@ -66,11 +66,11 @@ pub(super) async fn process_satisfied_await(
         {
             return None;
         }
-        let claim = engine::await_wake(&state.core_state, now)?;
+        let claim = harness::await_wake(&state.core_state, now)?;
         let outcome = match claim {
-            engine::WakeReason::Cancelled => AwaitOutcome::Cancelled,
-            engine::WakeReason::Timeout => AwaitOutcome::Timeout,
-            engine::WakeReason::Terminal => AwaitOutcome::Terminal,
+            harness::WakeReason::Cancelled => AwaitOutcome::Cancelled,
+            harness::WakeReason::Timeout => AwaitOutcome::Timeout,
+            harness::WakeReason::Terminal => AwaitOutcome::Terminal,
         };
         let results = promise_snapshot(parked.spec(), &state.core_state);
         Some((parked, claim, outcome, results))
@@ -80,31 +80,31 @@ pub(super) async fn process_satisfied_await(
     };
 
     // The runtime prepares what the resolved payloads supply beside the
-    // results (a sub-agent's linked images, for example); the engine only
+    // results (a sub-agent's linked images, for example); the harness only
     // records and sequences those entries.
     let has_resolved_payload = results
         .iter()
         .any(|result| result.status == "resolved" && result.payload_ref.is_some());
     let resume_output = match &parked.suspension {
-        engine::ToolBatchSuspension::AwaitTool { .. } => {
+        harness::ToolBatchSuspension::AwaitTool { .. } => {
             let request = AwaitMaterializationRequest { outcome, results };
             let materialized = ctx
-                .start_activity(
+                .execute_activity(
                     WorkflowActivities::materialize_await_result,
                     request,
                     activity_options(),
                 )
                 .await
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
-            engine::ToolBatchResumeOutput::AwaitTool {
+            harness::ToolBatchResumeOutput::AwaitTool {
                 result_ref: materialized.result_ref,
                 additional_context: materialized.additional_context,
                 attachments: materialized.attachments,
             }
         }
-        engine::ToolBatchSuspension::JoinedWorkflowCalls { .. } => {
+        harness::ToolBatchSuspension::JoinedWorkflowCalls { .. } => {
             let additional_context = if has_resolved_payload {
-                ctx.start_activity(
+                ctx.execute_activity(
                     WorkflowActivities::prepare_joined_context,
                     JoinedContextPreparationRequest { results },
                     activity_options(),
@@ -114,10 +114,10 @@ pub(super) async fn process_satisfied_await(
             } else {
                 Vec::new()
             };
-            engine::ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context }
+            harness::ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context }
         }
     };
-    let command = engine::ResumeToolBatchCommand {
+    let command = harness::ResumeToolBatchCommand {
         run_id: parked.run_id,
         batch_id: parked.batch_id,
         claim,
@@ -136,7 +136,7 @@ pub(super) async fn process_satisfied_await(
 }
 
 pub(super) fn promise_snapshot(
-    spec: &engine::AwaitSpec,
+    spec: &harness::AwaitSpec,
     core_state: &CoreAgentState,
 ) -> Vec<AwaitPromiseResult> {
     spec.promise_ids
@@ -160,11 +160,11 @@ pub(super) fn promise_snapshot(
         .collect()
 }
 
-pub(super) fn promise_status_name(status: engine::PromiseStatus) -> &'static str {
+pub(super) fn promise_status_name(status: harness::PromiseStatus) -> &'static str {
     match status {
-        engine::PromiseStatus::Pending => "pending",
-        engine::PromiseStatus::Resolved => "resolved",
-        engine::PromiseStatus::Failed => "failed",
-        engine::PromiseStatus::Cancelled => "cancelled",
+        harness::PromiseStatus::Pending => "pending",
+        harness::PromiseStatus::Resolved => "resolved",
+        harness::PromiseStatus::Failed => "failed",
+        harness::PromiseStatus::Cancelled => "cancelled",
     }
 }

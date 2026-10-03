@@ -98,7 +98,7 @@ it("uploads attachments on pick and sends them with the message", async () => {
   await act(async () => button("Send message").click());
   expect(onSend).toHaveBeenCalledWith({
     text: "Change direction",
-    attachments: [{ blobRef: `sha256:${"a".repeat(64)}`, mime: "image/png", kind: "image", name: "screen.png", size: 3 }],
+    attachments: [{ blobRef: `sha256:${"a".repeat(64)}`, mime: "image/png", kind: "image", name: "screen.png", size: 3, previewUrl: expect.stringMatching(/^blob:/) }],
   }, null);
   expect(container.querySelector('[aria-label="Attachments"]')).toBeNull();
 });

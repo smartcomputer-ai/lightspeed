@@ -5,6 +5,7 @@
 //! a bot's session follows its bot, which is shared. Lineage is written only
 //! by the runtime, so decisions may read it.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use api::{Attribution, ResourceAccessSummary, ResourceRef, Visibility};
 use serde_json::json;
 use sqlx::{PgPool, Row};
@@ -94,7 +95,7 @@ pub(crate) fn created_by_from_row(
 }
 
 /// `column` holds the attribution of the actor bound at `$bind`.
-pub(crate) fn actor_match(column: &str, bind: usize) -> String {
+pub(crate) fn actor_match(column: &'static str, bind: usize) -> String {
     format!("{column} = jsonb_build_object('kind', 'actor', 'id', ${bind}::text)")
 }
 
@@ -177,9 +178,9 @@ impl PgAccessStore {
         resource: &ResourceRef,
     ) -> Result<bool, AccessStoreError> {
         let (table, id_column) = content_table(resource);
-        sqlx::query_scalar(&format!(
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM {table} WHERE universe_id=$1 AND {id_column}=$2)"
-        ))
+        )))
         .bind(universe)
         .bind(resource.id())
         .fetch_one(&self.pool)
@@ -240,12 +241,12 @@ impl PgAccessStore {
         session: &str,
     ) -> Result<Option<ResourceAccess>, AccessStoreError> {
         let summary = session_summary_columns();
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT s.origin_parent_session_id, COALESCE(s.origin_root_session_id, s.session_id) AS root_session_id,
                     {SESSION_BOT} AS root_bot_id, {summary}
              FROM sessions s {SESSION_ROOT_JOIN}
              WHERE s.universe_id = $1 AND s.session_id = $2"
-        ))
+        )))
         .bind(universe)
         .bind(session)
         .fetch_optional(&self.pool)

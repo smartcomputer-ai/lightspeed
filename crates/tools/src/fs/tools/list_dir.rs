@@ -55,7 +55,7 @@ pub async fn invoke_list_dir(ctx: &FsToolContext, args: ListDirArgs) -> ToolResu
 mod tests {
     use std::sync::Arc;
 
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::fs::{CreateDirectoryOptions, FileSystem, InMemoryFileSystem};

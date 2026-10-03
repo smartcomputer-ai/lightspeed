@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { prepareCliConnection } from "./cli-connection.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -79,6 +80,54 @@ function launcherFixture(t) {
   writeFileSync(path.join(directory, "scripts/dev/env.sh"), "true\n");
   writeFileSync(path.join(directory, "scripts/dev/infra/up.sh"), "#!/bin/sh\necho 'fixture infrastructure only'\n", { mode: 0o755 });
   return directory;
+}
+
+for (const resetExitCode of [0, 7]) {
+  test(`database reset ${resetExitCode === 0 ? "clears credentials for fresh startup" : "failure preserves credentials"}`, async (t) => {
+    const directory = launcherFixture(t);
+    const env = {
+      ...process.env,
+      LIGHTSPEED_AUTH_MODE: "authenticated",
+      LIGHTSPEED_BOOTSTRAP_API_KEY: "",
+      LIGHTSPEED_PLATFORM_API_KEY: "",
+      LIGHTSPEED_API_URL: "http://127.0.0.1:18080/rpc",
+      LIGHTSPEED_PG_UNIVERSE_ID: "00000000-0000-0000-0000-000000000001",
+    };
+    const keys = new Set();
+    let sequence = 0;
+    const run = async (_name, _command, args, provisioningEnv) => {
+      if (args.includes("universe")) return { stdout: "" };
+      const secret = provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY ?? `lsk_reset_${++sequence}`;
+      if (args.includes("--require-existing")) assert.ok(keys.has(secret), "saved key must exist in the database");
+      keys.add(secret);
+      return { stdout: JSON.stringify({ secret }) };
+    };
+    const options = { root: directory, env, full: true, run };
+    const before = await prepareCliConnection(options);
+    const unrelated = path.join(directory, ".lightspeed", "unrelated");
+    writeFileSync(unrelated, "preserve");
+    writeFileSync(path.join(directory, "scripts/dev/infra/reset.sh"), `#!/bin/sh\nexit ${resetExitCode}\n`, { mode: 0o755 });
+    const result = spawnSync(process.execPath, ["scripts/dev/stack.mjs", "reset"], {
+      cwd: directory, encoding: "utf8", env,
+    });
+    assert.equal(result.status, resetExitCode === 0 ? 0 : 1, result.stderr);
+    assert.ok(existsSync(unrelated));
+    const credentialDirectory = path.join(directory, ".lightspeed", "cli");
+    if (resetExitCode === 0) {
+      assert.ok(!existsSync(credentialDirectory));
+      assert.match(result.stdout, /lightspeed connect dev/);
+      keys.clear();
+      const after = await prepareCliConnection(options);
+      assert.notEqual(after.platformSecret, before.platformSecret);
+      assert.equal(sequence, 4, "both CLI and Platform receive fresh keys");
+      assert.ok(existsSync(after.handoff));
+    } else {
+      assert.ok(existsSync(before.handoff));
+      const after = await prepareCliConnection(options);
+      assert.equal(after.platformSecret, before.platformSecret);
+      assert.equal(sequence, 2, "failed reset retains both saved keys");
+    }
+  });
 }
 
 for (const failure of ["migration", "runtime"]) {

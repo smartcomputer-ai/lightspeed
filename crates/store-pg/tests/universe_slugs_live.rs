@@ -19,7 +19,9 @@ async fn host_provisioning_fills_missing_slugs_without_renaming() {
         .expect("connect to live Postgres");
     let schema = format!("lightspeed_universe_slug_test_{}", Uuid::new_v4().simple());
     admin
-        .execute(format!("CREATE SCHEMA \"{schema}\"").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA \"{schema}\""
+        ))))
         .await
         .expect("create isolated schema");
     let pool = PgPoolOptions::new()
@@ -34,7 +36,9 @@ async fn host_provisioning_fills_missing_slugs_without_renaming() {
     let outcome = AssertUnwindSafe(exercise(&pool)).catch_unwind().await;
     pool.close().await;
     admin
-        .execute(format!("DROP SCHEMA \"{schema}\" CASCADE").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        ))))
         .await
         .expect("drop isolated schema");
     admin.close().await;

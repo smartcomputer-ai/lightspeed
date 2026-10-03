@@ -6,19 +6,19 @@ edition = "2024"
 [dependencies]
 api = { path = "../api" }
 async-trait = "0.1"
-base64 = "0.22"
-engine = { path = "../engine" }
+base64 = "0.23"
+harness = { path = "../harness" }
 futures-util = "0.3"
 hex = "0.4"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 oauth2 = { version = "5", default-features = false }
-rand = "0.8"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["form", "json", "rustls", "stream"] }
 rmcp = { version = "3.1.4", default-features = false, features = ["auth", "client"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-thiserror = "1"
+sha2 = "0.11"
+thiserror = "2"
 tokio = { version = "1", features = ["net", "sync", "time"] }
 
 [dev-dependencies]

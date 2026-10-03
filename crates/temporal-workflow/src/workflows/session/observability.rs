@@ -63,7 +63,7 @@ pub(super) fn request_continue_as_new(
     args: &AgentSessionArgs,
 ) -> WorkflowResult<()> {
     let next_args = continuation_args(ctx, args);
-    match ctx.continue_as_new(&next_args, ContinueAsNewOptions::default()) {
+    match ctx.continue_as_new(next_args, ContinueAsNewOptions::default()) {
         Ok(never) => match never {},
         Err(termination @ temporalio_sdk::WorkflowTermination::ContinueAsNew(_)) => {
             log_continue_as_new(ctx, args);

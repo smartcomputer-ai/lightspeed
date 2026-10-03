@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/connectors",
+  "name": "@lightspeed-ai/connectors",
   "private": true,
   "type": "module",
   "description": "Lightspeed connector host: Telegram and WhatsApp bridges over the core API, one process serving many accounts.",
@@ -10,19 +10,19 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@lightspeed-ai/agent-client": "*",
-    "@temporalio/activity": "1.21.1",
-    "@temporalio/common": "1.21.1",
-    "@temporalio/worker": "1.21.1",
-    "baileys": "7.0.0-rc13",
-    "grammy": "^1.43.0",
-    "marked": "^18.0.5",
+    "@lightspeed-ai/sdk": "*",
+    "@temporalio/activity": "1.24.0",
+    "@temporalio/common": "1.24.0",
+    "@temporalio/worker": "1.24.0",
+    "baileys": "7.0.0-rc14",
+    "grammy": "^1.46.0",
+    "marked": "^18.0.14",
     "qrcode-terminal": "^0.12.0",
-    "tsx": "^4.20.0"
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@types/qrcode-terminal": "^0.12.2",
-    "vitest": "^3.2.0"
+    "vitest": "^5.0.3"
   },
   "engines": {
     "node": ">=24"

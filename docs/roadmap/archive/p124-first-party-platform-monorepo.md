@@ -16,10 +16,10 @@ Implemented repository slice 2026-08-15:
   MCP to `platform/configurator-mcp`;
 - moved committed generated API artifacts to their owner at
   `crates/api/contract`;
-- imported the platform server, web UI, operator CLI, shared inputs, database,
+- imported the platform backend, web UI, operator CLI, shared inputs, database,
   Channels, and mechanically preserved Foundry package under `platform/`;
 - established the private root npm workspace, in-tree client dependencies,
-  `@lightspeed/*` package names, and Node 24 baseline;
+  `@lightspeed-ai/*` package names, and Node 24 baseline;
 - updated generators, CI, release staging, SBOM inputs, documentation, and
   development commands for the new paths;
 - extended the P123 manifest and release workflows with digest-pinned Rust
@@ -95,7 +95,7 @@ public Lightspeed repository       private deployment repository
 
 runtime and API                    release-manifest pin
 generated clients                 deployment topology
-platform server and web UI        encrypted secrets
+platform backend and web UI        encrypted secrets
 channel workers                   DNS/TLS and ingress policy
 database schema and migrations    product-specific runtime config
 images and release manifest       deploy/rollback scripts
@@ -127,7 +127,7 @@ cross-repository coordination that P124 is intended to remove.
 
 The workspace moves as a unit because the current server and database still
 reference Foundry. P124 does not redesign, extract, promote, or add release
-work for Foundry while its product future is undecided. The platform server/UI,
+work for Foundry while its product future is undecided. The platform backend/UI,
 Channels roles, Telegram connector, and WhatsApp connector remain independently
 buildable and deployable components.
 
@@ -140,7 +140,7 @@ The current repository split does not correspond to an independent domain:
 - web types and configuration references derive from the Lightspeed contract;
 - Channels creates Lightspeed sessions and uses Lightspeed workflow tools
   directly;
-- the platform server and Channels share one application database schema and
+- the platform backend and Channels share one application database schema and
   migration history; and
 - server routes import contracts from the worker packages.
 
@@ -164,7 +164,7 @@ identifiable as the public client and place the cohesive product plane under
 
 ```text
 clients/
-  typescript/          generated @lightspeed-ai/agent-client
+  typescript/          generated @lightspeed-ai/sdk
 
 platform/
   server/              management API and static web host
@@ -192,12 +192,12 @@ required to enforce that boundary. The existing `interop/` directory is
 removed because it mixes a public client, a deployable service, and generated
 Rust API output.
 
-The generated `@lightspeed-ai/agent-client` remains the sole stable TypeScript
+The generated `@lightspeed-ai/sdk` remains the sole stable TypeScript
 contract boundary. In-tree consumers use the workspace source directly during
 development and CI. Tagged releases may continue publishing the client to npm
 for external consumers through P123.
 
-Rename imported internal packages to the `@lightspeed/*` scope. Keep the
+Rename imported internal packages to the `@lightspeed-ai/*` scope. Keep the
 workspace root and application-only packages marked `"private": true` unless a
 package is intentionally supported as a public npm artifact. Open source does
 not imply npm publication.
@@ -209,7 +209,7 @@ were removed. Leave Foundry's internal shape untouched until the feature is
 retained or removed; do not introduce another platform-local copy of Rust wire
 vocabulary.
 
-The imported code remains outside the deterministic `engine` crate. Platform
+The imported code remains outside the deterministic `harness` crate. Platform
 HTTP, authentication, database access, connectors, and Temporal workers are
 side-effecting product-plane components and must continue to communicate
 through the public `api` and generic workflow-tool protocols.
@@ -285,7 +285,7 @@ The Baileys-backed WhatsApp connector remains an explicit, default-off role
 with its unofficial status and operational risk documented. It shares the
 Platform workers image to keep the release topology small; enabling it is
 still a deployment choice, and it can be removed later without changing the
-platform server image.
+platform backend image.
 
 ## Coherent public release
 
@@ -294,10 +294,10 @@ artifact built from the same source revision and generated contract. The public
 repository owns builds and publishes immutable artifacts. At minimum, the
 release manifest identifies as applicable:
 
-- Rust runtime image plus provider, envd, server-bundle, and CLI artifacts;
+- Rust runtime image plus provider, envd, runtime-bundle, and CLI artifacts;
 - Configurator MCP image;
-- `@lightspeed-ai/agent-client` package and contract revision;
-- platform server/web image; and
+- `@lightspeed-ai/sdk` package and contract revision;
+- platform backend/web image; and
 - one Platform workers image startable with granular Channels/Bots roles,
   `channels`, `bots`, `telegram`, `whatsapp`, or `all`.
 

@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use engine::storage::BlobStore;
+use harness::storage::BlobStore;
 use thiserror::Error;
 use vfs::{
     ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget, VfsPath, VfsWorkspaceId,
@@ -309,7 +309,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use async_trait::async_trait;
-    use engine::{BlobRef, WorkspaceAccess, storage::InMemoryBlobStore};
+    use harness::{BlobRef, WorkspaceAccess, storage::InMemoryBlobStore};
     use vfs::{
         CompareAndSetVfsWorkspaceHead, CreateInlineSnapshotRequest, CreateVfsWorkspaceRecord,
         InlineFile, ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget,
@@ -408,7 +408,7 @@ mod tests {
             resolved_attachment(
                 "/skills/system",
                 ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
-                    snapshot_ref: engine::BlobRef::from_bytes(b"snapshot"),
+                    snapshot_ref: harness::BlobRef::from_bytes(b"snapshot"),
                 },
                 WorkspaceAccess::Read,
             ),

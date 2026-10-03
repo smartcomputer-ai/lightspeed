@@ -14,7 +14,7 @@ Implemented here:
 - deterministic standalone archives, checksums, release manifest schema, SPDX
   SBOM, and artifact smoke tests;
 - runtime and Configurator images that consume prebuilt `dist/` output;
-- publishable `@lightspeed-ai/agent-client` release metadata;
+- publishable `@lightspeed-ai/sdk` release metadata;
 - separate coherent workflows: successful `main` CI automatically builds and
   publishes only SHA snapshot references, while SemVer tags independently test
   and build their exact commit before publishing version aliases, npm, and a

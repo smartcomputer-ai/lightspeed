@@ -10,7 +10,7 @@
 **Progress**
 - Added a shared environment projection planner in
   `tools::environment::projection`.
-- Added `temporal_server::environment::SessionEnvironmentManager` as the hosted
+- Added `temporal_runtime::environment::SessionEnvironmentManager` as the hosted
   owner for session environment projection refreshes.
 - Replaced duplicated projection command construction in the gateway, Temporal
   worker skill-refresh activity, and in-process test runner.
@@ -18,9 +18,9 @@
   ownership boundary; it does not add a sandbox provider or local process
   executor.
 - Verified with:
-  `cargo test -p tools -p temporal-server -p test-support --tests`
+  `cargo test -p tools -p temporal-runtime -p test-support --tests`
 - After the final cleanup, verified the manager compile path with:
-  `cargo test -p temporal-server environment::tests::manager_projects_active_environment_from_default_env_target --lib`
+  `cargo test -p temporal-runtime environment::tests::manager_projects_active_environment_from_default_env_target --lib`
 
 ## Goal
 
@@ -52,7 +52,7 @@ Use two layers:
 
 - `tools::environment::projection` owns pure snapshot planning and CAS-backed
   command preparation.
-- `temporal-server::environment::SessionEnvironmentManager` owns hosted runtime
+- `temporal-runtime::environment::SessionEnvironmentManager` owns hosted runtime
   inputs: VFS mounts now, environment records and active selection next.
 
 The deterministic engine still only sees ordinary context upsert/remove
@@ -82,7 +82,7 @@ The planner:
 
 ### G2: Hosted Manager Boundary
 
-Add `SessionEnvironmentManager` in `temporal-server`.
+Add `SessionEnvironmentManager` in `temporal-runtime`.
 
 The manager currently owns:
 
@@ -107,7 +107,7 @@ Route the existing refresh paths through the shared planner/manager:
 The gateway remains responsible for submitting commands and waiting for context
 entries to apply. The worker remains responsible for composing environment
 projection refresh with skill-catalog refresh. Test-support calls the pure
-planner directly to avoid a dependency cycle on `temporal-server`.
+planner directly to avoid a dependency cycle on `temporal-runtime`.
 
 ## Non-Goals
 
@@ -125,4 +125,4 @@ planner directly to avoid a dependency cycle on `temporal-server`.
 - The in-process runner uses the same pure planner as hosted code.
 - Existing P76 behavior is preserved for VFS-only sessions: publish VFS catalog,
   publish empty environment catalog, and clear active environment.
-- Focused tools, temporal-server, and test-support tests pass.
+- Focused tools, temporal-runtime, and test-support tests pass.

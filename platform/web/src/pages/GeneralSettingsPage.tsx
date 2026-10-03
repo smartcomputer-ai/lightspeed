@@ -31,7 +31,7 @@ import {
   UniverseNotFound,
 } from "@/components/page";
 import { Switch } from "@/components/ui/switch";
-import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed/platform-shared";
+import { universeSlugSchema, FEATURES, FEATURE_KEYS, type FeatureKey } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 import { UniverseAppearanceCard } from "@/components/universe-appearance-card";
 

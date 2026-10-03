@@ -1,7 +1,7 @@
 //! Typed provider request parameters.
 //!
-//! The engine carries provider request settings as opaque
-//! [`engine::ProviderParams`] (`api_kind` + versioned JSON body). This module
+//! The harness carries provider request settings as opaque
+//! [`harness::ProviderParams`] (`api_kind` + versioned JSON body). This module
 //! owns the typed schemas for those bodies: admission boundaries validate
 //! incoming params against them, and adapters parse them when materializing
 //! provider-native wire requests. The deterministic core never sees these
@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use engine::{ModelProcessingTier, ProviderApiKind, ProviderParams};
+use harness::{ModelProcessingTier, ProviderApiKind, ProviderParams};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use engine::BlobRef;
+use harness::BlobRef;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::{fs, sync::Mutex};
 

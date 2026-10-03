@@ -300,13 +300,13 @@ function createPlan(profile, sourceEnv) {
     preparations.push({
       name: "runtime migration",
       command: "cargo",
-      args: ["run", "-p", "temporal-server", "--", "migrate"],
+      args: ["run", "-p", "temporal-runtime", "--", "migrate"],
       env,
     });
     processes.push({
       name: "runtime",
       command: "cargo",
-      args: ["run", "-p", "temporal-server"],
+      args: ["run", "-p", "temporal-runtime"],
       cwd: repoRoot,
       env,
     });
@@ -340,7 +340,7 @@ function createPlan(profile, sourceEnv) {
       {
         name: "platform",
         command: tsx,
-        args: ["watch", "platform/server/src/main.ts"],
+        args: ["watch", "platform/backend/src/main.ts"],
         cwd: repoRoot,
         env,
         // First-login bootstrap checks the canonical administrator through RPC.
@@ -361,7 +361,7 @@ function createPlan(profile, sourceEnv) {
   }
 
   // The demo is the web UI over its in-browser backend: no infrastructure,
-  // no runtime, no Platform server — just Vite in demo mode.
+  // no runtime, no Platform backend — just Vite in demo mode.
   if (profile === "demo") {
     ports.push({ name: "demo web", port: 5_175 });
     readiness.push({ name: "demo web", url: "http://localhost:5175/demo/" });
@@ -572,6 +572,10 @@ async function runDevelopmentAction(options, env) {
     infrastructureTouched = true;
     await runChecked("infra", path.join(infraDir, "reset.sh"), [], env);
     infrastructureTouched = false;
+    // An explicit reset invalidates the saved keys along with their database records.
+    // Only clear them after success; ordinary startup must still require existing keys.
+    rmSync(path.join(repoRoot, ".lightspeed", "cli"), { recursive: true, force: true });
+    console.log("[reset] Cleared saved development credentials. Start ./dev.sh to provision keys, then run lightspeed connect dev to refresh the CLI connection.");
     return;
   }
   const supervisor = readSupervisorState();

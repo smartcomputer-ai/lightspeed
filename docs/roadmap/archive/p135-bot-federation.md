@@ -140,7 +140,7 @@ bot_emit { kind, summary, data?, to?: botName, sessionKey? }
   webhook ingest uses: enabled bot → enabled `bot` trigger → `from` →
   hop bound → sender rate cap → filter → route → coalesce params →
   `whenBusy` → store-then-wake. That pipeline (`admitBotEvent` and
-  the breaker check) moves from `platform/server` routes into the bots
+  the breaker check) moves from `platform/backend` routes into the bots
   package so ingest, poll, self-emit, and addressed emit share one
   function; today the self-emit activity duplicates the insert without it.
 - **Joined.** The tool waits for validation and durable storage only —

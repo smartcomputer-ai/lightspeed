@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
-import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed/platform-shared";
+import { slugify, workspaceCreateSchema, validWorkspaceTransferPath } from "@lightspeed-ai/platform-shared";
 import {
   ChevronRight,
   File,

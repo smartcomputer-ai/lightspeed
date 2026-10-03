@@ -53,14 +53,14 @@ on the reentrant request.
 
 Relevant code:
 
-- `crates/temporal-server/src/gateway/service/mod.rs`:
+- `crates/temporal-runtime/src/gateway/service/mod.rs`:
   `start_run_internal` signals `RequestRun` and waits for
   `wait_for_run_accepted`.
-- `crates/temporal-server/src/gateway/service/workflow.rs`:
+- `crates/temporal-runtime/src/gateway/service/workflow.rs`:
   `wait_for_run_accepted` only returns matching active or completed runs.
 - `platform/configurator-mcp/src/config.ts`: Configurator upstream calls time
   out after 60 seconds by default.
-- `crates/temporal-server/src/gateway/service/mod.rs`: gateway operations time
+- `crates/temporal-runtime/src/gateway/service/mod.rs`: gateway operations time
   out after 90 seconds by default.
 
 The Configurator timeout broke the synchronous wait seen by the provider, but

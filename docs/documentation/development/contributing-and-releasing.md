@@ -19,7 +19,7 @@ edits out of the contribution so a reviewer can follow the behavior and its
 evidence together.
 
 Before implementation, identify the owning layer. The
-[architecture guide](../how-it-works/architecture.md) explains why the engine
+[architecture guide](../how-it-works/architecture.md) explains why the harness
 decides deterministically, adapters perform I/O, clients depend on the public
 API, and compute remains separate from VFS. The short repository rules in
 [`AGENTS.md`](../../../AGENTS.md) preserve those boundaries. A new provider
@@ -165,7 +165,7 @@ The outputs have distinct jobs:
 | Output | Purpose |
 | --- | --- |
 | `dist/bin/` and `dist/archives/` | Four Linux executables and their archives, plus the static demo and docs archives. |
-| `dist/npm/` | The publishable `@lightspeed-ai/agent-client` package. |
+| `dist/npm/` | The publishable `@lightspeed-ai/sdk` package. |
 | `dist/contracts/` | Generated public API contracts. |
 | `dist/configurator-mcp/` and `dist/runtime/` | Staged inputs for component images. |
 | `dist/release-manifest.json` and `dist/envd.json` | Release identity, compatibility and component references, plus daemon discovery metadata. |

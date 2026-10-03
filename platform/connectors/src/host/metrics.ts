@@ -1,4 +1,4 @@
-import type { ChannelInboundDecision } from "@lightspeed-ai/agent-client";
+import type { ChannelInboundDecision } from "@lightspeed-ai/sdk";
 import type { ConnectorHostHealth } from "./health.js";
 import type { AccountHealth } from "./lifecycle.js";
 

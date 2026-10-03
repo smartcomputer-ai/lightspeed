@@ -1,6 +1,6 @@
 import { ApplicationFailure } from "@temporalio/common";
 import { describe, expect, it, vi } from "vitest";
-import type { ChannelDeliveryCommand } from "@lightspeed-ai/agent-client/workflow";
+import type { ChannelDeliveryCommand } from "@lightspeed-ai/sdk/workflow";
 import {
   createTelegramDeliveryActivities,
   type TelegramDeliveryApi,

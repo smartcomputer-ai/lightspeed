@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DeploymentChannelAccountView } from "@lightspeed-ai/agent-client";
+import type { DeploymentChannelAccountView } from "@lightspeed-ai/sdk";
 import { CoreClient } from "../src/core/client.js";
 import type { AccountRunnerLike } from "../src/host/account-runner.js";
 import { ConnectorHost } from "../src/host/host.js";

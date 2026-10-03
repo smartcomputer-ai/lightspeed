@@ -1,10 +1,10 @@
-// Regenerates web/src/lib/profile-config-reference.ts from the engine's
+// Regenerates web/src/lib/profile-config-reference.ts from the harness's
 // canonical API contract schema (SessionConfig subtree). Run after
-// the engine's config schema changes:
+// the harness's config schema changes:
 //
 //   node scripts/generate-config-reference.mjs [path-to-api.schema.json]
 //
-// The schema ships inside @lightspeed-ai/agent-client and is also committed at
+// The schema ships inside @lightspeed-ai/sdk and is also committed at
 // the Rust API ownership boundary.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const candidates = [
-  path.resolve(here, "../../node_modules/@lightspeed-ai/agent-client/schema/api.schema.json"),
+  path.resolve(here, "../../node_modules/@lightspeed-ai/sdk/schema/api.schema.json"),
   path.resolve(here, "../../crates/api/contract/api.schema.json"),
 ];
 const schemaPath = process.argv[2] ?? candidates.find(existsSync);
@@ -146,7 +146,7 @@ const banner = [
   "/// Source: crates/api/contract/api.schema.json (SessionConfig).",
   "/// Regenerate with: node platform/scripts/generate-config-reference.mjs",
   "",
-  "export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit anything to keep engine defaults.",
+  "export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit anything to keep harness defaults.",
   "// Union values are written a | b — pick one.",
 ].join("\n");
 

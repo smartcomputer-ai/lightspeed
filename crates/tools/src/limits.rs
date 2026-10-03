@@ -9,7 +9,7 @@ pub struct ToolLimits {
     /// Deployment-owned ceiling on a requested `run_process` timeout. A caller
     /// may request a lower timeout but can never raise it above this bound;
     /// the hosted runtime derives its process activity deadline from the same
-    /// ceiling (asserted by a temporal-server test).
+    /// ceiling (asserted by a temporal-runtime test).
     pub max_process_timeout_ms: u64,
     /// Deployment-owned bounds on recursive text search. The same
     /// bounds are sent to a native host search and enforced by the generic

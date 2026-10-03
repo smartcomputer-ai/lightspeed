@@ -2,7 +2,7 @@ import { ReadError } from "@/components/read-error";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
-import { slugify } from "@lightspeed/platform-shared";
+import { slugify } from "@lightspeed-ai/platform-shared";
 import { ChevronRight, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
   api,

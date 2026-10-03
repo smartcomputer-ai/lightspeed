@@ -113,7 +113,7 @@ chosen from the effective turn model, including a run model override.
 
 The engine owns the small protocol types, or they live in a dependency-light
 protocol module. The `tools` crate owns the catalog of implementations, schema
-builders, and codecs. `engine` must not depend on `tools`, resolve a built-in
+builders, and codecs. `harness` must not depend on `tools`, resolve a built-in
 schema, or acquire one reducer branch per built-in implementation.
 
 ## Decision 2: Definition Source and Execution Are Separate
@@ -349,7 +349,7 @@ not a promise that stochastic scores will be numerically identical.
 
 ### Slice 2 — Internal registry and definition sources
 
-- Replace final-name keys and routing references in `engine` with internal ids;
+- Replace final-name keys and routing references in `harness` with internal ids;
   adapt tool choice, events, call facts, policy lookup, and workflow definitions.
 - Split built-in registration from rendering in `tools::toolset` and all
   code-owned definition producers. Keep externally authored schema refs.
@@ -398,8 +398,8 @@ not a promise that stochastic scores will be numerically identical.
   preserve existing approval, promise, cancellation, and completion behavior.
 - Transcript replay preserves original exposed names, raw arguments, call ids,
   result pairing, and provider-native blocks after internal identity changes.
-- Generated contracts and consumers are current. Scope Rust checks to `engine`,
-  `tools`, `llm-runtime`, `temporal-workflow`, `temporal-server`, `api`,
+- Generated contracts and consumers are current. Scope Rust checks to `harness`,
+  `tools`, `llm-runtime`, `temporal-workflow`, `temporal-runtime`, `api`,
   `api-projection`, and `eval`, then run the TypeScript checks for changed clients.
 - Once the developer confirms the environment and credentials are safe, run the
   relevant ignored integration suites with their required serialization and a
@@ -427,7 +427,7 @@ not a promise that stochastic scores will be numerically identical.
   workspace, environment, one-shot, explicit canonical, web, and workflow
   configurations. Their regression test renders with an empty blob store.
 - Verification passed: `cargo check --workspace --all-targets`; unit suites for
-  `engine`, `tools`, `llm-runtime`, `temporal-server`, `temporal-workflow`, `api`,
+  `harness`, `tools`, `llm-runtime`, `temporal-runtime`, `temporal-workflow`, `api`,
   `api-projection`, `test-support`, `bots`, and `channels`; and the complete
   provider-request fixture comparison. Coverage includes engine event replay
   from a checkpoint, run model overrides, unknown aliases, collisions,

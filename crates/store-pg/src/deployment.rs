@@ -5,6 +5,7 @@
 //! of universes, so no per-universe store applies. Stats are cheap aggregates
 //! computed at read time, approximate under concurrent writes by design.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -90,7 +91,7 @@ pub async fn read_universe_stats(
     universe_id: Uuid,
 ) -> Result<Option<UniverseStats>, PgStoreError> {
     let query = format!("{UNIVERSE_STATS_SELECT} WHERE u.universe_id = $1");
-    let row = sqlx::query(&query)
+    let row = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(universe_id)
         .fetch_optional(pool)
         .await?;
@@ -99,7 +100,9 @@ pub async fn read_universe_stats(
 
 pub async fn list_universe_stats(pool: &PgPool) -> Result<Vec<UniverseStats>, PgStoreError> {
     let query = format!("{UNIVERSE_STATS_SELECT} ORDER BY u.created_at_ms, u.universe_id");
-    let rows = sqlx::query(&query).fetch_all(pool).await?;
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+        .fetch_all(pool)
+        .await?;
     rows.iter().map(universe_stats_from_row).collect()
 }
 

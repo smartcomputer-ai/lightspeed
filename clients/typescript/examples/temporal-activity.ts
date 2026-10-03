@@ -1,5 +1,5 @@
 import { Context } from "@temporalio/activity";
-import { LightspeedClient, type EventCursor } from "@lightspeed-ai/agent-client";
+import { LightspeedClient, type EventCursor } from "@lightspeed-ai/sdk";
 
 export interface RunLightspeedStepInput {
   endpoint: string;

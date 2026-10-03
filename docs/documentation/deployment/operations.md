@@ -60,7 +60,7 @@ docker logs --tail 100 lightspeed-platform
 The runtime supports `compact`, `pretty`, and `json` through
 `LIGHTSPEED_LOG_FORMAT`. JSON is useful when collecting logs from several
 roles. `RUST_LOG` controls detail; for a focused investigation, a filter such
-as `warn,temporal_server=debug,temporal_workflow=info` adds runtime detail.
+as `warn,temporal_runtime=debug,temporal_workflow=info` adds runtime detail.
 Restart the affected process to apply an environment-file change.
 
 Session logs can include `universe_id`, `session_id`, `workflow_id`,
@@ -100,7 +100,7 @@ Prometheus endpoint; use their logs and the infrastructure's own monitoring.
 payloads as unreferenced CAS blobs and logs their references at debug level.
 Credentials are redacted, but requests include the conversation context.
 Include `llm_runtime=debug` in `RUST_LOG` to see the dump references; for example,
-`warn,temporal_server=debug,temporal_workflow=info,llm_runtime=debug`. Enable
+`warn,temporal_runtime=debug,temporal_workflow=info,llm_runtime=debug`. Enable
 this for a focused investigation, restrict access to the collected material,
 and disable it afterward. These dumps are subject to blob collection; they
 are not a permanent audit archive.
@@ -127,11 +127,8 @@ agree on stores, secrets, namespace, task queues, and environment routing.
 Every process without `environment-gateway` needs its internal URL and token.
 [Configuration](configuration.md) describes that shared setup.
 
-Workers can also separate workflow and activity polling with
-`LIGHTSPEED_WORKER_TASK_TYPES=workflows` or `activities`, or the matching
-`--task-types` argument. Local activities stay with workflow execution. Keep
-both required types of pollers available on each subsystem's queue; a workflow
-poller alone cannot execute remote activities.
+Each worker role runs its workflows and activities together. Add replicas of
+the role that needs more capacity; each replica polls that role's task queue.
 
 Use pending tasks, activity duration/failures, provider limits, and storage
 load to decide which capacity is missing. Adding session workers does not
@@ -183,7 +180,7 @@ docker run --rm --network lightspeed --env-file runtime.env \
 
 This continues the self-hosting recipe: run it from the deployment directory
 with `LIGHTSPEED_RELEASE_ID` set to the deployed image's revision-specific tag.
-The standalone binary equivalent is `lightspeed-server cas-sweep --dry-run`.
+The standalone binary equivalent is `lightspeed-runtime cas-sweep --dry-run`.
 
 The report includes `rows_scanned`, `candidates`, `rows_deleted`, `bytes_freed`,
 `objects_deleted`, and errors/conflicts. A pass is bounded, so its candidate

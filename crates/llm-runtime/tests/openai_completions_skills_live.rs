@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tools::skills::SkillId;
 
-use engine::{
+use harness::{
     ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource, ContextMessageRole,
     ContextSnapshot, LlmGenerationRequest, LlmRequest, ModelSelection, ProviderApiKind, RunId,
     SessionId, TurnId,
@@ -21,7 +21,7 @@ use support::{
     retrying_openai_completions_client,
 };
 
-fn entry(id: u64, kind: ContextEntryKind, content_ref: engine::BlobRef) -> ContextEntry {
+fn entry(id: u64, kind: ContextEntryKind, content_ref: harness::BlobRef) -> ContextEntry {
     ContextEntry {
         entry_id: ContextEntryId::new(id),
         key: None,
@@ -29,7 +29,7 @@ fn entry(id: u64, kind: ContextEntryKind, content_ref: engine::BlobRef) -> Conte
         source: ContextEntrySource::Runtime {
             label: "live-skill".to_owned(),
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,

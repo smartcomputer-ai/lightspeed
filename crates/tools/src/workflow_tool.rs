@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use engine::{
+use harness::{
     BlobRef, PromiseId, PromiseIdAllocator, REPLY_COMPLETION_KEY, RunId, SessionId, ToolBatchId,
     ToolInvocationRequest, ToolKind, TurnId, WorkflowToolBinding, WorkflowToolCompletion,
     WorkflowToolCompletionKeySource, WorkflowToolDefinition, WorkflowToolInvocation,
@@ -23,7 +23,7 @@ pub async fn validate_workflow_tool_definition_documents(
 ) -> ToolResult<()> {
     if let ToolKind::Builtin(spec) = &definition.tool.kind {
         let target =
-            crate::runtime::ToolTarget::api_kind(engine::ProviderApiKind::OpenAiCompletions);
+            crate::runtime::ToolTarget::api_kind(harness::ProviderApiKind::OpenAiCompletions);
         let resolved = crate::definitions::resolve(&definition.tool.name, spec, &target)?;
         if resolved.is_empty()
             || resolved
@@ -192,7 +192,7 @@ pub async fn invoke_workflow_tool(
             deadline_after_ms, ..
         } => {
             let promises = BTreeMap::from([(
-                engine::REPLY_COMPLETION_KEY.to_owned(),
+                harness::REPLY_COMPLETION_KEY.to_owned(),
                 promise_ids.allocate(),
             )]);
             (
@@ -291,7 +291,7 @@ fn derive_completion_keys(
             ..
         } => (*max_promises, key_source),
         WorkflowToolCompletion::Joined { .. } => {
-            return Ok(vec![engine::REPLY_COMPLETION_KEY.to_owned()]);
+            return Ok(vec![harness::REPLY_COMPLETION_KEY.to_owned()]);
         }
         WorkflowToolCompletion::Accepted => return Ok(Vec::new()),
     };
@@ -304,14 +304,16 @@ fn derive_completion_keys(
 }
 
 fn derive_completion_keys_from_source(
-    tool_id: &engine::WorkflowToolId,
+    tool_id: &harness::WorkflowToolId,
     max_promises: u32,
-    source: &engine::WorkflowToolCompletionKeySource,
+    source: &harness::WorkflowToolCompletionKeySource,
     arguments: &Value,
 ) -> ToolResult<Vec<String>> {
     match source {
-        engine::WorkflowToolCompletionKeySource::Reply => Ok(vec![REPLY_COMPLETION_KEY.to_owned()]),
-        engine::WorkflowToolCompletionKeySource::StringArray { pointer } => {
+        harness::WorkflowToolCompletionKeySource::Reply => {
+            Ok(vec![REPLY_COMPLETION_KEY.to_owned()])
+        }
+        harness::WorkflowToolCompletionKeySource::StringArray { pointer } => {
             let Some(Value::Array(entries)) = arguments.pointer(pointer) else {
                 return Err(ToolError::InvalidRequest {
                     message: format!(
@@ -350,7 +352,7 @@ fn derive_completion_keys_from_source(
             }
             Ok(keys)
         }
-        engine::WorkflowToolCompletionKeySource::ArrayItemField { pointer, field } => {
+        harness::WorkflowToolCompletionKeySource::ArrayItemField { pointer, field } => {
             let Some(Value::Array(entries)) = arguments.pointer(pointer) else {
                 return Err(ToolError::InvalidRequest {
                     message: format!(
@@ -391,7 +393,7 @@ fn derive_completion_keys_from_source(
             }
             Ok(keys)
         }
-        engine::WorkflowToolCompletionKeySource::ArrayIndices { pointer, prefix } => {
+        harness::WorkflowToolCompletionKeySource::ArrayIndices { pointer, prefix } => {
             let Some(Value::Array(entries)) = arguments.pointer(pointer) else {
                 return Err(ToolError::InvalidRequest {
                     message: format!(
@@ -433,7 +435,7 @@ async fn read_json(blobs: &dyn BlobStore, blob_ref: &BlobRef, kind: &str) -> Too
 mod tests {
     use std::sync::Arc;
 
-    use engine::{
+    use harness::{
         FunctionToolSpec, ToolCallId, ToolKind, ToolName, ToolParallelism, ToolSpec,
         WorkflowEndpointRef, WorkflowToolId,
         storage::{BlobStore, InMemoryBlobStore},
@@ -535,14 +537,14 @@ mod tests {
         assert_eq!(first.effects.len(), 1);
         assert_eq!(
             first.effects[0].kind,
-            engine::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+            harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
         );
     }
 
     async fn promise_bearing_binding(
         blobs: &dyn BlobStore,
         max_promises: u32,
-        key_source: engine::WorkflowToolCompletionKeySource,
+        key_source: harness::WorkflowToolCompletionKeySource,
     ) -> WorkflowToolBinding {
         let schema_ref = blobs
             .put_bytes(serde_json::to_vec(&json!({ "type": "object" })).expect("schema"))
@@ -572,7 +574,7 @@ mod tests {
                     workflow_id: "approval plugin id".to_owned(),
                     workflow_kind: "approvals".to_owned(),
                 },
-                dispatch: engine::BoundWorkflowToolDispatch::Push,
+                dispatch: harness::BoundWorkflowToolDispatch::Push,
             },
             WorkflowToolCompletion::Promises {
                 reply_schema_ref: None,
@@ -590,7 +592,7 @@ mod tests {
         let binding = promise_bearing_binding(
             blobs.as_ref(),
             1,
-            engine::WorkflowToolCompletionKeySource::Reply,
+            harness::WorkflowToolCompletionKeySource::Reply,
         )
         .await;
         let arguments_ref = blobs
@@ -641,7 +643,7 @@ mod tests {
         let explicit = promise_bearing_binding(
             blobs.as_ref(),
             1,
-            engine::WorkflowToolCompletionKeySource::Reply,
+            harness::WorkflowToolCompletionKeySource::Reply,
         )
         .await;
         let binding = WorkflowToolBinding::admit(
@@ -697,7 +699,7 @@ mod tests {
             .data
             .get("completion_promises")
             .expect("internal reply map");
-        assert!(encoded_promises.contains(engine::REPLY_COMPLETION_KEY));
+        assert!(encoded_promises.contains(harness::REPLY_COMPLETION_KEY));
         assert!(encoded_promises.contains("promise_1"));
     }
 
@@ -707,7 +709,7 @@ mod tests {
         let binding = promise_bearing_binding(
             blobs.as_ref(),
             4,
-            engine::WorkflowToolCompletionKeySource::StringArray {
+            harness::WorkflowToolCompletionKeySource::StringArray {
                 pointer: "/jobs".to_owned(),
             },
         )
@@ -796,7 +798,7 @@ mod tests {
         let binding = promise_bearing_binding(
             blobs.as_ref(),
             4,
-            engine::WorkflowToolCompletionKeySource::ArrayIndices {
+            harness::WorkflowToolCompletionKeySource::ArrayIndices {
                 pointer: "/jobs".to_owned(),
                 prefix: "job-".to_owned(),
             },
@@ -846,7 +848,7 @@ mod tests {
         let binding = promise_bearing_binding(
             blobs.as_ref(),
             4,
-            engine::WorkflowToolCompletionKeySource::ArrayItemField {
+            harness::WorkflowToolCompletionKeySource::ArrayItemField {
                 pointer: "/jobs".to_owned(),
                 field: "job_id".to_owned(),
             },
@@ -937,7 +939,7 @@ mod tests {
                 },
             },
             WorkflowToolTarget::Start {
-                start: engine::WorkflowStartRef {
+                start: harness::WorkflowStartRef {
                     recipe_format: 1,
                     revision: 1,
                     recipe_ref: BlobRef::from_bytes(b"recipe"),
@@ -948,7 +950,7 @@ mod tests {
                 reply_schema_ref: None,
                 deadline_after_ms: None,
                 max_promises: 1,
-                key_source: engine::WorkflowToolCompletionKeySource::Reply,
+                key_source: harness::WorkflowToolCompletionKeySource::Reply,
             },
         )
         .expect("start binding");

@@ -1,4 +1,4 @@
-import { reasoningEffortTiers, type MessageRunOptions } from "@lightspeed/platform-shared";
+import { reasoningEffortTiers, type MessageRunOptions } from "@lightspeed-ai/platform-shared";
 import type { ModelConfig, ModelOption } from "@/api";
 import { modelFromConfig } from "@/lib/model-defaults";
 

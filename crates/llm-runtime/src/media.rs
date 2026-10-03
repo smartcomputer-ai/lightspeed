@@ -22,7 +22,7 @@ use std::io::Cursor;
 use std::sync::{Mutex, OnceLock};
 
 use base64::Engine as _;
-use engine::{BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, storage::BlobStore};
+use harness::{BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, storage::BlobStore};
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
 use image::imageops::FilterType;
@@ -214,7 +214,7 @@ impl ModelImage {
     /// The media announcement written before the image block, extended with
     /// the dimensions the model sees when the image was downscaled, so
     /// coordinate-based work can scale back to the source.
-    pub fn announcement(&self, entry: &engine::ContextEntry) -> String {
+    pub fn announcement(&self, entry: &harness::ContextEntry) -> String {
         let announcement = crate::blob_io::media_announcement(entry);
         match (&self.resize, announcement.strip_suffix(']')) {
             (Some(resize), Some(head)) => format!(
@@ -476,18 +476,18 @@ mod tests {
         bytes
     }
 
-    fn image_entry(content_ref: BlobRef) -> engine::ContextEntry {
-        engine::ContextEntry {
-            entry_id: engine::ContextEntryId::new(1),
+    fn image_entry(content_ref: BlobRef) -> harness::ContextEntry {
+        harness::ContextEntry {
+            entry_id: harness::ContextEntryId::new(1),
             key: None,
-            kind: engine::ContextEntryKind::Message {
-                role: engine::ContextMessageRole::User,
+            kind: harness::ContextEntryKind::Message {
+                role: harness::ContextMessageRole::User,
             },
-            source: engine::ContextEntrySource::RunInput {
-                run_id: engine::RunId::new(1),
+            source: harness::ContextEntrySource::RunInput {
+                run_id: harness::RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: Some("image/png".to_owned()),
                 provider_kind: None,
@@ -616,7 +616,7 @@ mod tests {
             image.announcement(&entry),
             format!(
                 "[image · {} · image/png · shown at 2000×1400 of 4000×2800]",
-                engine::media::media_handle(&blob_ref)
+                harness::media::media_handle(&blob_ref)
             )
         );
     }
@@ -648,7 +648,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn request_media_omits_the_oldest_and_keeps_the_rest_prepared() {
-        let blobs = engine::storage::InMemoryBlobStore::new();
+        let blobs = harness::storage::InMemoryBlobStore::new();
         let png = {
             let mut bytes = Vec::new();
             PngEncoder::new(&mut bytes)

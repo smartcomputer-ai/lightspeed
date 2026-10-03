@@ -515,7 +515,7 @@ pub enum TokenEstimateQualityView {
     Estimated,
 }
 
-/// A session context entry, faithful to the stored engine entry: keyed,
+/// A session context entry, faithful to the stored harness entry: keyed,
 /// kind-tagged, ref-backed. Keys are a stable extension point — clients
 /// reconstruct derived surfaces (e.g. the prompted instruction set via the
 /// `prompt_instructions/` key prefix) by filtering on `key` and fetching

@@ -446,10 +446,12 @@ pub fn pkce_challenge_s256(verifier: &SecretValue) -> String {
 }
 
 fn random_url_safe(len: usize) -> String {
-    use rand::RngCore;
+    use rand::TryRng;
 
     let mut bytes = vec![0u8; len];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS random source unavailable");
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

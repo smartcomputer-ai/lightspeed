@@ -505,7 +505,7 @@ serialized hosted standalone-compaction and continuation tests.
 
 Completed checks on 2026-10-01:
 
-- Cross-crate engine, runtime, provider client, API projection, workflow, and
+- Cross-crate harness, runtime, provider client, API projection, workflow, and
   in-process runner tests, including replay, protected tool exchanges, unknown
   capacity recovery, partial-output discard, cancellation, manual queueing,
   exact full native windows, same-route fallback, and capability selection.

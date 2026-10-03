@@ -123,7 +123,7 @@ const manifest = {
     platformWorkers: process.env.LIGHTSPEED_PLATFORM_WORKERS_IMAGE ?? null,
   },
   binaries: {
-    server: archive("SERVER", "-server-"),
+    runtime: archive("RUNTIME", "-runtime-"),
     providerIncus: archive("PROVIDER_INCUS", "-provider-incus-"),
     envd: archive("ENVD", "-envd-"),
     cli: archive("CLI", "-cli-"),
@@ -139,7 +139,7 @@ const manifest = {
     },
   },
   typescriptClient: {
-    name: "@lightspeed-ai/agent-client",
+    name: "@lightspeed-ai/sdk",
     version,
     sha256: sha256(path.join("dist/npm", clientFile)),
   },

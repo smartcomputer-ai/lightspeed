@@ -1,10 +1,10 @@
 //! Environment discovery consumes generic endpoint observations independently of VFS.
 use super::{SkillId, parse_skill_frontmatter};
-use engine::{
+use environment_protocol::data::inventory::{ScanParams, ScanResponse};
+use harness::{
     BlobRef, ContextEntryInput, CoreAgentCommand, EnvironmentSkillsConfig,
     storage::{BlobStore, BlobStoreError},
 };
-use environment_protocol::data::inventory::{ScanParams, ScanResponse};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::Path};
 
@@ -164,11 +164,11 @@ mod tests {
         fs::{CreateDirectoryOptions, FileSystem, FsPath, InMemoryFileSystem},
         skills::*,
     };
-    use engine::storage::InMemoryBlobStore;
     use environment_protocol::{
         data::inventory::{ScanContent, ScanEntry},
         shared::EnvironmentPath,
     };
+    use harness::storage::InMemoryBlobStore;
 
     #[test]
     fn scope_defaults_and_overrides_are_independent_of_home() {

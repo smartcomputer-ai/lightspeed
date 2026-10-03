@@ -126,7 +126,7 @@
 - Slice 2 implemented 2026-08-20, end to end:
   - Triggers reshaped to per-kind `spec` jsonb + `filter` (CEL) + `route`
     columns (backfilling migration). Boot-time schedule reconcile in the
-    platform server converges Temporal Schedules to the rows.
+    platform backend converges Temporal Schedules to the rows.
   - **Webhook ingress**: `POST /api/v1/hooks/bots/:triggerId/:token` outside
     session auth; URL-token + optional generic HMAC-SHA256 verification;
     1 MiB cap; credential headers redacted; raw payload preserved in the
@@ -221,10 +221,10 @@
     declaration-mismatch failure from `session/managed/start`, rotates the
     main session to `<id>-g2`, `-g3`, … (`session_rotated` activity) —
     the planned workaround made real.
-  - **Shared config module** (`@lightspeed/bots/config`): trigger
+  - **Shared config module** (`@lightspeed-ai/bots/config`): trigger
     validation + create/update/delete + schedule reconcile, used by both the
     API routes and the bot's tools — one code path. Webhook helpers moved
-    to `@lightspeed/bots/webhooks`.
+    to `@lightspeed-ai/bots/webhooks`.
   - **One-shot schedules**: `spec.at` (ISO instant) as an alternative to
     cron, realized as a Temporal calendar spec with explicit year; the
     trigger disables itself and drops its schedule after firing. UI offers
@@ -247,7 +247,7 @@
   durable** — `admitBotEvent` inserted the row and then signalled the
   controller; if the signal failed, the sender's retry hit the duplicate
   path and returned without signalling, stranding the event. FIXED
-  2026-08-25 with one shared `wakeBotController` (`@lightspeed/bots/events`)
+  2026-08-25 with one shared `wakeBotController` (`@lightspeed-ai/bots/events`)
   used by the server route, schedule fires, polls, and `bot_emit`: a
   duplicate admission wakes the controller again (it dedupes by event id),
   and a wake that fails right after this call stored the row deletes the
@@ -615,8 +615,8 @@ state-query template, generalized.
 
 **Where it lives:** `platform/bots/` — a TypeScript Temporal application
 exactly like Channels: bot records in Platform Postgres (the `foundryPacks`
-shape), ingest routes in `platform/server`, one controller workflow type,
-activities over `@lightspeed-ai/agent-client`. Alternatives considered and set
+shape), ingest routes in `platform/backend`, one controller workflow type,
+activities over `@lightspeed-ai/sdk`. Alternatives considered and set
 aside: a core Rust crate (wrong tier — this is product logic that will
 iterate weekly, and the core's job is to stay still) and new core API methods
 for bot CRUD (unnecessary — Channels and Foundry both live entirely on the

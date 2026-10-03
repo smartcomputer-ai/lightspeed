@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use engine::{ToolEffect, ToolName};
+use harness::{ToolEffect, ToolName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -49,12 +49,12 @@ pub struct ToolCatalog {
 
 impl ToolCatalog {
     pub fn from_registrations(
-        tools: &BTreeMap<ToolName, engine::ToolSpec>,
+        tools: &BTreeMap<ToolName, harness::ToolSpec>,
         target: &ToolTarget,
     ) -> ToolResult<Self> {
         let mut catalog = Self::new();
         for tool in tools.values() {
-            if let engine::ToolKind::Builtin(spec) = &tool.kind {
+            if let harness::ToolKind::Builtin(spec) = &tool.kind {
                 for resolved in crate::definitions::resolve(&tool.name, spec, target)? {
                     if let Some(binding) = resolved.binding {
                         if catalog.get(&binding.tool_name).is_some() {
@@ -131,7 +131,7 @@ pub struct ToolInvocationOutput {
 }
 
 impl ToolInvocationOutput {
-    pub fn with_media(mut self, media: Vec<engine::media::MediaDescriptor>) -> Self {
+    pub fn with_media(mut self, media: Vec<harness::media::MediaDescriptor>) -> Self {
         self.attachments
             .extend(media.into_iter().map(crate::attachments::Attachment::Media));
         self

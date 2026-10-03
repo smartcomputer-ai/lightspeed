@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use api::{WebhookPreset, WebhookVerification};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Map, Value};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;

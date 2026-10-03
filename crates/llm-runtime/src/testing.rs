@@ -1,4 +1,4 @@
-use engine::{ContextEntry, ContextSnapshot, ProviderApiKind, TokenEstimate};
+use harness::{ContextEntry, ContextSnapshot, ProviderApiKind, TokenEstimate};
 
 pub fn context_snapshot(
     api_kind: ProviderApiKind,

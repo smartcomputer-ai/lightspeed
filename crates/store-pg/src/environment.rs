@@ -1,3 +1,4 @@
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId};
 use environment_protocol::shared::ProviderTargetId;
@@ -88,7 +89,7 @@ impl EnvironmentProviderStore for PgStore {
             RETURNING {PROVIDER_COLUMNS}
         "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(record.provider_id.as_str())
             .bind(record.display_name.as_deref())
             .bind(json_value(
@@ -110,7 +111,7 @@ impl EnvironmentProviderStore for PgStore {
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
         let query =
             format!("SELECT {PROVIDER_COLUMNS} FROM environment_providers WHERE provider_id = $1");
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(provider_id.as_str())
             .fetch_optional(&self.pool)
             .await
@@ -125,7 +126,7 @@ impl EnvironmentProviderStore for PgStore {
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError> {
         let query =
             format!("SELECT {PROVIDER_COLUMNS} FROM environment_providers ORDER BY provider_id");
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environment providers", error))?;
@@ -149,7 +150,7 @@ impl EnvironmentProviderStore for PgStore {
         let query = format!(
             "DELETE FROM environment_providers WHERE provider_id = $1 RETURNING {PROVIDER_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(provider_id.as_str())
             .fetch_optional(&self.pool)
             .await
@@ -213,7 +214,7 @@ impl EnvironmentProviderBindingStore for PgStore {
             RETURNING {BINDING_COLUMNS}
         "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(request.universe_id)
             .bind(request.binding_id.as_str())
             .bind(request.provider_id.as_str())
@@ -241,7 +242,7 @@ impl EnvironmentProviderBindingStore for PgStore {
         let query = format!(
             "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(universe_id)
             .bind(binding_id.as_str())
             .fetch_optional(&self.pool)
@@ -258,7 +259,7 @@ impl EnvironmentProviderBindingStore for PgStore {
         let query = format!(
             "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 ORDER BY binding_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(universe_id)
             .fetch_all(&self.pool)
             .await
@@ -281,7 +282,7 @@ impl EnvironmentProviderBindingStore for PgStore {
         let query = format!(
             "DELETE FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 RETURNING {BINDING_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(universe_id)
             .bind(binding_id.as_str())
             .fetch_optional(&self.pool)
@@ -328,7 +329,7 @@ impl EnvironmentStore for PgStore {
         let query = format!(
             "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 FOR UPDATE"
         );
-        let binding_row = sqlx::query(&query)
+        let binding_row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.binding_id.as_str())
             .fetch_optional(&mut *tx)
@@ -435,7 +436,7 @@ impl EnvironmentStore for PgStore {
         let query = format!(
             "SELECT {BINDING_COLUMNS} FROM environment_provider_bindings WHERE universe_id = $1 AND binding_id = $2 FOR UPDATE"
         );
-        let binding_row = sqlx::query(&query)
+        let binding_row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.binding_id.as_str())
             .fetch_optional(&mut *tx)
@@ -707,7 +708,7 @@ impl EnvironmentStore for PgStore {
         let query = format!(
             "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND e.daemon_public_key = $2"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(daemon_public_key)
             .fetch_optional(&self.pool)
@@ -776,7 +777,7 @@ impl EnvironmentStore for PgStore {
         let query = format!(
             "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND e.source_kind = 'registered' AND e.status NOT IN ('closing','closed') ORDER BY e.environment_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -840,7 +841,7 @@ impl EnvironmentStore for PgStore {
             query.push_str(&format!(" AND e.metadata_json @> ${next}"));
         }
         query.push_str(" ORDER BY e.environment_id");
-        let mut sql = sqlx::query(&query).bind(self.config.universe_id);
+        let mut sql = sqlx::query(sqlx::AssertSqlSafe(query)).bind(self.config.universe_id);
         if let Some(id) = request.provider_id {
             sql = sql.bind(id.to_string());
         }
@@ -869,7 +870,7 @@ impl EnvironmentStore for PgStore {
         let query = format!(
             "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND (e.status IN ('provisioning','booting','closing','unknown') OR {POWER_DIVERGES_SQL}) ORDER BY e.updated_at_ms, e.environment_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -883,7 +884,7 @@ impl EnvironmentStore for PgStore {
         let query = format!(
             "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND e.status = 'ready' AND e.idle_policy_json IS NOT NULL ORDER BY e.updated_at_ms, e.environment_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -1072,7 +1073,7 @@ impl EnvironmentCredentialStore for PgStore {
                 updated_at_ms=EXCLUDED.updated_at_ms RETURNING {CREDENTIAL_COLUMNS}
         "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.environment_id.as_str())
             .bind(&record.env_name)
@@ -1094,7 +1095,7 @@ impl EnvironmentCredentialStore for PgStore {
         let query = format!(
             "SELECT {CREDENTIAL_COLUMNS} FROM environment_credentials WHERE universe_id=$1 AND environment_id=$2 ORDER BY env_name"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(request.environment_id.as_str())
             .fetch_all(&self.pool)
@@ -1111,7 +1112,7 @@ impl EnvironmentCredentialStore for PgStore {
         let query = format!(
             "DELETE FROM environment_credentials WHERE universe_id=$1 AND environment_id=$2 AND env_name=$3 RETURNING {CREDENTIAL_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(environment_id.as_str())
             .bind(env_name)
@@ -1131,14 +1132,14 @@ impl EnvironmentCredentialStore for PgStore {
 async fn read_environment_on(
     pool: &sqlx::PgPool,
     universe_id: Uuid,
-    predicate: &str,
+    predicate: &'static str,
     value: &str,
     action: &str,
 ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
     let query = format!(
         "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND {predicate}"
     );
-    let row = sqlx::query(&query)
+    let row = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(universe_id)
         .bind(value)
         .fetch_optional(pool)

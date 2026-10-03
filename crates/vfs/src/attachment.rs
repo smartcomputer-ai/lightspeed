@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine::{
+use harness::{
     BlobRef, WorkspaceAccess, WorkspaceAttachment, WorkspaceAttachmentTarget, storage::BlobStore,
 };
 
@@ -126,7 +126,7 @@ mod tests {
     use std::sync::Mutex;
 
     use async_trait::async_trait;
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::{

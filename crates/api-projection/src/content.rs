@@ -1,15 +1,15 @@
 //! Read-only views of durable content. Provider payloads remain authoritative.
 
 use api::{AgentApiError, ContentRefView};
-use engine::{ContentRef, storage::BlobStore};
+use harness::{ContentRef, storage::BlobStore};
 
 pub fn content_ref_to_api(content: &ContentRef) -> ContentRefView {
     ContentRefView {
         content_ref: content.content_ref.as_str().to_owned(),
         media_type: content.media_type.clone(),
         provider_kind: content.provider_kind.clone(),
-        media_handle: engine::media::is_media_content(content)
-            .then(|| engine::media::media_handle(&content.content_ref)),
+        media_handle: harness::media::is_media_content(content)
+            .then(|| harness::media::media_handle(&content.content_ref)),
     }
 }
 
@@ -30,10 +30,10 @@ pub async fn project_content_text(
         return Ok(Some(text));
     }
     let project = match content.provider_kind.as_deref() {
-        Some(engine::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
+        Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
             llm_clients::content::anthropic_text_blocks
         }
-        Some(engine::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
+        Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
             llm_clients::content::openai_response_message
         }
         Some(llm_clients::content::OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND) => {
@@ -66,14 +66,14 @@ pub async fn project_content_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{
+    use harness::{
         ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
         storage::InMemoryBlobStore,
     };
     use llm_clients::content::*;
     use serde_json::json;
 
-    fn context_entry(input: engine::ContextEntryInput) -> ContextEntry {
+    fn context_entry(input: harness::ContextEntryInput) -> ContextEntry {
         ContextEntry {
             entry_id: ContextEntryId::new(1),
             key: None,
@@ -107,10 +107,10 @@ mod tests {
         ] {
             let bytes = text.into_bytes();
             let reference = blobs.put_bytes(bytes.clone()).await.unwrap();
-            let source = engine::RunSource::Input {
-                input: vec![engine::ContextEntryInput {
+            let source = harness::RunSource::Input {
+                input: vec![harness::ContextEntryInput {
                     kind: ContextEntryKind::Message {
-                        role: engine::ContextMessageRole::User,
+                        role: harness::ContextMessageRole::User,
                     },
                     content: ContentRef {
                         content_ref: reference.clone(),
@@ -145,9 +145,9 @@ mod tests {
         let full = "héllo 🦀\n".repeat(2000);
         for (kind, bytes) in [
             (None, full.as_bytes().to_vec()),
-            (Some(engine::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND),
+            (Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND),
                 serde_json::to_vec(&json!([{"type":"text","text":full,"citations":[]}])).unwrap()),
-            (Some(engine::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
+            (Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":full,"annotations":[]}]})).unwrap()),
             (Some(OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"role":"assistant","content":full,"annotations":[]})).unwrap()),
@@ -157,8 +157,8 @@ mod tests {
                 media_type: Some(if kind.is_some() { "application/json" } else { "text/plain" }.into()),
                 provider_kind: kind.map(str::to_owned),
             };
-            let input = engine::ContextEntryInput {
-                kind: ContextEntryKind::Message { role: engine::ContextMessageRole::User },
+            let input = harness::ContextEntryInput {
+                kind: ContextEntryKind::Message { role: harness::ContextMessageRole::User },
                 content: content.clone(),
                 preview: Some("short preview".into()),
                 origin: None,
@@ -174,9 +174,9 @@ mod tests {
                 vec![api::InputItem::Text { provenance_ref: None, origin: None,  text: full.clone() }]);
 
             // The retained terminal output still resolves after its context is gone.
-            let source = engine::RunSource::Input { input: Vec::new() };
+            let source = harness::RunSource::Input { input: Vec::new() };
             let run = projector.project_run_with_metadata(crate::ProjectRun {
-                entries: &[], run_id: engine::RunId::new(1), status: api::RunStatus::Completed,
+                entries: &[], run_id: harness::RunId::new(1), status: api::RunStatus::Completed,
                 output: Some(&content), source: &source, started_at_ms: None,
                 completed_at_ms: Some(1), usage: None,
             }).await.unwrap();
@@ -195,13 +195,13 @@ mod tests {
             media_type: Some("image/png".into()),
             provider_kind: None,
         };
-        let source = engine::RunSource::Input { input: Vec::new() };
+        let source = harness::RunSource::Input { input: Vec::new() };
         let projector = crate::CoreAgentProjector::new(&blobs);
         for output in [None, Some(&content)] {
             let run = projector
                 .project_run_with_metadata(crate::ProjectRun {
                     entries: &[],
-                    run_id: engine::RunId::new(1),
+                    run_id: harness::RunId::new(1),
                     status: api::RunStatus::Completed,
                     output,
                     source: &source,
@@ -220,9 +220,9 @@ mod tests {
     async fn tool_payloads_keep_bounded_previews_and_readable_original_blobs() {
         let blobs = InMemoryBlobStore::new();
         let full = "tool output 🦀\n".repeat(2000);
-        let input = engine::ContextEntryInput {
+        let input = harness::ContextEntryInput {
             kind: ContextEntryKind::ToolResult {
-                call_id: engine::ToolCallId::new("call"),
+                call_id: harness::ToolCallId::new("call"),
                 is_error: false,
             },
             content: ContentRef::text(blobs.insert_text(&full).await),

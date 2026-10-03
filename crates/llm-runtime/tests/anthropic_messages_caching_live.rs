@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextEntrySource, ContextMessageRole, ContextSnapshot, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, LlmUsage, ModelSelection, ProviderApiKind, RunId, SessionId,
@@ -44,7 +44,7 @@ fn entry(
         entry_id: ContextEntryId::new(id),
         kind,
         source,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -183,7 +183,7 @@ async fn generate(
     (usage, execution.result.context_entries)
 }
 
-async fn assert_succeeded(blobs: &InMemoryBlobStore, result: &engine::LlmGenerationResult) {
+async fn assert_succeeded(blobs: &InMemoryBlobStore, result: &harness::LlmGenerationResult) {
     let failure = match result.failure_ref.as_ref() {
         Some(reference) => blobs.read_text(reference).await.expect("failure details"),
         None => format!("finish={:?}", result.facts.finish),
@@ -282,17 +282,17 @@ async fn anthropic_caching_live_tool_round_trip_keeps_the_prefix_warm() {
         .await
         .expect("schema blob");
     let description_ref = text_blob(&blobs, "Get current weather for a city").await;
-    let tool = engine::ToolSpec {
+    let tool = harness::ToolSpec {
         name: ToolName::new("get_weather"),
         execution: Default::default(),
-        kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+        kind: harness::ToolKind::Function(harness::FunctionToolSpec {
             description_ref: Some(description_ref),
             input_schema_ref: schema_ref,
             output_schema_ref: None,
             strict: None,
             provider_options_ref: None,
         }),
-        parallelism: engine::ToolParallelism::ParallelSafe,
+        parallelism: harness::ToolParallelism::ParallelSafe,
     };
 
     let mut request = intent_request(

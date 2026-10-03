@@ -13,7 +13,7 @@ find the code that owns a behavior, and keep local state useful while developing
 ## Prepare the checkout
 
 Run the commands below from the repository root. The complete local product
-needs Rust and Cargo through rustup, Node.js 24 or newer with npm, and a running
+needs Rust and Cargo through rustup, Node.js 24.21.0 or newer with npm, and a running
 Docker daemon with Docker Compose v2. The checked-in
 [Rust toolchain](../../../rust-toolchain.toml) selects the compiler. Rust
 dependencies also need a native build toolchain and `protoc`, including its
@@ -113,7 +113,7 @@ Run the explicit live authentication check once Keycloak has started:
 
 ```bash
 LIGHTSPEED_PLATFORM_OIDC_TEST_ISSUER=http://localhost:18090/realms/lightspeed \
-  npm run test:sso --workspace @lightspeed/platform-server
+  npm run test:sso --workspace @lightspeed-ai/platform-backend
 ```
 
 This uses a disposable in-process PostgreSQL database and the real provider's
@@ -186,11 +186,11 @@ those pieces have different responsibilities.
 
 | If you are changing… | Start here |
 | --- | --- |
-| Agent decisions, scheduling, or replayed session state | `crates/engine`; keep decisions deterministic and represent effects as intents. |
+| Agent decisions, scheduling, or replayed session state | `crates/harness`; keep decisions deterministic and represent effects as intents. |
 | Public operation names, request fields, or response shapes | `crates/api`; follow [Changing contracts](changing-contracts.md) through generated consumers. |
-| Durable execution, activities, or gateway behavior | `crates/temporal-workflow` and `crates/temporal-server`; distinguish workflow decisions from activity I/O. |
+| Durable execution, activities, or gateway behavior | `crates/temporal-workflow` and `crates/temporal-runtime`; distinguish workflow decisions from activity I/O. |
 | Provider transport, tool execution, or persistence | The relevant adapter under `crates/`, such as `llm-runtime`, `tools`, or `store-pg`. |
-| Product accounts, management routes, or the web experience | `platform/server`, `platform/db`, and `platform/web`; shared product types live in `platform/shared`. |
+| Product accounts, management routes, or the web experience | `platform/backend`, `platform/db`, and `platform/web`; shared product types live in `platform/shared`. |
 | Machine execution or provisioning | The environment protocol, daemon, client, or provider; see [Environment providers](../integrating-and-extending/environment-providers.md). |
 
 Use [Architecture](../how-it-works/architecture.md) to understand those
@@ -207,7 +207,7 @@ trace tells you where the regression test belongs.
 
 ## Edit, check, and restart
 
-Vite updates the web UI as you edit. The Platform server runs through `tsx
+Vite updates the web UI as you edit. The Platform backend runs through `tsx
 watch` and restarts on relevant source changes. The Rust runtime and daemon
 run through ordinary `cargo run`; the supervisor does not watch and rebuild
 them. Configurator and the optional connector host also run without watch
@@ -217,12 +217,12 @@ For a Rust change, run the focused test first, then stop and restart the
 profile to exercise the new executable:
 
 ```bash
-cargo test -p engine
+cargo test -p harness
 ./dev.sh stop
 ./dev.sh
 ```
 
-Replace `engine` with the crate you changed. Restarting recompiles changed
+Replace `harness` with the crate you changed. Restarting recompiles changed
 Rust code and repeats startup migrations while retaining the infrastructure
 and its data. After changing startup environment variables, restart the
 relevant processes too.
@@ -230,8 +230,8 @@ relevant processes too.
 For a web change, use its own checks while the development server stays open:
 
 ```bash
-npm run typecheck --workspace @lightspeed/platform-web
-npm run test --workspace @lightspeed/platform-web
+npm run typecheck --workspace @lightspeed-ai/platform-web
+npm run test --workspace @lightspeed-ai/platform-web
 ```
 
 The demo backend makes many visual and interaction changes easy to inspect
@@ -246,8 +246,8 @@ startup needs an explicit migration first:
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server
+cargo run -p temporal-runtime -- migrate
+cargo run -p temporal-runtime
 ```
 
 Do this with the supervised runtime stopped so both processes don't claim
@@ -277,9 +277,13 @@ Stopping the application and deleting its data are separate operations:
 | Ctrl+C in the launcher, or `./dev.sh stop` | Stops tracked host processes; leaves Docker services and durable state available. |
 | `./dev.sh down` | Stops host processes and tears down the Compose services; retains their volumes. |
 | `./dev.sh down --volumes` | Also removes the Compose volumes and the data in them. |
-| `./dev.sh reset` | Recreates both local databases, migrates the runtime database, and clears the Lightspeed MinIO prefix. Stop the supervisor first. |
+| `./dev.sh reset` | Recreates both local databases, migrates the runtime database, and clears the Lightspeed MinIO prefix. On success, also clears the launcher's saved development credentials and CLI handoff. Stop the supervisor first. |
 
 Use reset for disposable development data when that is the intended outcome.
+After a successful reset, start `./dev.sh` to provision development keys again,
+then run `target/debug/lightspeed connect dev` to refresh the CLI connection.
+Manual database resets leave the launcher's saved credentials in place and
+require [explicit key repair](../using-lightspeed/cli.md#connect-to-local-development).
 A changed migration checksum requires understanding the schema history;
 deleting rows does not repair a ledger mismatch. See
 [Changing contracts](changing-contracts.md#database-migrations) before editing

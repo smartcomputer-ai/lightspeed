@@ -1,4 +1,4 @@
-import type { ChannelProvider } from "@lightspeed-ai/agent-client";
+import type { ChannelProvider } from "@lightspeed-ai/sdk";
 import type { IngressHealth } from "../providers/connector.js";
 
 export type AccountHealthState =

@@ -1,0 +1,5074 @@
+//! `api` gateway for the Temporal-backed agent workflow.
+
+mod api_config;
+pub(crate) mod auth_api;
+pub(crate) mod authorization;
+mod blobs;
+mod bots_api;
+mod catalogs;
+pub(crate) mod channels_api;
+mod common;
+mod controller;
+pub(crate) use crate::environments::lifecycle as environment_lifecycle;
+pub(crate) use crate::environments::power as environment_power;
+pub(crate) use crate::environments::providers as environment_providers;
+mod environments;
+mod errors;
+mod event_history;
+mod github_api;
+mod input;
+mod mcp_api;
+pub(crate) mod mcp_discovery;
+mod model_defaults;
+mod models_api;
+mod oauth_api;
+mod parse;
+mod profiles;
+mod transcriptions;
+pub(crate) use crate::environments::provider_controllers;
+mod session_jobs;
+mod session_lifecycle;
+pub(crate) mod session_preparation;
+mod skills;
+mod vfs_api;
+mod workflow;
+
+use api_config::harness_session_config_from_api;
+#[cfg(test)]
+use api_config::*;
+use auth_api::{
+    api_auth_provider_kind, auth_grant_import_draft, auth_grant_view, map_auth_broker_error,
+    map_auth_error, parse_auth_grant_id, registry_auth_grant_exposure,
+    registry_auth_grant_status_for_filter, require_retrievable_grant,
+};
+use blobs::{has_blobs, put_blobs, read_blob};
+use catalogs::parse_client_context_key;
+use common::now_ms;
+pub use environment_lifecycle::ReconcileFailureLog;
+use environment_lifecycle::parse_registry_environment_id;
+pub use environment_power::PowerReaperStats;
+use environment_providers::map_environments_error;
+use environments::{activate_environment_command, deactivate_environment_command};
+use errors::*;
+use github_api::{
+    auth_provider_create_draft, auth_provider_view, github_installation_grant_draft,
+    github_installation_view, map_github_app_error, parse_auth_provider_id,
+};
+use input::{context_entry_input_from_api, run_input_from_api};
+use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_server_record};
+use mcp_discovery::{
+    ConfiguratorTrustedHeaderPolicy, HttpMcpToolDiscoverer, McpDiscoveryGate, McpToolDiscoverer,
+};
+use models_api::{ModelDiscoveryService, stored_provider_key_resolver};
+use oauth_api::{
+    auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
+    mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
+    parse_oauth_client_id,
+};
+use parse::*;
+use provider_controllers::{ProviderControllerConnector, WebSocketProviderControllerConnector};
+#[cfg(test)]
+use skills::skill_list_response;
+#[cfg(test)]
+use tools::skills::SkillMetadata;
+use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot, vfs_workspace_view};
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use api::*;
+use api_projection::{
+    CoreAgentProjector, ProjectRun, ProjectSession, api_kind_from_str, api_run_id, api_steering_id,
+    core_run_status_to_api_status, decode_stored_entry, event_cursor, event_page_limit,
+    map_session_store_error, parse_api_run_id, project_context_entry_inputs,
+};
+use async_trait::async_trait;
+use auth::{
+    AuthFlowStore, AuthGrantStore, AuthProviderStore, AuthTokenBroker, GitHubApiClient,
+    GitHubAppRuntime, GrantRefreshLock, HttpGitHubApiClient, HttpOAuthMetadataClient,
+    HttpOAuthTokenClient, McpOAuthDriver, OAuthClientStore, OAuthFlowService, OAuthMetadataClient,
+    OAuthRefreshRuntime, OAuthTokenClient, RegistryTokenBroker, SecretStore, StartAuthFlow,
+    TokenAudience,
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use harness::{
+    ApprovalId, BlobRef, BoundWorkflowToolDispatch, CompactionPolicy, ContextEntry,
+    ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
+    CoreAgentStatus, FunctionToolSpec, ManagedSessionWorkflowTools, ModelSelection,
+    ProviderApiKind, RunConfig, RunId, RunStatus, SessionConfig, SessionId, SubmissionId,
+    ToolChoice, ToolKind, ToolName, ToolParallelism, ToolSpec, WorkflowEndpointRef,
+    WorkflowStartRef, WorkflowToolCompletion, WorkflowToolCompletionKeySource,
+    WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolId, WorkflowToolTarget,
+    storage::{BlobStore, BlobStoreError, ReadSessionEvents, SessionStore},
+};
+use llm_clients::{anthropic::messages as anthropic, openai::responses as openai};
+use mcp::McpRegistryStore;
+use store_pg::PgStore;
+use temporalio_client::WorkflowExecutionStatus;
+use temporalio_client::{
+    Client, WorkflowDescribeOptions, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions,
+    WorkflowStartOptions, WorkflowTerminateOptions, errors::WorkflowInteractionError,
+    errors::WorkflowQueryError, errors::WorkflowStartError,
+};
+use tools::{
+    builtin::{BuiltinTool, BuiltinToolOperation},
+    catalog::SKILL_CATALOG_CONTEXT_KEY,
+    environment::jobs::{
+        JOB_RUN_DEADLINE_AFTER_MS, JOB_RUN_WORKFLOW_SEMANTIC_TYPE, JOB_RUN_WORKFLOW_TOOL_ID,
+        JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE, JOB_SUBMIT_WORKFLOW_TOOL_ID,
+    },
+    skills::{SkillCatalogSnapshot, SkillLocation},
+    toolset::{
+        ToolsetConfig, enable_concurrency_for_workflow_tools, register_toolset,
+        register_workflow_tools,
+    },
+    web::search::WebSearchToolConfig,
+    workflow_tool::{
+        validate_workflow_tool_definition_documents, validate_workflow_tool_reply_schema,
+    },
+};
+use vfs::{
+    CompareAndSetVfsWorkspaceHead, CreateVfsWorkspaceRecord, VfsCatalogError, VfsSnapshotRecord,
+    VfsSnapshotSource, VfsSnapshotStore, VfsWorkspaceId, VfsWorkspaceRecord, VfsWorkspaceStore,
+};
+
+use super::{
+    AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentSessionArgs,
+    AgentSessionStatus, AgentSessionWorkflow, DEFAULT_TASK_QUEUE, DEFAULT_TEMPORAL_NAMESPACE,
+    DEFAULT_TEMPORAL_TARGET, connect_temporal, pg_store_from_env,
+};
+
+const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Server-side cap for `session/events/read` long-poll waits. Requests above
+/// the cap are clamped, not rejected. The gateway HTTP request timeout must
+/// stay above this cap.
+const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
+/// Cap on `activationText` returned per `session/context/append` entry. The committed
+/// context blob is authoritative; activation text only needs enough of the
+/// head for trigger matching.
+const ACTIVATION_TEXT_MAX_BYTES: usize = 4096;
+/// `session/list` page size when the request does not specify one.
+const DEFAULT_SESSION_LIST_LIMIT: usize = 50;
+/// Server-side cap for `session/list` page sizes; larger requests are clamped.
+const MAX_SESSION_LIST_LIMIT: usize = 200;
+const DEFAULT_RUN_SUMMARY_LIMIT: usize = 20;
+const MAX_RUN_SUMMARY_LIMIT: usize = 100;
+const MAX_RUN_DETAIL_LIMIT: usize = 512;
+/// Hard ceiling on the events scanned while projecting one run's complete
+/// interval; a run past this is served through `session/events/read` instead
+/// of an unbounded detail document.
+const MAX_RUN_DETAIL_EVENTS: usize = 20_000;
+/// Resource bound for the opaque managed-controller run terminal token.
+const MAX_RUN_TERMINAL_NOTIFICATION_TOKEN_BYTES: usize = 512;
+
+/// Default public base URL for the gateway-hosted OAuth callback; matches
+/// `DEFAULT_GATEWAY_BIND`. Hosted deployments must set the real public URL.
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://127.0.0.1:18080";
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+}
+
+/// Caller-supplied metadata on sessions and environments shares one validator
+/// (bounds plus the reserved-prefix rule), so a session and the environment
+/// it ran in accept the same keys.
+pub(super) fn validate_caller_metadata(
+    metadata: &BTreeMap<String, String>,
+) -> Result<(), AgentApiError> {
+    environment_protocol::registration::validate_registration_metadata(None, metadata)
+        .map_err(|message| AgentApiError::invalid_request(format!("invalid metadata: {message}")))
+}
+
+fn validate_delete_after_close_ms(value: Option<u64>) -> Result<(), AgentApiError> {
+    if let Some(value) = value
+        && !(1..=MAX_SESSION_DELETE_AFTER_CLOSE_MS).contains(&value)
+    {
+        return Err(AgentApiError::invalid_request(format!(
+            "deleteAfterCloseMs must be 1..={MAX_SESSION_DELETE_AFTER_CLOSE_MS}"
+        )));
+    }
+    Ok(())
+}
+
+fn session_retention_view(
+    record: &harness::storage::SessionRecord,
+    root: &harness::storage::SessionRecord,
+) -> SessionRetentionView {
+    SessionRetentionView {
+        root_session_id: record.retention_root_session_id.as_str().to_owned(),
+        delete_after_close_ms: root.delete_after_close_ms,
+        delete_at_ms: root.delete_at_ms,
+    }
+}
+
+fn session_summary_view(
+    record: harness::storage::SessionRecord,
+    root: &harness::storage::SessionRecord,
+    access: ResourceAccessSummary,
+) -> SessionSummaryView {
+    let retention = session_retention_view(&record, root);
+    let activity = api_projection::record_activity(&record);
+    SessionSummaryView {
+        access,
+        id: record.session_id.as_str().to_owned(),
+        display_name: record.display_name,
+        metadata: record.metadata,
+        lifecycle_status: match record.lifecycle_status {
+            harness::storage::SessionLifecycleStatus::New => SessionLifecycleStatus::New,
+            harness::storage::SessionLifecycleStatus::Open => SessionLifecycleStatus::Open,
+            harness::storage::SessionLifecycleStatus::Closed => SessionLifecycleStatus::Closed,
+        },
+        activity,
+        closed_at_ms: record.closed_at_ms,
+        retention,
+        managed: record.managed,
+        origin: record
+            .origin
+            .as_ref()
+            .map(api_projection::session_origin_to_api)
+            .transpose()
+            .ok()
+            .flatten(),
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
+    }
+}
+
+impl GatewayAgentApi {
+    /// A summary for a single session, with its access looked up.
+    async fn session_summary(
+        &self,
+        record: harness::storage::SessionRecord,
+        root: &harness::storage::SessionRecord,
+    ) -> Result<SessionSummaryView, AgentApiError> {
+        let access = self
+            .access_summary(&ResourceRef::Session(record.session_id.as_str().to_owned()))
+            .await?;
+        Ok(session_summary_view(record, root, access))
+    }
+}
+
+/// Opaque `session/list` cursor: `{updated_at_ms}:{session_id}`. Session ids
+/// cannot contain `:` at the first position of the numeric prefix, so
+/// `split_once` is unambiguous.
+fn encode_session_list_cursor(cursor: &harness::storage::SessionListCursor) -> String {
+    format!("{}:{}", cursor.updated_at_ms, cursor.session_id)
+}
+
+fn decode_session_list_cursor(
+    cursor: &str,
+) -> Result<harness::storage::SessionListCursor, AgentApiError> {
+    let invalid =
+        || AgentApiError::invalid_request(format!("invalid session list cursor: {cursor}"));
+    let (updated_at_ms, session_id) = cursor.split_once(':').ok_or_else(invalid)?;
+    let updated_at_ms = updated_at_ms.parse::<u64>().map_err(|_| invalid())?;
+    let session_id = SessionId::try_new(session_id).map_err(|_| invalid())?;
+    Ok(harness::storage::SessionListCursor {
+        updated_at_ms,
+        session_id,
+    })
+}
+
+fn status_has_submission(
+    status: Option<&AgentSessionStatus>,
+    submission_id: &SubmissionId,
+) -> bool {
+    let Some(status) = status else {
+        return false;
+    };
+    status
+        .active_run
+        .as_ref()
+        .is_some_and(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .queued_runs
+            .iter()
+            .any(|run| run.submission_id.as_ref() == Some(submission_id))
+        || status
+            .completed_runs
+            .iter()
+            .any(|run| run.submission_id.as_ref() == Some(submission_id))
+}
+
+fn approval_decision_failure(
+    approval_id: String,
+    kind: ApprovalDecisionFailureKind,
+    message: impl Into<String>,
+) -> ApprovalDecisionResult {
+    ApprovalDecisionResult {
+        approval_id,
+        status: ApprovalDecisionStatus::Failed,
+        failure: Some(ApprovalDecisionFailure {
+            kind,
+            message: message.into(),
+        }),
+    }
+}
+
+enum ExistingRunSubmission {
+    ReturnRun { run_id: RunId },
+    Reject,
+}
+
+pub(super) enum ContextAppendWaitOutcome {
+    Applied { entry: ContextEntryInput },
+    Failed { failure: AgentAdmissionFailure },
+}
+
+fn existing_run_submission(
+    state: &harness::CoreAgentState,
+    submission_id: &SubmissionId,
+    source: &harness::RunRequestSource,
+    run_config: &RunConfig,
+    notify_on_terminal: &[harness::RunTerminalNotifyIntent],
+) -> Option<ExistingRunSubmission> {
+    if let Some(active) = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        return Some(
+            if active.source.matches_request(source)
+                && &active.run_config == run_config
+                && active.notify_on_terminal == notify_on_terminal
+            {
+                ExistingRunSubmission::ReturnRun {
+                    run_id: active.run_id,
+                }
+            } else {
+                ExistingRunSubmission::Reject
+            },
+        );
+    }
+    if let Some(queued) = state
+        .runs
+        .queued
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        if !queued.source.matches_request(source)
+            || &queued.run_config != run_config
+            || queued.notify_on_terminal != notify_on_terminal
+        {
+            return Some(ExistingRunSubmission::Reject);
+        }
+        return None;
+    }
+    if let Some(completed) = state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.submission_id.as_ref() == Some(submission_id))
+    {
+        let digest = harness::request_run_submission_digest(source, run_config, notify_on_terminal);
+        return Some(match completed.submission_digest {
+            Some(existing) if existing != digest => ExistingRunSubmission::Reject,
+            _ => ExistingRunSubmission::ReturnRun {
+                run_id: completed.run_id,
+            },
+        });
+    }
+    None
+}
+
+fn duplicate_submission_error(submission_id: &SubmissionId) -> AgentApiError {
+    AgentApiError::rejected(format!(
+        "submission id {submission_id} was already used with a different command, input, or run config"
+    ))
+}
+
+async fn context_append_result(
+    store: &dyn BlobStore,
+    key: String,
+    status: ContextAppendStatus,
+    input: &ContextEntryInput,
+    submitted_text: Option<&str>,
+) -> Result<ContextAppendResult, AgentApiError> {
+    let entry = project_context_entry_inputs(std::slice::from_ref(input))
+        .into_iter()
+        .next();
+    let activation_text = if context_append_entry_has_activation_text(input) {
+        // The submitted text is reused when it produced this exact entry so
+        // plain-text appends do not pay a blob read per response entry.
+        match submitted_text {
+            Some(text) => Some(text.to_owned()),
+            None => Some(
+                store
+                    .read_text(&input.content.content_ref)
+                    .await
+                    .map_err(map_input_blob_store_error)?,
+            ),
+        }
+    } else {
+        None
+    };
+    let (activation_text, activation_text_truncated) = match activation_text {
+        Some(text) => {
+            let (text, truncated) = capped_activation_text(text);
+            (Some(text), truncated)
+        }
+        None => (None, false),
+    };
+    Ok(ContextAppendResult {
+        key,
+        status,
+        entry,
+        failure: None,
+        activation_text,
+        activation_text_truncated,
+    })
+}
+
+fn capped_activation_text(text: String) -> (String, bool) {
+    if text.len() <= ACTIVATION_TEXT_MAX_BYTES {
+        return (text, false);
+    }
+    let mut end = ACTIVATION_TEXT_MAX_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_owned(), true)
+}
+
+fn context_append_entry_has_activation_text(input: &ContextEntryInput) -> bool {
+    matches!(
+        &input.kind,
+        ContextEntryKind::Message {
+            role: ContextMessageRole::User
+        }
+    ) && input.preview.is_none()
+        && input
+            .content
+            .media_type
+            .as_deref()
+            .map(|media_type| {
+                let media_type = media_type.trim().to_ascii_lowercase();
+                media_type.is_empty() || media_type == "text/plain"
+            })
+            .unwrap_or(true)
+}
+
+fn context_append_failed_result(
+    key: String,
+    failure: InputAdmissionFailureView,
+) -> ContextAppendResult {
+    ContextAppendResult {
+        key,
+        status: ContextAppendStatus::Failed,
+        entry: None,
+        failure: Some(failure),
+        activation_text: None,
+        activation_text_truncated: false,
+    }
+}
+
+fn active_entry_input(entry: &ContextEntry) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: entry.kind.clone(),
+        content: entry.content.clone(),
+        preview: entry.preview.clone(),
+        origin: entry.origin.clone(),
+        provenance_ref: entry.provenance_ref.clone(),
+        token_estimate: entry.token_estimate.clone(),
+    }
+}
+
+fn active_context_entry_matches_input(active: &ContextEntry, input: &ContextEntryInput) -> bool {
+    active_entry_input(active) == *input
+}
+
+fn input_admission_failure_from_api_error(error: AgentApiError) -> InputAdmissionFailureView {
+    let kind = match error.kind {
+        AgentApiErrorKind::NotFound => InputAdmissionFailureKind::BlobMissing,
+        _ => InputAdmissionFailureKind::UnsupportedMedia,
+    };
+    InputAdmissionFailureView {
+        kind,
+        message: error.message,
+    }
+}
+
+/// The converted item as a replacement of `active`: the entry keeps its kind,
+/// so only tool results and user messages qualify and a tool result takes
+/// only text.
+fn replacement_input(
+    active: &harness::ContextEntry,
+    mut input: harness::ContextEntryInput,
+    item: &InputItem,
+) -> Result<harness::ContextEntryInput, InputAdmissionFailureView> {
+    let rejected = |message: &str| InputAdmissionFailureView {
+        kind: InputAdmissionFailureKind::AdmissionRejected,
+        message: message.to_owned(),
+    };
+    match &active.kind {
+        ContextEntryKind::ToolResult { .. } if matches!(item, InputItem::Media { .. }) => {
+            return Err(rejected("a tool result can only be replaced with text"));
+        }
+        ContextEntryKind::ToolResult { .. }
+        | ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        } => {}
+        _ => {
+            return Err(rejected(
+                "only tool results and user messages can be replaced",
+            ));
+        }
+    }
+    input.kind = active.kind.clone();
+    input.origin = input.origin.or_else(|| active.origin.clone());
+    // Keep the context's combined estimate known when the entry carried one.
+    input.token_estimate = active.token_estimate.as_ref().map(|estimate| match item {
+        InputItem::Text { text, .. } => harness::TokenEstimate {
+            tokens: u32::try_from(text.trim().len().div_ceil(4)).unwrap_or(u32::MAX),
+            quality: harness::TokenEstimateQuality::Estimated,
+        },
+        _ => estimate.clone(),
+    });
+    Ok(input)
+}
+
+fn input_admission_failure_from_workflow(
+    failure: &AgentAdmissionFailure,
+) -> InputAdmissionFailureView {
+    let kind = match failure.kind {
+        AgentAdmissionFailureKind::RejectedCommand => InputAdmissionFailureKind::AdmissionRejected,
+    };
+    InputAdmissionFailureView {
+        kind,
+        message: failure.message.clone(),
+    }
+}
+
+pub struct GatewayAgentApiBuilder {
+    client: Client,
+    store: Arc<PgStore>,
+    task_queue: String,
+    bot_task_queue: String,
+    channel_task_queue: String,
+    continue_as_new_history_threshold: Option<u32>,
+    poll_interval: Duration,
+    operation_timeout: Duration,
+    events_wait_cap: Duration,
+    public_base_url: String,
+    oauth_token_client: Option<Arc<dyn OAuthTokenClient>>,
+    oauth_metadata_client: Option<Arc<dyn OAuthMetadataClient>>,
+    github_api_client: Option<Arc<dyn GitHubApiClient>>,
+    model_discovery_openai: Option<Arc<openai::Client>>,
+    model_discovery_anthropic: Option<Arc<anthropic::Client>>,
+    provider_controller_connector: Arc<dyn ProviderControllerConnector>,
+    environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
+}
+
+impl GatewayAgentApiBuilder {
+    pub fn with_task_queue(mut self, task_queue: impl Into<String>) -> Self {
+        self.task_queue = task_queue.into();
+        self
+    }
+
+    /// Task queue of the `bots` worker role (bot controllers, trigger fires).
+    pub fn with_bot_task_queue(mut self, task_queue: impl Into<String>) -> Self {
+        self.bot_task_queue = task_queue.into();
+        self
+    }
+
+    /// Task queue of the `channels` worker role (conversation workflows).
+    pub fn with_channel_task_queue(mut self, task_queue: impl Into<String>) -> Self {
+        self.channel_task_queue = task_queue.into();
+        self
+    }
+
+    /// Externally reachable base URL of this gateway, used to build the OAuth
+    /// redirect URI (`{base}/auth/callback`).
+    pub fn with_public_base_url(mut self, public_base_url: impl Into<String>) -> Self {
+        self.public_base_url = public_base_url.into();
+        self
+    }
+
+    /// Override the OAuth token-endpoint client (tests).
+    pub fn with_oauth_token_client(mut self, token_client: Arc<dyn OAuthTokenClient>) -> Self {
+        self.oauth_token_client = Some(token_client);
+        self
+    }
+
+    /// Override the OAuth discovery/registration metadata client (tests).
+    pub fn with_oauth_metadata_client(
+        mut self,
+        metadata_client: Arc<dyn OAuthMetadataClient>,
+    ) -> Self {
+        self.oauth_metadata_client = Some(metadata_client);
+        self
+    }
+
+    /// Override the GitHub REST client (tests).
+    pub fn with_github_api_client(mut self, github_api_client: Arc<dyn GitHubApiClient>) -> Self {
+        self.github_api_client = Some(github_api_client);
+        self
+    }
+
+    /// Use deployment-shared LLM clients for direct provider model discovery.
+    pub fn with_model_discovery_clients(
+        mut self,
+        openai: Arc<openai::Client>,
+        anthropic: Arc<anthropic::Client>,
+    ) -> Self {
+        self.model_discovery_openai = Some(openai);
+        self.model_discovery_anthropic = Some(anthropic);
+        self
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn with_provider_controller_connector(
+        mut self,
+        connector: Arc<dyn ProviderControllerConnector>,
+    ) -> Self {
+        self.provider_controller_connector = connector;
+        self
+    }
+
+    pub fn with_environment_gateway(
+        mut self,
+        gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
+    ) -> Self {
+        self.environment_gateway = gateway;
+        self
+    }
+
+    pub fn with_continue_as_new_history_threshold(mut self, threshold: u32) -> Self {
+        self.continue_as_new_history_threshold = Some(threshold);
+        self
+    }
+
+    pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
+        self.poll_interval = poll_interval;
+        self
+    }
+
+    pub fn with_operation_timeout(mut self, operation_timeout: Duration) -> Self {
+        self.operation_timeout = operation_timeout;
+        self
+    }
+
+    pub fn with_events_wait_cap(mut self, events_wait_cap: Duration) -> Self {
+        self.events_wait_cap = events_wait_cap;
+        self
+    }
+
+    pub fn build(self) -> GatewayAgentApi {
+        let allow_private_mcp = env_flag("LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS");
+        let mcp_private_networks = crate::worker::mcp::McpPrivateNetworkPolicy::from_env()
+            .expect("parse LIGHTSPEED_MCP_PRIVATE_NETWORKS");
+        let configurator_trusted_header = ConfiguratorTrustedHeaderPolicy::from_env()
+            .expect("parse LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL");
+        let metadata_client = self.oauth_metadata_client.unwrap_or_else(|| {
+            Arc::new(HttpOAuthMetadataClient::with_private_networks(
+                allow_private_mcp,
+            ))
+        });
+        let token_client = self.oauth_token_client.unwrap_or_else(|| {
+            Arc::new(
+                HttpOAuthTokenClient::new_with_mcp_http(metadata_client.clone())
+                    .expect("construct OAuth token endpoint HTTP client"),
+            )
+        });
+        let oauth_flows = OAuthFlowService::new(
+            self.store.clone() as Arc<dyn OAuthClientStore>,
+            self.store.clone() as Arc<dyn AuthFlowStore>,
+            self.store.clone() as Arc<dyn AuthGrantStore>,
+            self.store.clone() as Arc<dyn SecretStore>,
+            token_client.clone(),
+        );
+        let mcp_oauth = McpOAuthDriver::new(
+            self.store.clone() as Arc<dyn OAuthClientStore>,
+            self.store.clone() as Arc<dyn SecretStore>,
+            metadata_client,
+        );
+        let mcp_tool_discoverer: Arc<dyn McpToolDiscoverer> =
+            Arc::new(HttpMcpToolDiscoverer::new());
+        let mcp_discovery_gate = Arc::new(McpDiscoveryGate::new(Duration::from_secs(2)));
+        let github_api = self.github_api_client.unwrap_or_else(|| {
+            Arc::new(HttpGitHubApiClient::new().expect("construct GitHub REST HTTP client"))
+        });
+        let grants: Arc<dyn AuthGrantStore> = self.store.clone();
+        let secrets: Arc<dyn SecretStore> = self.store.clone();
+        let providers: Arc<dyn AuthProviderStore> = self.store.clone();
+        let auth_token_broker: Arc<dyn AuthTokenBroker> = Arc::new(
+            RegistryTokenBroker::new(
+                grants.clone(),
+                secrets.clone(),
+                self.store.clone() as Arc<dyn GrantRefreshLock>,
+            )
+            .with_oauth_refresh(OAuthRefreshRuntime::new(
+                self.store.clone() as Arc<dyn OAuthClientStore>,
+                token_client.clone(),
+            ))
+            .with_token_source(
+                auth::AuthProviderKind::GitHubApp,
+                Arc::new(GitHubAppRuntime::new(
+                    providers,
+                    github_api.clone(),
+                    grants,
+                    secrets,
+                )),
+            ),
+        );
+        let discovery_openai = self.model_discovery_openai.unwrap_or_else(|| {
+            Arc::new(
+                openai::Client::new(openai::Config::from_env_allow_missing_key())
+                    .expect("construct OpenAI model discovery client"),
+            )
+        });
+        let discovery_anthropic = self.model_discovery_anthropic.unwrap_or_else(|| {
+            Arc::new(
+                anthropic::Client::new(anthropic::Config::from_env_allow_missing_key())
+                    .expect("construct Anthropic model discovery client"),
+            )
+        });
+        let model_discovery = ModelDiscoveryService::new(
+            discovery_openai,
+            discovery_anthropic,
+            stored_provider_key_resolver(
+                self.store.clone(),
+                token_client.clone(),
+                github_api.clone(),
+            ),
+            self.store.clone() as Arc<dyn AuthProviderStore>,
+        );
+        GatewayAgentApi {
+            client: self.client,
+            store: self.store,
+            task_queue: self.task_queue,
+            bot_task_queue: self.bot_task_queue,
+            channel_task_queue: self.channel_task_queue,
+            continue_as_new_history_threshold: self.continue_as_new_history_threshold,
+            poll_interval: self.poll_interval,
+            operation_timeout: self.operation_timeout,
+            events_wait_cap: self.events_wait_cap,
+            public_base_url: self.public_base_url,
+            oauth_flows,
+            auth_token_broker,
+            mcp_oauth,
+            mcp_tool_discoverer,
+            mcp_private_networks,
+            configurator_trusted_header,
+            mcp_discovery_gate,
+            github_api,
+            model_discovery,
+            provider_controller_connector: self.provider_controller_connector,
+            environment_gateway: self.environment_gateway,
+        }
+    }
+}
+
+pub struct GatewayAgentApi {
+    client: Client,
+    store: Arc<PgStore>,
+    task_queue: String,
+    pub(crate) bot_task_queue: String,
+    pub(crate) channel_task_queue: String,
+    continue_as_new_history_threshold: Option<u32>,
+    poll_interval: Duration,
+    operation_timeout: Duration,
+    events_wait_cap: Duration,
+    public_base_url: String,
+    oauth_flows: OAuthFlowService,
+    auth_token_broker: Arc<dyn AuthTokenBroker>,
+    mcp_oauth: McpOAuthDriver,
+    mcp_tool_discoverer: Arc<dyn McpToolDiscoverer>,
+    mcp_private_networks: crate::worker::mcp::McpPrivateNetworkPolicy,
+    configurator_trusted_header: ConfiguratorTrustedHeaderPolicy,
+    mcp_discovery_gate: Arc<McpDiscoveryGate>,
+    github_api: Arc<dyn GitHubApiClient>,
+    model_discovery: ModelDiscoveryService,
+    provider_controller_connector: Arc<dyn ProviderControllerConnector>,
+    pub(crate) environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
+}
+
+impl GatewayAgentApi {
+    /// Hosts and networks outbound requests may reach beyond the public
+    /// internet. One policy for every outbound HTTP client in the process.
+    pub(crate) fn private_networks(&self) -> &crate::worker::mcp::McpPrivateNetworkPolicy {
+        &self.mcp_private_networks
+    }
+
+    pub fn builder(client: Client, store: Arc<PgStore>) -> GatewayAgentApiBuilder {
+        let environment_gateway = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
+            DEFAULT_PUBLIC_BASE_URL,
+            format!("local-{}", uuid::Uuid::new_v4()),
+        );
+        GatewayAgentApiBuilder {
+            client,
+            store,
+            task_queue: DEFAULT_TASK_QUEUE.to_owned(),
+            bot_task_queue: temporal_workflow::bots::DEFAULT_BOTS_TASK_QUEUE.to_owned(),
+            channel_task_queue: crate::config::DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
+            continue_as_new_history_threshold: None,
+            poll_interval: DEFAULT_POLL_INTERVAL,
+            operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            events_wait_cap: DEFAULT_EVENTS_WAIT_CAP,
+            public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
+            oauth_token_client: None,
+            oauth_metadata_client: None,
+            github_api_client: None,
+            model_discovery_openai: None,
+            model_discovery_anthropic: None,
+            provider_controller_connector: Arc::new(WebSocketProviderControllerConnector::default()),
+            environment_gateway,
+        }
+    }
+
+    pub(crate) fn store(&self) -> &Arc<PgStore> {
+        &self.store
+    }
+
+    pub(crate) fn temporal_client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Task queue of the `bots` worker role.
+    pub(crate) fn bot_task_queue(&self) -> &str {
+        &self.bot_task_queue
+    }
+
+    pub fn new(client: Client, store: Arc<PgStore>) -> Self {
+        Self::builder(client, store).build()
+    }
+
+    pub async fn from_env() -> anyhow::Result<Self> {
+        let temporal_target =
+            env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
+        let namespace = env::var("TEMPORAL_NAMESPACE")
+            .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
+        let task_queue = crate::config::task_queue_from_env()?;
+        let client = connect_temporal(&temporal_target, &namespace).await?;
+        let store = pg_store_from_env().await?;
+        Ok(Self::builder(client, store)
+            .with_task_queue(task_queue)
+            .build())
+    }
+
+    fn allocate_submission_id(&self) -> SubmissionId {
+        SubmissionId::new(format!("submit_{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    /// Materialize the session's granted features into the provider-aware
+    /// toolset. Absent feature = no tools: capability semantics need no
+    /// effective-default resolution here.
+    pub(crate) fn session_toolset_config(
+        session_config: &SessionConfig,
+        include_environment_tools: bool,
+        include_job_read_tool: bool,
+    ) -> ToolsetConfig {
+        session_preparation::SessionPreparationService::session_toolset_config(
+            session_config,
+            include_environment_tools,
+            include_job_read_tool,
+        )
+    }
+
+    /// Sub-agent run start: identical to the public `session/runs/start`
+    /// boundary except that the admitted `RunRequestCommand` carries the
+    /// execution's cross-session notify-intent. Public callers can request
+    /// only the single destination derived from the durable lifecycle
+    /// controller.
+    pub(crate) async fn start_run_for_subagent(
+        &self,
+        session_id: &SessionId,
+        input: Vec<InputItem>,
+        submission_id: SubmissionId,
+        notify_on_terminal: Vec<harness::RunTerminalNotifyIntent>,
+    ) -> Result<String, AgentApiError> {
+        let response = self
+            .start_run_internal(
+                RunStartParams {
+                    session_id: session_id.as_str().to_owned(),
+                    source: RunStartSource::Input { items: input },
+                    submission_id: Some(submission_id.as_str().to_owned()),
+                    config: None,
+                    notify_on_terminal: None,
+                },
+                notify_on_terminal,
+            )
+            .await?;
+        Ok(response.result.run.id)
+    }
+
+    async fn start_run_internal(
+        &self,
+        params: RunStartParams,
+        internal_notify_on_terminal: Vec<harness::RunTerminalNotifyIntent>,
+    ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_START,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let RunStartParams {
+            session_id,
+            source,
+            submission_id,
+            config,
+            notify_on_terminal,
+        } = params;
+        let session_id = SessionId::try_new(session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        // The workflow refreshes prompts and catalogs immediately before idle
+        // run admission. Scanning here too duplicates environment roundtrips
+        // and cannot replace the authoritative refresh at that boundary.
+        let loaded = self.load_session_state(&session_id).await?;
+        let notify_on_terminal = run_terminal_notify_intents(
+            loaded.state.workflow_tools.lifecycle_controller.as_ref(),
+            notify_on_terminal,
+            internal_notify_on_terminal,
+        )?;
+        let client_supplied_submission_id = submission_id.is_some();
+        let submission_id = match submission_id {
+            Some(submission_id) => SubmissionId::try_new(submission_id).map_err(|error| {
+                AgentApiError::invalid_request(format!("invalid submission id: {error}"))
+            })?,
+            None => self.allocate_submission_id(),
+        };
+        let session_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
+            AgentApiError::invalid_request(format!("session is not open: {session_id}"))
+        })?;
+        let mut run_config = api_config::run_config_for_start(session_config, config)?;
+        if let Some(model) = run_config.model_override.as_ref() {
+            run_config.input_limit_tokens = self.model_discovery.input_limit(model).await;
+        }
+        let RunStartSource::Input { items } = source;
+        let input = run_input_from_api(self.store.as_ref(), &items).await?;
+        let source = harness::RunRequestSource::Input { input };
+        if let Some(existing) = existing_run_submission(
+            &loaded.state,
+            &submission_id,
+            &source,
+            &run_config,
+            &notify_on_terminal,
+        ) {
+            return match existing {
+                ExistingRunSubmission::ReturnRun { run_id } => {
+                    let run = self.project_run_by_id(&session_id, run_id).await?;
+                    Ok(AgentApiOutcome::new(RunStartResponse { run }))
+                }
+                ExistingRunSubmission::Reject => Err(duplicate_submission_error(&submission_id)),
+            };
+        }
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let status_before_signal = self.query_status_optional(&session_id).await?;
+        let baseline_admission_failures = status_before_signal
+            .as_ref()
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        let wait_for_admission_drain = client_supplied_submission_id
+            || status_has_submission(status_before_signal.as_ref(), &submission_id);
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::RequestRun(harness::RunRequestCommand {
+                notify_on_terminal,
+                requested_by: self.requested_by()?,
+                submission_id: Some(submission_id.clone()),
+                source,
+                run_config,
+            }),
+        )
+        .await?;
+        let run = self
+            .wait_for_run_accepted(
+                &session_id,
+                &submission_id,
+                baseline_admission_failures,
+                wait_for_admission_drain,
+            )
+            .await?;
+        Ok(AgentApiOutcome::new(RunStartResponse { run }))
+    }
+
+    fn projector(&self) -> CoreAgentProjector<'_> {
+        CoreAgentProjector::new(self.store.as_ref())
+    }
+
+    async fn load_session_state(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<LoadedSession, AgentApiError> {
+        let record = self
+            .store
+            .load_session(session_id)
+            .await
+            .map_err(map_session_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
+        let loaded =
+            crate::checkpoint::load_reduction(self.store.as_ref(), self.store.as_ref(), &record)
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?;
+        if crate::checkpoint::checkpoint_due(&loaded)
+            && let Err(error) = crate::checkpoint::write_checkpoint(
+                self.store.as_ref(),
+                self.store.as_ref(),
+                &record,
+                &loaded.reduced,
+                record.updated_at_ms,
+            )
+            .await
+        {
+            tracing::warn!(session_id = %session_id, error = %error, "session checkpoint write failed after gateway replay");
+        }
+        Ok(LoadedSession {
+            record,
+            state: loaded.reduced.core_state,
+        })
+    }
+
+    async fn load_retention_root(
+        &self,
+        record: &harness::storage::SessionRecord,
+    ) -> Result<harness::storage::SessionRecord, AgentApiError> {
+        if record.retention_root_session_id == record.session_id {
+            return Ok(record.clone());
+        }
+        self.store
+            .load_session(&record.retention_root_session_id)
+            .await
+            .map_err(map_session_store_error)?
+            .ok_or_else(|| {
+                AgentApiError::internal(format!(
+                    "retention root {} is missing for session {}",
+                    record.retention_root_session_id, record.session_id
+                ))
+            })
+    }
+
+    async fn project_session_by_id(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionView, AgentApiError> {
+        let loaded = self.load_session_state(session_id).await?;
+        let retention_root = self.load_retention_root(&loaded.record).await?;
+        let retention = session_retention_view(&loaded.record, &retention_root);
+        let access = self
+            .access_summary(&ResourceRef::Session(session_id.as_str().to_owned()))
+            .await?;
+        self.projector()
+            .project_session(ProjectSession {
+                session_id,
+                state: &loaded.state,
+                record: &loaded.record,
+                retention: &retention,
+                access: &access,
+                run_limit: DEFAULT_RUN_SUMMARY_LIMIT,
+                run_cursor: None,
+            })
+            .await
+            .map(|(session, _, _)| session)
+    }
+
+    async fn project_session_page_by_id(
+        &self,
+        session_id: &SessionId,
+        run_limit: usize,
+    ) -> Result<(SessionView, Option<api::RunId>, bool), AgentApiError> {
+        let loaded = self.load_session_state(session_id).await?;
+        let retention_root = self.load_retention_root(&loaded.record).await?;
+        let retention = session_retention_view(&loaded.record, &retention_root);
+        let access = self
+            .access_summary(&ResourceRef::Session(session_id.as_str().to_owned()))
+            .await?;
+        self.projector()
+            .project_session(ProjectSession {
+                session_id,
+                state: &loaded.state,
+                record: &loaded.record,
+                retention: &retention,
+                access: &access,
+                run_limit,
+                run_cursor: None,
+            })
+            .await
+    }
+
+    fn session_mutation_view(&self, loaded: &LoadedSession) -> SessionMutationView {
+        SessionMutationView {
+            id: loaded.record.session_id.as_str().to_owned(),
+            status: api_projection::session_status(&loaded.state),
+            head_cursor: loaded
+                .record
+                .head
+                .as_ref()
+                .map(|head| event_cursor(head.seq)),
+            config_revision: loaded.state.lifecycle.config_revision,
+            context_revision: loaded.state.context.revision,
+        }
+    }
+
+    async fn session_mutation_view_by_id(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<SessionMutationView, AgentApiError> {
+        let loaded = self.load_session_state(session_id).await?;
+        Ok(self.session_mutation_view(&loaded))
+    }
+
+    async fn project_run_by_id(
+        &self,
+        session_id: &SessionId,
+        run_id: RunId,
+    ) -> Result<RunView, AgentApiError> {
+        let loaded = self.load_session_state(session_id).await?;
+        self.project_loaded_run(&loaded, run_id).await
+    }
+
+    /// Project one run from its complete sequence interval. Run projection is
+    /// stateful across events (tool batches, approval pairs), so a partial
+    /// interval would silently drop cross-event state; the interval is always
+    /// read to completion and one pathological run is rejected with a typed
+    /// error instead of a truncated view.
+    async fn project_loaded_run(
+        &self,
+        loaded: &LoadedSession,
+        run_id: RunId,
+    ) -> Result<RunView, AgentApiError> {
+        let metadata = run_projection_metadata(&loaded.state, run_id)
+            .ok_or_else(|| AgentApiError::not_found(format!("run not found: {run_id}")))?;
+        let entries = self
+            .read_run_interval(
+                &loaded.record,
+                run_id,
+                metadata.first_seq,
+                metadata.terminal_seq,
+            )
+            .await?;
+        self.projector()
+            .project_run_with_metadata(ProjectRun {
+                entries: &entries,
+                run_id,
+                status: metadata.status,
+                output: metadata.output,
+                source: metadata.source,
+                started_at_ms: metadata.started_at_ms,
+                completed_at_ms: metadata.completed_at_ms,
+                usage: metadata.usage,
+            })
+            .await
+    }
+
+    async fn read_run_interval(
+        &self,
+        record: &harness::storage::SessionRecord,
+        run_id: RunId,
+        first_seq: harness::EventSeq,
+        terminal_seq: Option<harness::EventSeq>,
+    ) -> Result<Vec<harness::CoreAgentEntry>, AgentApiError> {
+        let through = terminal_seq
+            .or_else(|| record.head.as_ref().map(|head| head.seq))
+            .unwrap_or(first_seq);
+        let mut after = harness::EventSeq::new(first_seq.as_u64().saturating_sub(1));
+        let codec = harness::CoreAgentCodec;
+        let mut entries = Vec::new();
+        let mut scanned: usize = 0;
+        loop {
+            let page = self
+                .store
+                .read_range(harness::storage::ReadSessionEventRange {
+                    session_id: record.session_id.clone(),
+                    after,
+                    through,
+                    limit: MAX_RUN_DETAIL_LIMIT,
+                })
+                .await
+                .map_err(map_session_store_error)?;
+            scanned = scanned.saturating_add(page.entries.len());
+            if scanned > MAX_RUN_DETAIL_EVENTS {
+                return Err(AgentApiError::rejected(format!(
+                    "run {run_id} spans more than {MAX_RUN_DETAIL_EVENTS} events; page it through session/events/read"
+                )));
+            }
+            for entry in &page.entries {
+                let belongs = entry
+                    .joins
+                    .get("run_id")
+                    .is_some_and(|value| value == &run_id.as_u64().to_string());
+                if belongs {
+                    entries.push(decode_stored_entry(&codec, entry)?);
+                }
+            }
+            let Some(next_after) = page.next_after else {
+                break;
+            };
+            if page.complete {
+                break;
+            }
+            after = next_after;
+        }
+        Ok(entries)
+    }
+}
+
+pub(super) struct LoadedSession {
+    pub(super) record: harness::storage::SessionRecord,
+    pub(super) state: harness::CoreAgentState,
+}
+
+struct RunProjectionMetadata<'a> {
+    output: Option<&'a harness::ContentRef>,
+    status: api::RunStatus,
+    first_seq: harness::EventSeq,
+    terminal_seq: Option<harness::EventSeq>,
+    source: &'a harness::RunSource,
+    started_at_ms: Option<u64>,
+    completed_at_ms: Option<u64>,
+    usage: Option<&'a harness::LlmUsage>,
+}
+
+fn run_projection_metadata(
+    state: &harness::CoreAgentState,
+    run_id: RunId,
+) -> Option<RunProjectionMetadata<'_>> {
+    state
+        .runs
+        .completed
+        .iter()
+        .find(|run| run.run_id == run_id)
+        .map(|run| RunProjectionMetadata {
+            status: core_run_status_to_api_status(run.status),
+            first_seq: run.first_seq,
+            terminal_seq: Some(run.terminal_seq),
+            output: run.output.as_ref(),
+            source: &run.source,
+            started_at_ms: run.started_at_ms,
+            completed_at_ms: Some(run.completed_at_ms),
+            usage: run.usage.as_ref(),
+        })
+        .or_else(|| {
+            state
+                .runs
+                .active
+                .as_ref()
+                .filter(|run| run.run_id == run_id)
+                .map(|run| RunProjectionMetadata {
+                    status: core_run_status_to_api_status(run.status),
+                    first_seq: run.first_seq,
+                    terminal_seq: None,
+                    output: None,
+                    source: &run.source,
+                    started_at_ms: run.started_at_ms,
+                    completed_at_ms: None,
+                    usage: run.usage.as_ref(),
+                })
+        })
+        .or_else(|| {
+            state
+                .runs
+                .queued
+                .iter()
+                .find(|run| run.run_id == run_id)
+                .map(|run| RunProjectionMetadata {
+                    status: api::RunStatus::Queued,
+                    first_seq: run.first_seq,
+                    terminal_seq: None,
+                    output: None,
+                    source: &run.source,
+                    started_at_ms: None,
+                    completed_at_ms: None,
+                    usage: None,
+                })
+        })
+}
+
+fn managed_workflow_tools_from_api(
+    input: ManagedSessionWorkflowToolsInput,
+) -> Result<ManagedSessionWorkflowTools, AgentApiError> {
+    if input.lifecycle_controller.is_none() && input.tools.is_empty() {
+        return Err(AgentApiError::invalid_request(
+            "managed session requires a lifecycle controller or at least one workflow tool",
+        ));
+    }
+    let lifecycle_controller = input.lifecycle_controller.map(workflow_endpoint_from_api);
+    let tools = input
+        .tools
+        .into_iter()
+        .map(|declaration| {
+            let tool_id =
+                WorkflowToolId::try_new(declaration.definition.tool_id).map_err(|error| {
+                    AgentApiError::invalid_request(format!("invalid workflow tool id: {error}"))
+                })?;
+            if is_core_environment_job_tool_id(tool_id.as_str()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "workflow tool id {tool_id} is reserved"
+                )));
+            }
+            let tool_name =
+                ToolName::try_new(declaration.definition.tool.name).map_err(|error| {
+                    AgentApiError::invalid_request(format!(
+                        "invalid workflow tool {tool_id} name: {error}"
+                    ))
+                })?;
+            let parallelism = match declaration.definition.tool.parallelism {
+                ToolParallelismView::Exclusive => ToolParallelism::Exclusive,
+                ToolParallelismView::ParallelSafe => ToolParallelism::ParallelSafe,
+            };
+            let kind = match declaration.definition.tool.kind {
+                WorkflowToolKindInput::Function {
+                    description_ref,
+                    input_schema_ref,
+                    output_schema_ref,
+                    strict,
+                    provider_options_ref,
+                } => ToolKind::Function(FunctionToolSpec {
+                    description_ref: parse_workflow_tool_blob_ref(
+                        &tool_id,
+                        "descriptionRef",
+                        description_ref,
+                    )?,
+                    input_schema_ref: parse_required_workflow_tool_blob_ref(
+                        &tool_id,
+                        "inputSchemaRef",
+                        input_schema_ref,
+                    )?,
+                    output_schema_ref: parse_workflow_tool_blob_ref(
+                        &tool_id,
+                        "outputSchemaRef",
+                        output_schema_ref,
+                    )?,
+                    strict,
+                    provider_options_ref: parse_workflow_tool_blob_ref(
+                        &tool_id,
+                        "providerOptionsRef",
+                        provider_options_ref,
+                    )?,
+                }),
+            };
+            let target = match declaration.target {
+                WorkflowToolTargetInput::Bound { receiver, dispatch } => {
+                    WorkflowToolTarget::Bound {
+                        receiver: workflow_endpoint_from_api(receiver),
+                        dispatch: match dispatch {
+                            BoundWorkflowToolDispatchInput::Pull => BoundWorkflowToolDispatch::Pull,
+                            BoundWorkflowToolDispatchInput::Push => BoundWorkflowToolDispatch::Push,
+                        },
+                    }
+                }
+                WorkflowToolTargetInput::Start { start } => WorkflowToolTarget::Start {
+                    start: WorkflowStartRef {
+                        recipe_format: start.recipe_format,
+                        revision: start.revision,
+                        recipe_ref: parse_required_workflow_tool_blob_ref(
+                            &tool_id,
+                            "target.start.recipeRef",
+                            start.recipe_ref,
+                        )?,
+                        recipe_fingerprint: start.recipe_fingerprint,
+                    },
+                },
+            };
+            let completion = match declaration.completion {
+                WorkflowToolCompletionInput::Accepted => WorkflowToolCompletion::Accepted,
+                WorkflowToolCompletionInput::Joined {
+                    reply_schema_ref,
+                    deadline_after_ms,
+                } => WorkflowToolCompletion::Joined {
+                    reply_schema_ref: parse_workflow_tool_blob_ref(
+                        &tool_id,
+                        "completion.replySchemaRef",
+                        reply_schema_ref,
+                    )?,
+                    deadline_after_ms,
+                },
+                WorkflowToolCompletionInput::Promises {
+                    reply_schema_ref,
+                    deadline_after_ms,
+                    max_promises,
+                    key_source,
+                } => WorkflowToolCompletion::Promises {
+                    reply_schema_ref: parse_workflow_tool_blob_ref(
+                        &tool_id,
+                        "completion.replySchemaRef",
+                        reply_schema_ref,
+                    )?,
+                    deadline_after_ms,
+                    max_promises,
+                    key_source: match key_source {
+                        WorkflowToolCompletionKeySourceInput::Reply => {
+                            WorkflowToolCompletionKeySource::Reply
+                        }
+                        WorkflowToolCompletionKeySourceInput::StringArray { pointer } => {
+                            WorkflowToolCompletionKeySource::StringArray { pointer }
+                        }
+                        WorkflowToolCompletionKeySourceInput::ArrayItemField { pointer, field } => {
+                            WorkflowToolCompletionKeySource::ArrayItemField { pointer, field }
+                        }
+                        WorkflowToolCompletionKeySourceInput::ArrayIndices { pointer, prefix } => {
+                            WorkflowToolCompletionKeySource::ArrayIndices { pointer, prefix }
+                        }
+                    },
+                },
+            };
+            Ok(WorkflowToolDeclaration::new(
+                WorkflowToolDefinition {
+                    tool_id,
+                    revision: declaration.definition.revision,
+                    semantic_type: declaration.definition.semantic_type,
+                    tool: ToolSpec {
+                        name: tool_name,
+                        kind,
+                        parallelism,
+                        execution: harness::ToolExecutionSpec::default(),
+                    },
+                },
+                target,
+                completion,
+            ))
+        })
+        .collect::<Result<Vec<_>, AgentApiError>>()?;
+    Ok(ManagedSessionWorkflowTools {
+        version: input.version,
+        lifecycle_controller,
+        tools,
+    })
+}
+
+fn workflow_endpoint_from_api(input: WorkflowEndpointInput) -> WorkflowEndpointRef {
+    WorkflowEndpointRef {
+        workflow_id: input.workflow_id,
+        workflow_kind: input.workflow_kind,
+    }
+}
+
+fn parse_required_workflow_tool_blob_ref(
+    tool_id: &WorkflowToolId,
+    field: &str,
+    value: String,
+) -> Result<BlobRef, AgentApiError> {
+    BlobRef::parse(value).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid workflow tool {tool_id} {field}: {error}"))
+    })
+}
+
+fn parse_workflow_tool_blob_ref(
+    tool_id: &WorkflowToolId,
+    field: &str,
+    value: Option<String>,
+) -> Result<Option<BlobRef>, AgentApiError> {
+    value
+        .map(|value| parse_required_workflow_tool_blob_ref(tool_id, field, value))
+        .transpose()
+}
+
+fn run_terminal_notify_intents(
+    lifecycle_controller: Option<&WorkflowEndpointRef>,
+    notification: Option<RunTerminalNotificationInput>,
+    internal: Vec<harness::RunTerminalNotifyIntent>,
+) -> Result<Vec<harness::RunTerminalNotifyIntent>, AgentApiError> {
+    let Some(notification) = notification else {
+        return Ok(internal);
+    };
+    if !internal.is_empty() {
+        return Err(AgentApiError::invalid_request(
+            "run terminal notification cannot be combined with internal notify intents",
+        ));
+    }
+    let controller = lifecycle_controller.ok_or_else(|| {
+        AgentApiError::invalid_request(
+            "notifyOnTerminal requires a managed session lifecycle controller",
+        )
+    })?;
+    if notification.token.is_empty() {
+        return Err(AgentApiError::invalid_request(
+            "notifyOnTerminal token must not be empty",
+        ));
+    }
+    if notification.token.len() > MAX_RUN_TERMINAL_NOTIFICATION_TOKEN_BYTES {
+        return Err(AgentApiError::invalid_request(format!(
+            "notifyOnTerminal token is too long: {} bytes, max {}",
+            notification.token.len(),
+            MAX_RUN_TERMINAL_NOTIFICATION_TOKEN_BYTES
+        )));
+    }
+    Ok(vec![harness::RunTerminalNotifyIntent {
+        holder_workflow_id: controller.workflow_id.clone(),
+        token: notification.token,
+    }])
+}
+
+fn is_core_environment_job_tool_id(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        JOB_SUBMIT_WORKFLOW_TOOL_ID | JOB_RUN_WORKFLOW_TOOL_ID
+    )
+}
+
+fn is_core_environment_job_binding(binding: &harness::WorkflowToolBinding) -> bool {
+    is_core_environment_job_tool_id(binding.definition.tool_id.as_str())
+}
+
+fn is_core_subagent_binding(binding: &harness::WorkflowToolBinding) -> bool {
+    tools::subagents::is_subagent_workflow_tool_id(binding.definition.tool_id.as_str())
+}
+
+fn validate_subagent_deadline_for_existing_bindings(
+    state: &harness::CoreAgentState,
+    features: &harness::FeaturesConfig,
+) -> Result<(), AgentApiError> {
+    let Some(requested_deadline_ms) = features
+        .subagents
+        .as_ref()
+        .map(|subagents| subagents.limits.deadline_ms)
+    else {
+        return Ok(());
+    };
+    let existing_ceiling_ms = [
+        tools::subagents::AGENT_RUN_WORKFLOW_TOOL_ID,
+        tools::subagents::AGENT_SPAWN_WORKFLOW_TOOL_ID,
+    ]
+    .into_iter()
+    .filter_map(|tool_id| {
+        state
+            .workflow_tools
+            .bindings
+            .get(&WorkflowToolId::new(tool_id))
+    })
+    .filter_map(|binding| match binding.completion {
+        WorkflowToolCompletion::Joined {
+            deadline_after_ms, ..
+        } => Some(deadline_after_ms),
+        WorkflowToolCompletion::Promises {
+            deadline_after_ms, ..
+        } => deadline_after_ms,
+        WorkflowToolCompletion::Accepted => None,
+    })
+    .min();
+    if let Some(ceiling_ms) = existing_ceiling_ms
+        && requested_deadline_ms > ceiling_ms
+    {
+        return Err(AgentApiError::invalid_request(format!(
+            "subagents deadlineMs {requested_deadline_ms} exceeds this session's immutable binding ceiling of {ceiling_ms} ms; create a new session to use the 24-hour ceiling"
+        )));
+    }
+    Ok(())
+}
+
+/// The environments a batch of job handles addresses, each authorized once.
+/// A batch names at least one job.
+fn job_environments(
+    method: &str,
+    jobs: &[SessionJobHandleInput],
+) -> Result<Vec<ResourceRef>, AgentApiError> {
+    if jobs.is_empty() {
+        return Err(AgentApiError::invalid_request(format!(
+            "{method} requires at least one job"
+        )));
+    }
+    let environments: BTreeSet<&str> = jobs.iter().map(|job| job.environment_id.as_str()).collect();
+    Ok(environments
+        .into_iter()
+        .map(|id| ResourceRef::Environment(id.to_owned()))
+        .collect())
+}
+
+/// The MCP server an `mcp:<server_id>` OAuth client logs in to. That client
+/// is part of the server's configuration: seen with the server, changed by
+/// whoever may configure it.
+fn mcp_client_server(client_id: &str) -> Option<ResourceRef> {
+    client_id
+        .strip_prefix("mcp:")
+        .map(|server_id| ResourceRef::McpServer(server_id.to_owned()))
+}
+
+#[async_trait]
+impl AgentApiService for GatewayAgentApi {
+    async fn read_vfs_workspace_file(
+        &self,
+        params: VfsWorkspaceFileReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_VFS_WORKSPACES_FILES_READ,
+            Some(ResourceRef::Workspace(params.workspace_id.clone())),
+        )
+        .await?;
+        let path = vfs::VfsPath::parse(&params.path)
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        let workspace = self
+            .read_vfs_workspace_record(VfsWorkspaceReadParams {
+                workspace_id: params.workspace_id,
+            })
+            .await?;
+        let manifest =
+            vfs::read_snapshot_manifest(self.store.as_ref(), &workspace.head_snapshot_ref)
+                .await
+                .map_err(map_vfs_read_error)?;
+        let file = match vfs::lookup_snapshot_path(&manifest, &path) {
+            Ok(vfs::VfsNode::File(file)) => file,
+            Ok(_) => return Err(AgentApiError::invalid_request("path is not a file")),
+            Err(vfs::VfsError::NotFound { .. }) => {
+                return Err(AgentApiError::not_found("file not found"));
+            }
+            Err(error) => return Err(map_vfs_read_error(error)),
+        };
+        read_blob(
+            self.store.as_ref(),
+            BlobReadParams {
+                blob_ref: file.blob_ref.as_str().to_owned(),
+            },
+        )
+        .await
+        .map(AgentApiOutcome::new)
+    }
+
+    // ── Bots ────────────────────────────────────────────────────────────
+
+    async fn create_bot(
+        &self,
+        params: BotCreateParams,
+    ) -> Result<AgentApiOutcome<BotCreateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_CREATE,
+            Some(ResourceRef::Bot(params.bot.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        self.create_bot_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_bot(
+        &self,
+        params: BotPutParams,
+    ) -> Result<AgentApiOutcome<BotPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_PUT,
+            Some(ResourceRef::Bot(params.bot.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let bot = self
+            .put_bot_record(params.bot, params.expected_revision)
+            .await?;
+        Ok(AgentApiOutcome::new(BotPutResponse { bot: bot.view() }))
+    }
+
+    async fn read_bot(
+        &self,
+        params: BotReadParams,
+    ) -> Result<AgentApiOutcome<BotReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let bot = ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
+            .await
+            .map_err(crate::bots::map_bot_error)?;
+        let access = self
+            .access_summary(&ResourceRef::Bot(params.bot_id.as_str().to_owned()))
+            .await?;
+        Ok(AgentApiOutcome::new(BotReadResponse {
+            bot: bot.view(),
+            access,
+        }))
+    }
+
+    async fn list_bots(
+        &self,
+        params: BotListParams,
+    ) -> Result<AgentApiOutcome<BotListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BOTS_LIST, None).await?;
+        self.list_bot_roster(params).await.map(AgentApiOutcome::new)
+    }
+
+    async fn close_bot(
+        &self,
+        params: BotCloseParams,
+    ) -> Result<AgentApiOutcome<BotCloseResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_CLOSE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let bot = self.close_bot_record(&params.bot_id).await?;
+        Ok(AgentApiOutcome::new(BotCloseResponse { bot: bot.view() }))
+    }
+
+    async fn delete_bot(
+        &self,
+        params: BotDeleteParams,
+    ) -> Result<AgentApiOutcome<BotDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_DELETE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let (bot, deleted_sessions) = self.delete_bot_record(&params.bot_id).await?;
+        Ok(AgentApiOutcome::new(BotDeleteResponse {
+            bot: bot.view(),
+            deleted_sessions,
+        }))
+    }
+
+    async fn read_bot_state(
+        &self,
+        params: BotStateReadParams,
+    ) -> Result<AgentApiOutcome<BotStateReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_STATE_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let state = self.bot_state_view(&params.bot_id).await?;
+        Ok(AgentApiOutcome::new(BotStateReadResponse { state }))
+    }
+
+    async fn rotate_bot_session(
+        &self,
+        params: BotSessionRotateParams,
+    ) -> Result<AgentApiOutcome<BotSessionRotateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_SESSIONS_ROTATE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let accepted = self
+            .rotate_bot_session_record(&params.bot_id, &params.session_id)
+            .await?;
+        Ok(AgentApiOutcome::new(BotSessionRotateResponse { accepted }))
+    }
+
+    async fn put_bot_trigger(
+        &self,
+        params: BotTriggerPutParams,
+    ) -> Result<AgentApiOutcome<BotTriggerPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_PUT,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let record = self
+            .put_bot_trigger_record(&params.bot_id, params.trigger, params.expected_revision)
+            .await?;
+        Ok(AgentApiOutcome::new(BotTriggerPutResponse {
+            trigger: self.trigger_view(&record),
+        }))
+    }
+
+    async fn read_bot_trigger(
+        &self,
+        params: BotTriggerReadParams,
+    ) -> Result<AgentApiOutcome<BotTriggerReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let can_manage = self.may_manage_bot(&params.bot_id).await?;
+        let record = ::bots::BotTriggerStore::read_bot_trigger(
+            self.store.as_ref(),
+            &params.bot_id,
+            &params.trigger_id,
+        )
+        .await
+        .map_err(crate::bots::map_bot_error)?;
+        Ok(AgentApiOutcome::new(BotTriggerReadResponse {
+            trigger: if can_manage {
+                self.trigger_view(&record)
+            } else {
+                record.view(true, None)
+            },
+        }))
+    }
+
+    async fn list_bot_triggers(
+        &self,
+        params: BotTriggerListParams,
+    ) -> Result<AgentApiOutcome<BotTriggerListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_LIST,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let can_manage = self.may_manage_bot(&params.bot_id).await?;
+        ::bots::BotStore::read_bot(self.store.as_ref(), &params.bot_id)
+            .await
+            .map_err(crate::bots::map_bot_error)?;
+        let records =
+            ::bots::BotTriggerStore::list_bot_triggers(self.store.as_ref(), &params.bot_id)
+                .await
+                .map_err(crate::bots::map_bot_error)?;
+        Ok(AgentApiOutcome::new(BotTriggerListResponse {
+            triggers: records
+                .iter()
+                .map(|record| {
+                    if can_manage {
+                        self.trigger_view(record)
+                    } else {
+                        record.view(true, None)
+                    }
+                })
+                .collect(),
+        }))
+    }
+
+    async fn delete_bot_trigger(
+        &self,
+        params: BotTriggerDeleteParams,
+    ) -> Result<AgentApiOutcome<BotTriggerDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_TRIGGERS_DELETE,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let record = self
+            .delete_bot_trigger_record(&params.bot_id, &params.trigger_id)
+            .await?;
+        Ok(AgentApiOutcome::new(BotTriggerDeleteResponse {
+            trigger: self.trigger_view(&record),
+        }))
+    }
+
+    async fn admit_bot_event(
+        &self,
+        params: BotEventAdmitParams,
+    ) -> Result<AgentApiOutcome<BotEventAdmitResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_ADMIT,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let (record, duplicate) = self
+            .admit_bot_event_record(&params.bot_id, params.event)
+            .await?;
+        Ok(AgentApiOutcome::new(BotEventAdmitResponse {
+            event: record.view(),
+            duplicate,
+        }))
+    }
+
+    async fn replay_bot_event(
+        &self,
+        params: BotEventReplayParams,
+    ) -> Result<AgentApiOutcome<BotEventReplayResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_REPLAY,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let record = self
+            .replay_bot_event_record(&params.bot_id, params.seq)
+            .await?;
+        Ok(AgentApiOutcome::new(BotEventReplayResponse {
+            event: record.view(),
+        }))
+    }
+
+    async fn list_bot_events(
+        &self,
+        params: BotEventListParams,
+    ) -> Result<AgentApiOutcome<BotEventListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_LIST,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        let (records, next_cursor) = self
+            .list_bot_events_page(&params.bot_id, params.limit, params.cursor)
+            .await?;
+        Ok(AgentApiOutcome::new(BotEventListResponse {
+            events: records.iter().map(|record| record.view()).collect(),
+            next_cursor,
+        }))
+    }
+
+    async fn read_bot_event(
+        &self,
+        params: BotEventReadParams,
+    ) -> Result<AgentApiOutcome<BotEventReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_EVENTS_READ,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        self.read_bot_event_with_document(&params.bot_id, params.seq)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn test_bot_filter(
+        &self,
+        params: BotFilterTestParams,
+    ) -> Result<AgentApiOutcome<BotFilterTestResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_BOTS_FILTERS_TEST,
+            Some(ResourceRef::Bot(params.bot_id.as_str().to_owned())),
+        )
+        .await?;
+        self.test_bot_filter_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    // ── Channels ────────────────────────────────────────────────────────
+
+    async fn create_channel_account(
+        &self,
+        params: ChannelAccountCreateParams,
+    ) -> Result<AgentApiOutcome<ChannelAccountCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_CREATE, None)
+            .await?;
+        self.create_channel_account_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_channel_account(
+        &self,
+        params: ChannelAccountPutParams,
+    ) -> Result<AgentApiOutcome<ChannelAccountPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_PUT, None)
+            .await?;
+        self.put_channel_account_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_channel_account(
+        &self,
+        params: ChannelAccountReadParams,
+    ) -> Result<AgentApiOutcome<ChannelAccountReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_READ, None)
+            .await?;
+        self.read_channel_account_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_channel_accounts(
+        &self,
+        params: ChannelAccountListParams,
+    ) -> Result<AgentApiOutcome<ChannelAccountListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_LIST, None)
+            .await?;
+        self.list_channel_account_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn delete_channel_account(
+        &self,
+        params: ChannelAccountDeleteParams,
+    ) -> Result<AgentApiOutcome<ChannelAccountDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_ACCOUNTS_DELETE, None)
+            .await?;
+        self.delete_channel_account_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn admit_channel_inbound(
+        &self,
+        params: ChannelInboundAdmitParams,
+    ) -> Result<AgentApiOutcome<ChannelInboundAdmitResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_INBOUND_ADMIT, None)
+            .await?;
+        self.admit_channel_inbound_message(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_channel_pairings(
+        &self,
+        params: ChannelPairingListParams,
+    ) -> Result<AgentApiOutcome<ChannelPairingListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_PAIRINGS_LIST, None)
+            .await?;
+        self.list_channel_pairing_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn delete_channel_pairing(
+        &self,
+        params: ChannelPairingDeleteParams,
+    ) -> Result<AgentApiOutcome<ChannelPairingDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_PAIRINGS_DELETE, None)
+            .await?;
+        self.delete_channel_pairing_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_channel_conversation(
+        &self,
+        params: ChannelConversationReadParams,
+    ) -> Result<AgentApiOutcome<ChannelConversationReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_CHANNELS_CONVERSATIONS_READ, None)
+            .await?;
+        self.read_channel_conversation_snapshot(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn start_transcription(
+        &self,
+        params: TranscriptionStartParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        self.start_transcription_impl(params).await
+    }
+    async fn read_transcription(
+        &self,
+        params: TranscriptionReadParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        self.read_transcription_impl(params).await
+    }
+    async fn cancel_transcription(
+        &self,
+        params: TranscriptionCancelParams,
+    ) -> Result<AgentApiOutcome<TranscriptionResponse>, AgentApiError> {
+        self.cancel_transcription_impl(params).await
+    }
+
+    async fn read_model_defaults(
+        &self,
+        _params: api::ModelDefaultsReadParams,
+    ) -> Result<AgentApiOutcome<api::ModelDefaultsResponse>, AgentApiError> {
+        self.authorize_method(api::METHOD_MODELS_DEFAULTS_READ, None)
+            .await?;
+        let defaults = self
+            .store
+            .read_model_defaults()
+            .await
+            .map_err(model_defaults::map_store_error)?;
+        Ok(AgentApiOutcome::new(api::ModelDefaultsResponse {
+            defaults,
+        }))
+    }
+
+    async fn put_model_defaults(
+        &self,
+        params: api::ModelDefaultsPutParams,
+    ) -> Result<AgentApiOutcome<api::ModelDefaultsResponse>, AgentApiError> {
+        self.authorize_method(api::METHOD_MODELS_DEFAULTS_PUT, None)
+            .await?;
+        let defaults = self
+            .store
+            .put_model_defaults(params)
+            .await
+            .map_err(model_defaults::map_store_error)?;
+        Ok(AgentApiOutcome::new(api::ModelDefaultsResponse {
+            defaults,
+        }))
+    }
+
+    async fn list_models(
+        &self,
+        params: ModelListParams,
+    ) -> Result<AgentApiOutcome<ModelListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MODELS_LIST, None).await?;
+        Ok(AgentApiOutcome::new(
+            self.model_discovery.list(params.selectable_only).await,
+        ))
+    }
+
+    async fn initialize(
+        &self,
+        params: InitializeParams,
+    ) -> Result<AgentApiOutcome<InitializeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_INITIALIZE, None).await?;
+        let _capabilities = params.capabilities.unwrap_or(ClientCapabilities {
+            experimental_api: false,
+        });
+        let caller = crate::gateway::request_context::request_context()?.caller_access();
+        Ok(super::request_context::initialize_response(caller))
+    }
+
+    /// Idempotent on a client-supplied session id: when the session already
+    /// exists, the existing session view is returned (creation fields such as
+    /// config, metadata, profile, and retention are ignored).
+    /// This keeps a retried `session/start` + `session/runs/start` pair safe
+    /// end to end.
+    async fn start_session(
+        &self,
+        params: SessionStartParams,
+    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_START, None).await?;
+        self.start_session_internal(params, false, false, None)
+            .await
+    }
+
+    async fn start_managed_session(
+        &self,
+        params: ManagedSessionStartParams,
+    ) -> Result<AgentApiOutcome<SessionStartResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_MANAGED_START, None)
+            .await?;
+        let ManagedSessionStartParams {
+            session_id,
+            display_name,
+            metadata,
+            config,
+            profile,
+            delete_after_close_ms,
+            access,
+            workflow_tools,
+        } = params;
+        let workflow_tools = managed_workflow_tools_from_api(workflow_tools)?;
+        // The runtime signals these endpoints on the caller's behalf, so an
+        // endpoint inside the runtime's own `{universe}/…` namespace must be
+        // in the caller's universe; plugin workflows live outside it.
+        if let Some(controller) = &workflow_tools.lifecycle_controller {
+            self.require_universe_workflow_reference(
+                "lifecycleController.workflowId",
+                &controller.workflow_id,
+            )?;
+        }
+        for tool in &workflow_tools.tools {
+            if let Some(receiver) = tool.target.bound_receiver() {
+                self.require_universe_workflow_reference(
+                    &format!(
+                        "workflow tool {} receiver.workflowId",
+                        tool.definition.tool_id
+                    ),
+                    &receiver.workflow_id,
+                )?;
+            }
+        }
+        self.start_session_internal(
+            SessionStartParams {
+                session_id,
+                display_name,
+                metadata,
+                config,
+                profile,
+                delete_after_close_ms,
+                access,
+            },
+            false,
+            false,
+            Some(workflow_tools),
+        )
+        .await
+    }
+
+    async fn create_profile(
+        &self,
+        params: ProfileCreateParams,
+    ) -> Result<AgentApiOutcome<ProfileCreateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_CREATE,
+            Some(ResourceRef::Profile(
+                params.profile.profile_id.as_str().to_owned(),
+            )),
+        )
+        .await?;
+        self.create_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_profile(
+        &self,
+        params: ProfileReadParams,
+    ) -> Result<AgentApiOutcome<ProfileReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_READ,
+            Some(ResourceRef::Profile(params.profile_id.as_str().to_owned())),
+        )
+        .await?;
+        self.read_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_profiles(
+        &self,
+        params: ProfileListParams,
+    ) -> Result<AgentApiOutcome<ProfileListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_PROFILES_LIST, None).await?;
+        self.list_profile_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_profile(
+        &self,
+        params: ProfilePutParams,
+    ) -> Result<AgentApiOutcome<ProfilePutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_PUT,
+            Some(ResourceRef::Profile(
+                params.profile.profile_id.as_str().to_owned(),
+            )),
+        )
+        .await?;
+        self.put_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn delete_profile(
+        &self,
+        params: ProfileDeleteParams,
+    ) -> Result<AgentApiOutcome<ProfileDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_PROFILES_DELETE,
+            Some(ResourceRef::Profile(params.profile_id.as_str().to_owned())),
+        )
+        .await?;
+        self.delete_profile_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn apply_profile(
+        &self,
+        params: ProfileApplyParams,
+    ) -> Result<AgentApiOutcome<ProfileApplyResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_PROFILES_APPLY,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        self.apply_profile_to_session(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_session_config(
+        &self,
+        params: SessionConfigPutParams,
+    ) -> Result<AgentApiOutcome<SessionConfigPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONFIG_PUT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+            return Err(AgentApiError::rejected(
+                "session config can only change while no run is active or queued",
+            ));
+        }
+        if let Some(expected) = params.expected_config_revision {
+            let actual = loaded.state.lifecycle.config_revision;
+            if expected != actual {
+                return Err(AgentApiError::conflict(format!(
+                    "expected config revision {expected}, got {actual}"
+                )));
+            }
+        }
+        let mut config = harness_session_config_from_api(
+            params.config,
+            model_defaults::current_session_model(&loaded.state)?,
+        )?;
+        self.resolve_context_capacity(&mut config).await;
+        config
+            .validate()
+            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+        // Admission before resolution: everything attached must exist.
+        self.admit_attachments(&config.features).await?;
+        // Declared MCP links must resolve (catalog record, grant/policy
+        // compatibility) before the document enters the session log.
+        self.desired_mcp_tools(&config.features).await?;
+        self.validate_workspace_attachment_targets(&config.features)
+            .await?;
+        self.validate_subagent_agents(&config.features).await?;
+        validate_subagent_deadline_for_existing_bindings(&loaded.state, &config.features)?;
+        self.prepare_session_operation(
+            &session_id,
+            temporal_workflow::SessionOperation::Configure {
+                config,
+                expected_revision: Some(loaded.state.lifecycle.config_revision),
+            },
+        )
+        .await?;
+        let session = self.session_mutation_view_by_id(&session_id).await?;
+        Ok(AgentApiOutcome::new(SessionConfigPutResponse { session }))
+    }
+
+    async fn read_session(
+        &self,
+        params: SessionReadParams,
+    ) -> Result<AgentApiOutcome<SessionReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if let Some(status) = self.query_status_optional(&session_id).await?
+            && let Some(error) = status.last_error
+        {
+            return Err(AgentApiError::internal(format!(
+                "agent workflow reported error: {error}"
+            )));
+        }
+        let limit = match params.run_limit {
+            Some(0) => return Err(AgentApiError::invalid_request("runLimit must be positive")),
+            Some(limit) => (limit as usize).min(MAX_RUN_SUMMARY_LIMIT),
+            None => DEFAULT_RUN_SUMMARY_LIMIT,
+        };
+        let (session, next_run_cursor, has_older_runs) =
+            self.project_session_page_by_id(&session_id, limit).await?;
+        tracing::debug!(
+            session_id = %session_id,
+            summary_page_size = session.runs.len(),
+            preview_blob_reads_upper_bound = session.runs.len(),
+            has_older_runs,
+            "projected bounded session summary"
+        );
+        Ok(AgentApiOutcome::new(SessionReadResponse {
+            session,
+            next_run_cursor,
+            has_older_runs,
+        }))
+    }
+
+    async fn list_sessions(
+        &self,
+        params: SessionListParams,
+    ) -> Result<AgentApiOutcome<SessionListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_SESSION_LIST, None).await?;
+        let limit = match params.limit {
+            Some(0) => {
+                return Err(AgentApiError::invalid_request("limit must be positive"));
+            }
+            Some(limit) => (limit as usize).min(MAX_SESSION_LIST_LIMIT),
+            None => DEFAULT_SESSION_LIST_LIMIT,
+        };
+        let cursor = params
+            .cursor
+            .as_deref()
+            .map(decode_session_list_cursor)
+            .transpose()?;
+        let parent = params
+            .parent
+            .map(SessionId::try_new)
+            .transpose()
+            .map_err(|error| AgentApiError::invalid_request(format!("invalid parent: {error}")))?;
+        let trees = params
+            .trees
+            .into_iter()
+            .map(SessionId::try_new)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AgentApiError::invalid_request(format!("invalid trees: {error}")))?;
+        let filter = self.access_filter(store_pg::AccessFilter {
+            visible_to: params.visible_to,
+            within_root: None,
+        });
+        let page = self
+            .store
+            .list_sessions_for(
+                harness::storage::ListSessions {
+                    cursor,
+                    limit,
+                    closed: params.closed,
+                    managed: params.managed,
+                    subagent: params.subagent,
+                    parent,
+                    trees,
+                    metadata: params.metadata,
+                },
+                &filter,
+            )
+            .await
+            .map_err(map_session_store_error)?;
+        let mut sessions = Vec::with_capacity(page.sessions.len());
+        for (record, access) in page.sessions {
+            let root = self.load_retention_root(&record).await?;
+            sessions.push(session_summary_view(record, &root, access));
+        }
+        Ok(AgentApiOutcome::new(SessionListResponse {
+            sessions,
+            next_cursor: page.next_cursor.as_ref().map(encode_session_list_cursor),
+        }))
+    }
+
+    async fn rename_session(
+        &self,
+        params: SessionRenameParams,
+    ) -> Result<AgentApiOutcome<SessionRenameResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RENAME,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let record = self
+            .store
+            .set_session_display_name(&session_id, params.display_name)
+            .await
+            .map_err(map_session_store_error)?;
+        let root = self.load_retention_root(&record).await?;
+        Ok(AgentApiOutcome::new(SessionRenameResponse {
+            session: self.session_summary(record, &root).await?,
+        }))
+    }
+
+    async fn put_session_metadata(
+        &self,
+        params: SessionMetadataPutParams,
+    ) -> Result<AgentApiOutcome<SessionMetadataPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_METADATA_PUT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        validate_caller_metadata(&params.metadata)?;
+        let record = self
+            .store
+            .set_session_metadata(&session_id, params.metadata)
+            .await
+            .map_err(map_session_store_error)?;
+        let root = self.load_retention_root(&record).await?;
+        Ok(AgentApiOutcome::new(SessionMetadataPutResponse {
+            session: self.session_summary(record, &root).await?,
+        }))
+    }
+
+    async fn put_session_retention(
+        &self,
+        params: SessionRetentionPutParams,
+    ) -> Result<AgentApiOutcome<SessionRetentionPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RETENTION_PUT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        validate_delete_after_close_ms(params.delete_after_close_ms)?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let record = self
+            .store
+            .set_session_retention(&session_id, params.delete_after_close_ms)
+            .await
+            .map_err(map_session_store_error)?;
+        let root = record.clone();
+        Ok(AgentApiOutcome::new(SessionRetentionPutResponse {
+            session: self.session_summary(record, &root).await?,
+        }))
+    }
+
+    async fn read_session_events(
+        &self,
+        params: SessionEventsReadParams,
+    ) -> Result<AgentApiOutcome<SessionEventsReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_EVENTS_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        if params.direction == SessionEventDirection::Backward {
+            let response =
+                event_history::read(self.store.as_ref(), self.store.as_ref(), params).await?;
+            return Ok(AgentApiOutcome::new(response));
+        }
+        if params.before.is_some() {
+            return Err(AgentApiError::invalid_request(
+                "before requires backward direction",
+            ));
+        }
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        self.store
+            .load_session(&session_id)
+            .await
+            .map_err(map_session_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
+        let limit = event_page_limit(params.limit)?;
+        // Long-poll: clamp the requested wait to the server cap and park
+        // until an event lands past the cursor or the deadline passes. A
+        // `session/close` appends a lifecycle event, so parked readers
+        // observe closes as a normal wakeup.
+        let wait = Duration::from_millis(params.wait_ms.unwrap_or(0)).min(self.events_wait_cap);
+        let deadline = Instant::now() + wait;
+        loop {
+            let page = self
+                .store
+                .read_after(ReadSessionEvents {
+                    session_id: session_id.clone(),
+                    after: params
+                        .after
+                        .map(|cursor| harness::EventSeq::new(cursor.seq)),
+                    limit,
+                })
+                .await
+                .map_err(map_session_store_error)?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if page.entries.is_empty() && !remaining.is_zero() {
+                let poll = self
+                    .poll_interval
+                    .min(Duration::from_millis(250))
+                    .min(remaining);
+                tokio::time::sleep(poll).await;
+                continue;
+            }
+            let head_cursor = self
+                .store
+                .head(&session_id)
+                .await
+                .map_err(map_session_store_error)?
+                .map(|position| event_cursor(position.seq));
+            let codec = harness::CoreAgentCodec;
+            let mut events = Vec::with_capacity(page.entries.len());
+            for entry in &page.entries {
+                let entry = decode_stored_entry(&codec, entry)?;
+                events.push(self.projector().project_entry(&session_id, &entry).await?);
+            }
+
+            return Ok(AgentApiOutcome::new(SessionEventsReadResponse {
+                events,
+                next_cursor: page.next_after.map(event_cursor),
+                head_cursor,
+                complete: page.complete,
+                gap: None,
+            }));
+        }
+    }
+
+    async fn close_session(
+        &self,
+        params: SessionCloseParams,
+    ) -> Result<AgentApiOutcome<SessionCloseResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CLOSE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
+            return Ok(AgentApiOutcome::new(SessionCloseResponse {
+                session: self.session_mutation_view_by_id(&session_id).await?,
+            }));
+        }
+        if !params.force {
+            if loaded.state.runs.active.is_some() || !loaded.state.runs.queued.is_empty() {
+                return Err(AgentApiError::rejected(
+                    "session cannot close with active work",
+                ));
+            }
+            self.submit_core_command(&session_id, CoreAgentCommand::CloseSession { force: false })
+                .await?;
+            self.wait_for_closed_session(&session_id).await?;
+            let session = self.session_mutation_view_by_id(&session_id).await?;
+            return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
+        }
+
+        // Force path. Prefer the live workflow: it cancels active work,
+        // appends the close, observes closed+quiescent, and exits itself.
+        if self.workflow_is_running(&session_id).await {
+            let signalled = self
+                .submit_core_command(&session_id, CoreAgentCommand::CloseSession { force: true })
+                .await
+                .is_ok();
+            if signalled && self.wait_for_closed_session(&session_id).await.is_ok() {
+                let session = self.session_mutation_view_by_id(&session_id).await?;
+                return Ok(AgentApiOutcome::new(SessionCloseResponse { session }));
+            }
+            // The workflow exists but never converged: it is wedged (e.g. a
+            // permanently failing workflow task). Terminate it so the direct
+            // append below is the only writer, then reconcile the log.
+            let _ = self
+                .workflow_handle(&session_id)
+                .terminate(WorkflowTerminateOptions::default())
+                .await;
+        }
+        // No running workflow (operator terminate, bootstrap failure, or the
+        // terminate above): reconcile the session log directly. Session and
+        // run status are projections of the log, so this alone recovers the
+        // row; the expected-head CAS protects against a concurrent writer.
+        self.force_close_session_in_store(&session_id).await?;
+        let session = self.session_mutation_view_by_id(&session_id).await?;
+        Ok(AgentApiOutcome::new(SessionCloseResponse { session }))
+    }
+
+    async fn share_session(
+        &self,
+        params: SessionShareParams,
+    ) -> Result<AgentApiOutcome<SessionShareResponse>, AgentApiError> {
+        let resource = ResourceRef::Session(params.session_id);
+        self.authorize_method(METHOD_SESSION_SHARE, Some(resource.clone()))
+            .await?;
+        let store = self.access_store();
+        let internal =
+            |error: store_pg::AccessStoreError| AgentApiError::internal(error.to_string());
+        let access = store
+            .session_access(self.universe_id(), resource.id())
+            .await
+            .map_err(internal)?
+            .ok_or_else(|| authorization::not_found(&resource))?;
+        if access.root != resource {
+            return Err(AgentApiError::rejected(if access.bot.is_some() {
+                "a bot's session follows its bot, which is shared with the universe"
+            } else {
+                "a delegated session follows its root session: share that one"
+            }));
+        }
+        if !store
+            .share_session(self.universe_id(), resource.id())
+            .await
+            .map_err(internal)?
+        {
+            return Err(AgentApiError::rejected(
+                "the session is already shared with the universe",
+            ));
+        }
+        Ok(AgentApiOutcome::new(SessionShareResponse {
+            access: self.access_summary(&resource).await?,
+        }))
+    }
+
+    async fn delete_session(
+        &self,
+        params: SessionDeleteParams,
+    ) -> Result<AgentApiOutcome<SessionDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_DELETE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        if params.cascade {
+            self.authorize_session_subtree(&params.session_id, METHOD_SESSION_DELETE)
+                .await?;
+        }
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let target_before_delete = self
+            .store
+            .load_session(&session_id)
+            .await
+            .map_err(map_session_store_error)?
+            .ok_or_else(|| AgentApiError::not_found(format!("session not found: {session_id}")))?;
+        let root = self.load_retention_root(&target_before_delete).await?;
+        // The anchor goes with the session; capture what the view shows first.
+        let access = self
+            .access_summary(&ResourceRef::Session(session_id.as_str().to_owned()))
+            .await?;
+        let deleted = crate::session_deletion::delete_session_subtree(
+            self.store.as_ref(),
+            harness::storage::DeleteClosedSessions {
+                session_id: session_id.clone(),
+                cascade: params.cascade,
+                due_at_or_before_ms: None,
+            },
+            crate::session_deletion::SessionDeletionCause::Manual,
+        )
+        .await
+        .map_err(map_session_store_error)?;
+        Ok(AgentApiOutcome::new(SessionDeleteResponse {
+            session: session_summary_view(deleted.target, &root, access),
+            deleted_session_count: deleted.deleted_session_ids.len() as u64,
+        }))
+    }
+
+    async fn compact_context(
+        &self,
+        params: ContextCompactParams,
+    ) -> Result<AgentApiOutcome<ContextCompactResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_COMPACT,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let baseline_revision = loaded.state.context.revision;
+        let baseline_failures = self
+            .query_status_optional(&session_id)
+            .await?
+            .map(|status| status.admission_failures.len())
+            .unwrap_or(0);
+        self.submit_core_command(&session_id, CoreAgentCommand::CompactContext)
+            .await?;
+        self.wait_for_context_compaction_complete(
+            &session_id,
+            baseline_revision,
+            baseline_failures,
+        )
+        .await?;
+        let session = self.session_mutation_view_by_id(&session_id).await?;
+        Ok(AgentApiOutcome::new(ContextCompactResponse { session }))
+    }
+
+    async fn append_context(
+        &self,
+        params: ContextAppendParams,
+    ) -> Result<AgentApiOutcome<ContextAppendResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_APPEND,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        const MAX_CONTEXT_APPEND_ENTRIES: usize = 64;
+
+        enum PreparedAppend {
+            Ready {
+                key: ContextEntryKey,
+                input: ContextEntryInput,
+                /// Submitted text kept in hand so the response does not
+                /// re-read the blob it was just written from. Only valid for
+                /// the entry it produced (checked via `content_ref`).
+                text: Option<String>,
+            },
+            Failed(ContextAppendResult),
+        }
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.entries.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "session/context/append requires at least one entry",
+            ));
+        }
+        if params.entries.len() > MAX_CONTEXT_APPEND_ENTRIES {
+            return Err(AgentApiError::invalid_request(format!(
+                "session/context/append accepts at most {MAX_CONTEXT_APPEND_ENTRIES} entries per call"
+            )));
+        }
+
+        let mut prepared = Vec::with_capacity(params.entries.len());
+        let mut seen_keys = BTreeSet::new();
+        for entry in &params.entries {
+            let key = parse_client_context_key(entry.key.clone())?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate context key in append batch: {key}"
+                )));
+            }
+            match context_entry_input_from_api(self.store.as_ref(), &entry.item).await {
+                Ok(input) => {
+                    let text = match &entry.item {
+                        InputItem::Text { text, .. } => Some(text.trim().to_owned()),
+                        _ => None,
+                    };
+                    prepared.push(PreparedAppend::Ready { key, input, text });
+                }
+                Err(error) if matches!(entry.item, InputItem::Media { .. }) => {
+                    prepared.push(PreparedAppend::Failed(context_append_failed_result(
+                        key.as_str().to_owned(),
+                        input_admission_failure_from_api_error(error),
+                    )));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let mut ordered = Vec::with_capacity(prepared.len());
+        let mut pending = Vec::new();
+        for prepared in prepared {
+            match prepared {
+                PreparedAppend::Failed(result) => ordered.push(PreparedAppend::Failed(result)),
+                PreparedAppend::Ready { key, input, text } => {
+                    if let Some(active) = harness::current_context_entry(&loaded.state, &key)
+                        .filter(|active| active_context_entry_matches_input(active, &input))
+                    {
+                        let effective = active_entry_input(active);
+                        let text = text
+                            .filter(|_| effective.content.content_ref == input.content.content_ref);
+                        ordered.push(PreparedAppend::Ready {
+                            key,
+                            input: effective,
+                            text,
+                        });
+                    } else {
+                        ordered.push(PreparedAppend::Ready {
+                            key: key.clone(),
+                            input: input.clone(),
+                            text,
+                        });
+                        pending.push((key, input));
+                    }
+                }
+            }
+        }
+        let (context_revision, outcomes) = if pending.is_empty() {
+            (loaded.state.context.revision, BTreeMap::new())
+        } else {
+            let correlations = self
+                .submit_correlated_context_commands(
+                    &session_id,
+                    pending
+                        .iter()
+                        .map(|(key, entry)| CoreAgentCommand::UpsertContext {
+                            expected_revision: None,
+                            key: key.clone(),
+                            entry: entry.clone(),
+                        })
+                        .collect(),
+                )
+                .await?;
+            self.wait_for_context_append_outcomes(&session_id, &pending, &correlations)
+                .await?
+        };
+        let mut response_results = Vec::with_capacity(ordered.len());
+        for item in ordered {
+            match item {
+                PreparedAppend::Failed(result) => response_results.push(result),
+                PreparedAppend::Ready { key, input, text } => {
+                    let result = match outcomes.get(&key) {
+                        Some(ContextAppendWaitOutcome::Applied { entry }) => {
+                            let text = text
+                                .as_deref()
+                                .filter(|_| entry.content.content_ref == input.content.content_ref);
+                            context_append_result(
+                                self.store.as_ref(),
+                                key.as_str().to_owned(),
+                                ContextAppendStatus::Applied,
+                                entry,
+                                text,
+                            )
+                            .await?
+                        }
+                        Some(ContextAppendWaitOutcome::Failed { failure }) => {
+                            context_append_failed_result(
+                                key.as_str().to_owned(),
+                                input_admission_failure_from_workflow(failure),
+                            )
+                        }
+                        None => {
+                            context_append_result(
+                                self.store.as_ref(),
+                                key.as_str().to_owned(),
+                                ContextAppendStatus::Unchanged,
+                                &input,
+                                text.as_deref(),
+                            )
+                            .await?
+                        }
+                    };
+                    response_results.push(result);
+                }
+            }
+        }
+        Ok(AgentApiOutcome::new(ContextAppendResponse {
+            context_revision,
+            results: response_results,
+        }))
+    }
+
+    async fn replace_context(
+        &self,
+        params: ContextReplaceParams,
+    ) -> Result<AgentApiOutcome<ContextReplaceResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_REPLACE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        const MAX_CONTEXT_REPLACE_ENTRIES: usize = 64;
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.entries.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "session/context/replace requires at least one entry",
+            ));
+        }
+        if params.entries.len() > MAX_CONTEXT_REPLACE_ENTRIES {
+            return Err(AgentApiError::invalid_request(format!(
+                "session/context/replace accepts at most {MAX_CONTEXT_REPLACE_ENTRIES} entries per call"
+            )));
+        }
+        // Items convert like `session/context/append`: media problems fail
+        // their entry, any other invalid item fails the request.
+        let mut converted = Vec::with_capacity(params.entries.len());
+        for entry in &params.entries {
+            let entry_id = api_projection::parse_api_item_id(&entry.entry_id)?;
+            if converted.iter().any(|(id, _, _)| *id == entry_id) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate entry id in replace batch: {}",
+                    entry.entry_id
+                )));
+            }
+            if matches!(entry.item, InputItem::Catalog { .. }) {
+                return Err(AgentApiError::invalid_request(
+                    "session/context/replace items are text, textRef, or media",
+                ));
+            }
+            let input = match context_entry_input_from_api(self.store.as_ref(), &entry.item).await {
+                Ok(input) => Ok(input),
+                Err(error) if matches!(entry.item, InputItem::Media { .. }) => {
+                    Err(input_admission_failure_from_api_error(error))
+                }
+                Err(error) => return Err(error),
+            };
+            converted.push((entry_id, entry, input));
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        if loaded.state.runs.active.is_some() {
+            return Err(AgentApiError::rejected(
+                "context entries cannot be replaced while a run is active",
+            ));
+        }
+        let mut outcomes = Vec::with_capacity(converted.len());
+        let mut pending = BTreeMap::new();
+        for (entry_id, entry, input) in converted {
+            let outcome = match (
+                input,
+                loaded
+                    .state
+                    .context
+                    .entries
+                    .iter()
+                    .find(|active| active.entry_id == entry_id),
+            ) {
+                (Err(failure), _) => (ContextReplaceStatus::Failed, Some(failure)),
+                (Ok(_), None) => (ContextReplaceStatus::Absent, None),
+                (Ok(input), Some(active)) => match replacement_input(active, input, &entry.item) {
+                    Err(failure) => (ContextReplaceStatus::Failed, Some(failure)),
+                    Ok(input) if input.content == active.content => {
+                        (ContextReplaceStatus::Unchanged, None)
+                    }
+                    Ok(input) => {
+                        pending.insert(entry_id, input);
+                        (ContextReplaceStatus::Replaced, None)
+                    }
+                },
+            };
+            outcomes.push((entry_id, entry.entry_id.clone(), outcome));
+        }
+
+        let mut context_revision = loaded.state.context.revision;
+        if !pending.is_empty() {
+            let expected = pending
+                .iter()
+                .map(|(entry_id, input)| (*entry_id, input.content.clone()))
+                .collect::<Vec<_>>();
+            let correlation_token = format!("admit_{}", uuid::Uuid::new_v4().simple());
+            self.signal_submit_admissions(
+                &session_id,
+                vec![AgentAdmission {
+                    command: CoreAgentCommand::ReplaceContextEntries {
+                        expected_revision: Some(loaded.state.context.revision),
+                        entries: pending.clone(),
+                    },
+                    correlation_token: Some(correlation_token.clone()),
+                }],
+            )
+            .await?;
+            let (revision, failure) = self
+                .wait_for_context_entries_replaced(&session_id, &expected, &correlation_token)
+                .await?;
+            context_revision = revision;
+            // The command is atomic: a refusal fails every entry it carried.
+            if let Some(failure) = failure {
+                let failure = input_admission_failure_from_workflow(&failure);
+                for (entry_id, _, outcome) in &mut outcomes {
+                    if pending.contains_key(entry_id) {
+                        *outcome = (ContextReplaceStatus::Failed, Some(failure.clone()));
+                    }
+                }
+            }
+        }
+        let results = outcomes
+            .into_iter()
+            .map(|(_, entry_id, (status, failure))| ContextReplaceResult {
+                entry_id,
+                status,
+                failure,
+            })
+            .collect();
+        Ok(AgentApiOutcome::new(ContextReplaceResponse {
+            context_revision,
+            results,
+        }))
+    }
+
+    async fn remove_context(
+        &self,
+        params: ContextRemoveParams,
+    ) -> Result<AgentApiOutcome<ContextRemoveResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_CONTEXT_REMOVE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        const MAX_CONTEXT_REMOVE_KEYS: usize = 64;
+
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        if params.keys.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "session/context/remove requires at least one key",
+            ));
+        }
+        if params.keys.len() > MAX_CONTEXT_REMOVE_KEYS {
+            return Err(AgentApiError::invalid_request(format!(
+                "session/context/remove accepts at most {MAX_CONTEXT_REMOVE_KEYS} keys per call"
+            )));
+        }
+        let mut keys = Vec::with_capacity(params.keys.len());
+        let mut seen_keys = BTreeSet::new();
+        for key in params.keys {
+            let key = parse_client_context_key(key)?;
+            if !seen_keys.insert(key.clone()) {
+                return Err(AgentApiError::invalid_request(format!(
+                    "duplicate context key in remove batch: {key}"
+                )));
+            }
+            keys.push(key);
+        }
+
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let mut pending = Vec::new();
+        let mut absent = BTreeSet::new();
+        for key in &keys {
+            let present = loaded
+                .state
+                .context
+                .entries
+                .iter()
+                .any(|entry| entry.key.as_ref() == Some(key));
+            if present {
+                pending.push(key.clone());
+            } else {
+                absent.insert(key.clone());
+            }
+        }
+        let (context_revision, outcomes) = if pending.is_empty() {
+            (loaded.state.context.revision, BTreeMap::new())
+        } else {
+            let correlations = self
+                .submit_correlated_context_commands(
+                    &session_id,
+                    pending
+                        .iter()
+                        .map(|key| CoreAgentCommand::RemoveContext {
+                            expected_revision: None,
+                            key: key.clone(),
+                        })
+                        .collect(),
+                )
+                .await?;
+            self.wait_for_context_keys_removed(&session_id, &pending, &correlations)
+                .await?
+        };
+        let results = keys
+            .into_iter()
+            .map(|key| {
+                if absent.contains(&key) {
+                    return ContextRemoveResult {
+                        key: key.as_str().to_owned(),
+                        status: ContextRemoveStatus::Absent,
+                        failure: None,
+                    };
+                }
+                match outcomes.get(&key) {
+                    Some(Some(failure)) => ContextRemoveResult {
+                        key: key.as_str().to_owned(),
+                        status: ContextRemoveStatus::Failed,
+                        failure: Some(input_admission_failure_from_workflow(failure)),
+                    },
+                    _ => ContextRemoveResult {
+                        key: key.as_str().to_owned(),
+                        status: ContextRemoveStatus::Removed,
+                        failure: None,
+                    },
+                }
+            })
+            .collect();
+        Ok(AgentApiOutcome::new(ContextRemoveResponse {
+            context_revision,
+            results,
+        }))
+    }
+
+    async fn start_run(
+        &self,
+        params: RunStartParams,
+    ) -> Result<AgentApiOutcome<RunStartResponse>, AgentApiError> {
+        self.start_run_internal(params, Vec::new()).await
+    }
+
+    async fn list_runs(
+        &self,
+        params: RunListParams,
+    ) -> Result<AgentApiOutcome<RunListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_LIST,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let limit = match params.limit {
+            Some(0) => return Err(AgentApiError::invalid_request("limit must be positive")),
+            Some(limit) => (limit as usize).min(MAX_RUN_SUMMARY_LIMIT),
+            None => DEFAULT_RUN_SUMMARY_LIMIT,
+        };
+        let cursor = params.cursor.as_deref().map(parse_api_run_id).transpose()?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let (runs, next_cursor, has_older_runs) = self
+            .projector()
+            .project_run_summaries(&loaded.state, cursor, limit)
+            .await?;
+        tracing::debug!(
+            session_id = %session_id,
+            summary_page_size = runs.len(),
+            preview_blob_reads_upper_bound = runs.len(),
+            has_older_runs,
+            "projected run summary page"
+        );
+        Ok(AgentApiOutcome::new(RunListResponse {
+            runs,
+            next_cursor,
+            has_older_runs,
+        }))
+    }
+
+    async fn read_run(
+        &self,
+        params: RunReadParams,
+    ) -> Result<AgentApiOutcome<RunReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_READ,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let run_id = parse_api_run_id(&params.run_id)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        let run = self.project_loaded_run(&loaded, run_id).await?;
+        tracing::debug!(
+            session_id = %session_id,
+            run_id = run_id.as_u64(),
+            detail_entries = run.entries.len(),
+            "projected complete run detail"
+        );
+        Ok(AgentApiOutcome::new(RunReadResponse { run }))
+    }
+
+    async fn cancel_run(
+        &self,
+        params: RunCancelParams,
+    ) -> Result<AgentApiOutcome<RunCancelResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_CANCEL,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let requested_run_id = parse_api_run_id(&params.run_id)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        match loaded.state.runs.active.as_ref() {
+            Some(active)
+                if active.run_id == requested_run_id
+                    && matches!(
+                        active.status,
+                        RunStatus::Active | RunStatus::Parked | RunStatus::Cancelling
+                    ) => {}
+            Some(active) if active.run_id == requested_run_id => {
+                return Err(AgentApiError::rejected(format!(
+                    "run is not cancellable: {}",
+                    params.run_id
+                )));
+            }
+            _ if loaded
+                .state
+                .runs
+                .queued
+                .iter()
+                .any(|run| run.run_id == requested_run_id) => {}
+            _ if loaded
+                .state
+                .runs
+                .completed
+                .iter()
+                .any(|run| run.run_id == requested_run_id) =>
+            {
+                return Err(AgentApiError::rejected(format!(
+                    "run is already terminal: {}",
+                    params.run_id
+                )));
+            }
+            _ => {
+                return Err(AgentApiError::not_found(format!(
+                    "run not found: {}",
+                    params.run_id
+                )));
+            }
+        }
+        self.submit_core_command(
+            &session_id,
+            CoreAgentCommand::CancelRun {
+                run_id: requested_run_id,
+                requested_by: self.requested_by()?,
+            },
+        )
+        .await?;
+        let run = self
+            .wait_for_cancelled_run(&session_id, requested_run_id)
+            .await?;
+        Ok(AgentApiOutcome::new(RunCancelResponse { run }))
+    }
+
+    async fn decide_run_approvals(
+        &self,
+        params: RunApprovalsDecideParams,
+    ) -> Result<AgentApiOutcome<RunApprovalsDecideResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_APPROVALS_DECIDE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        const MAX_DECISIONS: usize = 64;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let run_id = parse_api_run_id(&params.run_id)?;
+        if params.decisions.is_empty() || params.decisions.len() > MAX_DECISIONS {
+            return Err(AgentApiError::invalid_request(format!(
+                "session/runs/approvals/decide requires 1 to {MAX_DECISIONS} decisions"
+            )));
+        }
+        let loaded = self.load_session_state(&session_id).await?;
+        let Some(active) = loaded.state.runs.active.as_ref() else {
+            return Err(AgentApiError::rejected(format!(
+                "run is not active: {}",
+                params.run_id
+            )));
+        };
+        if active.run_id != run_id
+            || !matches!(active.status, RunStatus::Active | RunStatus::Parked)
+        {
+            return Err(AgentApiError::rejected(format!(
+                "run is not accepting approval decisions: {}",
+                params.run_id
+            )));
+        }
+
+        let decided_by = self.requested_by()?;
+        let mut seen = BTreeSet::new();
+        let mut results = Vec::with_capacity(params.decisions.len());
+        for input in params.decisions {
+            let approval_id = match ApprovalId::try_new(input.approval_id.clone()) {
+                Ok(id) => id,
+                Err(error) => {
+                    results.push(approval_decision_failure(
+                        input.approval_id,
+                        ApprovalDecisionFailureKind::InvalidId,
+                        error.to_string(),
+                    ));
+                    continue;
+                }
+            };
+            if !seen.insert(approval_id.clone()) {
+                results.push(approval_decision_failure(
+                    input.approval_id,
+                    ApprovalDecisionFailureKind::Duplicate,
+                    "duplicate approval id in decision batch",
+                ));
+                continue;
+            }
+            if let Err(error) = harness::validate_note(input.note.as_deref()) {
+                results.push(approval_decision_failure(
+                    input.approval_id,
+                    ApprovalDecisionFailureKind::InvalidNote,
+                    error.to_string(),
+                ));
+                continue;
+            }
+            let Some(record) = active.approvals.get(&approval_id) else {
+                results.push(approval_decision_failure(
+                    input.approval_id,
+                    ApprovalDecisionFailureKind::Unknown,
+                    "approval was not found for the active run",
+                ));
+                continue;
+            };
+            if record.request.run_id != run_id {
+                results.push(approval_decision_failure(
+                    input.approval_id,
+                    ApprovalDecisionFailureKind::ForeignRun,
+                    "approval belongs to a different run",
+                ));
+                continue;
+            }
+            if record.status != harness::ApprovalStatus::Pending {
+                let kind = if record.status == harness::ApprovalStatus::Cancelled {
+                    ApprovalDecisionFailureKind::Cancelled
+                } else {
+                    ApprovalDecisionFailureKind::AlreadyDecided
+                };
+                results.push(approval_decision_failure(
+                    input.approval_id,
+                    kind,
+                    "approval is already terminal",
+                ));
+                continue;
+            }
+            let harness_decision = match input.decision {
+                ApprovalDecisionKind::Approve => harness::ApprovalDecision::Approved,
+                ApprovalDecisionKind::Reject => harness::ApprovalDecision::Rejected,
+            };
+            let approve = harness_decision == harness::ApprovalDecision::Approved;
+            let response = match &record.request.continuation {
+                harness::ApprovalContinuation::OpenAiMcp {
+                    provider_request_id,
+                } => {
+                    let response_json = serde_json::json!({
+                        "type": "mcp_approval_response",
+                        "approval_request_id": provider_request_id,
+                        "approve": approve,
+                    });
+                    let response_ref = self
+                        .store
+                        .put_bytes(serde_json::to_vec(&response_json).map_err(|error| {
+                            AgentApiError::internal(format!(
+                                "encode MCP approval response: {error}"
+                            ))
+                        })?)
+                        .await
+                        .map_err(|error| AgentApiError::internal(error.to_string()))?;
+                    Some(ContextEntryInput {
+                        kind: ContextEntryKind::McpApprovalResponse {
+                            approval_request_id: provider_request_id.clone(),
+                            approve,
+                        },
+                        content: harness::ContentRef {
+                            content_ref: response_ref,
+                            media_type: Some("application/json".to_owned()),
+                            provider_kind: Some(
+                                "openai.responses.mcp_approval_response".to_owned(),
+                            ),
+                        },
+                        preview: Some(
+                            if approve {
+                                "MCP tool call approved"
+                            } else {
+                                "MCP tool call rejected"
+                            }
+                            .to_owned(),
+                        ),
+                        origin: None,
+                        provenance_ref: None,
+                        token_estimate: None,
+                    })
+                }
+                harness::ApprovalContinuation::NativeMcp { .. } => None,
+            };
+            let correlation = format!("approval_{}", uuid::Uuid::new_v4().simple());
+            self.signal_submit_admissions(
+                &session_id,
+                vec![AgentAdmission {
+                    command: CoreAgentCommand::DecideApproval(harness::ApprovalDecisionCommand {
+                        approval_id: approval_id.clone(),
+                        run_id,
+                        decision: harness_decision,
+                        note: input.note,
+                        decided_by: decided_by.clone(),
+                        response,
+                    }),
+                    correlation_token: Some(correlation.clone()),
+                }],
+            )
+            .await?;
+            match self
+                .wait_for_approval_decision(&session_id, run_id, &approval_id, &correlation)
+                .await
+            {
+                Ok(()) => results.push(ApprovalDecisionResult {
+                    approval_id: approval_id.as_str().to_owned(),
+                    status: ApprovalDecisionStatus::Decided,
+                    failure: None,
+                }),
+                Err(error) => results.push(approval_decision_failure(
+                    approval_id.as_str().to_owned(),
+                    ApprovalDecisionFailureKind::Rejected,
+                    error.message,
+                )),
+            }
+        }
+        let run = self.project_run_by_id(&session_id, run_id).await?;
+        Ok(AgentApiOutcome::new(RunApprovalsDecideResponse {
+            results,
+            run,
+        }))
+    }
+
+    /// Steer the active run. The steering is admitted against the
+    /// live drive — between drive actions or while a model/tool activity is
+    /// in flight — and materializes at the run's next turn boundary. A
+    /// parked run accepts steering without waking.
+    async fn steer_run(
+        &self,
+        params: RunSteerParams,
+    ) -> Result<AgentApiOutcome<RunSteerResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_RUNS_STEER,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let requested_run_id = parse_api_run_id(&params.run_id)?;
+        if params.items.is_empty() {
+            return Err(AgentApiError::invalid_request(
+                "session/runs/steer requires at least one input item",
+            ));
+        }
+        let loaded = self.load_session_state(&session_id).await?;
+        if loaded.state.lifecycle.status != CoreAgentStatus::Open {
+            return Err(AgentApiError::rejected(format!(
+                "session is not open: {session_id}"
+            )));
+        }
+        let steering_baseline = match loaded.state.runs.active.as_ref() {
+            Some(active)
+                if active.run_id == requested_run_id
+                    && matches!(active.status, RunStatus::Active | RunStatus::Parked) =>
+            {
+                active.steering.len()
+            }
+            Some(active) if active.run_id == requested_run_id => {
+                return Err(AgentApiError::rejected(format!(
+                    "run is not accepting steering: {}",
+                    params.run_id
+                )));
+            }
+            _ if loaded
+                .state
+                .runs
+                .queued
+                .iter()
+                .any(|run| run.run_id == requested_run_id) =>
+            {
+                return Err(AgentApiError::rejected(format!(
+                    "run is queued and cannot be steered yet: {}",
+                    params.run_id
+                )));
+            }
+            _ if loaded
+                .state
+                .runs
+                .completed
+                .iter()
+                .any(|run| run.run_id == requested_run_id) =>
+            {
+                return Err(AgentApiError::rejected(format!(
+                    "run is already terminal: {}",
+                    params.run_id
+                )));
+            }
+            _ => {
+                return Err(AgentApiError::not_found(format!(
+                    "run not found: {}",
+                    params.run_id
+                )));
+            }
+        };
+        let input = run_input_from_api(self.store.as_ref(), &params.items).await?;
+        let correlation_token = format!("steer_{}", uuid::Uuid::new_v4().simple());
+        self.signal_submit_admissions(
+            &session_id,
+            vec![AgentAdmission {
+                command: CoreAgentCommand::RequestRunSteering {
+                    run_id: requested_run_id,
+                    input,
+                    requested_by: self.requested_by()?,
+                },
+                correlation_token: Some(correlation_token.clone()),
+            }],
+        )
+        .await?;
+        let steering_id = self
+            .wait_for_steering_accepted(
+                &session_id,
+                requested_run_id,
+                steering_baseline,
+                &correlation_token,
+            )
+            .await?;
+        let run = self
+            .project_run_by_id(&session_id, requested_run_id)
+            .await?;
+        Ok(AgentApiOutcome::new(RunSteerResponse {
+            steering_id: api_steering_id(steering_id),
+            run,
+        }))
+    }
+
+    async fn list_skills(
+        &self,
+        params: SkillListParams,
+    ) -> Result<AgentApiOutcome<SkillListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_SKILLS_LIST,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = if self.may_control_session(&session_id).await? {
+            self.load_session_state_with_current_skill_catalog(&session_id)
+                .await?
+        } else {
+            self.load_session_state(&session_id).await?
+        };
+        Ok(AgentApiOutcome::new(
+            self.project_skill_list(&loaded).await?,
+        ))
+    }
+
+    async fn create_environment(
+        &self,
+        params: EnvironmentCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_CREATE, None)
+            .await?;
+        self.create_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment(
+        &self,
+        params: EnvironmentReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_READ,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.environment_service()
+            .read_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environments(
+        &self,
+        params: EnvironmentListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_LIST, None)
+            .await?;
+        self.list_environment_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn close_environment(
+        &self,
+        params: EnvironmentCloseParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCloseResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_CLOSE,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.close_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_external_environment(
+        &self,
+        params: EnvironmentExternalCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentExternalCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_EXTERNAL_CREATE, None)
+            .await?;
+        self.create_external_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE, None)
+            .await?;
+        self.create_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ, None)
+            .await?;
+        self.read_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_registration_keys(
+        &self,
+        params: EnvironmentRegistrationKeyListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST, None)
+            .await?;
+        self.list_environment_registration_key_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn revoke_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyRevokeParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRevokeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE, None)
+            .await?;
+        self.revoke_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_environment_ingress(
+        &self,
+        params: EnvironmentIngressPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentIngressPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_INGRESS_PUT,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.put_environment_ingress_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_environment_power(
+        &self,
+        params: EnvironmentPowerPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_POWER_PUT,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.put_environment_power_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_environment_idle_policy(
+        &self,
+        params: EnvironmentIdlePolicyPutParams,
+    ) -> Result<AgentApiOutcome<EnvironmentIdlePolicyPutResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_IDLE_POLICY_PUT,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.put_environment_idle_policy_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn activate_session_environment(
+        &self,
+        params: SessionEnvironmentActivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentActivateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_ENVIRONMENTS_ACTIVATE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "environment activation")?;
+        self.selectable_environment_for_session(&loaded.state, &environment_id)
+            .await?;
+
+        if loaded.state.environment.active_environment_id.as_ref() != Some(&environment_id) {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_command(
+                &session_id,
+                activate_environment_command(environment_id.clone()),
+            )
+            .await?;
+            self.wait_for_active_environment(&session_id, Some(&environment_id), baseline_failures)
+                .await?;
+        }
+        Ok(AgentApiOutcome::new(SessionEnvironmentActivateResponse {
+            session: self.project_session_by_id(&session_id).await?,
+        }))
+    }
+
+    async fn deactivate_session_environment(
+        &self,
+        params: SessionEnvironmentDeactivateParams,
+    ) -> Result<AgentApiOutcome<SessionEnvironmentDeactivateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_SESSION_ENVIRONMENTS_DEACTIVATE,
+            Some(ResourceRef::Session(params.session_id.clone())),
+        )
+        .await?;
+        let session_id = SessionId::try_new(params.session_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid session id: {error}"))
+        })?;
+        let loaded = self.load_session_state(&session_id).await?;
+        self.require_open_idle_session(&session_id, &loaded, "environment deactivation")?;
+
+        if loaded.state.environment.active_environment_id.is_some() {
+            let baseline_failures = self
+                .query_status_optional(&session_id)
+                .await?
+                .map(|status| status.admission_failures.len())
+                .unwrap_or(0);
+            self.submit_core_command(&session_id, deactivate_environment_command())
+                .await?;
+            self.wait_for_active_environment(&session_id, None, baseline_failures)
+                .await?;
+        }
+        Ok(AgentApiOutcome::new(SessionEnvironmentDeactivateResponse {
+            session: self.project_session_by_id(&session_id).await?,
+        }))
+    }
+
+    async fn bind_environment_credential(
+        &self,
+        params: EnvironmentCredentialBindParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCredentialBindResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_CREDENTIALS_BIND,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.bind_environment_credential_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_credentials(
+        &self,
+        params: EnvironmentCredentialListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCredentialListResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_CREDENTIALS_LIST,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.list_environment_credential_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn unbind_environment_credential(
+        &self,
+        params: EnvironmentCredentialUnbindParams,
+    ) -> Result<AgentApiOutcome<EnvironmentCredentialUnbindResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.unbind_environment_credential_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_environment_jobs(
+        &self,
+        params: EnvironmentJobCreateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobCreateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_JOBS_CREATE,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.create_environment_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment_jobs(
+        &self,
+        params: EnvironmentJobReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobReadResponse>, AgentApiError> {
+        for environment in job_environments(METHOD_ENVIRONMENTS_JOBS_READ, &params.jobs)? {
+            self.authorize_method(METHOD_ENVIRONMENTS_JOBS_READ, Some(environment))
+                .await?;
+        }
+        self.read_environment_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn cancel_environment_jobs(
+        &self,
+        params: EnvironmentJobCancelParams,
+    ) -> Result<AgentApiOutcome<EnvironmentJobCancelResponse>, AgentApiError> {
+        for environment in job_environments(METHOD_ENVIRONMENTS_JOBS_CANCEL, &params.jobs)? {
+            self.authorize_method(METHOD_ENVIRONMENTS_JOBS_CANCEL, Some(environment))
+                .await?;
+        }
+        self.cancel_environment_job_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_provider_bindings(
+        &self,
+        params: EnvironmentProviderBindingListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, None)
+            .await?;
+        self.list_environment_provider_binding_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment_provider_binding(
+        &self,
+        params: EnvironmentProviderBindingReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentProviderBindingReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ, None)
+            .await?;
+        self.read_environment_provider_binding_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn list_environment_templates(
+        &self,
+        params: EnvironmentTemplateListParams,
+    ) -> Result<AgentApiOutcome<EnvironmentTemplateListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_TEMPLATES_LIST, None)
+            .await?;
+        self.list_environment_template_records(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_environment_template(
+        &self,
+        params: EnvironmentTemplateReadParams,
+    ) -> Result<AgentApiOutcome<EnvironmentTemplateReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_TEMPLATES_READ, None)
+            .await?;
+        self.read_environment_template_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn put_blobs(
+        &self,
+        params: BlobPutParams,
+    ) -> Result<AgentApiOutcome<BlobPutResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BLOBS_PUT, None).await?;
+        put_blobs(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn read_blob(
+        &self,
+        params: BlobReadParams,
+    ) -> Result<AgentApiOutcome<BlobReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BLOBS_READ, None).await?;
+        read_blob(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn has_blobs(
+        &self,
+        params: BlobHasParams,
+    ) -> Result<AgentApiOutcome<BlobHasResponse>, AgentApiError> {
+        self.authorize_method(METHOD_BLOBS_HAS, None).await?;
+        has_blobs(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn commit_vfs_snapshot(
+        &self,
+        params: VfsSnapshotCommitParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotCommitResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_SNAPSHOTS_COMMIT, None)
+            .await?;
+        let response =
+            commit_vfs_snapshot(self.store.as_ref(), Some(self.store.as_ref()), params).await?;
+        let snapshot_ref = parse_blob_ref(&response.snapshot_ref)?;
+        self.record_vfs_snapshot(
+            snapshot_ref,
+            VfsSnapshotSource::new("api_commit").with_subject("vfs/snapshots/commit"),
+            None,
+        )
+        .await?;
+        Ok(AgentApiOutcome::new(response))
+    }
+
+    async fn read_vfs_snapshot(
+        &self,
+        params: VfsSnapshotReadParams,
+    ) -> Result<AgentApiOutcome<VfsSnapshotReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_SNAPSHOTS_READ, None)
+            .await?;
+        read_vfs_snapshot(self.store.as_ref(), params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn create_vfs_workspace(
+        &self,
+        params: VfsWorkspaceCreateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_CREATE, None)
+            .await?;
+        let workspace = self.create_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceCreateResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn read_vfs_workspace(
+        &self,
+        params: VfsWorkspaceReadParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_VFS_WORKSPACES_READ,
+            Some(ResourceRef::Workspace(params.workspace_id.clone())),
+        )
+        .await?;
+        let workspace = self.read_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceReadResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn list_vfs_workspaces(
+        &self,
+        _params: VfsWorkspaceListParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_VFS_WORKSPACES_LIST, None)
+            .await?;
+        let workspaces = self.list_vfs_workspace_records().await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceListResponse {
+            workspaces: workspaces.into_iter().map(vfs_workspace_view).collect(),
+        }))
+    }
+
+    async fn update_vfs_workspace(
+        &self,
+        params: VfsWorkspaceUpdateParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceUpdateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_VFS_WORKSPACES_UPDATE,
+            Some(ResourceRef::Workspace(params.workspace_id.clone())),
+        )
+        .await?;
+        let workspace = self.update_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceUpdateResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn delete_vfs_workspace(
+        &self,
+        params: VfsWorkspaceDeleteParams,
+    ) -> Result<AgentApiOutcome<VfsWorkspaceDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_VFS_WORKSPACES_DELETE,
+            Some(ResourceRef::Workspace(params.workspace_id.clone())),
+        )
+        .await?;
+        let workspace = self.delete_vfs_workspace_record(params).await?;
+        Ok(AgentApiOutcome::new(VfsWorkspaceDeleteResponse {
+            workspace: vfs_workspace_view(workspace),
+        }))
+    }
+
+    async fn put_mcp_server(
+        &self,
+        params: McpServerPutParams,
+    ) -> Result<AgentApiOutcome<McpServerPutResponse>, AgentApiError> {
+        let record = put_mcp_server_record(params.server, now_ms()?)?;
+        self.authorize_method(
+            METHOD_MCP_SERVERS_PUT,
+            Some(ResourceRef::McpServer(record.server_id.as_str().to_owned())),
+        )
+        .await?;
+        let grant = match record.auth_grant_id.as_ref() {
+            Some(grant_id) => Some(
+                self.store
+                    .read_grant(grant_id)
+                    .await
+                    .map_err(map_auth_error)?,
+            ),
+            None => None,
+        };
+        mcp_api::validate_mcp_server_credential(&record, grant.as_ref())?;
+        let server = self
+            .store
+            .put_server(record, params.expected_revision)
+            .await
+            .map_err(map_mcp_error)?;
+        Ok(AgentApiOutcome::new(McpServerPutResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn discover_mcp_server_auth(
+        &self,
+        params: McpServerAuthDiscoverParams,
+    ) -> Result<AgentApiOutcome<McpServerAuthDiscoverResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_AUTH_DISCOVER, None)
+            .await?;
+        mcp::validate_remote_mcp_server_url(&params.server_url).map_err(map_mcp_error)?;
+        let target = auth::McpOAuthTarget {
+            server_id: "discovery".to_owned(),
+            server_url: params.server_url,
+            scopes_default: Vec::new(),
+            protected_resource_metadata_url: None,
+            authorization_server_hint: None,
+        };
+        let discovered = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.mcp_oauth.discover_protected_resource(&target),
+        )
+        .await;
+        let oauth = match discovered {
+            Ok(Ok(metadata)) => Some(McpOAuthDiscoveryView {
+                resource: metadata.resource,
+                authorization_servers: metadata.authorization_servers,
+                scopes_supported: metadata.scopes_supported,
+            }),
+            Ok(Err(auth::McpOAuthError::ProtectedResourceMetadataUnavailable { .. })) | Err(_) => {
+                None
+            }
+            Ok(Err(error)) => return Err(map_mcp_oauth_error(error)),
+        };
+        Ok(AgentApiOutcome::new(McpServerAuthDiscoverResponse {
+            oauth,
+        }))
+    }
+
+    async fn discover_mcp_server_tools(
+        &self,
+        params: McpServerToolsDiscoverParams,
+    ) -> Result<AgentApiOutcome<McpServerToolsDiscoverResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_MCP_SERVERS_TOOLS_DISCOVER,
+            Some(ResourceRef::McpServer(params.server_id.clone())),
+        )
+        .await?;
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let record = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_error)?;
+        if record.status == mcp::McpServerStatus::Disabled {
+            return Err(AgentApiError::rejected(format!(
+                "MCP server is disabled: {server_id}"
+            )));
+        }
+        if record.status == mcp::McpServerStatus::NeedsAuthConfig
+            || (record.auth_grant_id.is_none()
+                && matches!(
+                    record.auth_policy,
+                    mcp::McpServerAuthPolicy::RequiredBearer
+                        | mcp::McpServerAuthPolicy::RequiredOAuth { .. }
+                ))
+        {
+            return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                mcp::McpToolDiscoveryFailure::new(
+                    mcp::McpToolDiscoveryFailureKind::CredentialAbsent,
+                    "This MCP server needs a credential before its tools can be discovered",
+                ),
+            )));
+        }
+
+        let _discovery_permit = self
+            .mcp_discovery_gate
+            .try_start(server_id.as_str())
+            .map_err(AgentApiError::rejected)?;
+        let discovery_started = Instant::now();
+
+        let trusted_universe = self
+            .configurator_trusted_header
+            .permits(server_id.as_str(), &record.server_url)
+            .then_some(self.store.config().universe_id);
+        let bearer = match (trusted_universe, record.auth_grant_id.as_ref()) {
+            (Some(_), _) => None,
+            (None, Some(grant_id)) => match self
+                .auth_token_broker
+                .bearer_token(
+                    grant_id,
+                    &TokenAudience::McpResource(record.server_url.clone()),
+                )
+                .await
+            {
+                Ok(token) => Some(token),
+                Err(auth::AuthBrokerError::AudienceMismatch { .. }) => {
+                    return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                        mcp::McpToolDiscoveryFailure::new(
+                            mcp::McpToolDiscoveryFailureKind::GrantAudienceMismatch,
+                            "The configured credential does not cover this MCP server",
+                        ),
+                    )));
+                }
+                Err(auth::AuthBrokerError::Store { message }) => {
+                    return Err(AgentApiError::internal(message));
+                }
+                Err(_) => {
+                    return Ok(AgentApiOutcome::new(mcp_api::mcp_tool_discovery_failure(
+                        mcp::McpToolDiscoveryFailure::new(
+                            mcp::McpToolDiscoveryFailureKind::GrantNeedsReauth,
+                            "The configured credential must be reconnected",
+                        ),
+                    )));
+                }
+            },
+            (None, None) => None,
+        };
+        let response = match self
+            .mcp_tool_discoverer
+            .discover_tools(
+                &record.server_url,
+                bearer.as_ref(),
+                trusted_universe,
+                self.mcp_private_networks
+                    .permits(&record.server_url, record.allow_private_network),
+                mcp::McpToolDiscoveryLimits::default(),
+            )
+            .await
+        {
+            Ok(inventory) => {
+                tracing::info!(
+                    server_id = %server_id,
+                    outcome = "success",
+                    tool_count = inventory.tools.len(),
+                    duration_ms = discovery_started.elapsed().as_millis(),
+                    "completed live MCP tool discovery"
+                );
+                mcp_api::mcp_tool_discovery_success(inventory.tools)
+            }
+            Err(failure) => {
+                tracing::info!(
+                    server_id = %server_id,
+                    outcome = ?failure.kind,
+                    tool_count = 0,
+                    duration_ms = discovery_started.elapsed().as_millis(),
+                    "completed live MCP tool discovery"
+                );
+                mcp_api::mcp_tool_discovery_failure(failure)
+            }
+        };
+        Ok(AgentApiOutcome::new(response))
+    }
+
+    async fn list_mcp_servers(
+        &self,
+        params: McpServerListParams,
+    ) -> Result<AgentApiOutcome<McpServerListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_MCP_SERVERS_LIST, None).await?;
+        let servers = self
+            .store
+            .list_servers(mcp::ListMcpServers {
+                status: params.status.map(mcp_api::registry_status_for_filter),
+            })
+            .await
+            .map_err(map_mcp_error)?
+            .into_iter()
+            .map(mcp_server_view)
+            .collect();
+        Ok(AgentApiOutcome::new(McpServerListResponse { servers }))
+    }
+
+    async fn read_mcp_server(
+        &self,
+        params: McpServerReadParams,
+    ) -> Result<AgentApiOutcome<McpServerReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_MCP_SERVERS_READ,
+            Some(ResourceRef::McpServer(params.server_id.clone())),
+        )
+        .await?;
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let server = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_error)?;
+        Ok(AgentApiOutcome::new(McpServerReadResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn delete_mcp_server(
+        &self,
+        params: McpServerDeleteParams,
+    ) -> Result<AgentApiOutcome<McpServerDeleteResponse>, AgentApiError> {
+        let resource = ResourceRef::McpServer(params.server_id.clone());
+        self.authorize_method(METHOD_MCP_SERVERS_DELETE, Some(resource.clone()))
+            .await?;
+        let server_id = parse_mcp_server_id(params.server_id)?;
+        let server = self
+            .store
+            .delete_server(&server_id)
+            .await
+            .map_err(map_mcp_error)?;
+        // The server's OAuth client and the login made through it belong to
+        // the server: both would be unreachable for everyone once it is gone.
+        // A pasted token it used is shared by nature and stays.
+        if let Ok(client_id) = parse_oauth_client_id(format!("mcp:{}", server.server_id))
+            && let Ok(client) = self.store.delete_oauth_client(&client_id).await
+            && let Some(secret_id) = &client.client_secret
+        {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        if let Some(grant_id) = &server.auth_grant_id
+            && let Ok(grant) = self.store.read_grant(grant_id).await
+            && grant.provider_kind == auth::AuthProviderKind::McpOAuth
+        {
+            let _ = self
+                .store
+                .update_grant_status(grant_id, auth::AuthGrantStatus::Revoked, now_ms()?)
+                .await;
+        }
+        Ok(AgentApiOutcome::new(McpServerDeleteResponse {
+            server: mcp_server_view(server),
+        }))
+    }
+
+    async fn import_auth_grant(
+        &self,
+        params: AuthGrantImportParams,
+    ) -> Result<AgentApiOutcome<AuthGrantImportResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_IMPORT, None)
+            .await?;
+        let draft = auth_grant_import_draft(params, now_ms()?)?;
+        self.store
+            .put_secret(draft.secret.clone())
+            .await
+            .map_err(map_auth_error)?;
+        match self.store.create_grant(draft.grant).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthGrantImportResponse {
+                grant: auth_grant_view(record),
+            })),
+            Err(error) => {
+                // The secret is orphaned without its grant; clean up best-effort
+                // so a failed import does not leave sealed values behind.
+                let _ = self.store.delete_secret(&draft.secret.secret_id).await;
+                Err(map_auth_error(error))
+            }
+        }
+    }
+
+    async fn lease_auth_grant(
+        &self,
+        params: AuthGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_LEASE, None)
+            .await?;
+        self.lease_grant_token(params).await
+    }
+
+    async fn list_auth_grants(
+        &self,
+        params: AuthGrantListParams,
+    ) -> Result<AgentApiOutcome<AuthGrantListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_LIST, None).await?;
+        let grants = self
+            .store
+            .list_grants(auth::ListAuthGrants {
+                status: params.status.map(registry_auth_grant_status_for_filter),
+            })
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantListResponse {
+            grants: grants.into_iter().map(auth_grant_view).collect(),
+        }))
+    }
+
+    async fn read_auth_grant(
+        &self,
+        params: AuthGrantReadParams,
+    ) -> Result<AgentApiOutcome<AuthGrantReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_READ, None).await?;
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let record = self
+            .store
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantReadResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+
+    async fn revoke_auth_grant(
+        &self,
+        params: AuthGrantRevokeParams,
+    ) -> Result<AgentApiOutcome<AuthGrantRevokeResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GRANTS_REVOKE, None)
+            .await?;
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let record = self
+            .store
+            .update_grant_status(&grant_id, auth::AuthGrantStatus::Revoked, now_ms()?)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantRevokeResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+
+    async fn create_auth_client(
+        &self,
+        params: AuthClientCreateParams,
+    ) -> Result<AgentApiOutcome<AuthClientCreateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_AUTH_CLIENTS_CREATE,
+            params.client_id.as_deref().and_then(mcp_client_server),
+        )
+        .await?;
+        let draft = auth_client_create_draft(params, now_ms()?)?;
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_error)?;
+        }
+        match self.store.create_oauth_client(draft.client).await {
+            Ok(record) => Ok(AgentApiOutcome::new(AuthClientCreateResponse {
+                client: oauth_client_view(record),
+            })),
+            Err(error) => {
+                // The secret is orphaned without its client; clean up
+                // best-effort and surface the original failure.
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                Err(map_auth_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_clients(
+        &self,
+        _params: AuthClientListParams,
+    ) -> Result<AgentApiOutcome<AuthClientListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_CLIENTS_LIST, None)
+            .await?;
+        let clients = self
+            .store
+            .list_oauth_clients()
+            .await
+            .map_err(map_auth_error)?
+            .into_iter()
+            .map(oauth_client_view)
+            .collect();
+        Ok(AgentApiOutcome::new(AuthClientListResponse { clients }))
+    }
+
+    async fn read_auth_client(
+        &self,
+        params: AuthClientReadParams,
+    ) -> Result<AgentApiOutcome<AuthClientReadResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_AUTH_CLIENTS_READ,
+            mcp_client_server(&params.client_id),
+        )
+        .await?;
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let record = self
+            .store
+            .read_oauth_client(&client_id)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthClientReadResponse {
+            client: oauth_client_view(record),
+        }))
+    }
+
+    async fn delete_auth_client(
+        &self,
+        params: AuthClientDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthClientDeleteResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_AUTH_CLIENTS_DELETE,
+            mcp_client_server(&params.client_id),
+        )
+        .await?;
+        let client_id = parse_oauth_client_id(params.client_id)?;
+        let record = self
+            .store
+            .delete_oauth_client(&client_id)
+            .await
+            .map_err(map_auth_error)?;
+        // The stored client secret is unreachable without its client.
+        if let Some(secret_id) = &record.client_secret {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        Ok(AgentApiOutcome::new(AuthClientDeleteResponse {
+            client: oauth_client_view(record),
+        }))
+    }
+
+    async fn start_auth_flow(
+        &self,
+        params: AuthFlowStartParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStartResponse>, AgentApiError> {
+        // A flow for a catalogued MCP server configures that server.
+        self.authorize_method(
+            METHOD_AUTH_FLOWS_START,
+            mcp_client_server(&params.client_id),
+        )
+        .await?;
+        let created_by = crate::gateway::request_context::request_attribution()?;
+        // `mcp:<server_id>` lazily discovers and registers the OAuth client
+        // for a catalogued MCP server before starting the flow.
+        let client_id = match params.client_id.strip_prefix("mcp:") {
+            Some(server_id) => self.ensure_mcp_oauth_client(server_id).await?,
+            None => parse_oauth_client_id(params.client_id)?,
+        };
+        let started = self
+            .oauth_flows
+            .start_flow(StartAuthFlow {
+                client_id,
+                redirect_uri: oauth_redirect_uri(&self.public_base_url),
+                scopes: params.scopes,
+                audience: params.audience,
+                grant_exposure: registry_auth_grant_exposure(params.exposure),
+                created_by,
+            })
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthFlowStartResponse {
+            flow_id: started.flow.flow_id.as_str().to_owned(),
+            authorize_url: started.authorize_url,
+            expires_at_ms: started.flow.expires_at_ms,
+        }))
+    }
+
+    async fn read_auth_flow_status(
+        &self,
+        params: AuthFlowStatusParams,
+    ) -> Result<AgentApiOutcome<AuthFlowStatusResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_FLOWS_READ, None).await?;
+        let flow_id = parse_auth_flow_id(params.flow_id)?;
+        let record = self
+            .oauth_flows
+            .read_flow(&flow_id)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthFlowStatusResponse {
+            flow: auth_flow_view(record, self.oauth_flows.now_ms()),
+        }))
+    }
+
+    async fn create_auth_provider(
+        &self,
+        params: AuthProviderCreateParams,
+    ) -> Result<AgentApiOutcome<AuthProviderCreateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_CREATE, None)
+            .await?;
+        let draft = auth_provider_create_draft(params, now_ms()?)?;
+        // A model_oauth binding must point at a real, active grant; validate
+        // before committing the provider row.
+        if let auth::AuthProviderConfig::ModelOAuth(config) = &draft.provider.config {
+            let grant = self
+                .store
+                .read_grant(&config.grant_id)
+                .await
+                .map_err(map_auth_error)?;
+            if grant.status != auth::AuthGrantStatus::Active {
+                return Err(AgentApiError::rejected(format!(
+                    "auth grant {} is not active: {:?}",
+                    grant.grant_id, grant.status
+                )));
+            }
+        }
+        // The secret must exist before the provider row: auth_providers
+        // carries a foreign key into auth_secrets.
+        if let Some(secret) = &draft.secret {
+            self.store
+                .put_secret(secret.clone())
+                .await
+                .map_err(map_auth_error)?;
+        }
+        match self.store.create_auth_provider(draft.provider).await {
+            Ok(record) => {
+                self.model_discovery
+                    .invalidate_auth_provider(record.provider_id.as_str());
+                Ok(AgentApiOutcome::new(AuthProviderCreateResponse {
+                    provider: auth_provider_view(record),
+                }))
+            }
+            Err(error) => {
+                if let Some(secret) = &draft.secret {
+                    let _ = self.store.delete_secret(&secret.secret_id).await;
+                }
+                Err(map_auth_error(error))
+            }
+        }
+    }
+
+    async fn list_auth_providers(
+        &self,
+        _params: AuthProviderListParams,
+    ) -> Result<AgentApiOutcome<AuthProviderListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_LIST, None)
+            .await?;
+        let providers = self
+            .store
+            .list_auth_providers()
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthProviderListResponse {
+            providers: providers.into_iter().map(auth_provider_view).collect(),
+        }))
+    }
+
+    async fn read_auth_provider(
+        &self,
+        params: AuthProviderReadParams,
+    ) -> Result<AgentApiOutcome<AuthProviderReadResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_READ, None)
+            .await?;
+        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        let record = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthProviderReadResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
+    async fn delete_auth_provider(
+        &self,
+        params: AuthProviderDeleteParams,
+    ) -> Result<AgentApiOutcome<AuthProviderDeleteResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_PROVIDERS_DELETE, None)
+            .await?;
+        let provider_id = parse_auth_provider_id(params.provider_id)?;
+        // The provider row must go first: its foreign key prevents deleting
+        // the credential secret while the provider references it.
+        let record = self
+            .store
+            .delete_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_error)?;
+        self.model_discovery
+            .invalidate_auth_provider(record.provider_id.as_str());
+        if let Some(secret_id) = &record.credential_secret {
+            let _ = self.store.delete_secret(secret_id).await;
+        }
+        Ok(AgentApiOutcome::new(AuthProviderDeleteResponse {
+            provider: auth_provider_view(record),
+        }))
+    }
+
+    async fn list_github_installations(
+        &self,
+        params: AuthGitHubInstallationListParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationListResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GITHUB_INSTALLATIONS_LIST, None)
+            .await?;
+        let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
+        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {} is not a github_app provider",
+                provider.provider_id
+            )));
+        };
+        let installations = self
+            .github_api
+            .list_installations(&config.api_base_url, &app_jwt)
+            .await
+            .map_err(map_github_app_error)?;
+        Ok(AgentApiOutcome::new(AuthGitHubInstallationListResponse {
+            installations: installations.iter().map(github_installation_view).collect(),
+        }))
+    }
+
+    async fn grant_github_installation(
+        &self,
+        params: AuthGitHubInstallationGrantParams,
+    ) -> Result<AgentApiOutcome<AuthGitHubInstallationGrantResponse>, AgentApiError> {
+        self.authorize_method(METHOD_AUTH_GITHUB_INSTALLATIONS_GRANT, None)
+            .await?;
+        let (provider, app_jwt) = self.github_provider_jwt(params.provider_id).await?;
+        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {} is not a github_app provider",
+                provider.provider_id
+            )));
+        };
+        // Verify the installation exists live before recording the grant;
+        // this also captures its account/permission metadata.
+        let installations = self
+            .github_api
+            .list_installations(&config.api_base_url, &app_jwt)
+            .await
+            .map_err(map_github_app_error)?;
+        let Some(installation) = installations
+            .iter()
+            .find(|installation| installation.installation_id == params.installation_id)
+        else {
+            return Err(AgentApiError::not_found(format!(
+                "github app installation {} not found for provider {}",
+                params.installation_id, provider.provider_id
+            )));
+        };
+        let draft = github_installation_grant_draft(
+            &provider,
+            installation,
+            params.grant_id,
+            params.display_name,
+            registry_auth_grant_exposure(params.exposure),
+            now_ms()?,
+        )?;
+        let record = self
+            .store
+            .create_grant(draft)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthGitHubInstallationGrantResponse {
+            grant: auth_grant_view(record),
+        }))
+    }
+}
+
+/// Result of an authorization callback, consumed by the HTTP handler to
+/// render a user-facing page. Never carries token material.
+#[derive(Debug)]
+pub enum OAuthCallbackOutcome {
+    /// The flow completed and minted a grant.
+    Completed { grant_id: String },
+    /// The flow terminated without a grant (denial or failed exchange).
+    Failed { message: String },
+    /// The callback could not be matched to a live flow (unknown state,
+    /// replay, or expiry).
+    Rejected { message: String },
+}
+
+impl GatewayAgentApi {
+    /// Lazily discover and register the OAuth client for an OAuth-protected
+    /// MCP server: protected resource metadata, authorization
+    /// server metadata, then CIMD or dynamic client registration. Existing
+    /// `mcp:<server_id>` client records are reused without network traffic.
+    async fn ensure_mcp_oauth_client(
+        &self,
+        server_id: &str,
+    ) -> Result<auth::OAuthClientId, AgentApiError> {
+        // A manually registered `mcp:<server_id>` client always wins: reuse
+        // it without touching the catalog or the network, so login works
+        // even when the catalog record is named differently or absent.
+        let client_id = auth::mcp_oauth_client_id(server_id).map_err(map_auth_error)?;
+        match self.store.read_oauth_client(&client_id).await {
+            Ok(existing) => return Ok(existing.client_id),
+            Err(auth::AuthRegistryError::ClientNotFound { .. }) => {}
+            Err(error) => return Err(map_auth_error(error)),
+        }
+
+        let server_id = parse_mcp_server_id(server_id.to_owned())?;
+        let record = self
+            .store
+            .read_server(&server_id)
+            .await
+            .map_err(map_mcp_error)?;
+        let target = mcp_oauth_target_from_record(&record)?;
+        let redirect_uri = oauth_redirect_uri(&self.public_base_url);
+        let cimd = cimd_config(&self.public_base_url);
+        let client = self
+            .mcp_oauth
+            .ensure_client(&target, &redirect_uri, cimd.as_ref())
+            .await
+            .map_err(map_mcp_oauth_error)?;
+        Ok(client.client_id)
+    }
+
+    /// The Client ID Metadata Document served at
+    /// `/auth/client-metadata.json` for authorization servers that support
+    /// CIMD client ids.
+    pub fn cimd_document(&self) -> serde_json::Value {
+        oauth_api::cimd_document(&self.public_base_url)
+    }
+
+    pub fn public_base_url(&self) -> &str {
+        &self.public_base_url
+    }
+
+    /// Load a GitHub App provider and sign its app JWT for control-plane
+    /// calls (installation listing/verification). The JWT and the key only
+    /// exist in memory inside [`auth::SecretValue`] wrappers.
+    async fn github_provider_jwt(
+        &self,
+        provider_id: String,
+    ) -> Result<(auth::AuthProviderRecord, auth::SecretValue), AgentApiError> {
+        let provider_id = parse_auth_provider_id(provider_id)?;
+        let provider = self
+            .store
+            .read_auth_provider(&provider_id)
+            .await
+            .map_err(map_auth_error)?;
+        let auth::AuthProviderConfig::GitHubApp(config) = &provider.config else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {provider_id} is not a github_app provider"
+            )));
+        };
+        let Some(credential_secret) = &provider.credential_secret else {
+            return Err(AgentApiError::rejected(format!(
+                "auth provider {provider_id} has no private key credential"
+            )));
+        };
+        let (_, private_key) = self
+            .store
+            .read_secret(credential_secret)
+            .await
+            .map_err(map_auth_error)?;
+        let app_jwt = auth::sign_github_app_jwt(&config.app_id, &private_key, now_ms()?)
+            .map_err(map_github_app_error)?;
+        Ok((provider, app_jwt))
+    }
+
+    /// Handle the OAuth redirect: consume the flow, exchange the code, and
+    /// store the resulting grant. Called by the gateway's HTTP callback
+    /// route, not via JSON-RPC.
+    pub async fn complete_oauth_callback(
+        &self,
+        callback: auth::AuthCallback,
+    ) -> OAuthCallbackOutcome {
+        match self.oauth_flows.complete_callback(callback).await {
+            Ok(record) => match (&record.grant_id, &record.error) {
+                (Some(grant_id), _) => OAuthCallbackOutcome::Completed {
+                    grant_id: grant_id.as_str().to_owned(),
+                },
+                (None, Some(error)) => OAuthCallbackOutcome::Failed {
+                    message: error.clone(),
+                },
+                (None, None) => OAuthCallbackOutcome::Failed {
+                    message: "authorization flow ended without an outcome".to_owned(),
+                },
+            },
+            Err(error) => OAuthCallbackOutcome::Rejected {
+                message: map_auth_error(error).message,
+            },
+        }
+    }
+}
+/// Server-side id allocation for registered environments admitted on the
+/// gateway's connect route.
+pub(crate) fn allocate_environment_id_public() -> ::environments::EnvironmentId {
+    environment_lifecycle::allocate_environment_id()
+}
+
+pub(crate) fn allocate_incarnation_id_public() -> ::environments::EnvironmentIncarnationId {
+    environment_lifecycle::allocate_incarnation_id()
+}
+
+#[cfg(test)]
+mod tests;
+
+/// Deployment-scoped CIMD document: depends only on the public base URL, so
+/// the multi-universe HTTP edge serves it without resolving a universe.
+pub(crate) fn cimd_document_for(public_base_url: &str) -> serde_json::Value {
+    oauth_api::cimd_document(public_base_url)
+}
+
+impl GatewayAgentApi {
+    pub(crate) fn environment_service(&self) -> crate::environments::EnvironmentService {
+        crate::environments::EnvironmentService {
+            store: self.store.clone(),
+            environment_gateway: self.environment_gateway.clone(),
+            provider_controller_connector: self.provider_controller_connector.clone(),
+        }
+    }
+    pub(super) async fn put_environment_ingress_record(
+        &self,
+        params: EnvironmentIngressPutParams,
+    ) -> Result<EnvironmentIngressPutResponse, AgentApiError> {
+        self.environment_service()
+            .put_environment_ingress_record(params)
+            .await
+    }
+
+    pub(super) async fn create_external_environment_record(
+        &self,
+        params: EnvironmentExternalCreateParams,
+    ) -> Result<EnvironmentExternalCreateResponse, AgentApiError> {
+        self.environment_service()
+            .create_external_environment_record(params)
+            .await
+    }
+
+    pub(super) async fn create_environment_record(
+        &self,
+        params: EnvironmentCreateParams,
+    ) -> Result<EnvironmentCreateResponse, AgentApiError> {
+        self.environment_service()
+            .create_environment_record(params)
+            .await
+    }
+
+    pub(super) async fn put_environment_power_record(
+        &self,
+        params: EnvironmentPowerPutParams,
+    ) -> Result<EnvironmentPowerPutResponse, AgentApiError> {
+        self.environment_service()
+            .put_environment_power_record(params)
+            .await
+    }
+
+    pub(super) async fn put_environment_idle_policy_record(
+        &self,
+        params: EnvironmentIdlePolicyPutParams,
+    ) -> Result<EnvironmentIdlePolicyPutResponse, AgentApiError> {
+        self.environment_service()
+            .put_environment_idle_policy_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_records(
+        &self,
+        params: EnvironmentListParams,
+    ) -> Result<EnvironmentListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_records(params)
+            .await
+    }
+
+    pub(super) async fn close_environment_record(
+        &self,
+        params: EnvironmentCloseParams,
+    ) -> Result<EnvironmentCloseResponse, AgentApiError> {
+        self.environment_service()
+            .close_environment_record(params)
+            .await
+    }
+
+    pub async fn reconcile_environments_once(&self) -> Result<usize, AgentApiError> {
+        self.environment_service()
+            .reconcile_environments_once()
+            .await
+    }
+
+    pub async fn reap_idle_environments_once(&self) -> Result<PowerReaperStats, AgentApiError> {
+        self.environment_service()
+            .reap_idle_environments_once()
+            .await
+    }
+
+    pub(super) async fn create_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyCreateParams,
+    ) -> Result<EnvironmentRegistrationKeyCreateResponse, AgentApiError> {
+        self.environment_service()
+            .create_environment_registration_key_record(params)
+            .await
+    }
+
+    pub(super) async fn read_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyReadParams,
+    ) -> Result<EnvironmentRegistrationKeyReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_registration_key_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_registration_key_records(
+        &self,
+        _params: EnvironmentRegistrationKeyListParams,
+    ) -> Result<EnvironmentRegistrationKeyListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_registration_key_records(_params)
+            .await
+    }
+
+    pub(super) async fn revoke_environment_registration_key_record(
+        &self,
+        params: EnvironmentRegistrationKeyRevokeParams,
+    ) -> Result<EnvironmentRegistrationKeyRevokeResponse, AgentApiError> {
+        self.environment_service()
+            .revoke_environment_registration_key_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_provider_binding_records(
+        &self,
+        _params: EnvironmentProviderBindingListParams,
+    ) -> Result<EnvironmentProviderBindingListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_provider_binding_records(_params)
+            .await
+    }
+
+    pub(super) async fn read_environment_provider_binding_record(
+        &self,
+        params: EnvironmentProviderBindingReadParams,
+    ) -> Result<EnvironmentProviderBindingReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_provider_binding_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_template_records(
+        &self,
+        params: EnvironmentTemplateListParams,
+    ) -> Result<EnvironmentTemplateListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_template_records(params)
+            .await
+    }
+
+    pub(super) async fn read_environment_template_record(
+        &self,
+        params: EnvironmentTemplateReadParams,
+    ) -> Result<EnvironmentTemplateReadResponse, AgentApiError> {
+        self.environment_service()
+            .read_environment_template_record(params)
+            .await
+    }
+}
+
+impl GatewayAgentApi {
+    pub(super) async fn bind_environment_credential_record(
+        &self,
+        params: EnvironmentCredentialBindParams,
+    ) -> Result<EnvironmentCredentialBindResponse, AgentApiError> {
+        self.environment_service()
+            .bind_environment_credential_record(params)
+            .await
+    }
+
+    pub(super) async fn list_environment_credential_records(
+        &self,
+        params: EnvironmentCredentialListParams,
+    ) -> Result<EnvironmentCredentialListResponse, AgentApiError> {
+        self.environment_service()
+            .list_environment_credential_records(params)
+            .await
+    }
+
+    pub(super) async fn unbind_environment_credential_record(
+        &self,
+        params: EnvironmentCredentialUnbindParams,
+    ) -> Result<EnvironmentCredentialUnbindResponse, AgentApiError> {
+        self.environment_service()
+            .unbind_environment_credential_record(params)
+            .await
+    }
+}
+
+impl GatewayAgentApi {
+    /// Lease without caller authorization. Internal callers must take the
+    /// grant and audience from admitted configuration (a stored trigger),
+    /// never from request input.
+    pub(crate) async fn lease_grant_token(
+        &self,
+        params: AuthGrantLeaseParams,
+    ) -> Result<AgentApiOutcome<AuthGrantLeaseResponse>, AgentApiError> {
+        let grant_id = parse_auth_grant_id(params.grant_id)?;
+        let grant = self
+            .store
+            .read_grant(&grant_id)
+            .await
+            .map_err(map_auth_error)?;
+        require_retrievable_grant(&grant)?;
+
+        let audience = match grant.provider_kind {
+            auth::AuthProviderKind::McpOAuth => {
+                TokenAudience::McpResource(params.audience.ok_or_else(|| {
+                    AgentApiError::rejected("mcp_oauth grant leases require an audience")
+                })?)
+            }
+            auth::AuthProviderKind::GitHubApp => {
+                TokenAudience::GitHubApi(params.audience.ok_or_else(|| {
+                    AgentApiError::rejected("github_app grant leases require an audience")
+                })?)
+            }
+            _ => TokenAudience::ServiceLease(
+                params
+                    .audience
+                    .or_else(|| grant.audience.clone())
+                    .unwrap_or_else(|| "service:lease".to_owned()),
+            ),
+        };
+        let token = self
+            .auth_token_broker
+            .bearer_token(&grant_id, &audience)
+            .await
+            .map_err(map_auth_broker_error)?;
+        let leased = self
+            .store
+            .record_grant_lease(&grant_id, now_ms()?)
+            .await
+            .map_err(map_auth_error)?;
+        Ok(AgentApiOutcome::new(AuthGrantLeaseResponse {
+            token: token.expose().to_owned(),
+            expires_at_ms: leased.expires_at_ms,
+            grant_id: grant_id.as_str().to_owned(),
+            provider_kind: api_auth_provider_kind(leased.provider_kind),
+        }))
+    }
+}

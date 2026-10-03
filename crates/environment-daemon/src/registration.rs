@@ -467,8 +467,8 @@ impl TlsSettings {
 }
 
 fn jittered(base: Duration) -> Duration {
-    use rand::Rng as _;
-    let factor = rand::thread_rng().gen_range(0.75_f64..=1.25_f64);
+    use rand::RngExt as _;
+    let factor = rand::rng().random_range(0.75_f64..=1.25_f64);
     base.mul_f64(factor)
 }
 

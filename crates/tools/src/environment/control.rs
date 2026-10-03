@@ -1,6 +1,6 @@
 //! Live universe-environment discovery and session selection tool contracts.
 
-use engine::ToolName;
+use harness::ToolName;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

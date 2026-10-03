@@ -2,6 +2,7 @@
 //! Accounts are what a `chat` bot trigger points at; pairings record which
 //! conversations that trigger admitted.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use ::channels::{
     ChannelAccountRecord, ChannelAccountStore, ChannelError, ChannelPairingFilter,
     ChannelPairingRecord, ChannelPairingStore, validate_account_document,
@@ -46,7 +47,7 @@ impl ChannelAccountStore for PgStore {
             RETURNING {ACCOUNT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(account_id.as_str())
             .bind(document.provider.as_str())
@@ -139,7 +140,7 @@ impl ChannelAccountStore for PgStore {
             "SELECT {ACCOUNT_COLUMNS} FROM channel_accounts \
              WHERE universe_id = $1 AND account_id = $2"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(account_id.as_str())
             .fetch_optional(&self.pool)
@@ -162,7 +163,7 @@ impl ChannelAccountStore for PgStore {
              WHERE universe_id = $1 AND ($2::text IS NULL OR provider = $2) \
              ORDER BY account_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(provider.as_ref().map(ChannelProvider::as_str))
             .fetch_all(&self.pool)
@@ -179,7 +180,7 @@ impl ChannelAccountStore for PgStore {
             "DELETE FROM channel_accounts WHERE universe_id = $1 AND account_id = $2 \
              RETURNING {ACCOUNT_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(account_id.as_str())
             .fetch_optional(&self.pool)
@@ -218,7 +219,7 @@ impl PgStore {
             RETURNING {ACCOUNT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(account_id.as_str())
             .bind(document.provider.as_str())
@@ -259,7 +260,7 @@ impl ChannelPairingStore for PgStore {
             RETURNING {PAIRING_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.account_id.as_str())
             .bind(record.chat_id.as_str())
@@ -282,7 +283,7 @@ impl ChannelPairingStore for PgStore {
             "SELECT {PAIRING_COLUMNS} FROM channel_pairings \
              WHERE universe_id = $1 AND account_id = $2 AND chat_id = $3"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(account_id.as_str())
             .bind(chat_id)
@@ -305,7 +306,7 @@ impl ChannelPairingStore for PgStore {
                AND ($5::text IS NULL OR chat_id = $5) \
              ORDER BY paired_at_ms DESC, account_id, chat_id"
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(filter.account_id.as_ref().map(ChannelAccountId::as_str))
             .bind(filter.bot_id.as_ref().map(BotId::as_str))
@@ -327,7 +328,7 @@ impl ChannelPairingStore for PgStore {
              WHERE universe_id = $1 AND account_id = $2 AND chat_id = $3 \
              RETURNING {PAIRING_COLUMNS}"
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(account_id.as_str())
             .bind(chat_id)
@@ -360,7 +361,7 @@ pub async fn list_channel_accounts_all(
            AND ($2 OR COALESCE((document_json->>'enabled')::boolean, true)) \
          ORDER BY universe_id, account_id"
     );
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query))
         .bind(provider.as_ref().map(ChannelProvider::as_str))
         .bind(include_disabled)
         .fetch_all(pool)

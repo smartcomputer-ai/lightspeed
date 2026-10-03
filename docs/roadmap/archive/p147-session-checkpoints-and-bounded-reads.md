@@ -80,7 +80,7 @@ Several amplifiers multiply that cost:
   replays at a rate proportional to run activity, which is worse than a
   fixed-interval poll. The consumer never reads `run.entries`; a summary view
   would satisfy it.
-- The Platform server instructions editor fetches an entire `SessionView`
+- The Platform backend instructions editor fetches an entire `SessionView`
   only to read `activeContext.entries`.
 - The Configurator MCP wrapper emits every successful result twice: once
   JSON-stringified into `content`, once as `structuredContent`.

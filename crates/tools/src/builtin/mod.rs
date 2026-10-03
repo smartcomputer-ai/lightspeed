@@ -7,7 +7,7 @@
 //! and `KillShell` are both `continue_process`), and a toolset may restrict
 //! the process tools to a one-shot shape that omits the handle path.
 
-use engine::{ToolExecutionClass, ToolExecutionSpec, ToolName, ToolParallelism};
+use harness::{ToolExecutionClass, ToolExecutionSpec, ToolName, ToolParallelism};
 use serde_json::Value;
 
 use crate::{
@@ -171,7 +171,7 @@ impl<'a> BuiltinToolContext<'a> {
         }
     }
 
-    pub fn blobs(self) -> &'a std::sync::Arc<dyn engine::storage::BlobStore> {
+    pub fn blobs(self) -> &'a std::sync::Arc<dyn harness::storage::BlobStore> {
         match self {
             Self::Vfs {
                 filesystem: ctx, ..
@@ -191,7 +191,7 @@ impl<'a> BuiltinToolContext<'a> {
         }
     }
 
-    pub fn drain_tool_effects(self) -> Vec<engine::ToolEffect> {
+    pub fn drain_tool_effects(self) -> Vec<harness::ToolEffect> {
         match self {
             Self::Vfs {
                 filesystem: ctx, ..
@@ -808,7 +808,7 @@ impl BuiltinToolOperation {
 
 #[cfg(test)]
 mod tests {
-    use engine::ProviderApiKind;
+    use harness::ProviderApiKind;
     use serde_json::json;
 
     use super::*;

@@ -212,7 +212,7 @@ const methodLines = [
 await writeFile(path.join(generatedDir, "methods.ts"), methodLines.join("\n"));
 
 // Ship the canonical contract schema inside the package (exported as
-// "@lightspeed-ai/agent-client/schema/api.schema.json") so downstream tooling
+// "@lightspeed-ai/sdk/schema/api.schema.json") so downstream tooling
 // can derive references/validators from the exact schema version it pins.
 const schemaOutDir = path.join(clientDir, "schema");
 await mkdir(schemaOutDir, { recursive: true });

@@ -384,7 +384,7 @@
       ]
     },
     "ContentRef": {
-      "description": "Durable content identity and encoding. The payload stays in CAS; consumers\nproject it outside the engine rather than assuming every output is text.",
+      "description": "Durable content identity and encoding. The payload stays in CAS; consumers\nproject it outside the harness rather than assuming every output is text.",
       "properties": {
         "content_ref": {
           "type": "string"
@@ -551,7 +551,7 @@
         {
           "properties": {
             "holder_workflow_id": {
-              "description": "Workflow id of the session that emitted the invocation — the\nendpoint a receiver signals its reply to. Supplied by the\nsubstrate adapter; the engine treats it as opaque.",
+              "description": "Workflow id of the session that emitted the invocation — the\nendpoint a receiver signals its reply to. Supplied by the\nsubstrate adapter; the harness treats it as opaque.",
               "type": "string"
             },
             "invocation": {
@@ -764,7 +764,7 @@
       "type": "object"
     },
     "PromiseId": {
-      "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The engine hands every tool batch a\nbase one past the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from\nthat base, and the reducer accepts a creation only at or above the\nbatch's base and never twice. Producer correlation lives on\n`PromiseSource`, not in the id.",
+      "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The harness hands every tool batch a\nbase one past the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from\nthat base, and the reducer accepts a creation only at or above the\nbatch's base and never twice. Producer correlation lives on\n`PromiseSource`, not in the id.",
       "type": "string"
     },
     "PromiseResolution": {

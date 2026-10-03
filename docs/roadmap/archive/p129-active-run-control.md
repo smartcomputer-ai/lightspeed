@@ -45,7 +45,7 @@ cancellation UI.
 
 ## Today
 
-### Engine (`crates/engine`) — mostly complete
+### Engine (`crates/harness`) — mostly complete
 
 - `CancelRun` → `CancellationRequested` → `Cancelling`; the planner waits
   for the open turn/tool batch to drain, then `CancellationGraceStarted` →
@@ -93,7 +93,7 @@ cancellation UI.
   `CancellationRequested` event exists, which is the part that never happens
   in time.
 
-### Gateway / API (`crates/api`, `crates/temporal-server`)
+### Gateway / API (`crates/api`, `crates/temporal-runtime`)
 
 - `session/runs/cancel` pre-validates against store state, signals
   `CancelRun`, then polls until the run leaves `Active` or a 90 s
@@ -112,7 +112,7 @@ cancellation UI.
   queueing through the gateway. The only workflow-level steering test uses
   it as a guaranteed-rejecting command (`runs_live.rs`).
 
-### Platform UI (`platform/web`, `platform/server`)
+### Platform UI (`platform/web`, `platform/backend`)
 
 - Stop: `SessionsPage.tsx:738-751` → `POST …/runs/:runId/cancel` →
   `gateway.ts:644-657` → `session/runs/cancel`. Wired, but:
@@ -382,13 +382,13 @@ stop it, talk to it, or line up the next thing — with honest feedback.
   - Enter = **Queue as next run** (default);
   - ⌘/Ctrl+Enter = **Steer** ("send now, into the current run"; shown in
     the transcript as a steering message attached to the run);
-  - both call platform server routes → `session/runs/start` /
+  - both call platform backend routes → `session/runs/start` /
     `session/runs/steer`.
 - **Queued display.** A queued list under the transcript (source text, ×),
   fed by `SessionView.runs` + `runAccepted`; collapses as runs start.
 - **Transcript.** Render steering entries distinctly inside the run they
   steered; render `cancelling`/`cancelled` states on the run header.
-- **Platform server.** Add `POST …/runs/:runId/steer` and make
+- **Platform backend.** Add `POST …/runs/:runId/steer` and make
   `…/messages` accept a `mode: "queue"` (or a dedicated `…/runs` route) that
   returns the queued `RunView`; return the cancel response body instead of
   `{ ok: true }`.
@@ -455,7 +455,7 @@ stop it, talk to it, or line up the next thing — with honest feedback.
    await (await resolves `cancelled`, child run cancelled through the promise
    cascade). Existing fake-run, parallel-batch, admission-failure, and
    await-parks scenarios still pass.
-5. **[DONE]** Platform UI (`platform/web`, `platform/server`): the
+5. **[DONE]** Platform UI (`platform/web`, `platform/backend`): the
    transcript reducer tracks `activeRun` (with `cancelling`), `queuedRuns`,
    per-run phases, and a `runRevision`; `reconcileRuns` folds the
    authoritative `SessionView.runs` into the tail forward-only (heals a

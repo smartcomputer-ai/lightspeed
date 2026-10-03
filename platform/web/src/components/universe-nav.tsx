@@ -14,7 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { Navigate } from "react-router-dom";
-import type { FeatureKey, FeatureStates } from "@lightspeed/platform-shared";
+import type { FeatureKey, FeatureStates } from "@lightspeed-ai/platform-shared";
 import { BotFaceIcon } from "@/components/icons/bot";
 import { useActionPermissions, type PermissionAction } from "@/lib/permissions";
 import { universeHome, useActiveUniverse } from "@/lib/universes";

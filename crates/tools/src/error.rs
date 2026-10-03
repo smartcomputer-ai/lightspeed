@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use engine::storage::BlobStoreError;
+use harness::storage::BlobStoreError;
 
 use crate::{environment::jobs::JobError, environment::process::ProcessError, fs::FsError};
 

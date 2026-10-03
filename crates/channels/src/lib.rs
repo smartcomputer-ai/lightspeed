@@ -5,7 +5,7 @@
 //! A chat connection is a bot trigger of kind `chat`; this crate holds
 //! what that trigger points at and the conversation-side logic. The
 //! conversation workflow lives in `temporal-workflow`, its activities and
-//! the control plane in `temporal-server`, the tables in `store-pg`, and
+//! the control plane in `temporal-runtime`, the tables in `store-pg`, and
 //! the provider bridges (Telegram, WhatsApp) in `platform/connectors`.
 //!
 //! Module map:

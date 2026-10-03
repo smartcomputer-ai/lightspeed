@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createDemoStore } from "./fixtures";
 import { createDemoRouter } from "./router";
-import type { TranscriptionView } from "@lightspeed-ai/agent-client";
+import type { TranscriptionView } from "@lightspeed-ai/sdk";
 function boot() {
   const store = createDemoStore();
   const app = createDemoRouter(store);

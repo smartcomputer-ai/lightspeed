@@ -97,19 +97,19 @@ enum Event {
 fn to_guest(message: AxumMessage) -> Option<TungsteniteMessage> {
     Some(match message {
         AxumMessage::Text(value) => TungsteniteMessage::Text(value.to_string().into()),
-        AxumMessage::Binary(value) => TungsteniteMessage::Binary(value.to_vec().into()),
-        AxumMessage::Ping(value) => TungsteniteMessage::Ping(value.to_vec().into()),
-        AxumMessage::Pong(value) => TungsteniteMessage::Pong(value.to_vec().into()),
+        AxumMessage::Binary(value) => TungsteniteMessage::Binary(value),
+        AxumMessage::Ping(value) => TungsteniteMessage::Ping(value),
+        AxumMessage::Pong(value) => TungsteniteMessage::Pong(value),
         AxumMessage::Close(_) => TungsteniteMessage::Close(None),
     })
 }
 
 fn to_lightspeed(message: TungsteniteMessage) -> Option<AxumMessage> {
     match message {
-        TungsteniteMessage::Text(value) => Some(AxumMessage::Text(value.to_string())),
-        TungsteniteMessage::Binary(value) => Some(AxumMessage::Binary(value.to_vec())),
-        TungsteniteMessage::Ping(value) => Some(AxumMessage::Ping(value.to_vec())),
-        TungsteniteMessage::Pong(value) => Some(AxumMessage::Pong(value.to_vec())),
+        TungsteniteMessage::Text(value) => Some(AxumMessage::Text(value.to_string().into())),
+        TungsteniteMessage::Binary(value) => Some(AxumMessage::Binary(value)),
+        TungsteniteMessage::Ping(value) => Some(AxumMessage::Ping(value)),
+        TungsteniteMessage::Pong(value) => Some(AxumMessage::Pong(value)),
         TungsteniteMessage::Close(_) => Some(AxumMessage::Close(None)),
         TungsteniteMessage::Frame(_) => None,
     }

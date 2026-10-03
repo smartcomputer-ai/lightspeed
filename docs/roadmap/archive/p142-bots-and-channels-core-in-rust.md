@@ -8,9 +8,9 @@
   deleted). Implementation log at the end of this document.
 - Proposed 2026-08-30 from a design conversation with Lukas, after a
   survey of `platform/bots`, `platform/channels`, `platform/workers`, the
-  Platform server/db/web glue, and the Rust runtime crates.
+  Platform backend/db/web glue, and the Rust runtime crates.
 - Direction from Lukas: move bots and the core of Channels (workflows,
-  control plane, tables) into `temporal-workflow`, `temporal-server`,
+  control plane, tables) into `temporal-workflow`, `temporal-runtime`,
   `store-pg`, and dedicated domain crates; keep the messaging bridges
   (Telegram, WhatsApp) as TypeScript processes in `platform/`; fold the
   bot and channel API into the existing core API — no second gateway.
@@ -36,7 +36,7 @@ conversation is the receiver of `message_*` workflow tools, every event
 goes through one admission pipeline — but they run as a second product
 plane written against the core's public API:
 
-- The Platform server is itself a Temporal client (`bot-common.ts`,
+- The Platform backend is itself a Temporal client (`bot-common.ts`,
   `bot-schedules.ts`): signal-with-start, queries, and Schedule
   reconciliation at boot happen in route handlers.
 - Two databases hold one product: `bots`, `bot_triggers`, `bot_events`,
@@ -64,7 +64,7 @@ and `WorkerTaskTypes` for the workflow/activity split.
 ## The shape
 
 ```text
-                           lightspeed-server (one node; --roles gateway,sessions,bots,channels)
+                           lightspeed-runtime (one node; --roles gateway,sessions,bots,channels)
                            ┌──────────────────────────────────────────────────────────┐
   Platform (TS)            │ gateway                                                  │
   ┌──────────────────┐     │   JSON-RPC: session/* profiles/* … bots/* channels/*     │
@@ -111,7 +111,7 @@ Two new domain crates follow the `environments` / `mcp` / `profiles`
 pattern — records, validation, errors, pure logic, `#[async_trait]` store
 traits, an in-memory store for tests — with no I/O:
 
-**`crates/bots`** (depends on `api`, `engine` for storage ids, `sha2`,
+**`crates/bots`** (depends on `api`, `harness` for storage ids, `sha2`,
 `cel-interpreter`, `cron`, `hmac`)
 
 - Records: `BotRecord`, `BotTriggerRecord` with the five `TriggerSpec`
@@ -169,7 +169,7 @@ traits, an in-memory store for tests — with no I/O:
   `workflows/bot_trigger_fire.rs`, `workflows/channel_conversation.rs`,
   their activity definitions, and contract-export roots and vectors for
   everything a connector must derive (§7).
-- `temporal-server`: `bots/` module (admission pipeline, schedule
+- `temporal-runtime`: `bots/` module (admission pipeline, schedule
   reconciler, tool executor, session ensure/rotate), `worker/activities/
   {bots,channels}.rs`, `gateway/service/{bots_api,channels_api}.rs`,
   `gateway/hooks.rs`, and the `--task-types` role knob (§6).
@@ -333,7 +333,7 @@ JSON-RPC over HTTP:
   (`self_config`, `emit`) as defense in depth, results and errors as CAS
   blobs, `reply` promise resolved by signalling the holder session.
 
-The admission pipeline (`temporal-server/src/bots/admission.rs`) is one
+The admission pipeline (`temporal-runtime/src/bots/admission.rs`) is one
 Rust function set used by every path — hook route, manual admit, replay,
 schedule and poll fires, chat emit, `bot_emit`, receipts: closed-bot
 guard → `allocate_event_seq` → render → CAS put → insert `ON CONFLICT DO
@@ -343,7 +343,7 @@ and rethrow if the wake fails and this call inserted it. Filter misses
 store nothing.
 
 Tool execution and the `bots/*` methods share the same service functions
-(`temporal-server/src/bots/`), so a bot editing its own trigger and an
+(`temporal-runtime/src/bots/`), so a bot editing its own trigger and an
 operator editing it through the API go through identical validation.
 
 ### 6. Runtime roles
@@ -360,11 +360,11 @@ background loops that belong to that subsystem:
 | `channels` | `lightspeed-channels` | `ChannelConversationWorkflow` | channel activities |
 
 ```
-lightspeed-server                                   # all roles, one process (default)
-lightspeed-server --roles gateway
-lightspeed-server --roles sessions,bots,channels    # today's "worker"
-lightspeed-server --roles bots --task-types workflows
-lightspeed-server --roles bots --task-types activities
+lightspeed-runtime                                   # all roles, one process (default)
+lightspeed-runtime --roles gateway
+lightspeed-runtime --roles sessions,bots,channels    # today's "worker"
+lightspeed-runtime --roles bots --task-types workflows
+lightspeed-runtime --roles bots --task-types activities
 ```
 
 `--roles` (env `LIGHTSPEED_ROLES`) replaces the `gateway` / `worker` /
@@ -395,7 +395,7 @@ runs the environment reconciler *and* the power reaper (today the
 gateway-only mode skips the reaper — an asymmetry to fix while
 rewriting the composition).
 
-`./dev.sh full` becomes runtime + envd + Platform server + web +
+`./dev.sh full` becomes runtime + envd + Platform backend + web +
 Configurator + the opt-in connector host: the four `platform-workers`
 processes disappear. `platform/workers` becomes the connector host.
 
@@ -430,7 +430,7 @@ two dependencies — the core API and Temporal — and reads no database.
    (heartbeating, cancelled by scope) — unchanged payloads.
 4. Health and metrics as today, per account.
 
-The host authenticates the way the Platform server does: it is a
+The host authenticates the way the Platform backend does: it is a
 first-party deployment process, so in `trusted-header` mode it stamps
 `x-lightspeed-universe` per call and uses the operator scope for
 discovery; in `single` mode the universe is fixed; in `api-key` mode
@@ -499,7 +499,7 @@ and core-Channels variable groups in `docs/variables.md`.
    one API. P124's non-goal is reversed for this scope only.
 2. **Two domain crates**, `bots` and `channels`, hold everything pure;
    workflows in `temporal-workflow`, activities and service in
-   `temporal-server` (use subfolders in `crates/temporal-workflow/src/workflows` to segregate the parts), tables in `store-pg`. No new binary, no new
+   `temporal-runtime` (use subfolders in `crates/temporal-workflow/src/workflows` to segregate the parts), tables in `store-pg`. No new binary, no new
    gateway.
 3. **Roles per subsystem, one process by default**: `--roles gateway |
    sessions | bots | channels` (all by default), each worker role its
@@ -540,7 +540,7 @@ and core-Channels variable groups in `docs/variables.md`.
   — ported; the rest moves to `platform/connectors`.
 - `platform/db/src/schema/{bots,channels}.ts`, migrations
   `0001_channels`, `0002_bots`.
-- `platform/server/src/routes/{bot-hooks,bot-common}.ts`,
+- `platform/backend/src/routes/{bot-hooks,bot-common}.ts`,
   `bot-schedules.ts`; the bot logic in `routes/bots.ts` and
   `routes/channel-accounts.ts` (they become passthroughs).
 - `platform/workers` roles `bots-*`, `channels-*`; the Channels search
@@ -560,7 +560,7 @@ and core-Channels variable groups in `docs/variables.md`.
 2. **Bots runtime** — `BotControllerWorkflow`, `BotTriggerFireWorkflow`,
    admission pipeline, bot activities, tool executor, Schedules
    reconciler, hook route, `bots/state/read`, `bots/close` / `delete`,
-   `profiles/put` reconcile signal; `crates/temporal-server/tests/
+   `profiles/put` reconcile signal; `crates/temporal-runtime/tests/
    bots_live.rs` porting the eighteen integration scenarios (dedupe,
    budget, descendants, config reconcile, perKey, coalesce, debounce
    wake, steer/append, sidecar, retention, rotation ×3, close,
@@ -577,12 +577,12 @@ and core-Channels variable groups in `docs/variables.md`.
    grant-leased Telegram tokens and per-account WhatsApp session
    directories, `channels/inbound/admit` with the decision → reply
    mapping, one activity worker per `connectorTaskQueue` (derivation
-   exported from `@lightspeed-ai/agent-client/workflow` and asserted
+   exported from `@lightspeed-ai/sdk/workflow` and asserted
    against the contract vector), one health/metrics listener.
    `platform/channels` and `platform/workers` are deleted; `dev.sh
    full` starts one `connectors` process behind
    `LIGHTSPEED_CHANNELS_CONNECTORS`. `platform/bots` survived only
-   because `platform/server` still imported it (deleted in slice 4). The WhatsApp
+   because `platform/backend` still imported it (deleted in slice 4). The WhatsApp
    group-join pairing announcement was dropped: the core has no
    "is pairing required" query, and the first message in the group
    yields `pairing_required` anyway.
@@ -666,14 +666,14 @@ and core-Channels variable groups in `docs/variables.md`.
   TypeScript client regenerated; the workflow contract now exports
   `ConversationStart`, the connector activity payloads, the connector queue
   derivation, and channel vectors.
-- **Runtime roles.** `lightspeed-server [--roles gateway,sessions,bots,channels] [--task-types all|workflows|activities]`
+- **Runtime roles.** `lightspeed-runtime [--roles gateway,sessions,bots,channels] [--task-types all|workflows|activities]`
   replaces the `gateway`/`worker`/`both` subcommands; per-role queues
   `LIGHTSPEED_TASK_QUEUE` (`lightspeed-sessions`), `LIGHTSPEED_TASK_QUEUE_BOTS`,
   `LIGHTSPEED_TASK_QUEUE_CHANNELS`; the bot schedule reconciler runs beside
   the environment reconciler and power reaper.
 - **Bots runtime.** `BotControllerWorkflow` (lanes as boxed futures polled
   under the loop, no custom wakers; 32 unit tests) and one
-  `BotTriggerFireWorkflow`; `temporal-server/src/bots/`: store-then-wake
+  `BotTriggerFireWorkflow`; `temporal-runtime/src/bots/`: store-then-wake
   admission with row compensation, Temporal Schedules through the raw
   workflow service (the typed client cannot carry workflow input), the
   controller's session activities, the pushed `bot_*` executor, receipts and
@@ -687,7 +687,7 @@ and core-Channels variable groups in `docs/variables.md`.
   activities, and the connector seam: three activities on
   `lightspeed-connector-{provider}-{digest}` served by the TypeScript
   connector host in `platform/connectors`.
-- **Live proof** (`cargo test -p temporal-server --test bots_live|channels_live -- --ignored --test-threads=1`):
+- **Live proof** (`cargo test -p temporal-runtime --test bots_live|channels_live -- --ignored --test-threads=1`):
   manual event → run → outcome, duplicate admission keeps `#N`; webhook
   trigger with filter and coalescing into one batch delivery, filtered and
   probed requests refused; daily budget parking; Temporal Schedule create /
@@ -753,8 +753,8 @@ and core-Channels variable groups in `docs/variables.md`.
   documents carry `data.conversation` / `data.message` (CEL filters written
   against the TS layout need updating).
 - **Slice 4, Platform cut-over (2026-08-30).** `platform/bots` is deleted
-  and the Platform server is no longer a Temporal client
-  (`@temporalio/client` and `@lightspeed/bots` left its dependencies).
+  and the Platform backend is no longer a Temporal client
+  (`@temporalio/client` and `@lightspeed-ai/bots` left its dependencies).
   `routes/bots.ts` and `routes/channel-accounts.ts` are thin passthroughs
   on the existing `engineClientFor` / `withGateway` seam at the same URL
   paths with the core response shapes: reads keep member access, writes
@@ -773,7 +773,7 @@ and core-Channels variable groups in `docs/variables.md`.
   (`LIGHTSPEED_PLATFORM_SCHEMA_REVISION=1`), and the migration gate now
   asserts the moved tables never reappear (the `lightspeed_channels`
   role machinery went with them). The web UI and the demo backend read
-  the generated `@lightspeed-ai/agent-client` types (`platform/web/src/api.ts`
+  the generated `@lightspeed-ai/sdk` types (`platform/web/src/api.ts`
   re-exports them; the demo emulates the new wire exactly, hooks at the
   core-shaped path). Release staging no longer ships `platform/bots/src`.
   Found while migrating: `BotTriggerView` serialized the poll spec's

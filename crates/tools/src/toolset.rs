@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use engine::{ProviderApiKind, ToolName, ToolSpec, WorkflowToolBinding};
+use harness::{ProviderApiKind, ToolName, ToolSpec, WorkflowToolBinding};
 
 use crate::{
     builtin::{BuiltinTool, BuiltinToolDomain, BuiltinToolOperation, BuiltinToolSurface},
@@ -399,7 +399,7 @@ pub fn register_workflow_tools<'a>(
 }
 
 pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset> {
-    use engine::{ToolExecutionClass, ToolExecutionSpec, ToolParallelism};
+    use harness::{ToolExecutionClass, ToolExecutionSpec, ToolParallelism};
     let mut tools = BTreeMap::new();
     let mut add = |tool: ToolSpec| -> ToolResult<()> {
         let name = tool.name.clone();
@@ -531,7 +531,7 @@ mod tests {
         let registry = super::register_toolset(config)?;
         let mut tools = BTreeMap::new();
         for tool in registry.tools.values() {
-            let engine::ToolKind::Builtin(spec) = &tool.kind else {
+            let harness::ToolKind::Builtin(spec) = &tool.kind else {
                 panic!("built-in registration");
             };
             for resolved in crate::definitions::resolve(&tool.name, spec, target)? {

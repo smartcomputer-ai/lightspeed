@@ -1,7 +1,7 @@
 import type {
   ChannelDeliveryCommand,
   ChannelDeliveryResult,
-} from "@lightspeed-ai/agent-client/workflow";
+} from "@lightspeed-ai/sdk/workflow";
 
 /** The delivery command/result shape this connector implements. */
 export const CHANNEL_DELIVERY_VERSION = 1;

@@ -1,5 +1,5 @@
 {
-  "name": "@lightspeed/docs",
+  "name": "@lightspeed-ai/docs",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,23 +10,23 @@
     "check": "npm run test && astro check && npm run build"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "7.3.0",
-    "@astrojs/starlight": "0.42.0",
-    "astro": "7.3.1",
+    "@astrojs/markdown-remark": "7.3.1",
+    "@astrojs/starlight": "0.42.5",
+    "astro": "7.3.5",
     "astro-mermaid": "2.1.0",
     "cookie": "2.0.1",
     "mdast-util-to-string": "^4.0.0",
-    "mermaid": "^11.12.0",
+    "mermaid": "^11.17.2",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "unified": "^11.0.5",
-    "unist-util-visit": "^5.0.0"
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.9",
-    "cheerio": "^1.1.2",
-    "typescript": "^5.8.3"
+    "@astrojs/check": "^0.9.10",
+    "cheerio": "^1.2.0",
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=24"

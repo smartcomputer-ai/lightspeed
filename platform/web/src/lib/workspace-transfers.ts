@@ -3,7 +3,7 @@ import {
   MAX_WORKSPACE_UPLOAD_ENTRIES,
   validWorkspaceTransferPath,
   type WorkspaceUpload,
-} from "@lightspeed/platform-shared";
+} from "@lightspeed-ai/platform-shared";
 
 export type UploadEntry =
   | { kind: "file"; path: string; file: File }

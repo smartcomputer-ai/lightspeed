@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use engine::storage::BlobStore;
+use harness::storage::BlobStore;
 
 use crate::{
     environment::{jobs::JobExecutor, process::ProcessExecutor},

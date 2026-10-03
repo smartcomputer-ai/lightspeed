@@ -54,7 +54,7 @@ docker run --rm --entrypoint node "$platform_workers_image" -e \
 docker run --rm --entrypoint node "$platform_workers_image" \
   --import tsx --input-type=module -e '
     const { parseHostConfig } = await import("./platform/connectors/src/host/config.ts");
-    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/agent-client/workflow");
+    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/sdk/workflow");
     const config = parseHostConfig({
       LIGHTSPEED_API_URL: "http://runtime:18080/rpc",
       LIGHTSPEED_CONNECTOR_API_KEY: "lsk_release_smoke_test",

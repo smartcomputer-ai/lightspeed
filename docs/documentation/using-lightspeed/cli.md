@@ -33,7 +33,10 @@ selection on subsequent imports. Starting the launcher alone does not change
 your selected CLI connection.
 
 Ordinary restarts reuse the keys. Adding Platform does not rotate the CLI key.
-Revoked keys, missing saved secrets or keys absent after a database reset
+After a successful `./dev.sh reset`, the launcher clears its saved credentials
+and handoff. The next startup provisions development keys again; run
+`lightspeed connect dev` afterward to refresh the CLI connection.
+Revoked keys, missing saved secrets or keys absent after a manual database reset
 require explicit repair; startup does not silently issue another administrator
 key. To replace a key, provision a new one with the server command described
 below, put its secret into the corresponding protected `.lightspeed/cli/cli.key`
@@ -61,12 +64,12 @@ On the server host, configure the runtime stores and secrets as described in
 [Self-hosting](../deployment/self-hosting.md), then run:
 
 ```bash
-lightspeed-server migrate
-lightspeed-server api-key provision --name "Initial operator"
+lightspeed-runtime migrate
+lightspeed-runtime api-key provision --name "Initial operator"
 ```
 
-From source, replace `lightspeed-server` with
-`cargo run -p temporal-server --`. The provision command prints JSON containing
+From source, replace `lightspeed-runtime` with
+`cargo run -p temporal-runtime --`. The provision command prints JSON containing
 the secret; capture it securely. It creates a deployment key with every method
 group and no actor assertion. No universe is needed yet.
 

@@ -44,6 +44,8 @@ it.each([
 });
 
 it.each(["user:operator", "event"])("collapses and expands overflowing messages from %s", async (origin) => {
+  // jsdom does not retain gradient stops containing calc() in its CSSOM.
+  const maskImage = vi.spyOn(CSSStyleProperties.prototype, "maskImage", "set");
   height = 700;
   const text = "Long input\n".repeat(50) + "Last line";
   await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "long", role: "user", text, origin, steering: true }} />));
@@ -52,13 +54,13 @@ it.each(["user:operator", "event"])("collapses and expands overflowing messages 
   expect(button.textContent).toBe("Show more");
   expect(button.getAttribute("aria-expanded")).toBe("false");
   expect(content.style.maxHeight).toBe("160px");
-  expect(content.style.maskImage).toContain("linear-gradient");
+  expect(maskImage).toHaveBeenLastCalledWith("linear-gradient(to bottom, black calc(100% - 48px), transparent)");
   expect(content.textContent).toContain("Last line");
   await act(async () => button.click());
   expect(button.textContent).toBe("Show less");
   expect(button.getAttribute("aria-expanded")).toBe("true");
   expect(content.style.maxHeight).toBe("");
-  expect(content.style.maskImage).toBe("");
+  expect(maskImage).toHaveBeenLastCalledWith("");
   await act(async () => button.click());
   expect(content.style.maxHeight).toBe("160px");
 });

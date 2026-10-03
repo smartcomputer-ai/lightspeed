@@ -1,4 +1,4 @@
-import { LightspeedClient } from "@lightspeed-ai/agent-client";
+import { LightspeedClient } from "@lightspeed-ai/sdk";
 
 export const UNIVERSE_HEADER = "x-lightspeed-universe";
 

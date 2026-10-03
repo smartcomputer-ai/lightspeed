@@ -118,7 +118,7 @@ Consequences that fall out structurally:
   principal or `user:<id>` (`engineClientFor(ctx, universe, principal)`);
   neither leases. The Secrets page shows a badge, never a value.
 - **Platform workers** identify themselves: the Bots and Channels activity
-  workers and the platform server send `service_account:lightspeed-bots` /
+  workers and the platform backend send `service_account:lightspeed-bots` /
   `-channels` / `-platform` (audit identity, not a credential). In
   `api-key` deployments the platform mints service keys through
   `operator/api-keys/create` with a `service_account` principal, which it

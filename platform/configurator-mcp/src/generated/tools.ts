@@ -208,7 +208,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+              "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
               "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
@@ -536,7 +536,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the engine drive loop.",
+          "description": "Run budget defaults enforced by the harness drive loop.",
           "properties": {
             "maxToolRounds": {
               "format": "uint32",
@@ -1349,7 +1349,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+              "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
               "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
@@ -1622,7 +1622,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the engine drive loop.",
+          "description": "Run budget defaults enforced by the harness drive loop.",
           "properties": {
             "maxToolRounds": {
               "format": "uint32",
@@ -3647,7 +3647,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+              "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
               "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
@@ -3975,7 +3975,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the engine drive loop.",
+          "description": "Run budget defaults enforced by the harness drive loop.",
           "properties": {
             "maxToolRounds": {
               "format": "uint32",
@@ -5693,7 +5693,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+              "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
               "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
@@ -5966,7 +5966,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the engine drive loop.",
+          "description": "Run budget defaults enforced by the harness drive loop.",
           "properties": {
             "maxToolRounds": {
               "format": "uint32",
@@ -6721,7 +6721,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+              "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
             },
             "inputLimitTokens": {
               "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
@@ -6994,7 +6994,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the engine drive loop.",
+          "description": "Run budget defaults enforced by the harness drive loop.",
           "properties": {
             "maxToolRounds": {
               "format": "uint32",

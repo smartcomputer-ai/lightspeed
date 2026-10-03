@@ -260,7 +260,7 @@ failing is clearer than silently shadowing caller input.
 ## Environment Protocol And Bridge
 
 `run_process` and `job_submit` have an internal resolved-secret-env path
-between `temporal-server` and the active `JobExecutor`/`ProcessExecutor`. This
+between `temporal-runtime` and the active `JobExecutor`/`ProcessExecutor`. This
 path is not exposed in model-visible or public API DTOs.
 
 The environment data-plane request can carry:
@@ -347,7 +347,7 @@ records, not in the environment binding row.
 
 - [x] Load credential bindings when constructing runtime environments or immediately
   before process/job spawn.
-- [x] Resolve bindings in `temporal-server` runtime code, outside workflow replay.
+- [x] Resolve bindings in `temporal-runtime` runtime code, outside workflow replay.
 - [x] Merge resolved credential env into environment process/job starts.
 - [x] Reject caller `env` entries that collide with bound credential env names.
 
@@ -362,7 +362,7 @@ records, not in the environment binding row.
 
 - [x] Store tests for credential binding behavior.
 - [x] API tests for bind/list/unbind JSON-RPC routing.
-- [x] Runtime wiring covered by temporal-server and tools tests.
+- [x] Runtime wiring covered by temporal-runtime and tools tests.
 - [x] Bridge tests that process/job starts receive hidden env vars and redacted
   output does not persist resolved values.
 - [ ] Runtime tests that `run_process` and `job_submit` receive bound env vars

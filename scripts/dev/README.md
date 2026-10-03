@@ -204,7 +204,7 @@ scripts/dev/infra/minio-reset.sh
 
 `reset.sh` recreates both databases, applies the runtime's ledgered schema, and
 clears the Lightspeed MinIO prefix. Platform applies its independently owned
-database migrations when the Platform server starts.
+database migrations when the Platform backend starts.
 
 The runtime's fresh PostgreSQL baseline is organized into eleven domain migrations
 in `crates/store-pg/migrations/`: identity and scoped API keys share a definition;
@@ -266,27 +266,27 @@ For debugging a specific executable role manually:
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server
+cargo run -p temporal-runtime -- migrate
+cargo run -p temporal-runtime
 ```
 
-With no flags, the `lightspeed-server` binary runs every role — the JSON-RPC
+With no flags, the `lightspeed-runtime` binary runs every role — the JSON-RPC
 `gateway`, the `environment-gateway` (worker environment routes, the public
 daemon registration routes, and the environment reconcilers), plus the
 `sessions`, `bots`, and `channels` Temporal workers, each on its own task
-queue — in one process. For split-role runs, select roles per shell
-(`--task-types workflows|activities` splits a worker role further); keep the
-`environment-gateway` role on exactly one process and point the others at it
+queue — in one process. Each worker runs its workflows and activities together.
+For split-role runs, select roles per shell; keep the `environment-gateway`
+role on exactly one process and point the others at it
 through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`:
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-server -- --roles sessions,bots,channels
+cargo run -p temporal-runtime -- --roles sessions,bots,channels
 ```
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-server -- --roles gateway,environment-gateway
+cargo run -p temporal-runtime -- --roles gateway,environment-gateway
 ```
 
 Then chat through the regular CLI over the gateway transport from another
@@ -304,7 +304,7 @@ Run the fake hosted-agent live integration test against the same stack:
 
 ```bash
 source scripts/dev/env.sh
-cargo test -p temporal-server --test sessions_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --test-threads=1 --nocapture
+cargo test -p temporal-runtime --test sessions_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --test-threads=1 --nocapture
 ```
 
 Run the minimal live environment control-plane acceptance test. This uses real
@@ -313,7 +313,7 @@ does not require Incus:
 
 ```bash
 source scripts/dev/env.sh
-cargo test -p temporal-server --test environment_provider_live \
+cargo test -p temporal-runtime --test environment_provider_live \
   -- --ignored --test-threads=1 --nocapture
 ```
 
@@ -322,7 +322,7 @@ Run only the OpenAI-backed hosted-agent live test:
 ```bash
 source scripts/dev/env.sh
 export OPENAI_API_KEY=...
-cargo test -p temporal-server --test sessions_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --test-threads=1 --nocapture
+cargo test -p temporal-runtime --test sessions_live temporal_live_session_start_then_run_start_completes_openai_run -- --ignored --test-threads=1 --nocapture
 ```
 
 Set `LIGHTSPEED_OPENAI_MODEL`, `OPENAI_RESPONSES_MODEL`, or

@@ -25,12 +25,12 @@ export LIGHTSPEED_GIT_SHA="$git_sha"
 # The server reports which daemon targets this release publishes.
 export LIGHTSPEED_ENVD_TARGETS="$envd_target"
 cargo build --release --locked --target "$target" \
-  -p temporal-server -p environment-provider-incus -p cli
+  -p temporal-runtime -p environment-provider-incus -p cli
 # The environment daemon alone is a static musl binary, so it runs on any
 # Linux image whatever glibc that image carries.
 cargo build --release --locked --target "$envd_target" -p environment-daemon
 
-for binary in lightspeed-server lightspeed-provider-incus lightspeed; do
+for binary in lightspeed-runtime lightspeed-provider-incus lightspeed; do
   install -m 0755 "target/$target/release/$binary" "$dist_dir/bin/$binary"
   strip "$dist_dir/bin/$binary"
 done
@@ -64,15 +64,16 @@ client_tgz="$(find "$dist_dir/npm" -maxdepth 1 -name '*.tgz' -print -quit)"
 cp -R platform/configurator-mcp/dist "$dist_dir/configurator-mcp/dist"
 cp platform/configurator-mcp/package.json platform/configurator-mcp/package-lock.json \
   "$dist_dir/configurator-mcp/"
-cp "$client_tgz" "$dist_dir/configurator-mcp/agent-client.tgz"
-node scripts/release/stage-package.mjs configurator "$dist_dir/configurator-mcp" "$version" "$git_sha"
+cp "$client_tgz" "$dist_dir/configurator-mcp/sdk.tgz"
+node scripts/release/stage-package.mjs configurator "$dist_dir/configurator-mcp" "$version" "$git_sha" \
+  "$stage_root/ts-client/package-lock.json"
 (cd "$dist_dir/configurator-mcp" && \
   npm ci --omit=dev --offline --ignore-scripts)
 
 scripts/release/stage-runtimes.sh "$dist_dir"
 
 for spec in \
-  "lightspeed-server:server:$target" \
+  "lightspeed-runtime:runtime:$target" \
   "lightspeed-provider-incus:provider-incus:$target" \
   "lightspeed-envd:envd:$envd_target" \
   "lightspeed:cli:$target"; do

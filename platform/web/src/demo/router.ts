@@ -1,4 +1,4 @@
-/// The in-browser stand-in for the platform server: one Hono app the fetch
+/// The in-browser stand-in for the platform backend: one Hono app the fetch
 /// shim hands every same-origin `/api/*` request to.
 import { Hono } from "hono";
 import type { DemoStore } from "./store";

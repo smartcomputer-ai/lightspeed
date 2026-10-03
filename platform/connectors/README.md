@@ -1,6 +1,6 @@
 # Lightspeed connector host
 
-`@lightspeed/connectors` bridges chat providers (Telegram, WhatsApp) to the
+`@lightspeed-ai/connectors` bridges chat providers (Telegram, WhatsApp) to the
 Lightspeed core. It is **one process serving many accounts across many
 universes**: one grammy long-poller or Baileys socket per account, one Temporal
 activity worker per account queue, all in one Node process. Its only
@@ -59,9 +59,9 @@ The minimum is `LIGHTSPEED_API_URL`; WhatsApp additionally needs
 `LIGHTSPEED_CONNECTOR_WHATSAPP_MEDIA_LOCATOR_KEY`.
 
 ```bash
-npm run test --workspace @lightspeed/connectors
-npm run typecheck --workspace @lightspeed/connectors
-LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc npm run dev --workspace @lightspeed/connectors
+npm run test --workspace @lightspeed-ai/connectors
+npm run typecheck --workspace @lightspeed-ai/connectors
+LIGHTSPEED_API_URL=http://127.0.0.1:18080/rpc npm run dev --workspace @lightspeed-ai/connectors
 ```
 
 `./dev.sh` starts the host as part of the `full` profile when

@@ -1,4 +1,4 @@
-import type { ChannelMediaKind } from "@lightspeed-ai/agent-client";
+import type { ChannelMediaKind } from "@lightspeed-ai/sdk";
 
 const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const DOCUMENT_MIMES = new Set([

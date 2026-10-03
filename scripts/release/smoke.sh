@@ -4,7 +4,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 source release/metadata.env
 expected_sha="${LIGHTSPEED_GIT_SHA:-$(git rev-parse HEAD)}"
-for binary in dist/bin/lightspeed-server dist/bin/lightspeed-provider-incus \
+for binary in dist/bin/lightspeed-runtime dist/bin/lightspeed-provider-incus \
   dist/bin/lightspeed-envd dist/bin/lightspeed; do
   version_output="$($binary --version)"
   grep -F "$expected_sha" <<<"$version_output" >/dev/null
@@ -56,13 +56,13 @@ for entry in package/package.json package/release.json package/dist/index.js \
   tar -tzf "$client_tgz" "$entry" >/dev/null
 done
 test -f dist/configurator-mcp/dist/bin.js
-test -f dist/configurator-mcp/node_modules/@lightspeed-ai/agent-client/dist/index.js
+test -f dist/configurator-mcp/node_modules/@lightspeed-ai/sdk/dist/index.js
 
 for runtime in platform platform-workers; do
   test -f "dist/runtime/$runtime.tar.gz"
   tar -tzf "dist/runtime/$runtime.tar.gz" ./package.json >/dev/null
 done
-tar -tzf dist/runtime/platform.tar.gz ./platform/server/src/main.ts >/dev/null
+tar -tzf dist/runtime/platform.tar.gz ./platform/backend/src/main.ts >/dev/null
 tar -tzf dist/runtime/platform.tar.gz ./platform/web/dist/index.html >/dev/null
 tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/host/main.ts >/dev/null
 tar -tzf dist/runtime/platform-workers.tar.gz ./platform/connectors/src/providers/telegram/connector.ts >/dev/null

@@ -1,4 +1,4 @@
-use engine::{
+use harness::{
     ContentRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmRequest, ModelSelection, ProviderApiKind,
     storage::{BlobStore, InMemoryBlobStore},

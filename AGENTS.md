@@ -26,13 +26,13 @@ change (see Maintenance for sign-off).
 
 ## Architecture Boundaries
 
-- `crates/engine` is deterministic and event-sourced. It must not perform
+- `crates/harness` is deterministic and event-sourced. It must not perform
   network, provider, shell, filesystem, database, or workflow I/O. It emits
   intents that effectful adapters execute.
 - Keep provider request and response structures native to each provider. The
-  engine may retain only the provider-neutral facts needed for deterministic
+  harness may retain only the provider-neutral facts needed for deterministic
   branching; wire materialization and transport configuration belong outside
-  the engine and outside durable session state.
+  the harness and outside durable session state.
 - Public clients depend on `crates/api`, never reducer internals. Keep public
   wire documentation on the Rust manifest and DTOs so generated consumers stay
   aligned.
@@ -40,7 +40,7 @@ change (see Maintenance for sign-off).
   packages. Domain crates such as `bots`, `channels`, and `environments` define
   records, validation, and policy without taking on infrastructure I/O.
 - The Incus environment provider depends only on the environment protocol
-  boundary. It must not depend on Lightspeed stores, API internals, the engine,
+  boundary. It must not depend on Lightspeed stores, API internals, the harness,
   or Temporal runtime.
 - The hosted runtime remains one binary with selectable roles. Cross-subsystem
   work uses workflow starts and signals, not activities dispatched onto another
@@ -90,7 +90,7 @@ environment and always serialize them, including filtered runs:
 
 ```bash
 source scripts/dev/env.sh
-cargo test -p temporal-server --test <suite> [test_name] -- --ignored --test-threads=1
+cargo test -p temporal-runtime --test <suite> [test_name] -- --ignored --test-threads=1
 ```
 
 Avoid running `runs_live_slow`: it waits out production activity budgets and
@@ -118,7 +118,7 @@ Use `./dev.sh` as the supported local entry point; profiles and lifecycle
 commands are in `docs/documentation/development/local-development.md`.
 
 The Rust server never migrates PostgreSQL implicitly. Before manual startup
-against a new or upgraded database, run `cargo run -p temporal-server -- migrate`.
+against a new or upgraded database, run `cargo run -p temporal-runtime -- migrate`.
 
 When adding, removing, or renumbering Rust schema migrations, keep
 `crates/store-pg`'s `REQUIRED_SCHEMA_REVISION` and
@@ -128,6 +128,10 @@ release boundary with `scripts/release/verify-metadata.sh`.
 ## Maintenance
 
 - Keep changes focused and preserve unrelated work in a dirty worktree.
+- Preserve concise Cargo dependency ranges such as `"1"` and `"0.1"`;
+  `Cargo.lock` records the exact tested versions. Change manifest ranges for
+  breaking upgrades or when a required API or fix needs a higher minimum,
+  rather than expanding every range to the latest full version.
 - Edit the root `README.md` only with explicit user permission. General requests
   to update documentation do not authorize changes to that file.
 - Never cite letter-P numeric roadmap identifiers in source comments, symbols,
@@ -141,6 +145,6 @@ release boundary with `scripts/release/verify-metadata.sh`.
   change.
 - Record implementation progress in an active roadmap document, but do not
   promote completed roadmap detail into this file.
-- Add or update tests for behavioral changes. For deterministic engine changes,
+- Add or update tests for behavioral changes. For deterministic harness changes,
   include replay coverage or vectors where appropriate.
 - When asked for repository line counts, use `cloc $(git ls-files)`.

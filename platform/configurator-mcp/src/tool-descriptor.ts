@@ -1,4 +1,4 @@
-import type { Method, MethodGroup } from "@lightspeed-ai/agent-client";
+import type { Method, MethodGroup } from "@lightspeed-ai/sdk";
 
 export interface JsonSchema {
   [key: string]: unknown;

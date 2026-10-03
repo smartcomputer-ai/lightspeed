@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use engine::storage::InMemoryBlobStore;
 use environment_client::{EnvironmentClientError, EnvironmentDataClient, JsonRpcTransport};
 use environment_protocol::{
     data::handshake::{InitializeParams, InitializedParams},
     shared::{CURRENT_PROTOCOL_VERSION, EnvironmentCapabilities},
 };
+use harness::storage::InMemoryBlobStore;
 use thiserror::Error;
 
 use crate::{
