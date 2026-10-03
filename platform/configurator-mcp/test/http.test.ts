@@ -180,6 +180,10 @@ describe("Streamable HTTP configurator", () => {
   });
 
   it("aborts an in-flight upstream request when the MCP client disconnects", async () => {
+    let upstreamStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      upstreamStarted = resolve;
+    });
     let observedAbort!: () => void;
     const aborted = new Promise<void>((resolve) => {
       observedAbort = resolve;
@@ -194,6 +198,7 @@ describe("Streamable HTTP configurator", () => {
           },
           { once: true },
         );
+        upstreamStarted();
       });
     });
     const controller = new AbortController();
@@ -203,9 +208,10 @@ describe("Streamable HTTP configurator", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
       signal: controller.signal,
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const rejected = expect(request).rejects.toThrow();
+    await started;
     controller.abort();
-    await expect(request).rejects.toThrow();
+    await rejected;
     await expect(aborted).resolves.toBeUndefined();
   });
 

@@ -9,6 +9,7 @@ import { UNIVERSE_ICONS } from "@lightspeed/platform-shared";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { GeneralSettingsPage } from "@/pages/GeneralSettingsPage";
 import { UniverseAppearanceCard } from "./universe-appearance-card";
+import { waitForUi } from "@/test/wait-for-ui";
 import { UniverseIcon } from "./universe-icon";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), universe: {} as Universe }));
@@ -64,7 +65,7 @@ it.each(UNIVERSE_ICONS)("previews the %s icon and saves it to the shared univers
   expect(preview.querySelector("span[style]")?.getAttribute("style")).toContain("oklch(0.58 0.11 255)");
   expect(mocks.api).not.toHaveBeenCalled();
   await click("Save appearance");
-  await vi.waitFor(() => expect(client.getQueryData<Universe[]>(["universes"])![0]).toMatchObject({ icon, iconColor: "blue" }));
+  await waitForUi(() => expect(client.getQueryData<Universe[]>(["universes"])![0]).toMatchObject({ icon, iconColor: "blue" }));
   expect(mocks.api).toHaveBeenCalledWith("PATCH", "/api/v1/universes/universe", { icon, iconColor: "blue" });
   await render(<CachedIcon />);
   expect(container.querySelector(`.lucide-${icon}`)).not.toBeNull();
@@ -75,11 +76,11 @@ it("keeps the saved appearance when a save fails and allows retry", async () => 
   mocks.api.mockRejectedValueOnce(new Error("Unable to save"));
   await render(<UniverseAppearanceCard universe={mocks.universe} />);
   await click("Star icon"); await click("Save appearance");
-  await vi.waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("Unable to save"));
+  await waitForUi(() => expect(container.querySelector('[role="alert"]')?.textContent).toBe("Unable to save"));
   expect(client.getQueryData<Universe[]>(["universes"])![0]).toMatchObject({ icon: "orbit", iconColor: "default" });
   expect(button("Star icon").getAttribute("aria-pressed")).toBe("true");
   await click("Save appearance");
-  await vi.waitFor(() => expect(client.getQueryData<Universe[]>(["universes"])![0]).toMatchObject({ icon: "star" }));
+  await waitForUi(() => expect(client.getQueryData<Universe[]>(["universes"])![0]).toMatchObject({ icon: "star" }));
 });
 
 it("restores defaults only after saving", async () => {

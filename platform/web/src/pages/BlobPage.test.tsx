@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
+import { waitForUi } from "@/test/wait-for-ui";
 import { BlobPage } from "./BlobPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -16,8 +17,10 @@ const filePath = "docs/résumé #?.txt";
 let root: Root;
 let container: HTMLDivElement;
 let stored: string;
+let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   stored = "# Instructions\n\n<script>alert(1)</script>";
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
     if (path.endsWith("/access")) return { actions: ["read"], resources: [] };
@@ -46,12 +49,12 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  client.clear();
   container.remove();
   vi.unstubAllGlobals();
 });
 
 async function open(url: string) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <PermissionIdentityProvider userId="user" platformAdmin={false}>
@@ -61,10 +64,10 @@ async function open(url: string) {
       </PermissionIdentityProvider>
     </QueryClientProvider>,
   ));
-  for (let attempt = 0; attempt < 20 && !container.querySelector("pre, img, iframe"); attempt++) {
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-  }
-  expect(container.querySelector("pre, img, iframe")).not.toBeNull();
+  await waitForUi(() => {
+    expect(container.querySelector("pre, img, iframe")).not.toBeNull();
+    expect(client.isFetching()).toBe(0);
+  });
 }
 
 it("shows stored text exactly as stored, named from the link, with its source session", async () => {
@@ -73,7 +76,7 @@ it("shows stored text exactly as stored, named from the link, with its source se
   expect(container.textContent).toContain("Markdown · ");
   expect(container.querySelector("pre")!.textContent).toBe(stored);
   expect(container.querySelector("script")).toBeNull();
-  await vi.waitFor(() => expect(container.textContent).toContain("Linked from session: HIT login debugging"));
+  await waitForUi(() => expect(container.textContent).toContain("Linked from session: HIT login debugging"));
   expect(container.querySelector('header a[href="/u/acme/sessions/s1"]')!.textContent).toBe("HIT login debugging");
   expect(document.title).toBe("Profile instructions");
 });
@@ -91,7 +94,7 @@ it("hands images to the browser and names unnamed blobs by digest", async () => 
 
 it("names a source session the viewer cannot read by its id, without a link", async () => {
   await open(`/u/acme/blobs/${digest}?session=private`);
-  await vi.waitFor(() => expect(container.textContent).toContain("Linked from session: private"));
+  await waitForUi(() => expect(container.textContent).toContain("Linked from session: private"));
   expect(container.querySelector(`header a[href*="/sessions/"]`)).toBeNull();
 });
 
@@ -127,7 +130,6 @@ it("does not look up workspaces when the link has no workspace source", async ()
 });
 
 it("refuses addresses that are not digests without reading anything", async () => {
-  const client = new QueryClient();
   await act(async () => root.render(
     <QueryClientProvider client={client}>
       <PermissionIdentityProvider userId="user" platformAdmin={false}>
@@ -137,6 +139,6 @@ it("refuses addresses that are not digests without reading anything", async () =
       </PermissionIdentityProvider>
     </QueryClientProvider>,
   ));
-  await vi.waitFor(() => expect(container.textContent).toContain("This is not a blob address."));
+  await waitForUi(() => expect(container.textContent).toContain("This is not a blob address."));
   expect(mocks.api.mock.calls.some(([, path]) => String(path).includes("/blobs/"))).toBe(false);
 });

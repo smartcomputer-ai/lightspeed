@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ReactNode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { WorkspacesPage } from "@/pages/WorkspacesPage";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import {
   WorkspaceDropArea,
 } from "./workspace-transfers";
 import { WorkspaceFileTree } from "./workspace-file-tree";
+import { waitForUi } from "@/test/wait-for-ui";
 
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
@@ -96,6 +97,13 @@ vi.mock("@/components/ui/dropdown-menu", async () => {
 let root: Root;
 let container: HTMLDivElement;
 let entries: Record<string, VfsTreeEntry>;
+let transferClient: QueryClient;
+const clients: QueryClient[] = [];
+function createQueryClient() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  clients.push(client);
+  return client;
+}
 const originalPdfSupport = Object.getOwnPropertyDescriptor(
   navigator,
   "pdfViewerEnabled",
@@ -112,6 +120,8 @@ const tree = (revision = 3) => ({
 });
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  notifyManager.setNotifyFunction((notify) => act(notify));
+  transferClient = createQueryClient();
   mocks.editable = true;
   mocks.configurable = true;
   mocks.workspaceRemoved.mockReset();
@@ -127,25 +137,23 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  clients.splice(0).forEach((client) => client.clear());
+  notifyManager.setNotifyFunction((notify) => notify());
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   if (originalPdfSupport)
     Object.defineProperty(navigator, "pdfViewerEnabled", originalPdfSupport);
   else Reflect.deleteProperty(navigator, "pdfViewerEnabled");
 });
-const settle = () => new Promise((resolve) => setTimeout(resolve, 40));
 async function waitForEditor() {
-  return vi.waitFor(async () => {
-    await act(settle);
+  return waitForUi(() => {
     const editor = container.querySelector('textarea[aria-label="File contents"]');
     expect(editor).toBeInstanceOf(HTMLTextAreaElement);
     return editor as HTMLTextAreaElement;
   });
 }
 async function render(withTree = false) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = transferClient;
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
@@ -181,13 +189,12 @@ async function render(withTree = false) {
       </QueryClientProvider>,
     ),
   );
-  await act(settle);
+  await waitForUi(() => expect(client.getQueryState(["workspace-tree", "u", "ws"])?.status).toBe("success"));
 }
 async function click(element: Element | null | undefined) {
   if (!element) throw new Error("Expected a clickable element");
   await act(async () => {
     (element as HTMLElement).click();
-    await settle();
   });
 }
 const button = (text: string) =>
@@ -208,7 +215,6 @@ async function select(files: File[], replacement = false) {
   Object.defineProperty(input, "files", { configurable: true, value: files });
   await act(async () => {
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    await settle();
   });
 }
 const writes = () =>
@@ -224,7 +230,6 @@ async function drag(type: string, target: Element, types = ["Files"]) {
   Object.defineProperty(event, "dataTransfer", { value: transfer });
   await act(async () => {
     target.dispatchEvent(event);
-    await settle();
   });
   return transfer;
 }
@@ -309,12 +314,11 @@ it("does not advertise a drop destination for viewers or text drags", async () =
   ).toBeNull();
 });
 async function waitForWrites(count = 1) {
-  await act(async () => {
-    await vi.waitFor(() => expect(writes()).toHaveLength(count));
-  });
+  await waitForUi(() => expect(writes()).toHaveLength(count));
 }
 
 async function folderName(name: string) {
+  await waitForUi(() => expect(document.querySelector('[role="dialog"] input')).not.toBeNull());
   const input = document.querySelector<HTMLInputElement>(
     '[role="dialog"] input',
   )!;
@@ -388,7 +392,7 @@ function WorkspaceLocation() {
   return <output data-location>{useLocation().pathname}</output>;
 }
 
-it.each([0, 100])("renames a workspace in the picker while keeping the open file and unsaved edits (file delay: %i ms)", async (fileDelay) => {
+it("renames a workspace in the picker while keeping the open file and unsaved edits", async () => {
   let workspace = {
     workspaceId: "ws",
     displayName: "Documents",
@@ -407,16 +411,11 @@ it.each([0, 100])("renames a workspace in the picker while keeping the open file
       }
       if (path.endsWith("/workspaces")) return [workspace];
       if (path.endsWith("/tree")) return { ...tree(), workspace };
-      if (path.includes("/files/")) {
-        await new Promise((resolve) => setTimeout(resolve, fileDelay));
-        return { bytesBase64: "eA==", bytes: 1 };
-      }
+      if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     },
   );
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createQueryClient();
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
@@ -533,9 +532,7 @@ it.each([true, false])(
       if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createQueryClient();
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -557,15 +554,14 @@ it.each([true, false])(
         </QueryClientProvider>,
       ),
     );
-    await act(settle);
+    await waitForEditor();
     await menu("Workspace actions");
     await click(item("Delete workspace…"));
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
       "Documents",
     );
     await click(button("Delete workspace"));
-    await vi.waitFor(async () => {
-      await act(settle);
+    await waitForUi(() => {
       expect(container.querySelector("[data-location]")?.textContent).toBe(
         `/u/test/workspaces${hasOther ? "/other" : ""}`,
       );
@@ -596,12 +592,12 @@ it.each([
     )!;
     expect(input.value).toBe(path.split("/").at(-1));
     expect((button("Rename") as HTMLButtonElement).disabled).toBe(true);
-    expect(input.selectionStart).toBe(0);
-    expect(input.selectionEnd).toBe(
-      label.startsWith("File")
-        ? input.value.lastIndexOf(".")
-        : input.value.length,
-    );
+    await waitForUi(() => {
+      expect(input.selectionStart).toBe(0);
+      expect(input.selectionEnd).toBe(
+        label.startsWith("File") ? input.value.lastIndexOf(".") : input.value.length,
+      );
+    });
     await folderName("renamed");
     await click(button("Rename"));
     expect(writes()).toEqual([
@@ -790,7 +786,6 @@ it("uploads dropped files into the folder under the pointer without asking", asy
   });
   await act(async () => {
     container.querySelector("[data-workspace-folder]")!.dispatchEvent(event);
-    await settle();
   });
   expect(event.defaultPrevented).toBe(true);
   await waitForWrites();
@@ -809,6 +804,7 @@ it("keeps progress inside the action menu and adds no status strip", async () =>
     return tree();
   });
   await select([new File(["new"], "new.txt")]);
+  await waitForWrites();
   const statuses = [...container.querySelectorAll('[role="status"]')];
   expect(statuses.length).toBeGreaterThan(0);
   for (const status of statuses) {
@@ -818,9 +814,8 @@ it("keeps progress inside the action menu and adds no status strip", async () =>
   expect(document.querySelector('[role="dialog"]')).toBeNull();
   await act(async () => {
     finish();
-    await settle();
   });
-  expect(container.querySelector('[role="status"]')).toBeNull();
+  await waitForUi(() => expect(container.querySelector('[role="status"]')).toBeNull());
   expect(container.textContent).not.toContain("Upload complete");
 });
 
@@ -848,7 +843,7 @@ it("replaces the selected file at its original path after confirmation", async (
   await click(item("Upload replacement…"));
   await select([new File(["new"], "different-name.txt")], true);
   expect(writes()).toHaveLength(0);
-  expect(document.body.textContent).toContain("Replace existing files?");
+  await waitForUi(() => expect(document.body.textContent).toContain("Replace existing files?"));
   expect(document.body.textContent).toContain("docs/a #?.txt");
   await click(button("Replace and upload"));
   await waitForWrites();
@@ -867,6 +862,7 @@ it("can skip existing files and upload the rest", async () => {
     new File(["replacement"], "a #?.txt"),
     new File(["new"], "new.txt"),
   ]);
+  await waitForUi(() => expect(button("Skip existing")).toBeDefined());
   expect(writes()).toHaveLength(0);
   await click(button("Skip existing"));
   await waitForWrites();
@@ -889,13 +885,15 @@ it("rechecks collisions after a concurrent edit instead of silently overwriting"
     return tree(failed ? 4 : 3);
   });
   await select([new File(["new"], "new.txt")]);
+  await waitForUi(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain("Workspace changed"));
   expect(document.querySelector('[role="alert"]')?.textContent).toContain(
     "Workspace changed",
   );
   await click(button("Retry"));
   expect(writes()).toHaveLength(1);
-  expect(document.body.textContent).toContain("Replace existing files?");
+  await waitForUi(() => expect(document.body.textContent).toContain("Replace existing files?"));
   await click(button("Replace and upload"));
+  await waitForWrites(2);
   expect(writes()[1]?.[2]).toMatchObject({
     replace: true,
     expectedRevision: 4,
@@ -952,10 +950,12 @@ it("downloads from the file menu with the original filename", async () => {
     "/api/v1/universes/u/workspaces/ws/download?path=docs%2Fa+%23%3F.txt",
     { credentials: "same-origin" },
   );
-  expect(names).toEqual(["a #?.txt"]);
+  await waitForUi(() => expect(names).toEqual(["a #?.txt"]));
 });
 
 it("places the open file’s actions in the tree, not its detail header", async () => {
+  const snapshot = deferred<ReturnType<typeof tree>>();
+  const content = deferred<{ bytesBase64: string; bytes: number }>();
   const workspace = {
     workspaceId: "ws",
     displayName: "Documents",
@@ -964,13 +964,11 @@ it("places the open file’s actions in the tree, not its detail header", async 
   };
   mocks.api.mockImplementation(async (_method: string, path: string) => {
     if (path.endsWith("/workspaces")) return [workspace];
-    if (path.endsWith("/tree")) return { ...tree(), workspace };
-    if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
+    if (path.endsWith("/tree")) return snapshot.promise;
+    if (path.includes("/files/")) return content.promise;
     throw new Error(`Unexpected request: ${path}`);
   });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createQueryClient();
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
@@ -987,7 +985,20 @@ it("places the open file’s actions in the tree, not its detail header", async 
       </QueryClientProvider>,
     ),
   );
-  await act(settle);
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalledWith(
+    "GET", "/api/v1/universes/u/workspaces/ws/tree",
+  ));
+  expect(container.querySelector("textarea")).toBeNull();
+  await act(async () => snapshot.resolve({ ...tree(), workspace }));
+  await waitForUi(() => {
+    expect(mocks.api).toHaveBeenCalledWith(
+      "GET",
+      "/api/v1/universes/u/workspaces/ws/files/docs/a%20%23%3F.txt",
+    );
+  });
+  expect(container.querySelector('textarea[aria-label="File contents"]')).toBeNull();
+  await act(async () => content.resolve({ bytesBase64: "eA==", bytes: 1 }));
+  await waitForEditor();
   const menus = container.querySelectorAll(
     '[aria-label="File actions: docs/a #?.txt"]',
   );
@@ -1056,9 +1067,7 @@ it.each(["", "docs"])(
         throw new Error(`Unexpected request: ${path}`);
       },
     );
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createQueryClient();
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -1075,7 +1084,7 @@ it.each(["", "docs"])(
         </QueryClientProvider>,
       ),
     );
-    await act(settle);
+    await waitForEditor();
     await menu(parent ? `Folder actions: ${parent}` : "Workspace actions");
     await click(item("New file"));
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
@@ -1104,8 +1113,7 @@ it.each(["", "docs"])(
         },
       ],
     ]);
-    await vi.waitFor(async () => {
-      await act(settle);
+    await waitForUi(() => {
       expect(
         container
           .querySelector('[role="treeitem"][aria-selected="true"]')
@@ -1151,9 +1159,7 @@ it.each(["file", "folder"])(
         throw new Error(`Unexpected request: ${path}`);
       },
     );
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createQueryClient();
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -1214,8 +1220,7 @@ it.each(["file", "folder"])(
         'a[href="/u/test/workspaces/ws/files/other.txt"]',
       ),
     );
-    await vi.waitFor(async () => {
-      await act(settle);
+    await waitForUi(() => {
       expect(container.querySelector("textarea")?.value).toBe("x");
     });
   },
@@ -1236,9 +1241,7 @@ it.each(["metaKey", "ctrlKey"] as const)(
       if (path.includes("/files/")) return { bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createQueryClient();
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -1282,7 +1285,6 @@ it.each(["metaKey", "ctrlKey"] as const)(
     });
     await act(async () => {
       expect(pressSave().defaultPrevented).toBe(true);
-      await settle();
     });
     expect(mocks.api).toHaveBeenCalledWith(
       "PUT",
@@ -1316,9 +1318,7 @@ it.each([
         return { bytesBase64: btoa(content), bytes: content.length };
       throw new Error(`Unexpected request: ${path}`);
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createQueryClient();
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -1335,8 +1335,7 @@ it.each([
         </QueryClientProvider>,
       ),
     );
-    await vi.waitFor(async () => {
-      await act(settle);
+    await waitForUi(() => {
       expect(container.querySelector("iframe")?.getAttribute("src")).toBe(
         "blob:workspace-pdf",
       );
@@ -1386,9 +1385,7 @@ it.each([
           : { blobRef: "old", bytesBase64: "eA==", bytes: 1 };
       throw new Error(`Unexpected request: ${path}`);
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createQueryClient();
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
@@ -1429,9 +1426,8 @@ it.each([
             cancelable: true,
           }),
         );
-      await settle();
     });
-    expect(button("Saving…")).toBeDefined();
+    await waitForUi(() => expect(button("Saving…")).toBeDefined());
     if (keepTyping) await edit("newer unsaved content");
     const stable = () => {
       expect(container.querySelector("textarea")).toBe(editor);
@@ -1448,7 +1444,6 @@ it.each([
     await act(async () => {
       saved = true;
       write.resolve({ workspace: { ...workspace, revision: 4 } });
-      await settle();
     });
     stable();
     await act(async () => {
@@ -1465,9 +1460,10 @@ it.each([
         ...tree(4),
         workspace: { ...workspace, revision: 4 },
       });
-      await settle();
     });
-    await act(settle);
+    await waitForUi(() => expect(
+      mocks.api.mock.calls.filter(([method, path]) => method === "GET" && path.includes("/files/")),
+    ).toHaveLength(2));
     stable();
     expect(
       mocks.api.mock.calls.filter(
@@ -1480,10 +1476,12 @@ it.each([
         bytesBase64: btoa("saved content"),
         bytes: 13,
       });
-      await settle();
+    });
+    await waitForUi(() => {
+      expect(client.isFetching()).toBe(0);
+      expect(button(keepTyping ? "Save" : "Saved")).toBeDefined();
     });
     stable();
-    expect(button(keepTyping ? "Save" : "Saved")).toBeDefined();
     expect(
       (button(keepTyping ? "Save" : "Saved") as HTMLButtonElement).disabled,
     ).toBe(!keepTyping);

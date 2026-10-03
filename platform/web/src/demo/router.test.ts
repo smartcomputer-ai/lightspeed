@@ -1,5 +1,5 @@
 import { defaultEnvironmentAttachment, environmentAttachments } from "@/lib/sessions/resource-features";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDemoStore } from "./fixtures";
 import { createDemoRouter } from "./router";
 import type {
@@ -709,7 +709,12 @@ describe("demo router", () => {
     expect((overriddenToKeep.json as SessionView).retention.deleteAfterCloseMs).toBeNull();
   });
 
-  it("admits a manual bot event and resolves its outcome", async () => {
+  it("admits a manual bot event and resolves its outcome", async ({ onTestFinished }) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    });
     const { call } = await boot();
     const [universe] = (await call("GET", "/api/v1/universes")).json as Universe[];
     const [bot] = ((await call("GET", `/api/v1/universes/${universe!.id}/bots`)).json as { bots: BotListItem[] }).bots;
@@ -721,14 +726,14 @@ describe("demo router", () => {
     });
     expect(admitted.status).toBe(202);
     expect((admitted.json as { duplicate: boolean }).duplicate).toBe(false);
-    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    await vi.runAllTimersAsync();
     const after = (await call("GET", `/api/v1/universes/${universe!.id}/bots/${bot!.botId}/events`)).json as {
       events: Array<{ seq: number; outcome: string | null }>;
     };
     expect(after.events.length).toBe(before.events.length + 1);
     const newest = after.events.reduce((a, b) => (a.seq > b.seq ? a : b));
     expect(newest.outcome).not.toBeNull();
-  }, 20_000);
+  });
 
   it("names the missing stub instead of hanging", async () => {
     const { call } = await boot();
