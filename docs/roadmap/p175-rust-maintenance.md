@@ -293,3 +293,37 @@ Deployment and environment-reference documentation now match.
   the standard SDK constructor.
 - The exact workspace Clippy gate, formatting, documentation checks, and
   `git diff --check` passed. The resolved SDK features exclude `experimental`.
+
+## CI/CD preflight
+
+Checked on 2026-10-03 without building container images. Two release defects
+were found and fixed:
+
+- Cached Rust builds could retain an earlier commit SHA because the build
+  script watched only `.git/HEAD`. It now watches Git's resolved HEAD, current
+  branch, and packed-reference paths. A regression test builds a fixture across
+  commits, packed refs, detached HEAD, and a linked worktree.
+- Configurator staging replaced the SDK lock entry without its production
+  dependency graph. The isolated SDK workflow import then failed on missing
+  `@noble/hashes`. Staging now nests the SDK's locked production dependencies
+  under the packed SDK, preserving Configurator's own resolutions. An offline
+  installation test covers direct and transitive dependencies and excludes
+  development dependencies.
+
+Validation:
+
+- `cargo test --workspace --locked` passed 2,118 tests; the new build-identity
+  regression passed separately. The final strict workspace Clippy gate passed.
+- Clean `npm ci`, the complete `npm run check:ci`, and documentation checks
+  passed. An initial PGlite setup timed out during concurrent Rust compilation;
+  the unchanged consumer gate passed on rerun. All 17 CI/release-script tests
+  passed after the packaging fix.
+- Rust's live migration-ledger test and the Platform migration gate passed.
+- All four native binaries built and reported the current commit SHA. The
+  staged SDK tarball, Configurator, backend and connector bundles imported
+  successfully; the packaged JavaScript Temporal native core initialized and
+  shut down successfully.
+- Release metadata, generated-file freshness, shell syntax, workflow lint,
+  rename references, and CI change classification passed. Pinned container
+  base digests and their Linux/amd64 manifests were verified remotely.
+- Linux GNU/musl compilation and container image smoke tests remain for CI/CD.

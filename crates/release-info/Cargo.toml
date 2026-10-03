@@ -3,3 +3,6 @@ name = "release-info"
 version.workspace = true
 edition = "2024"
 build = "build.rs"
+
+[dev-dependencies]
+tempfile = "3"

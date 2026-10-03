@@ -572,6 +572,10 @@ async function runDevelopmentAction(options, env) {
     infrastructureTouched = true;
     await runChecked("infra", path.join(infraDir, "reset.sh"), [], env);
     infrastructureTouched = false;
+    // An explicit reset invalidates the saved keys along with their database records.
+    // Only clear them after success; ordinary startup must still require existing keys.
+    rmSync(path.join(repoRoot, ".lightspeed", "cli"), { recursive: true, force: true });
+    console.log("[reset] Cleared saved development credentials. Start ./dev.sh to provision keys, then run lightspeed connect dev to refresh the CLI connection.");
     return;
   }
   const supervisor = readSupervisorState();

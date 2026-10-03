@@ -277,9 +277,13 @@ Stopping the application and deleting its data are separate operations:
 | Ctrl+C in the launcher, or `./dev.sh stop` | Stops tracked host processes; leaves Docker services and durable state available. |
 | `./dev.sh down` | Stops host processes and tears down the Compose services; retains their volumes. |
 | `./dev.sh down --volumes` | Also removes the Compose volumes and the data in them. |
-| `./dev.sh reset` | Recreates both local databases, migrates the runtime database, and clears the Lightspeed MinIO prefix. Stop the supervisor first. |
+| `./dev.sh reset` | Recreates both local databases, migrates the runtime database, and clears the Lightspeed MinIO prefix. On success, also clears the launcher's saved development credentials and CLI handoff. Stop the supervisor first. |
 
 Use reset for disposable development data when that is the intended outcome.
+After a successful reset, start `./dev.sh` to provision development keys again,
+then run `target/debug/lightspeed connect dev` to refresh the CLI connection.
+Manual database resets leave the launcher's saved credentials in place and
+require [explicit key repair](../using-lightspeed/cli.md#connect-to-local-development).
 A changed migration checksum requires understanding the schema history;
 deleting rows does not repair a ledger mismatch. See
 [Changing contracts](changing-contracts.md#database-migrations) before editing

@@ -33,7 +33,10 @@ selection on subsequent imports. Starting the launcher alone does not change
 your selected CLI connection.
 
 Ordinary restarts reuse the keys. Adding Platform does not rotate the CLI key.
-Revoked keys, missing saved secrets or keys absent after a database reset
+After a successful `./dev.sh reset`, the launcher clears its saved credentials
+and handoff. The next startup provisions development keys again; run
+`lightspeed connect dev` afterward to refresh the CLI connection.
+Revoked keys, missing saved secrets or keys absent after a manual database reset
 require explicit repair; startup does not silently issue another administrator
 key. To replace a key, provision a new one with the server command described
 below, put its secret into the corresponding protected `.lightspeed/cli/cli.key`

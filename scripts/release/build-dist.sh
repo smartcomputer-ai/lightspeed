@@ -65,7 +65,8 @@ cp -R platform/configurator-mcp/dist "$dist_dir/configurator-mcp/dist"
 cp platform/configurator-mcp/package.json platform/configurator-mcp/package-lock.json \
   "$dist_dir/configurator-mcp/"
 cp "$client_tgz" "$dist_dir/configurator-mcp/sdk.tgz"
-node scripts/release/stage-package.mjs configurator "$dist_dir/configurator-mcp" "$version" "$git_sha"
+node scripts/release/stage-package.mjs configurator "$dist_dir/configurator-mcp" "$version" "$git_sha" \
+  "$stage_root/ts-client/package-lock.json"
 (cd "$dist_dir/configurator-mcp" && \
   npm ci --omit=dev --offline --ignore-scripts)
 

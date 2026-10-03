@@ -53,6 +53,13 @@ test("key bootstrap opt-out preserves universe setup and requires existing servi
   assert.equal(supplied.platformSecret, "external");
   assert.equal(f.keys.size, 0);
 });
+test("ordinary startup refuses saved credentials absent from the database", async t => {
+  const f = fixture(t);
+  await prepareCliConnection({ ...f, full: true });
+  f.keys.clear();
+  await assert.rejects(prepareCliConnection({ ...f, full: true }), /restart must use an active key/);
+  assert.equal(f.keys.size, 0, "startup does not recreate missing administrator keys");
+});
 test("single mode writes a credential-free handoff", async t => {
   const f = fixture(t);
   const result = await prepareCliConnection({ ...f, env: { ...f.env, LIGHTSPEED_AUTH_MODE: "single" }, full: false });
