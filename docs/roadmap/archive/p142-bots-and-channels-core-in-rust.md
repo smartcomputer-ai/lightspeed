@@ -577,7 +577,7 @@ and core-Channels variable groups in `docs/variables.md`.
    grant-leased Telegram tokens and per-account WhatsApp session
    directories, `channels/inbound/admit` with the decision → reply
    mapping, one activity worker per `connectorTaskQueue` (derivation
-   exported from `@lightspeed-ai/client/workflow` and asserted
+   exported from `@lightspeed-ai/sdk/workflow` and asserted
    against the contract vector), one health/metrics listener.
    `platform/channels` and `platform/workers` are deleted; `dev.sh
    full` starts one `connectors` process behind
@@ -773,7 +773,7 @@ and core-Channels variable groups in `docs/variables.md`.
   (`LIGHTSPEED_PLATFORM_SCHEMA_REVISION=1`), and the migration gate now
   asserts the moved tables never reappear (the `lightspeed_channels`
   role machinery went with them). The web UI and the demo backend read
-  the generated `@lightspeed-ai/client` types (`platform/web/src/api.ts`
+  the generated `@lightspeed-ai/sdk` types (`platform/web/src/api.ts`
   re-exports them; the demo emulates the new wire exactly, hooks at the
   core-shaped path). Release staging no longer ships `platform/bots/src`.
   Found while migrating: `BotTriggerView` serialized the poll spec's

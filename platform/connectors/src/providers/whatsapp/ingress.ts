@@ -1,4 +1,4 @@
-import type { ChannelInbound, ChannelInboundMedia } from "@lightspeed-ai/client";
+import type { ChannelInbound, ChannelInboundMedia } from "@lightspeed-ai/sdk";
 import { mediaPlaceholder } from "../../media/inbound.js";
 
 export interface WhatsAppInboundMessage {

@@ -616,7 +616,7 @@ state-query template, generalized.
 **Where it lives:** `platform/bots/` — a TypeScript Temporal application
 exactly like Channels: bot records in Platform Postgres (the `foundryPacks`
 shape), ingest routes in `platform/backend`, one controller workflow type,
-activities over `@lightspeed-ai/client`. Alternatives considered and set
+activities over `@lightspeed-ai/sdk`. Alternatives considered and set
 aside: a core Rust crate (wrong tier — this is product logic that will
 iterate weekly, and the core's job is to stay still) and new core API methods
 for bot CRUD (unnecessary — Channels and Foundry both live entirely on the

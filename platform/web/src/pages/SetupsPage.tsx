@@ -3,7 +3,7 @@ import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, PackageOpen, RefreshCw, Sparkles } from "lucide-react";
-import type { DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/client";
+import type { DeploymentApiKeyView, MethodGroup } from "@lightspeed-ai/sdk";
 import { api, type UniverseSetup } from "@/api";
 import { KeyPresetField, MethodGroupPicker } from "@/components/api-keys/method-group-picker";
 import { Badge } from "@/components/ui/badge";

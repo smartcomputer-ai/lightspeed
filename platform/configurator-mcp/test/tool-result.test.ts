@@ -1,7 +1,7 @@
 import {
   LightspeedRpcError,
   LightspeedTransportError,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import { describe, expect, it } from "vitest";
 import {
   failedToolResult,

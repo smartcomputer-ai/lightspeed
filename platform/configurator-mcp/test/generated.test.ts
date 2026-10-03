@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { METHOD_INFO } from "@lightspeed-ai/client";
+import { METHOD_INFO } from "@lightspeed-ai/sdk";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 
 describe("generated universe tools", () => {

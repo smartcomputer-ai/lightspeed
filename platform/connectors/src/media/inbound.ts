@@ -1,4 +1,4 @@
-import type { ChannelInboundMedia, ChannelMediaKind } from "@lightspeed-ai/client";
+import type { ChannelInboundMedia, ChannelMediaKind } from "@lightspeed-ai/sdk";
 import { audioMime, documentMime, imageMime, mediaByteLimit } from "./validation.js";
 
 export const MAX_CHANNEL_MEDIA_PER_MESSAGE = 8;

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { TranscriptionView } from "@lightspeed-ai/client";
+import type { TranscriptionView } from "@lightspeed-ai/sdk";
 import { MAX_DICTATION_AUDIO_BYTES, roleAtLeast, transcriptionStartSchema, transcriptionUploadSchema } from "@lightspeed-ai/platform-shared";
 import type { DemoStore } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";

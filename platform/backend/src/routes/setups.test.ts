@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
-import { LightspeedRpcError, type LightspeedClient, type MethodGroup } from "@lightspeed-ai/client";
+import { LightspeedRpcError, type LightspeedClient, type MethodGroup } from "@lightspeed-ai/sdk";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ApiVariables, AppContext } from "../context.js";
 import { ensureCredential, ensureMcpServer, setupRoutes, type KeyChoice } from "./setups.js";

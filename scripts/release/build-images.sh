@@ -45,7 +45,7 @@ docker run --rm --entrypoint node "${tag}-platform-workers" -e \
 docker run --rm --entrypoint node "${tag}-platform-workers" \
   --import tsx --input-type=module -e '
     const { parseHostConfig } = await import("./platform/connectors/src/host/config.ts");
-    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/client/workflow");
+    const { connectorTaskQueue, WORKFLOW_CONTRACT_VECTORS } = await import("@lightspeed-ai/sdk/workflow");
     const config = parseHostConfig({ LIGHTSPEED_API_URL: "http://runtime:18080/rpc", LIGHTSPEED_CONNECTOR_PROVIDERS: "telegram" });
     if (config.providers.join(",") !== "telegram") process.exit(1);
     const vector = WORKFLOW_CONTRACT_VECTORS.channels;

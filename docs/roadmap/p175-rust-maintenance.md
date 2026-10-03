@@ -154,7 +154,7 @@ Validation:
 Implemented 2026-10-03:
 
 - [x] Standardize JavaScript workspace packages on `@lightspeed-ai`, name the
-  public SDK `@lightspeed-ai/client`, and retain private publication settings
+  public SDK `@lightspeed-ai/sdk`, and retain private publication settings
   on internal packages.
 - [x] Rename the Platform backend package and directory to
   `@lightspeed-ai/platform-backend` and `platform/backend`.
@@ -170,10 +170,17 @@ Validation:
   and demo UI.
 - Generated client/schema, Configurator, policy, and profile-reference files
   regenerate without further changes.
-- Built a staged `@lightspeed-ai/client` tarball, installed it into the
+- Built a staged `@lightspeed-ai/sdk` tarball, installed it into the
   staged Configurator with its standalone lockfile, and verified imports.
   Staged both runtime bundles and verified backend and connector imports
   from their extracted artifacts. No packages were published.
 - Registry dependency versions and integrity hashes remain unchanged;
   internal packages retain `private: true`. Obsolete workspace lock entries
   were removed. Shell syntax and `git diff --check` passed.
+
+SDK name finalized on 2026-10-03: the public package is `@lightspeed-ai/sdk`,
+including its `/workflow` and schema exports. Installation examples, imports,
+workspace commands, publication metadata, and the bundled `sdk.tgz` agree.
+`npm run check`, `npm run check:docs`, and `npm run test:build` passed.
+Staged SDK, Configurator, backend, and connector packaging/import checks passed;
+no package was published. Dependency versions remain unchanged.

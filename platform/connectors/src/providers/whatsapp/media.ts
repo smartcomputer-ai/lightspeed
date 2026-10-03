@@ -1,9 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { ChannelInboundMedia, LightspeedClient } from "@lightspeed-ai/client";
+import type { ChannelInboundMedia, LightspeedClient } from "@lightspeed-ai/sdk";
 import type {
   PrepareChannelMediaInput,
   PrepareChannelMediaResult,
-} from "@lightspeed-ai/client/workflow";
+} from "@lightspeed-ai/sdk/workflow";
 import { ApplicationFailure } from "@temporalio/common";
 import { downloadContentFromMessage } from "baileys";
 import { parseChannelInboundMedia } from "../../media/inbound.js";

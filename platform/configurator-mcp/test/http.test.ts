@@ -2,7 +2,7 @@ import { request as httpRequest } from "node:http";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ConfiguratorConfig } from "../src/config.js";
-import type { MethodGroup } from "@lightspeed-ai/client";
+import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { GENERATED_TOOLS } from "../src/generated/tools.js";
 import { startConfigurator, type RunningConfigurator } from "../src/transport.js";
 

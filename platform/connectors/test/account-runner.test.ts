@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CHANNEL_CONNECTOR_ACTIVITIES, connectorTaskQueue } from "@lightspeed-ai/client/workflow";
+import { CHANNEL_CONNECTOR_ACTIVITIES, connectorTaskQueue } from "@lightspeed-ai/sdk/workflow";
 import type { NativeConnection } from "@temporalio/worker";
 import { CoreClient } from "../src/core/client.js";
 import { AccountRunner, whatsAppAuthDir, type WorkerLike } from "../src/host/account-runner.js";

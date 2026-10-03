@@ -136,7 +136,7 @@ Import their names from `CHANNEL_CONNECTOR_ACTIVITIES` and derive the account
 queue with the shared helper, rather than copying the hashing algorithm:
 
 ```ts
-import { connectorTaskQueue } from "@lightspeed-ai/client/workflow";
+import { connectorTaskQueue } from "@lightspeed-ai/sdk/workflow";
 
 const queue = connectorTaskQueue(
   "00000000-0000-0000-0000-000000000001",

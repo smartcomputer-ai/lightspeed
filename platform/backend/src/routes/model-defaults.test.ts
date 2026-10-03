@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { ModelDefaults } from "@lightspeed-ai/client";
+import type { ModelDefaults } from "@lightspeed-ai/sdk";
 import type { ApiVariables, AppContext } from "../context.js";
 import { gatewayRoutes, withGateway } from "./gateway.js";
-import { LightspeedRpcError } from "@lightspeed-ai/client";
+import { LightspeedRpcError } from "@lightspeed-ai/sdk";
 
 const auth = vi.hoisted(() => ({ role: "operator" }));
 vi.mock("./universes.js", () => ({ universeForSession: vi.fn(async (_ctx, _c, id: string) => ({

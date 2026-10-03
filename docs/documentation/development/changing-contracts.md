@@ -111,7 +111,7 @@ consumers:
 ```bash
 cargo run -p api --bin export-schema
 npm install
-npm run generate --workspace @lightspeed-ai/client
+npm run generate --workspace @lightspeed-ai/sdk
 npm run generate --workspace @lightspeed-ai/configurator-mcp
 node platform/scripts/generate-config-reference.mjs
 node platform/scripts/generate-method-roles.mjs
@@ -163,7 +163,7 @@ that boundary with:
 
 ```bash
 cargo run -p temporal-workflow --bin export-workflow-contract
-npm run generate --workspace @lightspeed-ai/client
+npm run generate --workspace @lightspeed-ai/sdk
 ```
 
 This writes `workflow.schema.json`, `workflow.json`, and
@@ -179,7 +179,7 @@ workflow helpers are therefore tested against the generated vectors:
 
 ```bash
 cargo test -p temporal-workflow --test workflow_contract
-npm run test --workspace @lightspeed-ai/client -- test/workflow.test.ts
+npm run test --workspace @lightspeed-ai/sdk -- test/workflow.test.ts
 ```
 
 `WORKFLOW_CONTRACT_VERSION` versions the manifest layout. It does not
@@ -197,7 +197,7 @@ explains the two histories involved, and
 external receiver and controller contract.
 
 Channel delivery and prepared-media DTOs are included in the workflow export
-and reach connectors through `@lightspeed-ai/client/workflow`. Some
+and reach connectors through `@lightspeed-ai/sdk/workflow`. Some
 checks remain authored on both sides: `CHANNEL_DELIVERY_VERSION` exists in
 [`crates/channels/src/delivery.rs`](../../../crates/channels/src/delivery.rs)
 and the connector's

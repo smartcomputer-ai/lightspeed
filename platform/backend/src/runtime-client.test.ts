@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LightspeedRpcError, METHODS } from "@lightspeed-ai/client";
+import { LightspeedRpcError, METHODS } from "@lightspeed-ai/sdk";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";
 import { deploymentClient, GateRefusal, memberClient } from "./runtime-client.js";
 import { METHOD_ROLES, UNMEMBERED_METHODS } from "./routes/method-roles.js";

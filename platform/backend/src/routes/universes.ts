@@ -2,7 +2,7 @@ import { syncUniverseSlugs, requireAvailableCachedSlug } from "../universe-slugs
 import { Hono } from "hono";
 import { z } from "zod";
 import { and, eq, ne } from "drizzle-orm";
-import { LightspeedRpcError, type MethodGroup } from "@lightspeed-ai/client";
+import { LightspeedRpcError, type MethodGroup } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import {
   effectiveFeatures,

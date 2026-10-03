@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BlobPutResponse } from "@lightspeed-ai/client";
+import type { BlobPutResponse } from "@lightspeed-ai/sdk";
 import {
   ATTACHMENT_SUMMARY,
   MAX_MESSAGE_ATTACHMENTS,

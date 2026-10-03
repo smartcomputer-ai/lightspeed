@@ -1,4 +1,4 @@
-import type { EnvironmentAttachment } from "@lightspeed-ai/client";
+import type { EnvironmentAttachment } from "@lightspeed-ai/sdk";
 
 export type ResourceFeature = "vfs" | "environments" | "mcp";
 

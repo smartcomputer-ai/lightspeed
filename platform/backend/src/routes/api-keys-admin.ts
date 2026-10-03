@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import type { MethodGroup } from "@lightspeed-ai/client";
+import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";

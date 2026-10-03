@@ -2,7 +2,7 @@ import { ApplicationFailure } from "@temporalio/common";
 import type {
   ChannelDeliveryCommand,
   ChannelDeliveryResult,
-} from "@lightspeed-ai/client/workflow";
+} from "@lightspeed-ai/sdk/workflow";
 import { renderWhatsAppText } from "../../presentation/whatsapp.js";
 import { splitMessageText } from "../../presentation/text.js";
 import {

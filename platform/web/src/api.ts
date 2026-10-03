@@ -1,5 +1,5 @@
 import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed-ai/platform-shared";
-export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/client";
+export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/sdk";
 import type {
   Attribution,
   ResourceAccessSummary,
@@ -20,7 +20,7 @@ import type {
   SessionEventView,
   SessionEventsReadResponse,
   ToolCallDisplayView,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 
 /// Thin fetch wrapper for /api/v1 (cookie-authenticated, same origin).
 
@@ -669,9 +669,9 @@ export type {
   SessionSummaryView,
   WebhookPreset,
   WebhookVerification,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 
-import type { BotView } from "@lightspeed-ai/client";
+import type { BotView } from "@lightspeed-ai/sdk";
 
 export function botLabel(bot: Pick<BotView, "botId" | "displayName">): string {
   return bot.displayName ?? bot.botId;

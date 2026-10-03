@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LightspeedClient } from "@lightspeed-ai/client";
+import type { LightspeedClient } from "@lightspeed-ai/sdk";
 import { GrantLease, LEASE_EXPIRY_MARGIN_MS, LEASE_MAX_AGE_MS } from "../src/core/leases.js";
 
 function client(responses: Array<{ token: string; expiresAtMs?: number | null }>) {

@@ -39,7 +39,7 @@ TypeScript workspaces have their own test and typecheck scripts. For example:
 
 ```bash
 npm run test --workspace @lightspeed-ai/platform-web -- src/lib/subscriptions.test.ts
-npm run test --workspace @lightspeed-ai/client
+npm run test --workspace @lightspeed-ai/sdk
 npm run typecheck --workspace @lightspeed-ai/connectors
 ```
 

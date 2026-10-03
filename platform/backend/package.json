@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.14.0",
-    "@lightspeed-ai/client": "*",
+    "@lightspeed-ai/sdk": "*",
     "@lightspeed-ai/platform-db": "*",
     "@lightspeed-ai/platform-shared": "*",
     "better-auth": "1.7.6",

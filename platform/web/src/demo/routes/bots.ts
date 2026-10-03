@@ -24,7 +24,7 @@ import type {
   RunView,
   SessionSummaryView,
   WebhookPreset,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import type { ProfileDocument } from "@/api";
 import {
   EVENT_ORIGIN,

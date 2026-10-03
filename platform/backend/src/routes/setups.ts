@@ -6,7 +6,7 @@ import {
   type LightspeedClient,
   type McpServerInput,
   type MethodGroup,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import { z } from "zod";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { UniverseSetupState } from "@lightspeed-ai/platform-db/schema";

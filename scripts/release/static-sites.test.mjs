@@ -36,7 +36,7 @@ function fixture(t) {
   }
   write(`dist/archives/lightspeed-envd-${version}-${metadata.LIGHTSPEED_ENVD_TARGET}.tar.gz`, 'fixture envd');
   write(`dist/archives/lightspeed-docs-${version}.tar.gz`, 'fixture documentation archive');
-  write('dist/npm/client.tgz', 'fixture client');
+  write('dist/npm/sdk.tgz', 'fixture client');
   const env = {
     ...cleanEnv, LIGHTSPEED_RELEASE_BUILD_IMAGE: `${registry}/build-env@${digest}`,
     SOURCE_DATE_EPOCH: '1700000000',
@@ -65,7 +65,7 @@ for (const channel of ['main', 'release']) {
     if (channel === 'release') f.env.LIGHTSPEED_ENVD_PUBLIC_URL_BASE = 'https://example.test/releases/v1';
     f.create();
     const manifest = f.manifest();
-    assert.equal(manifest.typescriptClient.name, "@lightspeed-ai/client");
+    assert.equal(manifest.typescriptClient.name, "@lightspeed-ai/sdk");
     assert.deepEqual(Object.keys(manifest.binaries).sort(), ['cli', 'envd', 'providerIncus', 'runtime']);
     assert.equal(manifest.binaries.runtime.file, `lightspeed-runtime-${version}.tar.gz`);
     assert.equal(manifest.binaries.runtime.url, `oci://${registry}/runtime-bundle@${digest}`);

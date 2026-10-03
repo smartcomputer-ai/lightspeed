@@ -14,7 +14,7 @@
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/space-grotesk": "^5.2.10",
-    "@lightspeed-ai/client": "*",
+    "@lightspeed-ai/sdk": "*",
     "@lightspeed-ai/platform-shared": "*",
     "@shadcn/react": "^0.2.0",
     "@tabler/icons-react": "^3.44.0",

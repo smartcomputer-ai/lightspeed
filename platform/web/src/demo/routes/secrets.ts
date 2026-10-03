@@ -16,7 +16,7 @@ import type {
   SecretProvider,
   UniverseSetup,
 } from "@/api";
-import type { MethodGroup } from "@lightspeed-ai/client";
+import type { MethodGroup } from "@lightspeed-ai/sdk";
 import { base64ToText, universeApiKey, type DemoStore, type UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
 

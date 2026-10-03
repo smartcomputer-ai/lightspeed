@@ -1,9 +1,9 @@
 {
-  "name": "@lightspeed-ai/client",
+  "name": "@lightspeed-ai/sdk",
   "version": "0.0.0",
   "private": false,
   "type": "module",
-  "description": "TypeScript JSON-RPC client for the Lightspeed API.",
+  "description": "TypeScript SDK for the Lightspeed API and workflow integrations.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

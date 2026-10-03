@@ -1,4 +1,4 @@
-import type { ChannelProvider } from "@lightspeed-ai/client";
+import type { ChannelProvider } from "@lightspeed-ai/sdk";
 import { parseAccountSelector, type AccountSelector } from "../core/identity.js";
 import { parseWhatsAppMediaLocatorKey } from "../providers/whatsapp/media.js";
 import { parsePositiveInteger } from "./rate-limit.js";

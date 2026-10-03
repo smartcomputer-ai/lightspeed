@@ -294,7 +294,7 @@ work: Python client, opt-in gateway smoke tests, and CI drift checks.
 
 Messaging bridge overlay implemented 2026-06-11: `interop/messaging/` contains
 a private Node package for Telegram and WhatsApp. It depends on
-`@lightspeed-ai/client` via `file:../ts-client`, maps each chat/thread to a
+`@lightspeed-ai/sdk` via `file:../ts-client`, maps each chat/thread to a
 stable Lightspeed session, uses stable submission ids for channel message retries,
 long-polls run completion through the JSON-RPC API, and keeps channel
 state/dedupe in a local JSON store. This does not change the gateway contract;

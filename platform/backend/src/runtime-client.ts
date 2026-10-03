@@ -5,7 +5,7 @@ import {
   type Method,
   type MethodParams,
   type MethodResult,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import { roleAtLeast, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ServerEnv } from "./env.js";
 import { METHOD_ROLES, SESSION_TARGET_METHODS } from "./routes/method-roles.js";

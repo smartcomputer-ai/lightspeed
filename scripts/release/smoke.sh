@@ -56,7 +56,7 @@ for entry in package/package.json package/release.json package/dist/index.js \
   tar -tzf "$client_tgz" "$entry" >/dev/null
 done
 test -f dist/configurator-mcp/dist/bin.js
-test -f dist/configurator-mcp/node_modules/@lightspeed-ai/client/dist/index.js
+test -f dist/configurator-mcp/node_modules/@lightspeed-ai/sdk/dist/index.js
 
 for runtime in platform platform-workers; do
   test -f "dist/runtime/$runtime.tar.gz"

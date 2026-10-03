@@ -164,7 +164,7 @@ identifiable as the public client and place the cohesive product plane under
 
 ```text
 clients/
-  typescript/          generated @lightspeed-ai/client
+  typescript/          generated @lightspeed-ai/sdk
 
 platform/
   server/              management API and static web host
@@ -192,7 +192,7 @@ required to enforce that boundary. The existing `interop/` directory is
 removed because it mixes a public client, a deployable service, and generated
 Rust API output.
 
-The generated `@lightspeed-ai/client` remains the sole stable TypeScript
+The generated `@lightspeed-ai/sdk` remains the sole stable TypeScript
 contract boundary. In-tree consumers use the workspace source directly during
 development and CI. Tagged releases may continue publishing the client to npm
 for external consumers through P123.
@@ -296,7 +296,7 @@ release manifest identifies as applicable:
 
 - Rust runtime image plus provider, envd, runtime-bundle, and CLI artifacts;
 - Configurator MCP image;
-- `@lightspeed-ai/client` package and contract revision;
+- `@lightspeed-ai/sdk` package and contract revision;
 - platform backend/web image; and
 - one Platform workers image startable with granular Channels/Bots roles,
   `channels`, `bots`, `telegram`, `whatsapp`, or `all`.

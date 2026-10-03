@@ -1,4 +1,4 @@
-import type { CallerAccess, LightspeedClient, MethodParams } from "@lightspeed-ai/client";
+import type { CallerAccess, LightspeedClient, MethodParams } from "@lightspeed-ai/sdk";
 import {
   ProtocolError,
   ProtocolErrorCode,

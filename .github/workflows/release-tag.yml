@@ -325,7 +325,7 @@ jobs:
             const digest = crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64");
             process.stdout.write(`sha512-${digest}`);
           ' "$package_file")"
-          if published_integrity="$(npm view "@lightspeed-ai/client@$VERSION" dist.integrity 2>/dev/null)"; then
+          if published_integrity="$(npm view "@lightspeed-ai/sdk@$VERSION" dist.integrity 2>/dev/null)"; then
             test "$published_integrity" = "$expected_integrity" || {
               echo "npm version $VERSION already exists with different bytes" >&2
               exit 1
@@ -333,7 +333,7 @@ jobs:
           else
             npm publish "$package_file" --access public --tag latest
           fi
-          npm dist-tag add "@lightspeed-ai/client@$VERSION" latest
+          npm dist-tag add "@lightspeed-ai/sdk@$VERSION" latest
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

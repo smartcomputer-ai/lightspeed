@@ -1,8 +1,8 @@
-import type { LightspeedClient } from "@lightspeed-ai/client";
+import type { LightspeedClient } from "@lightspeed-ai/sdk";
 import type {
   PrepareChannelMediaInput,
   PrepareChannelMediaResult,
-} from "@lightspeed-ai/client/workflow";
+} from "@lightspeed-ai/sdk/workflow";
 import { ApplicationFailure } from "@temporalio/common";
 import type { TokenSource } from "../../core/leases.js";
 import { parseChannelInboundMedia } from "../../media/inbound.js";

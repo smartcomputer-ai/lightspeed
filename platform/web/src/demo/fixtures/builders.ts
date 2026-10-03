@@ -47,7 +47,7 @@ import type {
   ToolCallDisplayView,
   WebhookPreset,
   WebhookVerification,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import { DEFAULT_MODEL, newSession } from "../engine";
 import type { DemoStore, DemoToolCall, SessionRecord, UniverseState } from "../store";
 import type { UniverseRole } from "@lightspeed-ai/platform-shared";

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type {
   DeploymentEnvironmentProviderPutParams,
   DeploymentProviderBindingPutParams,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import type { AppContext, ApiVariables } from "../context.js";
 import { isPlatformAdmin } from "../context.js";

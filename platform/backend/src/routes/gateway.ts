@@ -24,7 +24,7 @@ import {
   type ModelListParams,
   type ProfileSource,
   type SessionConfig,
-} from "@lightspeed-ai/client";
+} from "@lightspeed-ai/sdk";
 import { schema } from "@lightspeed-ai/platform-db";
 import {
   MAX_ATTACHMENT_BYTES,

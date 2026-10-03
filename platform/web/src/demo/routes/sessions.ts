@@ -14,7 +14,7 @@ import {
   type MessageAttachment,
 } from "@lightspeed-ai/platform-shared";
 import type { Environment, ModelConfig, ProfileSessionRetention, ProfileSource, SessionView } from "@/api";
-import type { ProfileInstructions } from "@lightspeed-ai/client";
+import type { ProfileInstructions } from "@lightspeed-ai/sdk";
 import {
   refreshDemoCompactionView,
   PROFILE_INSTRUCTIONS_KEY,
