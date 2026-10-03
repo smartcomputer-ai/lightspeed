@@ -2821,6 +2821,26 @@
           }
         ]
       },
+      "AttachmentSourceView": {
+        "description": "Descriptive source, independent of the attachment's immutable content identity.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "path"
+        ],
+        "type": "object"
+      },
       "Attribution": {
         "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
         "oneOf": [
@@ -15198,6 +15218,13 @@
           {
             "description": "One tool call finished. `output_bytes` is the size of the\nmodel-visible text the tool produced before the runtime's projection\nbudget was applied, absent for synthetic results; `truncated` is true\nwhen that budget cut it.",
             "properties": {
+              "attachments": {
+                "description": "Portable immutable assets, separate from effects and native media input.",
+                "items": {
+                  "$ref": "#/components/schemas/ToolAttachmentView"
+                },
+                "type": "array"
+              },
               "batchId": {
                 "type": "string"
               },
@@ -16877,6 +16904,57 @@
         ],
         "type": "object"
       },
+      "ToolAttachmentKind": {
+        "enum": [
+          "media",
+          "file"
+        ],
+        "type": "string"
+      },
+      "ToolAttachmentView": {
+        "description": "A portable immutable asset supplied by a completed tool call.",
+        "properties": {
+          "contentRef": {
+            "description": "Full immutable blob identity; read through the universe-scoped blob API.",
+            "type": "string"
+          },
+          "handle": {
+            "description": "Model-facing alias, resolved against recorded attachments.",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ToolAttachmentKind"
+          },
+          "mediaType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AttachmentSourceView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "handle",
+          "contentRef"
+        ],
+        "type": "object"
+      },
       "ToolBatchView": {
         "properties": {
           "calls": {
@@ -17059,6 +17137,13 @@
           },
           "argumentsRef": {
             "type": "string"
+          },
+          "attachments": {
+            "description": "Immutable attachments available from this call; files do not imply model input.",
+            "items": {
+              "$ref": "#/components/schemas/ToolAttachmentView"
+            },
+            "type": "array"
           },
           "callId": {
             "type": "string"
@@ -20384,7 +20469,7 @@
         "kind": "universe"
       },
       "x-lightspeed-group": "vfs",
-      "x-lightspeed-role": "contributor",
+      "x-lightspeed-role": "operator",
       "x-lightspeed-target": null
     },
     {

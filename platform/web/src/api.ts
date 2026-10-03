@@ -1,5 +1,5 @@
 import type { FeatureStates, UniverseRole, UniverseIconName, UniverseIconColor } from "@lightspeed/platform-shared";
-export type { ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
+export type { ToolAttachmentView, ModelConfig, ModelDefaults, ModelDefaultsPutParams } from "@lightspeed-ai/agent-client";
 import type {
   Attribution,
   ResourceAccessSummary,

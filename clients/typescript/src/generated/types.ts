@@ -771,6 +771,10 @@ export type SessionEventKindView =
       type: "toolCallStarted";
     }
   | {
+      /**
+       * Portable immutable assets, separate from effects and native media input.
+       */
+      attachments?: ToolAttachmentView[];
       batchId: string;
       callId: string;
       effects?: ToolEffectView[];
@@ -828,6 +832,11 @@ export type RunFailureKindView =
       | "internal"
     )
   | "request_rejected";
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ToolAttachmentKind".
+ */
+export type ToolAttachmentKind = "media" | "file";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunViewSource".
@@ -2756,6 +2765,37 @@ export interface ToolCallEventView {
   toolName: string;
 }
 /**
+ * A portable immutable asset supplied by a completed tool call.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "ToolAttachmentView".
+ */
+export interface ToolAttachmentView {
+  /**
+   * Full immutable blob identity; read through the universe-scoped blob API.
+   */
+  contentRef: string;
+  /**
+   * Model-facing alias, resolved against recorded attachments.
+   */
+  handle: string;
+  kind: ToolAttachmentKind;
+  mediaType?: string | null;
+  name?: string | null;
+  source?: AttachmentSourceView | null;
+}
+/**
+ * Descriptive source, independent of the attachment's immutable content identity.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AttachmentSourceView".
+ */
+export interface AttachmentSourceView {
+  id: string;
+  kind: string;
+  path: string;
+}
+/**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ToolEffectView".
  */
@@ -2819,6 +2859,10 @@ export interface ToolBatchView {
 export interface ToolCallView {
   arguments?: string | null;
   argumentsRef: string;
+  /**
+   * Immutable attachments available from this call; files do not imply model input.
+   */
+  attachments?: ToolAttachmentView[];
   callId: string;
   /**
    * When the call's terminal result was committed. The window to

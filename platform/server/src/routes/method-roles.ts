@@ -117,7 +117,7 @@ export const METHOD_ROLES: Readonly<Record<string, UniverseRole>> = {
   "transcriptions/start": "contributor",
   "vfs/snapshots/commit": "contributor",
   "vfs/snapshots/read": "viewer",
-  "vfs/workspaces/create": "contributor",
+  "vfs/workspaces/create": "operator",
   "vfs/workspaces/delete": "operator",
   "vfs/workspaces/files/read": "viewer",
   "vfs/workspaces/list": "viewer",

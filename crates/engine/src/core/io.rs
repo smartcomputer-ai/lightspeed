@@ -516,6 +516,9 @@ pub struct ToolInvocationResult {
     pub error_ref: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffect>,
+    /// Immutable assets supplied by this result, separate from model input and effects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::Attachment>,
     /// Wall-clock milliseconds the executing runtime spent on this call.
     /// Stamped by the execution activity; carried into the durable
     /// `ToolCallResult` unchanged.
@@ -695,6 +698,7 @@ mod tests {
                 .calls
                 .iter()
                 .map(|call| ToolInvocationResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,

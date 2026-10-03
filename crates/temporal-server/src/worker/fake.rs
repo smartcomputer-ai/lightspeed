@@ -426,6 +426,7 @@ impl CoreAgentTools for FakeTools {
                     .await
                     .map_err(io_error)?;
                 results.push(ToolInvocationResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
@@ -452,6 +453,7 @@ impl CoreAgentTools for FakeTools {
                 .await
                 .map_err(io_error)?;
             results.push(ToolInvocationResult {
+                attachments: Vec::new(),
                 duration_ms: None,
                 output_bytes: Some(output_bytes),
                 truncated: false,

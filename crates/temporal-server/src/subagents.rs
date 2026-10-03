@@ -24,6 +24,7 @@ use temporal_workflow::{
     SubagentChildRef, SubagentPrepareActivityResult, SubagentTerminal, WorkflowToolStartArgs,
 };
 use tools::{
+    attachments::{Attachment, linked_attachments},
     concurrency::{AwaitArgs, AwaitModeArg},
     subagents::{
         AgentCallArgs, SubagentExecutionContextV1, SubagentResultEnvelope, SubagentResultStatus,
@@ -192,9 +193,8 @@ impl SubagentService {
         }
     }
 
-    /// Record containment edges from result envelopes to the media they
-    /// hand up, so the bytes outlive the child's close until the parent's
-    /// context entry roots them.
+    /// Retain handed-off attachments through the result envelope until the
+    /// receiving session records its own attachment and context references.
     pub fn with_blob_graph(mut self, blob_graph: Option<Arc<dyn BlobGraphStore>>) -> Self {
         self.blob_graph = blob_graph;
         self
@@ -425,26 +425,72 @@ impl SubagentService {
         })
     }
 
-    /// The media `text` links by handle that the child session actually
-    /// holds, in first-link order, capped like a tool result's media.
-    async fn linked_media(
+    /// Resolve only attachments mentioned by the child. Media retains its
+    /// active-context admission; file versions come from recorded completions,
+    /// including metadata handed up by earlier children.
+    async fn linked_attachments(
         &self,
         session_id: &str,
         text: &str,
-    ) -> Result<Vec<MediaDescriptor>, AgentApiError> {
-        let handles = engine::media::find_media_handles(text);
-        if handles.is_empty() {
-            return Ok(Vec::new());
-        }
+    ) -> Result<Vec<Attachment>, AgentApiError> {
         let session_id = SessionId::try_new(session_id.to_owned())
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
-        let available = self.runtime.session_media(&session_id).await?;
-        Ok(handles
-            .iter()
-            .filter_map(|handle| available.iter().find(|item| &item.handle == handle))
-            .take(engine::media::MAX_TOOL_MEDIA_ITEMS)
-            .cloned()
-            .collect())
+        let mut available = Vec::new();
+        if text.contains("media:") {
+            available.extend(
+                self.runtime
+                    .session_media(&session_id)
+                    .await?
+                    .into_iter()
+                    .map(Attachment::Media),
+            );
+        }
+        if text.contains("file:") {
+            let mut after = None;
+            loop {
+                let page = self
+                    .sessions
+                    .read_after(engine::storage::ReadSessionEvents {
+                        session_id: session_id.clone(),
+                        after,
+                        limit: 256,
+                    })
+                    .await
+                    .map_err(api_projection::map_session_store_error)?;
+                for entry in page.entries {
+                    if entry.event.kind != "lightspeed.core.tool.call_completed" {
+                        continue;
+                    }
+                    let event = engine::CoreAgentCodec
+                        .decode_event(&entry.event)
+                        .map_err(|error| AgentApiError::internal(error.to_string()))?;
+                    if let engine::CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted {
+                        result,
+                        ..
+                    }) = event
+                    {
+                        available.extend(
+                            result
+                                .attachments
+                                .into_iter()
+                                .filter(|item| matches!(item, Attachment::File(_)))
+                                .filter(|item| text.contains(item.handle())),
+                        );
+                    }
+                }
+                if page.complete {
+                    break;
+                }
+                let next = page
+                    .next_after
+                    .filter(|next| after.is_none_or(|after| *next > after))
+                    .ok_or_else(|| {
+                        AgentApiError::internal("attachment history cursor did not advance")
+                    })?;
+                after = Some(next);
+            }
+        }
+        Ok(linked_attachments(text, available))
     }
 
     /// Step C: the envelope the parent sees, then the child is closed.
@@ -453,7 +499,7 @@ impl SubagentService {
         child: SubagentChildRef,
         terminal: SubagentTerminal,
     ) -> Result<PromiseResolution, AgentApiError> {
-        let (status, output, error, media) = match terminal {
+        let (status, output, error, attachments) = match terminal {
             SubagentTerminal::Run {
                 status,
                 output,
@@ -467,12 +513,10 @@ impl SubagentService {
                     }
                     None => None,
                 };
-                // Media the child linked by handle in its answer is what it
-                // hands up: resolve each handle against what the child saw,
-                // in link order. Unknown handles stay plain text.
-                let media = match output.as_deref() {
+                // Unknown handles remain text; only recorded attachments travel.
+                let attachments = match output.as_deref() {
                     Some(text) if status == RunStatus::Completed => {
-                        self.linked_media(&child.session_id, text).await?
+                        self.linked_attachments(&child.session_id, text).await?
                     }
                     _ => Vec::new(),
                 };
@@ -481,7 +525,9 @@ impl SubagentService {
                     None => None,
                 };
                 match status {
-                    RunStatus::Completed => (SubagentResultStatus::Completed, output, None, media),
+                    RunStatus::Completed => {
+                        (SubagentResultStatus::Completed, output, None, attachments)
+                    }
                     RunStatus::Cancelled => (
                         SubagentResultStatus::Cancelled,
                         output,
@@ -513,7 +559,7 @@ impl SubagentService {
             status,
             output,
             error,
-            media,
+            attachments,
         };
         let payload_ref = self
             .blobs
@@ -525,7 +571,7 @@ impl SubagentService {
         engine::storage::record_contains_edges(
             self.blob_graph.as_deref(),
             &payload_ref,
-            envelope.media.iter().map(|item| item.content_ref.clone()),
+            envelope.attachments.iter().flat_map(Attachment::blob_refs),
         )
         .await
         .map_err(|error| AgentApiError::internal(error.to_string()))?;
@@ -1496,7 +1542,13 @@ mod tests {
             .await
             .expect("resolve");
         let envelope = envelope_of(&h.blobs, &resolution).await;
-        assert_eq!(envelope.media, vec![pdf.clone(), png.clone()]);
+        assert_eq!(
+            envelope.attachments,
+            vec![
+                Attachment::Media(pdf.clone()),
+                Attachment::Media(png.clone())
+            ]
+        );
 
         // A failed run hands nothing up even when its text links media.
         let failed = h
@@ -1512,7 +1564,153 @@ mod tests {
             .await
             .expect("resolve failed");
         let envelope = envelope_of(&h.blobs, &failed).await;
-        assert!(envelope.media.is_empty());
+        assert!(envelope.attachments.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn file_handoff_uses_recorded_versions_and_retains_them_for_nested_results() {
+        use engine::storage::{AppendSessionEvents, BlobEdge, UncommittedStoredEvent};
+        let mut h = harness(Arc::new(FakeChildRuntime::default())).await;
+        h.service = h.service.with_blob_graph(Some(h.blobs.clone()));
+        let original = h
+            .blobs
+            .put_bytes(b"original report".to_vec())
+            .await
+            .unwrap();
+        let reference = engine::FileAttachment::new(original.clone(), "report.txt".into(), None);
+        let unwanted = engine::FileAttachment::new(
+            h.blobs.put_bytes(b"intermediate".to_vec()).await.unwrap(),
+            "intermediate.txt".into(),
+            None,
+        );
+        let child_id = SessionId::new("agent_child");
+        h.sessions
+            .create_session(CreateSession {
+                session_id: child_id.clone(),
+                metadata: Default::default(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        let completion = |attachments| {
+            engine::CoreAgentEvent::Tool(engine::ToolEvent::CallCompleted {
+                run_id: engine::RunId::new(5),
+                turn_id: engine::TurnId::new(1),
+                batch_id: engine::ToolBatchId::new(1),
+                result: engine::ToolCallResult {
+                    attachments,
+                    call_id: engine::ToolCallId::new("call"),
+                    status: engine::ToolCallStatus::Succeeded,
+                    output_ref: None,
+                    model_visible_context_entries: vec![],
+                    error_ref: None,
+                    effects: Vec::new(),
+                    duration_ms: None,
+                    output_bytes: None,
+                    truncated: false,
+                },
+            })
+        };
+        h.sessions
+            .append(AppendSessionEvents {
+                session_id: child_id.clone(),
+                expected_head: None,
+                events: vec![UncommittedStoredEvent {
+                    observed_at_ms: 1,
+                    joins: Default::default(),
+                    event: engine::CoreAgentCodec
+                        .encode_event(&completion(vec![
+                            Attachment::File(reference.clone()),
+                            Attachment::File(unwanted.clone()),
+                        ]))
+                        .unwrap(),
+                }],
+            })
+            .await
+            .unwrap();
+        let text = format!(
+            "[report]({}) unknown file:000000000000000000000000",
+            reference.handle
+        );
+        let output = h.blobs.put_bytes(text.into_bytes()).await.unwrap();
+        let resolution = h
+            .service
+            .resolve(
+                child_ref(),
+                SubagentTerminal::Run {
+                    status: RunStatus::Completed,
+                    output: Some(engine::ContentRef::text(output.clone())),
+                    failure_message_ref: None,
+                },
+            )
+            .await
+            .unwrap();
+        let envelope = envelope_of(&h.blobs, &resolution).await;
+        assert_eq!(
+            envelope.attachments,
+            vec![Attachment::File(reference.clone())]
+        );
+        let PromiseResolution::Resolved {
+            payload_ref: Some(payload),
+        } = resolution
+        else {
+            panic!("resolved payload");
+        };
+        assert!(
+            h.blobs
+                .edges()
+                .contains(&BlobEdge::contains(payload, original.clone()))
+        );
+        // A parent completion carries the same facts, so another level can forward
+        // them without the original workspace, environment, or child context.
+        h.sessions
+            .append(AppendSessionEvents {
+                session_id: SessionId::new("parent"),
+                expected_head: None,
+                events: vec![UncommittedStoredEvent {
+                    observed_at_ms: 2,
+                    joins: Default::default(),
+                    event: engine::CoreAgentCodec
+                        .encode_event(&completion(vec![Attachment::File(reference.clone())]))
+                        .unwrap(),
+                }],
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            h.service
+                .linked_attachments("parent", &reference.handle)
+                .await
+                .unwrap(),
+            envelope.attachments
+        );
+        assert_eq!(
+            h.blobs.read_bytes(&original).await.unwrap(),
+            b"original report"
+        );
+        for status in [RunStatus::Failed, RunStatus::Cancelled] {
+            let resolution = h
+                .service
+                .resolve(
+                    child_ref(),
+                    SubagentTerminal::Run {
+                        status,
+                        output: Some(engine::ContentRef::text(output.clone())),
+                        failure_message_ref: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(
+                envelope_of(&h.blobs, &resolution)
+                    .await
+                    .attachments
+                    .is_empty()
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

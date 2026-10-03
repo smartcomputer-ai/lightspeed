@@ -52,6 +52,8 @@ it("gives each role what the one below has, plus its own", () => {
   expect(offered("control_session")).toEqual(["contributor", "operator", "admin"]);
   expect(offered("share_session")).toEqual(["contributor", "operator", "admin"]);
   expect(offered("configure_resource")).toEqual(["operator", "admin"]);
+  expect(offered("create_workspace")).toEqual(["operator", "admin"]);
+  expect(offered("use_resource")).toEqual(["contributor", "operator", "admin"]);
   expect(offered("create_profile")).toEqual(["operator", "admin"]);
   expect(offered("manage_access")).toEqual(["admin"]);
   expect(allowsAction(null, "read")).toBe(false);

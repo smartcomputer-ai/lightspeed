@@ -99,6 +99,7 @@ pub(super) async fn process_satisfied_await(
             engine::ToolBatchResumeOutput::AwaitTool {
                 result_ref: materialized.result_ref,
                 additional_context: materialized.additional_context,
+                attachments: materialized.attachments,
             }
         }
         engine::ToolBatchSuspension::JoinedWorkflowCalls { .. } => {

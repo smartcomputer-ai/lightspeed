@@ -255,6 +255,9 @@ pub enum ToolBatchResumeOutput {
         /// which reads the payloads; the reducer only validates and records.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         additional_context: Vec<crate::ContextEntryInput>,
+        /// Runtime-prepared result metadata, recorded without interpretation.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::Attachment>,
     },
     JoinedWorkflowCalls {
         /// Context per joined promise, appended after that promise's call
@@ -265,14 +268,16 @@ pub enum ToolBatchResumeOutput {
     },
 }
 
-/// Model-visible entries one resolved promise supplies beside its result,
-/// the same shape ordinary tool results carry in
-/// `model_visible_context_entries`. What they contain is the runtime's
-/// business; the reducer owns promise status, call association, and order.
+/// Context entries and metadata one resolved promise supplies beside its result.
+/// These have the same shape as ordinary tool results. Their interpretation
+/// belongs to the runtime; the reducer owns promise status, call association,
+/// and order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromiseContextEntries {
     pub promise_id: PromiseId,
     pub entries: Vec<crate::ContextEntryInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::Attachment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

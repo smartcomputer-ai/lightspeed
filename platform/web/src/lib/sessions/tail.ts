@@ -163,7 +163,7 @@ function baseUrl(universeId: string, sessionId: string) {
   return `/api/v1/universes/${encodeURIComponent(universeId)}/sessions/${encodeURIComponent(sessionId)}`;
 }
 
-async function fetchHistory(universeId: string, sessionId: string, before: number | null, signal: AbortSignal): Promise<SessionEventsPage> {
+export async function fetchHistory(universeId: string, sessionId: string, before: number | null, signal: AbortSignal): Promise<SessionEventsPage> {
   const params = new URLSearchParams({ direction: "backward", limit: String(PAGE_LIMIT) });
   if (before !== null) params.set("before", String(before));
   const page = await readPage<SessionEventsPage>(`${baseUrl(universeId, sessionId)}/events?${params}`, signal);

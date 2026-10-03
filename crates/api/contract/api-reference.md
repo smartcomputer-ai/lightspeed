@@ -878,7 +878,7 @@ Creates a universe workspace attributed to the caller at an optional seed snapsh
 
 - Access: `{"kind":"universe","action":"create_workspace"}`
 - Group: `vfs`
-- Role: `contributor`
+- Role: `operator`
 - Target: `none`
 - Params: `VfsWorkspaceCreateParams`
 - Result: `AgentApiOutcome<VfsWorkspaceCreateResponse>`

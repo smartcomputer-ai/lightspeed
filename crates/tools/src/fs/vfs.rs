@@ -1306,6 +1306,87 @@ mod tests {
         VfsSnapshotFileSystem::from_manifest(blobs, result.snapshot_ref, result.manifest)
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn explicit_reference_preserves_versions_without_changing_other_tool_outputs() {
+        use crate::builtin::{
+            BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op,
+            BuiltinToolSurface as Surface,
+        };
+        for surface in [
+            Surface::Canonical,
+            Surface::CodexLike,
+            Surface::ClaudeCodeLike,
+        ] {
+            let store = Arc::new(TestWorkspaceStore::default());
+            let (blobs, fs, _, _) = test_workspace_fs(
+                store,
+                vec![::vfs::InlineFile::new("report.md", b"original".to_vec()).unwrap()],
+            )
+            .await;
+            let ctx = crate::fs::FsToolContext::new(Arc::new(fs), blobs.clone());
+            let key = if surface == Surface::ClaudeCodeLike {
+                "file_path"
+            } else {
+                "path"
+            };
+            let read = BuiltinTool::vfs(Op::ReadFile, surface)
+                .invoke_json(
+                    BuiltinToolContext::Vfs(&ctx),
+                    serde_json::json!({key:"/report.md"}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(read.model_visible_text, "     1 | original");
+            assert!(read.attachments.is_empty());
+            let reference = BuiltinTool::vfs(Op::Reference, surface)
+                .invoke_json(
+                    BuiltinToolContext::Vfs(&ctx),
+                    serde_json::json!({"path":"/report.md"}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(reference.attachments.len(), 1);
+            assert!(reference.effects.is_empty());
+            let write = BuiltinTool::vfs(Op::WriteFile, surface)
+                .invoke_json(
+                    BuiltinToolContext::Vfs(&ctx),
+                    serde_json::json!({key:"/report.md", "content":"replacement"}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(write.model_visible_text, "Wrote 11 bytes to /report.md");
+            assert!(write.attachments.is_empty());
+            let edit = BuiltinTool::vfs(Op::EditFile, surface).invoke_json(BuiltinToolContext::Vfs(&ctx), serde_json::json!({key:"/report.md", "old_string":"replacement", "new_string":"edited"})).await.unwrap();
+            assert_eq!(
+                edit.model_visible_text,
+                "Replaced 1 match(es) in /report.md"
+            );
+            assert!(edit.attachments.is_empty());
+            let after = BuiltinTool::vfs(Op::Reference, surface)
+                .invoke_json(
+                    BuiltinToolContext::Vfs(&ctx),
+                    serde_json::json!({"path":"/report.md"}),
+                )
+                .await
+                .unwrap();
+            assert_ne!(
+                after.attachments[0].handle(),
+                reference.attachments[0].handle()
+            );
+            ctx.fs
+                .remove(&FsPath::new("/report.md").unwrap(), RemoveOptions::file())
+                .await
+                .unwrap();
+            assert_eq!(
+                blobs
+                    .read_bytes(reference.attachments[0].content_ref())
+                    .await
+                    .unwrap(),
+                b"original"
+            );
+        }
+    }
+
     async fn test_workspace_fs(
         store: Arc<TestWorkspaceStore>,
         files: Vec<::vfs::InlineFile>,

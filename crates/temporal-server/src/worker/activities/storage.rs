@@ -151,6 +151,8 @@ pub(super) async fn materialize_await_result(
     // An `await` is one result, so the awaited payloads share one media
     // budget, in await order.
     let mut additional_context = Vec::new();
+    let mut attachments = Vec::new();
+    let mut file_budget = tools::attachments::MAX_FILE_ATTACHMENTS;
     let mut budget = engine::media::MAX_TOOL_MEDIA_ITEMS;
     let mut omitted = 0usize;
     for result in &request.results {
@@ -160,9 +162,11 @@ pub(super) async fn materialize_await_result(
         let Some(payload_ref) = &result.payload_ref else {
             continue;
         };
-        let (entries, left_out) = prepare_payload_context(deps, payload_ref, &mut budget).await?;
-        additional_context.extend(entries);
-        omitted += left_out;
+        let prepared =
+            prepare_payload_context(deps, payload_ref, &mut budget, &mut file_budget).await?;
+        additional_context.extend(prepared.entries);
+        attachments.extend(prepared.attachments);
+        omitted += prepared.omitted;
     }
     if omitted > 0 {
         additional_context.push(omission_note(deps, omitted, "await result").await?);
@@ -239,60 +243,107 @@ pub(super) async fn materialize_await_result(
     Ok(temporal_workflow::AwaitMaterializationResult {
         result_ref: aggregate_ref,
         additional_context,
+        attachments,
     })
 }
 
-/// Context a resolved payload supplies beside its result, prepared for the
-/// model. A payload names media in a top-level `media` list of descriptors;
-/// each admitted one (a supported type, a blob that is in CAS, within the
-/// byte limit) becomes a media entry, in list order, until `budget` runs
-/// out. Anything malformed, missing, or unsupported contributes nothing, and
-/// nothing here fails the resume. Returns the entries and how many admitted
-/// items the budget left out.
+#[derive(Default)]
+struct PreparedAttachments {
+    entries: Vec<engine::ContextEntryInput>,
+    attachments: Vec<engine::Attachment>,
+    omitted: usize,
+}
+
+/// Materialize typed result attachments. Only media is model input; file
+/// references become completion metadata. Accept the former media-only envelope
+/// for already persisted workflow results.
 async fn prepare_payload_context(
     deps: &StorageActivityDeps,
     payload_ref: &BlobRef,
-    budget: &mut usize,
-) -> Result<(Vec<engine::ContextEntryInput>, usize), ActivityError> {
+    media_budget: &mut usize,
+    file_budget: &mut usize,
+) -> Result<PreparedAttachments, ActivityError> {
+    use tools::attachments::Attachment;
     let bytes = deps
         .blobs
         .read_bytes(payload_ref)
         .await
         .map_err(activity_error)?;
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return Ok((Vec::new(), 0));
+        return Ok(PreparedAttachments::default());
     };
-    let Some(listed) = payload.get("media").and_then(serde_json::Value::as_array) else {
-        return Ok((Vec::new(), 0));
+    let attachments: Vec<Attachment> = if let Some(listed) = payload
+        .get("attachments")
+        .and_then(serde_json::Value::as_array)
+    {
+        listed
+            .iter()
+            .filter_map(|item| serde_json::from_value(item.clone()).ok())
+            .collect()
+    } else {
+        payload
+            .get("media")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| serde_json::from_value(item.clone()).ok())
+            .map(Attachment::Media)
+            .collect()
     };
-    let mut entries = Vec::new();
-    let mut omitted = 0usize;
-    for item in listed {
-        let Ok(descriptor) = serde_json::from_value::<engine::media::MediaDescriptor>(item.clone())
-        else {
-            continue;
-        };
-        let Some(admitted) = engine::media::MediaDescriptor::new(
-            descriptor.content_ref.clone(),
-            &descriptor.media_type,
-            descriptor.name.as_deref(),
-        ) else {
-            continue;
-        };
-        let Ok(info) = deps.blobs.stat_blob(&admitted.content_ref).await else {
-            continue;
-        };
-        if engine::media::admit_tool_media(Some(&admitted.media_type), info.byte_len).is_err() {
-            continue;
+    let mut prepared = PreparedAttachments::default();
+    for attachment in attachments {
+        match attachment {
+            Attachment::Media(descriptor) => {
+                let Some(admitted) = engine::media::MediaDescriptor::new(
+                    descriptor.content_ref,
+                    &descriptor.media_type,
+                    descriptor.name.as_deref(),
+                ) else {
+                    continue;
+                };
+                if admitted.handle != descriptor.handle {
+                    continue;
+                }
+                let Ok(info) = deps.blobs.stat_blob(&admitted.content_ref).await else {
+                    continue;
+                };
+                if engine::media::admit_tool_media(Some(&admitted.media_type), info.byte_len)
+                    .is_err()
+                {
+                    continue;
+                }
+                if *media_budget == 0 {
+                    prepared.omitted += 1;
+                    continue;
+                }
+                *media_budget -= 1;
+                prepared.entries.push(admitted.context_entry());
+                prepared.attachments.push(Attachment::Media(admitted));
+            }
+            Attachment::File(file) => {
+                if *file_budget == 0
+                    || !file.is_valid()
+                    || deps.blobs.stat_blob(&file.content_ref).await.is_err()
+                {
+                    continue;
+                }
+                let attachment = Attachment::File(file);
+                let mut retained = true;
+                for reference in attachment.blob_refs() {
+                    if deps.blobs.retain_blob(&reference).await.is_err() {
+                        retained = false;
+                        break;
+                    }
+                }
+                if !retained {
+                    continue;
+                }
+                *file_budget -= 1;
+                prepared.attachments.push(attachment);
+            }
         }
-        if *budget == 0 {
-            omitted += 1;
-            continue;
-        }
-        *budget -= 1;
-        entries.push(admitted.context_entry());
     }
-    Ok((entries, omitted))
+    Ok(prepared)
 }
 
 /// A user-role text entry telling the model that media beyond the cap was
@@ -342,15 +393,20 @@ pub(super) async fn prepare_joined_context(
             continue;
         };
         let mut budget = engine::media::MAX_TOOL_MEDIA_ITEMS;
-        let (mut entries, omitted) =
-            prepare_payload_context(deps, &payload_ref, &mut budget).await?;
+        let mut file_budget = tools::attachments::MAX_FILE_ATTACHMENTS;
+        let PreparedAttachments {
+            mut entries,
+            attachments,
+            omitted,
+        } = prepare_payload_context(deps, &payload_ref, &mut budget, &mut file_budget).await?;
         if omitted > 0 {
             entries.push(omission_note(deps, omitted, "result").await?);
         }
-        if !entries.is_empty() {
+        if !entries.is_empty() || !attachments.is_empty() {
             prepared.push(engine::PromiseContextEntries {
                 promise_id,
                 entries,
+                attachments,
             });
         }
     }
@@ -799,6 +855,7 @@ mod tests {
                         completion_promises: None,
                     };
                     ToolInvocationResult {
+                        attachments: Vec::new(),
                         duration_ms: None,
                         output_bytes: None,
                         truncated: false,
@@ -1015,6 +1072,106 @@ mod tests {
             blobs,
             blob_graph: None,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn joined_and_awaited_file_attachments_are_metadata_without_media_input() {
+        use tools::attachments::Attachment;
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let blob = deps.blobs.put_bytes(b"report".to_vec()).await.unwrap();
+        let reference = engine::FileAttachment::new(
+            blob.clone(),
+            "report.txt".into(),
+            Some("text/plain".into()),
+        );
+        let payload = deps
+            .blobs
+            .put_bytes(
+                serde_json::to_vec(&json!({
+                    "output": format!("[report]({})", reference.handle),
+                    "attachments": [Attachment::File(reference.clone())],
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resolved = temporal_workflow::AwaitPromiseResult {
+            promise_id: "promise_1".into(),
+            status: "resolved".into(),
+            payload_ref: Some(payload),
+            error_ref: None,
+        };
+        let joined = prepare_joined_context(
+            &deps,
+            temporal_workflow::JoinedContextPreparationRequest {
+                results: vec![resolved.clone()],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(joined.len(), 1);
+        assert!(
+            joined[0].entries.is_empty(),
+            "file links must not become user messages"
+        );
+        assert_eq!(
+            joined[0].attachments,
+            vec![Attachment::File(reference.clone())]
+        );
+        let awaited = materialize_await_result(
+            &deps,
+            temporal_workflow::AwaitMaterializationRequest {
+                outcome: temporal_workflow::AwaitOutcome::Terminal,
+                results: vec![resolved],
+            },
+        )
+        .await
+        .unwrap();
+        assert!(awaited.additional_context.is_empty());
+        assert_eq!(awaited.attachments, joined[0].attachments);
+        assert!(
+            engine::storage::collect_blob_refs(
+                &serde_json::to_value(&awaited.attachments).unwrap()
+            )
+            .contains(&blob)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn file_attachment_admission_is_independent_of_media_budget_and_rejects_forgery() {
+        use tools::attachments::Attachment;
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let blob = deps.blobs.put_bytes(b"%PDF report".to_vec()).await.unwrap();
+        let reference = engine::FileAttachment::new(
+            blob.clone(),
+            "report.pdf".into(),
+            Some("application/pdf".into()),
+        );
+        let mut forged = reference.clone();
+        forged.content_ref = BlobRef::from_bytes(b"not recorded");
+        let payload = deps.blobs.put_bytes(serde_json::to_vec(&json!({"attachments": [
+            Attachment::File(forged), Attachment::File(reference.clone()),
+            Attachment::Media(engine::media::MediaDescriptor::new(blob, "application/pdf", None).unwrap()),
+        ]})).unwrap()).await.unwrap();
+        let prepared = prepare_payload_context(&deps, &payload, &mut 0, &mut 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            prepared.attachments,
+            vec![Attachment::File(reference.clone())]
+        );
+        assert!(prepared.entries.is_empty());
+        assert_eq!(prepared.omitted, 1);
+        let no_files = prepare_payload_context(&deps, &payload, &mut 1, &mut 0)
+            .await
+            .unwrap();
+        assert!(
+            no_files
+                .attachments
+                .iter()
+                .all(|item| matches!(item, Attachment::Media(_)))
+        );
+        assert_eq!(no_files.entries.len(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]

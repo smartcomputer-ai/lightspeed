@@ -1311,8 +1311,9 @@ pub fn resume_tool_batch_proposals(
             ToolBatchResumeOutput::AwaitTool {
                 result_ref,
                 additional_context,
+                attachments,
             },
-        ) => await_resume_result(state, result_ref, additional_context)?,
+        ) => await_resume_result(state, result_ref, additional_context, attachments)?,
         (
             ToolBatchSuspension::JoinedWorkflowCalls { .. },
             ToolBatchResumeOutput::JoinedWorkflowCalls { additional_context },
@@ -1462,6 +1463,7 @@ fn await_resume_result(
     state: &CoreAgentState,
     result_ref: BlobRef,
     additional_context: Vec<ContextEntryInput>,
+    attachments: Vec<crate::Attachment>,
 ) -> Result<ToolInvocationBatchResult, DomainError> {
     validate_supplemental_entries(&additional_context, &"await")?;
     let active_run = state
@@ -1496,6 +1498,7 @@ fn await_resume_result(
         turn_id: batch.turn_id,
         batch_id: batch.batch_id,
         results: vec![ToolInvocationResult {
+            effects: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -1504,7 +1507,7 @@ fn await_resume_result(
             output_ref: Some(result_ref),
             model_visible_context_entries,
             error_ref: None,
-            effects: Vec::new(),
+            attachments,
         }],
     })
 }
@@ -1613,6 +1616,7 @@ fn joined_workflow_resume_result(
                 status,
                 content_ref,
             )];
+        let mut attachments = Vec::new();
         if status == ToolCallStatus::Succeeded {
             model_visible_context_entries.extend(
                 additional_context
@@ -1620,8 +1624,15 @@ fn joined_workflow_resume_result(
                     .filter(|item| item.promise_id == joined.promise_id)
                     .flat_map(|item| item.entries.iter().cloned()),
             );
+            attachments.extend(
+                additional_context
+                    .iter()
+                    .filter(|item| item.promise_id == joined.promise_id)
+                    .flat_map(|item| item.attachments.iter().cloned()),
+            );
         }
         results.push(ToolInvocationResult {
+            effects: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -1630,7 +1641,7 @@ fn joined_workflow_resume_result(
             output_ref,
             model_visible_context_entries,
             error_ref,
-            effects: Vec::new(),
+            attachments,
         });
     }
     Ok(ToolInvocationBatchResult {
@@ -1683,6 +1694,7 @@ fn validate_minted_promise_id(
 fn invalid_await_tool_result(call_id: ToolCallId, _message: String) -> ToolInvocationResult {
     let error_ref = crate::unavailable_tool_result_ref();
     ToolInvocationResult {
+        attachments: Vec::new(),
         duration_ms: None,
         output_bytes: None,
         truncated: false,
@@ -2146,6 +2158,7 @@ fn validate_result_matches_active_tool_batch(
 
 fn invocation_result_to_call_result(result: ToolInvocationResult) -> ToolCallResult {
     ToolCallResult {
+        attachments: result.attachments,
         call_id: result.call_id,
         status: result.status,
         output_ref: result.output_ref,
@@ -2855,6 +2868,7 @@ mod tests {
             turn_id: request.turn_id,
             batch_id: request.batch_id,
             results: vec![ToolInvocationResult {
+                attachments: Vec::new(),
                 duration_ms: None,
                 output_bytes: None,
                 truncated: false,
@@ -2949,6 +2963,7 @@ mod tests {
             output: ToolBatchResumeOutput::AwaitTool {
                 result_ref: BlobRef::from_bytes(b"await output"),
                 additional_context: Vec::new(),
+                attachments: Vec::new(),
             },
         })
     }
@@ -7101,11 +7116,26 @@ mod tests {
         commit_action(&mut drive, deferred);
 
         assert_eq!(await_wake(drive.state(), 91), Some(WakeReason::Terminal));
+        let metadata = crate::Attachment::File(crate::FileAttachment::new(
+            BlobRef::from_bytes(b"asset"),
+            "asset.txt".into(),
+            None,
+        ));
+        let mut command = resume_tool_batch_command_with_claim(&request, WakeReason::Terminal);
+        if let CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
+            output: ToolBatchResumeOutput::AwaitTool { attachments, .. },
+            ..
+        }) = &mut command
+        {
+            attachments.push(metadata.clone());
+        }
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
         let resumed = drive
-            .admit_command(
-                resume_tool_batch_command_with_claim(&request, WakeReason::Terminal),
-                91,
-            )
+            .admit_command(command, 91)
             .expect("resume terminal await");
         let entries = commit_action(&mut drive, resumed);
         assert!(entries.iter().any(|entry| matches!(
@@ -7120,6 +7150,7 @@ mod tests {
                 _ => None,
             })
             .expect("await call completion");
+        assert_eq!(result.attachments, vec![metadata]);
         assert_eq!(result.output_ref.as_ref(), Some(&result_ref));
         assert_eq!(result.model_visible_context_entries.len(), 1);
         assert!(matches!(
@@ -7140,6 +7171,15 @@ mod tests {
                 .parked_tool_batch
                 .is_none()
         );
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
     }
 
     #[test]
@@ -8018,6 +8058,7 @@ mod tests {
                 turn_id: request.turn_id,
                 batch_id: request.batch_id,
                 results: vec![ToolInvocationResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
@@ -8105,6 +8146,16 @@ mod tests {
             Some("render.png"),
         )
         .expect("admitted descriptor");
+        let metadata = crate::Attachment::File(crate::FileAttachment::new(
+            BlobRef::from_bytes(b"asset"),
+            "asset.txt".into(),
+            None,
+        ));
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
         let resumed = drive
             .admit_command(
                 CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
@@ -8114,6 +8165,7 @@ mod tests {
                     claim_observed_at_ms: 100,
                     output: ToolBatchResumeOutput::JoinedWorkflowCalls {
                         additional_context: vec![crate::PromiseContextEntries {
+                            attachments: vec![metadata.clone()],
                             promise_id: promise_id.clone(),
                             entries: vec![handed_over.context_entry()],
                         }],
@@ -8131,6 +8183,7 @@ mod tests {
         else {
             panic!("expected original call completion");
         };
+        assert_eq!(result.attachments, vec![metadata]);
         assert_eq!(result.call_id, call.call_id);
         assert_eq!(result.status, ToolCallStatus::Succeeded);
         assert_eq!(result.output_ref.as_ref(), Some(&payload_ref));
@@ -8152,6 +8205,15 @@ mod tests {
                 .as_ref()
                 .is_some_and(|run| run.parked_tool_batch.is_none())
         );
+        replayed
+            .resume_appended(
+                entries
+                    .iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
     }
 
     #[test]
@@ -8253,6 +8315,7 @@ mod tests {
             if call.tool_name.as_str() == "local_echo" {
                 let content_ref = BlobRef::from_bytes(b"echo complete");
                 results.push(ToolInvocationResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
@@ -8302,6 +8365,7 @@ mod tests {
             };
             joined_ids.push((call.call_id.clone(), promise_id));
             results.push(ToolInvocationResult {
+                attachments: Vec::new(),
                 duration_ms: None,
                 output_bytes: None,
                 truncated: false,
@@ -8522,6 +8586,7 @@ mod tests {
             )])),
         };
         let completed_results = vec![ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
@@ -9348,6 +9413,7 @@ mod tests {
     ) -> ToolInvocationResult {
         let content_ref = BlobRef::from_bytes(call_id.as_str().as_bytes());
         ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,

@@ -57,6 +57,26 @@ describe("method roles", () => {
     expect((error as GateRefusal).status).toBe(403);
     expect(calls).toHaveLength(0);
   });
+
+  it.each(["viewer", "contributor"] as const)("refuses workspace creation by %s before reaching core", async (role) => {
+    const calls = core();
+    const error = await refusal(as(role).call("vfs/workspaces/create", {}));
+    expect(error).toBeInstanceOf(GateRefusal);
+    expect((error as GateRefusal).status).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["operator", "admin"] as const)("allows workspace creation by %s", async (role) => {
+    const calls = core();
+    await expect(as(role).call("vfs/workspaces/create", {})).resolves.toBeDefined();
+    expect(calls.map((call) => call.method)).toEqual(["vfs/workspaces/create"]);
+  });
+
+  it("still allows contributors to update workspace contents", async () => {
+    const calls = core();
+    await expect(as("contributor").call("vfs/workspaces/update", { workspaceId: "docs", snapshotRef: `sha256:${"a".repeat(64)}` })).resolves.toBeDefined();
+    expect(calls.map((call) => call.method)).toEqual(["vfs/workspaces/update"]);
+  });
 });
 
 describe("session targets", () => {

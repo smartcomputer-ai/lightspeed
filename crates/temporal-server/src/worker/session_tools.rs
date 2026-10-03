@@ -783,6 +783,7 @@ impl SessionTools {
             .await
             .map_err(map_blob_error)?;
         Ok(ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: Some(output_bytes),
             truncated: false,
@@ -832,6 +833,7 @@ impl SessionTools {
                 .map_err(map_blob_error)?;
         }
         Ok(ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: Some(output_bytes),
             truncated: false,
@@ -2034,6 +2036,7 @@ async fn failed_result_bytes(
 ) -> Result<ToolInvocationResult, CoreAgentIoError> {
     let error_ref = blobs.put_bytes(bytes).await.map_err(map_blob_error)?;
     Ok(ToolInvocationResult {
+        attachments: Vec::new(),
         duration_ms: None,
         output_bytes: None,
         truncated: false,

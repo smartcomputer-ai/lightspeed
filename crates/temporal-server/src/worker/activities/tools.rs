@@ -386,18 +386,23 @@ async fn execute_native_mcp_call(
                 status,
                 visible_ref.clone(),
             ));
+            let mut attachments = Vec::with_capacity(media.len());
             for item in media {
                 let Some(blob_ref) = asset_refs.get(item.asset_index) else {
                     continue;
                 };
-                model_visible_context_entries.push(engine::media::media_context_entry(
-                    blob_ref.clone(),
-                    &item.media_type,
-                    item.kind,
-                    item.name.as_deref(),
-                ));
+                let descriptor = engine::media::MediaDescriptor {
+                    handle: engine::media::media_handle(blob_ref),
+                    content_ref: blob_ref.clone(),
+                    media_type: item.media_type,
+                    kind: item.kind,
+                    name: item.name,
+                };
+                model_visible_context_entries.push(descriptor.context_entry());
+                attachments.push(engine::Attachment::Media(descriptor));
             }
             Ok(NativeMcpCallOutcome::Completed(ToolInvocationResult {
+                attachments,
                 duration_ms: None,
                 output_bytes: Some(output_bytes),
                 truncated: false,
@@ -640,6 +645,7 @@ mod tests {
     fn succeeded(call: &ToolInvocationRequest) -> ToolInvocationResult {
         let content_ref = BlobRef::from_bytes(call.call_id.as_str().as_bytes());
         ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,

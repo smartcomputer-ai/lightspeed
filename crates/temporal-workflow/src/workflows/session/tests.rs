@@ -486,6 +486,7 @@ fn pending_resume(batch_id: u64) -> PendingToolBatchResume {
             output: engine::ToolBatchResumeOutput::AwaitTool {
                 result_ref: engine::BlobRef::from_bytes(b"await output"),
                 additional_context: Vec::new(),
+                attachments: Vec::new(),
             },
         },
     }

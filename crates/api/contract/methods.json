@@ -1669,7 +1669,7 @@
         },
         "type": "AgentApiOutcome<VfsWorkspaceCreateResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Create a mutable VFS workspace",
       "target": null

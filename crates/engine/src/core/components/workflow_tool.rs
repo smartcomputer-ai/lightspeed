@@ -2978,6 +2978,7 @@ mod tests {
         let results = invocations
             .iter()
             .map(|invocation| ToolInvocationResult {
+                attachments: Vec::new(),
                 duration_ms: None,
                 output_bytes: None,
                 truncated: false,

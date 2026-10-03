@@ -782,6 +782,9 @@ pub struct ToolCallResult {
     pub error_ref: Option<BlobRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ToolEffect>,
+    /// Immutable assets supplied by this result, separate from model input and effects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::Attachment>,
     /// Wall-clock milliseconds the executing runtime spent on this call,
     /// measured around the execution activity. Absent for synthetic results
     /// (cancelled, unavailable) and executors that do not measure. Recorded
@@ -1538,6 +1541,7 @@ fn cancelled_tool_result(call: &ObservedToolCall) -> ToolCallResult {
     let error_ref = cancelled_tool_result_ref();
     let status = ToolCallStatus::Cancelled;
     ToolCallResult {
+        attachments: Vec::new(),
         call_id: call.call_id.clone(),
         status,
         output_ref: None,
@@ -1568,6 +1572,7 @@ fn unavailable_tool_result(call: &ObservedToolCall) -> ToolCallResult {
     let error_ref = unavailable_tool_result_ref();
     let status = ToolCallStatus::Unavailable;
     ToolCallResult {
+        attachments: Vec::new(),
         call_id: call.call_id.clone(),
         status,
         output_ref: None,

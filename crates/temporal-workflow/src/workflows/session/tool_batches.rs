@@ -496,6 +496,7 @@ fn boundary_call_result(
     error_ref: BlobRef,
 ) -> ToolInvocationResult {
     ToolInvocationResult {
+        attachments: Vec::new(),
         duration_ms: None,
         output_bytes: None,
         truncated: false,

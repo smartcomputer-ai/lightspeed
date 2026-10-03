@@ -1119,6 +1119,7 @@ impl<'a> CoreAgentProjector<'a> {
                     call_id: result.call_id.as_str().to_owned(),
                     status: core_tool_status_to_api_status(result.status),
                     effects: tool_effects_to_api(&result.effects),
+                    attachments: tool_attachments_to_api(&result.attachments),
                     output_bytes: result.output_bytes,
                     truncated: result.truncated,
                 }),
@@ -1180,6 +1181,7 @@ impl<'a> CoreAgentProjector<'a> {
     ) -> Result<Vec<ToolBatchView>, AgentApiError> {
         let result_by_call = self.project_tool_results_for_run(context_entries).await?;
         let effect_by_call = tool_effects_for_run(projection, run_id);
+        let attachment_by_call = tool_attachments_for_run(projection, run_id);
         let mut batches = Vec::new();
         let mut completed_batches = BTreeMap::new();
 
@@ -1209,6 +1211,10 @@ impl<'a> CoreAgentProjector<'a> {
                             status: result
                                 .map(|result| result.status)
                                 .unwrap_or(ToolItemStatus::Running),
+                            attachments: attachment_by_call
+                                .get(call.call_id.as_str())
+                                .cloned()
+                                .unwrap_or_default(),
                             effects: effect_by_call
                                 .get(call.call_id.as_str())
                                 .cloned()
@@ -2722,6 +2728,64 @@ fn tool_effects_for_run(
     effects
 }
 
+fn tool_attachments_for_run(
+    projection: &CoreAgentProjection<'_>,
+    run_id: RunId,
+) -> BTreeMap<String, Vec<api::ToolAttachmentView>> {
+    projection
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            if let CoreAgentEvent::Tool(ToolEvent::CallCompleted {
+                run_id: event_run_id,
+                result,
+                ..
+            }) = &entry.event
+                && *event_run_id == run_id
+                && !result.attachments.is_empty()
+            {
+                Some((
+                    result.call_id.to_string(),
+                    tool_attachments_to_api(&result.attachments),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn tool_attachments_to_api(attachments: &[engine::Attachment]) -> Vec<api::ToolAttachmentView> {
+    attachments
+        .iter()
+        .map(|attachment| match attachment {
+            engine::Attachment::Media(media) => api::ToolAttachmentView {
+                kind: api::ToolAttachmentKind::Media,
+                handle: media.handle.clone(),
+                content_ref: media.content_ref.to_string(),
+                name: media.name.clone(),
+                media_type: Some(media.media_type.clone()),
+                source: None,
+            },
+            engine::Attachment::File(file) => api::ToolAttachmentView {
+                kind: api::ToolAttachmentKind::File,
+                handle: file.handle.clone(),
+                content_ref: file.content_ref.to_string(),
+                name: Some(file.name.clone()),
+                media_type: file.media_type.clone(),
+                source: file
+                    .source
+                    .as_ref()
+                    .map(|source| api::AttachmentSourceView {
+                        kind: source.kind.clone(),
+                        id: source.id.clone(),
+                        path: source.path.clone(),
+                    }),
+            },
+        })
+        .collect()
+}
+
 fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
     effects
         .iter()
@@ -3338,6 +3402,7 @@ mod tests {
 
     fn tool_call_with_status(status: ToolItemStatus) -> ToolCallView {
         ToolCallView {
+            attachments: Vec::new(),
             tool_id: None,
             call_id: "call-1".to_owned(),
             tool_name: "read_file".to_owned(),
@@ -4030,6 +4095,7 @@ mod tests {
                 turn_id: TurnId::new(3),
                 batch_id: ToolBatchId::new(4),
                 result: engine::ToolCallResult {
+                    attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,

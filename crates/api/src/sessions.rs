@@ -1607,6 +1607,9 @@ pub enum SessionEventKindView {
         status: ToolItemStatus,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         effects: Vec<ToolEffectView>,
+        /// Portable immutable assets, separate from effects and native media input.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<ToolAttachmentView>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output_bytes: Option<u64>,
         #[serde(default)]

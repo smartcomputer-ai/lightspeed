@@ -1,3 +1,4 @@
+import type { FileReference } from "@/lib/file-references";
 import { createContext } from "react";
 import type { BlobHints } from "@/lib/blob-view";
 import type { TranscriptMedia } from "@/lib/sessions/transcript";
@@ -18,6 +19,12 @@ export interface TranscriptLinks {
   /// Every media item the transcript has folded, by `media:` handle, for
   /// resolving the handles assistant text references.
   mediaByHandle?: Map<string, TranscriptMedia>;
+  filesByHandle?: Map<string, FileReference | null>;
+  fileReferenceSource?: {
+    universeId: string;
+    sessionId: string;
+    load: (handle: string, signal: AbortSignal) => Promise<FileReference | null>;
+  };
 }
 
 export const TranscriptLinksContext = createContext<TranscriptLinks>({});

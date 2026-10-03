@@ -90,7 +90,9 @@ impl BuiltinToolsetConfig {
         let mut config = Self::disabled();
         for operation in operations {
             match operation {
-                BuiltinToolOperation::ReadFile => config.vfs.read_file = true,
+                BuiltinToolOperation::ReadFile | BuiltinToolOperation::Reference => {
+                    config.vfs.read_file = true
+                }
                 BuiltinToolOperation::WriteFile => config.vfs.write_file = true,
                 BuiltinToolOperation::EditFile => config.vfs.edit_file = true,
                 BuiltinToolOperation::ApplyPatch => config.vfs.apply_patch = true,
@@ -127,6 +129,7 @@ impl BuiltinToolsetConfig {
                 self.vfs.write_file = true;
                 self.environment.filesystem.read_file = true;
             }
+            BuiltinToolOperation::Reference => self.vfs.read_file = true,
             BuiltinToolOperation::ReadFile => self.environment.filesystem.read_file = true,
             BuiltinToolOperation::WriteFile => self.environment.filesystem.write_file = true,
             BuiltinToolOperation::EditFile => self.environment.filesystem.edit_file = true,
@@ -150,6 +153,9 @@ impl BuiltinToolsetConfig {
     /// grants needed for explicit transfers between the two domains.
     fn vfs_operations(&self) -> Vec<BuiltinToolOperation> {
         let mut operations = self.vfs.operations();
+        if self.vfs.read_file {
+            operations.push(BuiltinToolOperation::Reference);
+        }
         if self.vfs.read_file && self.environment.filesystem.write_file {
             operations.push(BuiltinToolOperation::Materialize);
         }
@@ -803,6 +809,7 @@ mod tests {
                 "vfs_grep",
                 "vfs_list_dir",
                 "vfs_read_file",
+                "vfs_reference",
                 "vfs_write_file"
             ]
         );
@@ -815,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_vfs_toolset_exposes_only_four_vfs_tools() {
+    fn read_only_vfs_toolset_includes_explicit_references() {
         let target = target(ProviderApiKind::OpenAiResponses);
         let mut config = ToolsetConfig::empty();
         config.builtin.vfs = FilesystemToolsetConfig::read_only();
@@ -824,7 +831,13 @@ mod tests {
 
         assert_eq!(
             visible_names(&toolset),
-            vec!["vfs_glob", "vfs_grep", "vfs_list_dir", "vfs_read_file"]
+            vec![
+                "vfs_glob",
+                "vfs_grep",
+                "vfs_list_dir",
+                "vfs_read_file",
+                "vfs_reference"
+            ]
         );
         assert!(
             toolset
@@ -848,7 +861,7 @@ mod tests {
         assert!(names.contains(&"exec_command".to_owned()));
         assert!(names.contains(&"vfs_materialize".to_owned()));
         assert!(names.contains(&"vfs_capture".to_owned()));
-        assert_eq!(names.len(), 18);
+        assert_eq!(names.len(), 19);
         assert!(
             toolset
                 .catalog
@@ -949,7 +962,7 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec!["VfsRead"]);
+        assert_eq!(visible_names(&toolset), vec!["VfsRead", "vfs_reference"]);
         assert!(
             input_schema(&toolset, "VfsRead")["properties"]
                 .get("file_path")
@@ -971,7 +984,8 @@ mod tests {
                 "VfsGrep",
                 "VfsListDir",
                 "VfsRead",
-                "VfsWrite"
+                "VfsWrite",
+                "vfs_reference"
             ]
         );
     }

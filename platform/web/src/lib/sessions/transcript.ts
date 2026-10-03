@@ -1,5 +1,5 @@
 import type { LlmUsageView, ToolItemStatus } from "@lightspeed-ai/agent-client";
-import type { SessionEvent, SessionItem, SessionRunView, ToolCallDisplay } from "@/api";
+import type { SessionEvent, SessionItem, SessionRunView, ToolCallDisplay, ToolAttachmentView } from "@/api";
 
 /// Folded chat model for a session. The event log is the source of truth;
 /// this module reduces it into renderable entries plus live-run state,
@@ -99,6 +99,7 @@ export interface TranscriptToolCall {
   /// The call began before the loaded history window. Older pages hydrate it.
   continuation?: boolean;
   display?: ToolCallDisplay | null;
+  attachments?: ToolAttachmentView[];
   effects?: Array<{ kind?: string; data?: Record<string, string> }>;
   /// Observed times of the call's dispatch and terminal result; the window
   /// includes runtime scheduling overhead, which is what a reader waited.
@@ -363,6 +364,7 @@ export function applyEvents(
             : {}),
           ...(kind.outputBytes != null ? { outputBytes: kind.outputBytes } : {}),
           ...(kind.effects?.length ? { effects: kind.effects } : {}),
+          ...(kind.attachments?.length ? { attachments: kind.attachments } : {}),
         }));
         syncToolGroupStatusForCall(next, String(kind.callId));
         break;

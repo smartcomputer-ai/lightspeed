@@ -2687,6 +2687,7 @@ mod tests {
                 turn_id: "turn_1".into(),
                 status: ToolItemStatus::Succeeded,
                 calls: vec![ToolCallView {
+                    attachments: Vec::new(),
                     tool_id: Some("env.read_file".into()),
                     started_at_ms: None,
                     completed_at_ms: None,
@@ -3090,6 +3091,7 @@ mod tests {
                     call_id: id.into(),
                     status,
                     effects: vec![],
+                    attachments: Vec::new(),
                     output_bytes: None,
                     truncated: false,
                 },
@@ -3233,6 +3235,7 @@ mod tests {
             call_id: "a".into(),
             status: ToolItemStatus::Succeeded,
             effects: vec![],
+            attachments: Vec::new(),
             output_bytes: Some(5),
             truncated: false,
         });

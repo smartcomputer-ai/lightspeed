@@ -359,6 +359,8 @@ pub struct AwaitMaterializationResult {
     pub result_ref: BlobRef,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub additional_context: Vec<engine::ContextEntryInput>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<engine::Attachment>,
 }
 
 /// Bounded, ref-only snapshot passed to the storage-backed await materializer.

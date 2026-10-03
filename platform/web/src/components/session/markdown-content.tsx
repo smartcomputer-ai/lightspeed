@@ -4,17 +4,22 @@ import type { ComponentProps } from "react";
 import { DocumentChip, MediaByHandle } from "@/components/session/media";
 import { TranscriptLinksContext } from "@/components/session/transcript-links";
 import { useContext } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { isFileHandle, type FileReference } from "@/lib/file-references";
 import { cn } from "@/lib/utils";
 
 const MEDIA_SCHEME = "media:";
 
-/// `media:` is how the model names media it was shown; keep those URLs so
+/// Media and VFS handles name recorded tool assets; keep those URLs so
 /// the renderer below can resolve them, and sanitize everything else.
 function urlTransform(url: string): string {
-  return url.startsWith(MEDIA_SCHEME) ? url : defaultUrlTransform(url);
+  return url.startsWith(MEDIA_SCHEME) || url.startsWith("file:") ? url : defaultUrlTransform(url);
 }
 
 function MarkdownImage({ src, alt }: ComponentProps<"img">) {
+  if (typeof src === "string" && src.startsWith("file:")) {
+    return <MarkdownLink href={src}>{alt ?? "File"}</MarkdownLink>;
+  }
   if (typeof src === "string" && src.startsWith(MEDIA_SCHEME)) {
     return <MediaByHandle handle={src} alt={alt} />;
   }
@@ -23,6 +28,13 @@ function MarkdownImage({ src, alt }: ComponentProps<"img">) {
 
 function MarkdownLink({ href, children, ...rest }: ComponentProps<"a">) {
   const links = useContext(TranscriptLinksContext);
+  if (typeof href === "string" && href.startsWith("file:")) {
+    const file = isFileHandle(href) ? links.filesByHandle?.get(href) ?? undefined : undefined;
+    if (isFileHandle(href) && links.fileReferenceSource) {
+      return <HistoricalFileLink href={href} {...rest}>{children}</HistoricalFileLink>;
+    }
+    return <FileLink file={file} {...rest}>{children}</FileLink>;
+  }
   if (typeof href === "string" && href.startsWith(MEDIA_SCHEME)) {
     const media = links.mediaByHandle?.get(href);
     if (media && media.kind === "document") {
@@ -38,6 +50,30 @@ function MarkdownLink({ href, children, ...rest }: ComponentProps<"a">) {
     );
   }
   return <a href={href} target="_blank" rel="noreferrer" {...rest}>{children}</a>;
+}
+
+function HistoricalFileLink({ href, children, ...rest }: ComponentProps<"a"> & { href: string }) {
+  const links = useContext(TranscriptLinksContext);
+  const source = links.fileReferenceSource!;
+  const reference = useQuery({
+    queryKey: ["file-reference", source.universeId, source.sessionId, href, links.filesByHandle?.get(href)],
+    queryFn: ({ signal }) => source.load(href, signal),
+    staleTime: Infinity,
+    retry: false,
+  });
+  if (reference.isPending) return <span className="text-muted-foreground" title="Looking up file reference" aria-busy="true">{children}</span>;
+  return <FileLink file={reference.data ?? undefined} {...rest}>{children}</FileLink>;
+}
+
+function FileLink({ file, children, ...rest }: ComponentProps<"a"> & { file?: FileReference }) {
+  const links = useContext(TranscriptLinksContext);
+  const target = file && links.blobHref?.(file.blobRef, {
+    name: file.name, type: file.type,
+    workspace: file.workspace, path: file.path,
+  });
+  return target
+    ? <a {...rest} href={target} target="_blank" rel="noopener noreferrer">{children}</a>
+    : <span className="text-muted-foreground" title="This file reference is unavailable">{children} (unavailable)</span>;
 }
 
 export function MarkdownContent({

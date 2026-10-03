@@ -797,6 +797,7 @@ async fn failed_tool_batch_result(
         )
         .await?;
         results.push(ToolInvocationResult {
+            attachments: Vec::new(),
             duration_ms: None,
             output_bytes: None,
             truncated: false,
