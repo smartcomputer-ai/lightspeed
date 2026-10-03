@@ -128,6 +128,10 @@ release boundary with `scripts/release/verify-metadata.sh`.
 ## Maintenance
 
 - Keep changes focused and preserve unrelated work in a dirty worktree.
+- Preserve concise Cargo dependency ranges such as `"1"` and `"0.1"`;
+  `Cargo.lock` records the exact tested versions. Change manifest ranges for
+  breaking upgrades or when a required API or fix needs a higher minimum,
+  rather than expanding every range to the latest full version.
 - Edit the root `README.md` only with explicit user permission. General requests
   to update documentation do not authorize changes to that file.
 - Never cite letter-P numeric roadmap identifiers in source comments, symbols,

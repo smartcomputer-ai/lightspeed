@@ -11,13 +11,13 @@ use temporal_workflow::{
     WorkflowToolRecoveryResult, WorkflowToolStartActivityRequest, WorkflowToolStartActivityResult,
     split_workflow_id, workflow_tool_recipe_fingerprint,
 };
+use temporalio_client::WorkflowExecutionStatus;
 use temporalio_client::{
     UntypedWorkflow, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowQueryOptions,
     WorkflowStartOptions,
 };
 use temporalio_common::data_converters::PayloadConverter;
 use temporalio_common::data_converters::RawValue;
-use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use temporalio_sdk::activities::ActivityError;
 
 use super::{

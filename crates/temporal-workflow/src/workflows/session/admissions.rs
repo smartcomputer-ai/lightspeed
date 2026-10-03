@@ -330,7 +330,7 @@ pub(super) async fn prepare_runtime_projection(
     request: RuntimeProjectionRefreshActivityRequest,
 ) -> anyhow::Result<Vec<CoreAgentCommand>> {
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::runtime_projection_refresh,
         request,
         preparation::activity_options(),

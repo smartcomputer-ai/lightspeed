@@ -4,6 +4,7 @@
 //! universe resolution. A key's authority is its row: scope, groups and the
 //! actor flag. Rotation replaces only the secret and its display prefix.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use std::collections::BTreeSet;
 
 use api::{AccessScope, MethodGroup};
@@ -70,9 +71,9 @@ impl PgApiKeyStore {
                 Err(error) => return Err(error),
             }
         }
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {KEY_COLUMNS} FROM api_keys WHERE key_hash = $1"
-        ))
+        )))
         .bind(&key.key_hash)
         .fetch_optional(&self.pool)
         .await
@@ -97,9 +98,9 @@ impl PgApiKeyStore {
         key_hash: &str,
         observed_at_ms: u64,
     ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        let Some(row) = sqlx::query(&format!(
+        let Some(row) = sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {KEY_COLUMNS} FROM api_keys WHERE key_hash = $1 AND revoked_at_ms IS NULL"
-        ))
+        )))
         .bind(key_hash)
         .fetch_optional(&self.pool)
         .await
@@ -134,11 +135,11 @@ impl PgApiKeyStore {
             None => (false, None),
             Some(scope) => (true, scope.universe_id()),
         };
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "SELECT {KEY_COLUMNS} FROM api_keys
              WHERE NOT $1 OR universe_id IS NOT DISTINCT FROM $2
              ORDER BY created_at_ms, key_prefix"
-        ))
+        )))
         .bind(filtered)
         .bind(universe_id)
         .fetch_all(&self.pool)
@@ -162,10 +163,10 @@ impl PgApiKeyStore {
             if new_prefix == key_prefix {
                 continue;
             }
-            let result = sqlx::query(&format!(
+            let result = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE api_keys SET key_hash = $2, key_prefix = $3, last_used_at_ms = NULL
                  WHERE key_prefix = $1 AND revoked_at_ms IS NULL RETURNING {KEY_COLUMNS}"
-            ))
+            )))
             .bind(key_prefix)
             .bind(&key_hash)
             .bind(&new_prefix)
@@ -196,10 +197,10 @@ impl PgApiKeyStore {
         key_prefix: &str,
         now_ms: u64,
     ) -> Result<Option<ApiKeyRecord>, ApiKeyError> {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE api_keys SET revoked_at_ms = COALESCE(revoked_at_ms, $2)
              WHERE key_prefix = $1 RETURNING {KEY_COLUMNS}"
-        ))
+        )))
         .bind(key_prefix)
         .bind(ms_to_i64(now_ms)?)
         .fetch_optional(&self.pool)

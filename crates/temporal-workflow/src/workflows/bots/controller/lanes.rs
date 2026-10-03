@@ -3,6 +3,7 @@
 //! Each lane owns a context clone, finishes its own bookkeeping, and
 //! records failures on the controller instead of failing the workflow.
 
+use crate::workflows::WorkflowContextExt as _;
 use api::{BotEventOutcome, BotRecentDeliverySnapshot, LlmUsageView};
 use bots::{BotDeliveryPhase, RoutedSession, ids};
 use futures::{FutureExt, pin_mut, select};
@@ -180,7 +181,8 @@ async fn run_delivery_inner(
             // A direct run can win the narrow read/start race. Hold the
             // lane through a short delay, then requeue at the front.
             ctx.state_mut(|state| state.record_error(message));
-            ctx.timer(BOT_BUSY_RETRY_DELAY).await;
+            ctx.timer_with_manual_cancellation(BOT_BUSY_RETRY_DELAY)
+                .await;
             ctx.state_mut(|state| {
                 state.active_by_session.remove(target.as_str());
                 state.requeue_front(delivery.clone());
@@ -204,8 +206,10 @@ async fn run_delivery_inner(
 
     {
         let session_id = target.clone();
-        let wait = ctx.wait_condition(move |state| state.lane_has_terminal(&session_id));
-        let timeout = ctx.timer(BOT_EVENT_TERMINAL_TIMEOUT).fuse();
+        let wait = ctx.wait_for_state(move |state| state.lane_has_terminal(&session_id));
+        let timeout = ctx
+            .timer_with_manual_cancellation(BOT_EVENT_TERMINAL_TIMEOUT)
+            .fuse();
         pin_mut!(wait, timeout);
         select! {
             _ = wait => {}
@@ -655,13 +659,17 @@ pub(super) async fn handle_invocation(ctx: Ctx, pending: PendingInvocation) {
     );
     let signalled = ctx
         .external_workflow(holder_workflow_id.clone(), None)
-        .signal(AgentSessionWorkflow::deliver_emission, envelope)
+        .signal(
+            AgentSessionWorkflow::deliver_emission,
+            envelope,
+            crate::workflows::signal_options(),
+        )
         .await;
     if let Err(failure) = signalled {
         ctx.state_mut(|state| {
             state.record_error(format!(
                 "resolve pushed invocation at {holder_workflow_id}: {}",
-                failure.message
+                failure
             ))
         });
     }

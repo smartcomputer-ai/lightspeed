@@ -1,6 +1,6 @@
 use super::*;
 use temporal_workflow::{TranscriptionSnapshot, TranscriptionWorkflow, TranscriptionWorkflowArgs};
-use temporalio_common::protos::temporal::api::enums::v1::WorkflowIdReusePolicy;
+use temporalio_client::WorkflowIdReusePolicy;
 
 fn validate_id(id: &str) -> Result<(), AgentApiError> {
     if id

@@ -108,12 +108,12 @@ use harness::{
 use llm_clients::{anthropic::messages as anthropic, openai::responses as openai};
 use mcp::McpRegistryStore;
 use store_pg::PgStore;
+use temporalio_client::WorkflowExecutionStatus;
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowHandle, WorkflowQueryOptions, WorkflowSignalOptions,
     WorkflowStartOptions, WorkflowTerminateOptions, errors::WorkflowInteractionError,
     errors::WorkflowQueryError, errors::WorkflowStartError,
 };
-use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use tools::{
     builtin::{BuiltinTool, BuiltinToolOperation},
     catalog::SKILL_CATALOG_CONTEXT_KEY,

@@ -400,14 +400,14 @@ pub fn gateway_router(
             .route("/auth/callback", get(oauth_callback))
             .route("/auth/client-metadata.json", get(cimd_document))
             .route(
-                "/hooks/bots/:universe/:bot/:trigger/:token",
+                "/hooks/bots/{universe}/{bot}/{trigger}/{token}",
                 post(bot_webhook_ingest),
             );
     }
     if routes.environment {
         router = router
             .route(
-                &format!("{ROUTE_PATH_PREFIX}/:universe/:environment/:incarnation"),
+                &format!("{ROUTE_PATH_PREFIX}/{{universe}}/{{environment}}/{{incarnation}}"),
                 get(environment_route_upgrade),
             )
             .route(CONNECT_PATH, get(registration::connect_upgrade))
@@ -807,9 +807,9 @@ async fn proxy_provider_route(
                 let close = matches!(message, Message::Close(_));
                 let message = match message {
                     Message::Text(value) => ProviderMessage::Text(value.to_string().into()),
-                    Message::Binary(value) => ProviderMessage::Binary(value.to_vec().into()),
-                    Message::Ping(value) => ProviderMessage::Ping(value.to_vec().into()),
-                    Message::Pong(value) => ProviderMessage::Pong(value.to_vec().into()),
+                    Message::Binary(value) => ProviderMessage::Binary(value),
+                    Message::Ping(value) => ProviderMessage::Ping(value),
+                    Message::Pong(value) => ProviderMessage::Pong(value),
                     Message::Close(_) => ProviderMessage::Close(None),
                 };
                 if provider_writer.send(message).await.is_err() || close { break }
@@ -818,10 +818,10 @@ async fn proxy_provider_route(
                 let Some(Ok(message)) = message else { break };
                 let close = matches!(message, ProviderMessage::Close(_));
                 let message = match message {
-                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string())),
-                    ProviderMessage::Binary(value) => Some(Message::Binary(value.to_vec())),
-                    ProviderMessage::Ping(value) => Some(Message::Ping(value.to_vec())),
-                    ProviderMessage::Pong(value) => Some(Message::Pong(value.to_vec())),
+                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string().into())),
+                    ProviderMessage::Binary(value) => Some(Message::Binary(value)),
+                    ProviderMessage::Ping(value) => Some(Message::Ping(value)),
+                    ProviderMessage::Pong(value) => Some(Message::Pong(value)),
                     ProviderMessage::Close(_) => Some(Message::Close(None)),
                     ProviderMessage::Frame(_) => None,
                 };
@@ -862,9 +862,9 @@ async fn proxy_external_route(
                 let close = matches!(message, Message::Close(_));
                 let message = match message {
                     Message::Text(value) => ProviderMessage::Text(value.to_string().into()),
-                    Message::Binary(value) => ProviderMessage::Binary(value.to_vec().into()),
-                    Message::Ping(value) => ProviderMessage::Ping(value.to_vec().into()),
-                    Message::Pong(value) => ProviderMessage::Pong(value.to_vec().into()),
+                    Message::Binary(value) => ProviderMessage::Binary(value),
+                    Message::Ping(value) => ProviderMessage::Ping(value),
+                    Message::Pong(value) => ProviderMessage::Pong(value),
                     Message::Close(_) => ProviderMessage::Close(None),
                 };
                 if daemon_writer.send(message).await.is_err() || close { break }
@@ -873,10 +873,10 @@ async fn proxy_external_route(
                 let Some(Ok(message)) = message else { break };
                 let close = matches!(message, ProviderMessage::Close(_));
                 let message = match message {
-                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string())),
-                    ProviderMessage::Binary(value) => Some(Message::Binary(value.to_vec())),
-                    ProviderMessage::Ping(value) => Some(Message::Ping(value.to_vec())),
-                    ProviderMessage::Pong(value) => Some(Message::Pong(value.to_vec())),
+                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string().into())),
+                    ProviderMessage::Binary(value) => Some(Message::Binary(value)),
+                    ProviderMessage::Ping(value) => Some(Message::Ping(value)),
+                    ProviderMessage::Pong(value) => Some(Message::Pong(value)),
                     ProviderMessage::Close(_) => Some(Message::Close(None)),
                     ProviderMessage::Frame(_) => None,
                 };

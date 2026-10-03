@@ -345,7 +345,8 @@ async fn live_store() -> anyhow::Result<Arc<PgStore>> {
 
 fn random_master_key() -> SecretsMasterKey {
     let mut bytes = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, &mut bytes)
+        .expect("OS random source unavailable");
     SecretsMasterKey::from_bytes(bytes)
 }
 

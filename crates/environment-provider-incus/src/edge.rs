@@ -58,7 +58,7 @@ async fn authorize<B: IncusBackend>(
 
 async fn proxy<B: IncusBackend>(
     State(state): State<EdgeState<B>>,
-    upgrade: Option<WebSocketUpgrade>,
+    upgrade: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
@@ -78,7 +78,7 @@ async fn proxy<B: IncusBackend>(
         .path_and_query()
         .map(|value| value.as_str())
         .unwrap_or("/");
-    if let Some(upgrade) = upgrade {
+    if let Ok(upgrade) = upgrade {
         let endpoint = format!("ws://{}:{}{}", route.address, route.port, path);
         return upgrade
             .on_upgrade(move |socket| proxy_websocket(socket, endpoint))
@@ -154,9 +154,9 @@ async fn proxy_websocket(mut client: WebSocket, endpoint: String) {
                     let close = matches!(message, axum::extract::ws::Message::Close(_));
                     let mapped = match message {
                         axum::extract::ws::Message::Text(v) => UpstreamMessage::Text(v.to_string().into()),
-                        axum::extract::ws::Message::Binary(v) => UpstreamMessage::Binary(v.to_vec().into()),
-                        axum::extract::ws::Message::Ping(v) => UpstreamMessage::Ping(v.to_vec().into()),
-                        axum::extract::ws::Message::Pong(v) => UpstreamMessage::Pong(v.to_vec().into()),
+                        axum::extract::ws::Message::Binary(v) => UpstreamMessage::Binary(v),
+                        axum::extract::ws::Message::Ping(v) => UpstreamMessage::Ping(v),
+                        axum::extract::ws::Message::Pong(v) => UpstreamMessage::Pong(v),
                         axum::extract::ws::Message::Close(_) => UpstreamMessage::Close(None),
                     };
                     if upstream.send(mapped).await.is_err() || close { break }
@@ -167,10 +167,10 @@ async fn proxy_websocket(mut client: WebSocket, endpoint: String) {
                 Some(Ok(message)) => {
                     let close = matches!(message, UpstreamMessage::Close(_));
                     let mapped = match message {
-                        UpstreamMessage::Text(v) => axum::extract::ws::Message::Text(v.to_string()),
-                        UpstreamMessage::Binary(v) => axum::extract::ws::Message::Binary(v.to_vec()),
-                        UpstreamMessage::Ping(v) => axum::extract::ws::Message::Ping(v.to_vec()),
-                        UpstreamMessage::Pong(v) => axum::extract::ws::Message::Pong(v.to_vec()),
+                        UpstreamMessage::Text(v) => axum::extract::ws::Message::Text(v.to_string().into()),
+                        UpstreamMessage::Binary(v) => axum::extract::ws::Message::Binary(v),
+                        UpstreamMessage::Ping(v) => axum::extract::ws::Message::Ping(v),
+                        UpstreamMessage::Pong(v) => axum::extract::ws::Message::Pong(v),
                         UpstreamMessage::Close(_) => axum::extract::ws::Message::Close(None),
                         UpstreamMessage::Frame(_) => continue,
                     };

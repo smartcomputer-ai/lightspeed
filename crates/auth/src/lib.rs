@@ -217,10 +217,12 @@ pub enum AuthRegistryError {
 /// Generate a random id with the given prefix: `prefix` + 32 lowercase hex
 /// characters from the OS RNG (128 bits).
 pub fn random_auth_id(prefix: &str) -> String {
-    use rand::RngCore;
+    use rand::TryRng;
 
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS random source unavailable");
     format!("{prefix}{}", hex::encode(bytes))
 }
 

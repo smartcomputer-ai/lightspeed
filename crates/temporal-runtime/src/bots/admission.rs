@@ -25,16 +25,14 @@ use bots::{
 use harness::storage::BlobStore;
 use serde_json::Value;
 use temporal_workflow::bots::BotControllerArgs;
-use temporalio_client::{UntypedWorkflow, WorkflowStartOptions, WorkflowStartSignal};
+use temporalio_client::{UntypedSignal, UntypedWorkflow, WorkflowStartOptions};
 use temporalio_common::data_converters::{PayloadConverter, RawValue};
-use temporalio_common::protos::{
-    coresdk::AsJsonPayloadExt as _, temporal::api::common::v1::Payloads,
-};
+use temporalio_common::protos::coresdk::AsJsonPayloadExt as _;
 
 use super::now_ms;
 use crate::gateway::GatewayAgentApi;
 
-/// Workflow type name of the bot controller (`#[workflow(name = …)]`).
+/// Workflow type name of the bot controller (`#[run(name = …)]`).
 pub const BOT_CONTROLLER_WORKFLOW_TYPE: &str = "BotControllerWorkflow";
 
 /// What an admission stores for one event.
@@ -217,16 +215,15 @@ impl GatewayAgentApi {
         let config = BotControllerConfig::from_record(self.universe_id(), bot);
         let workflow_id = bot_controller_workflow_id(self.universe_id(), &bot.bot_id);
         let payload = event.as_json_payload()?;
-        let options = WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id)
-            .start_signal(
-                WorkflowStartSignal::new(bots::BOT_EVENT_SIGNAL)
-                    .input(Payloads {
-                        payloads: vec![payload],
-                    })
-                    .build(),
-            )
-            .build();
-        self.start_bot_controller(config, options).await
+        let options =
+            WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
+        self.start_bot_controller(
+            config,
+            options,
+            bots::BOT_EVENT_SIGNAL,
+            RawValue::new(vec![payload]),
+        )
+        .await
     }
 
     /// Start (or signal-with-start) the controller workflow by type name so
@@ -235,6 +232,8 @@ impl GatewayAgentApi {
         &self,
         config: BotControllerConfig,
         options: WorkflowStartOptions,
+        signal_name: &str,
+        signal_input: RawValue,
     ) -> anyhow::Result<()> {
         let input = RawValue::from_value(
             &BotControllerArgs {
@@ -244,9 +243,11 @@ impl GatewayAgentApi {
             &PayloadConverter::default(),
         );
         self.temporal_client()
-            .start_workflow(
+            .signal_with_start_workflow(
                 UntypedWorkflow::new(BOT_CONTROLLER_WORKFLOW_TYPE),
                 input,
+                UntypedSignal::new(signal_name),
+                signal_input,
                 options,
             )
             .await
@@ -261,16 +262,15 @@ impl GatewayAgentApi {
         let config = BotControllerConfig::from_record(self.universe_id(), bot);
         let workflow_id = bot_controller_workflow_id(self.universe_id(), &bot.bot_id);
         let payload = config.as_json_payload()?;
-        let options = WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id)
-            .start_signal(
-                WorkflowStartSignal::new(bots::BOT_CONFIG_SIGNAL)
-                    .input(Payloads {
-                        payloads: vec![payload],
-                    })
-                    .build(),
-            )
-            .build();
-        self.start_bot_controller(config, options).await
+        let options =
+            WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
+        self.start_bot_controller(
+            config,
+            options,
+            bots::BOT_CONFIG_SIGNAL,
+            RawValue::new(vec![payload]),
+        )
+        .await
     }
 
     /// The trigger pipeline: filter, route, idle-close policy, coalesce, delivery

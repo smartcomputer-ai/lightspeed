@@ -101,7 +101,7 @@ pub(super) async fn process_due(
                 ..
             } if producer_workflow_kind == harness::WORKFLOW_TOOL_EXECUTION_KIND => {
                 let check = ctx
-                    .start_activity(
+                    .execute_activity(
                         WorkflowActivities::check_workflow_tool_execution,
                         crate::WorkflowToolExecutionCheckRequest {
                             execution_id: producer_workflow_id.clone(),
@@ -232,7 +232,11 @@ pub(super) async fn flush_pending_promise_cancellations(
                 );
                 let _ = ctx
                     .external_workflow(producer_workflow_id, None)
-                    .signal(AgentSessionWorkflow::deliver_emission, envelope)
+                    .signal(
+                        AgentSessionWorkflow::deliver_emission,
+                        envelope,
+                        crate::workflows::signal_options(),
+                    )
                     .await;
             }
         }
@@ -324,7 +328,7 @@ pub(super) async fn process_pending_source_resolutions(
         let resolution = match (reply_schema_ref, resolution) {
             (Some(reply_schema_ref), harness::PromiseResolution::Resolved { payload_ref }) => {
                 let validation = ctx
-                    .start_activity(
+                    .execute_activity(
                         WorkflowActivities::validate_workflow_tool_reply,
                         crate::WorkflowToolReplyValidationRequest {
                             reply_schema_ref,

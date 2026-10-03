@@ -39,7 +39,7 @@ fn assert_validates(bundle: &Value, definition: &str, instance: &Value) {
     let validator = jsonschema::validator_for(&schema).expect("workflow schema compiles");
     let errors: Vec<String> = validator
         .iter_errors(instance)
-        .map(|error| format!("{} at {}", error, error.instance_path))
+        .map(|error| format!("{} at {}", error, error.instance_path()))
         .collect();
     assert!(
         errors.is_empty(),

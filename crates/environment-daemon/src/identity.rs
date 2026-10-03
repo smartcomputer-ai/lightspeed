@@ -53,7 +53,10 @@ impl DaemonIdentity {
         std::fs::create_dir_all(state_dir)
             .with_context(|| format!("create state dir {}", state_dir.display()))?;
         restrict_dir(state_dir)?;
-        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let mut seed = [0u8; 32];
+        rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, &mut seed)
+            .context("generate daemon identity seed")?;
+        let signing_key = SigningKey::from_bytes(&seed);
         let temp = state_dir.join(format!(".{DAEMON_KEY_FILE}.{}", std::process::id()));
         write_private(&temp, &encode_hex(&signing_key.to_bytes()))?;
         if let Err(error) = std::fs::rename(&temp, &path) {

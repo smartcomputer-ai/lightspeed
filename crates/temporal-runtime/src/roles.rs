@@ -1,12 +1,9 @@
 //! Process roles. One binary runs any combination of roles in one process
 //! (all of them by default); each worker role is its own Temporal task queue
 //! with the workflow types, activities, and background loops of that
-//! subsystem. `--task-types` further splits a process's worker roles into
-//! workflow-only or activity-only pollers.
+//! subsystem. Each worker role runs its workflows and activities together.
 
 use std::{collections::BTreeSet, fmt, str::FromStr};
-
-use temporalio_common::worker::WorkerTaskTypes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
@@ -124,62 +121,6 @@ impl fmt::Display for RoleSet {
     }
 }
 
-/// Which task types a process's worker roles poll.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum TaskTypes {
-    #[default]
-    All,
-    Workflows,
-    Activities,
-}
-
-impl TaskTypes {
-    pub fn parse(value: &str) -> Result<Self, String> {
-        match value.trim() {
-            "" | "all" => Ok(Self::All),
-            "workflows" => Ok(Self::Workflows),
-            "activities" => Ok(Self::Activities),
-            other => Err(format!(
-                "unknown task types {other:?}; expected all, workflows, or activities"
-            )),
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Workflows => "workflows",
-            Self::Activities => "activities",
-        }
-    }
-
-    /// Local activities run inside the workflow poller, so they follow the
-    /// workflow side of the split.
-    pub fn worker_task_types(self) -> WorkerTaskTypes {
-        match self {
-            Self::All => WorkerTaskTypes::all(),
-            Self::Workflows => WorkerTaskTypes {
-                enable_workflows: true,
-                enable_local_activities: true,
-                enable_remote_activities: false,
-                enable_nexus: false,
-            },
-            Self::Activities => WorkerTaskTypes {
-                enable_workflows: false,
-                enable_local_activities: false,
-                enable_remote_activities: true,
-                enable_nexus: false,
-            },
-        }
-    }
-}
-
-impl fmt::Display for TaskTypes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,15 +154,5 @@ mod tests {
                 .unwrap()
                 .has(Role::EnvironmentGateway)
         );
-    }
-
-    #[test]
-    fn task_types_split_the_poller() {
-        let workflows = TaskTypes::parse("workflows").unwrap().worker_task_types();
-        assert!(workflows.enable_workflows && !workflows.enable_remote_activities);
-        let activities = TaskTypes::parse("activities").unwrap().worker_task_types();
-        assert!(!activities.enable_workflows && activities.enable_remote_activities);
-        assert_eq!(TaskTypes::parse("").unwrap(), TaskTypes::All);
-        assert!(TaskTypes::parse("nexus").is_err());
     }
 }

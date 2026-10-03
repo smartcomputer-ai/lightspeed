@@ -29,10 +29,10 @@ use store_pg::{
     CasSweepPage, PgStore,
 };
 use temporal_workflow::{AgentAdmission, AgentSessionWorkflow, compose_workflow_id};
+use temporalio_client::WorkflowExecutionStatus;
 use temporalio_client::{
     Client, WorkflowDescribeOptions, WorkflowSignalOptions, errors::WorkflowInteractionError,
 };
-use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -833,7 +833,7 @@ async fn observe_active_projection_statuses(
                     %workflow_id,
                     lightspeed_run_id = active_run_id.as_u64(),
                     session_head_seq,
-                    temporal_status = status.as_str_name(),
+                    temporal_status = ?status,
                     "session projection is active but its workflow is terminal"
                 );
             }

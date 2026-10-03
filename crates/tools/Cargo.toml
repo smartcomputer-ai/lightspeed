@@ -11,13 +11,13 @@ futures-util = "0.3"
 glob = "0.3"
 environment-client = { path = "../environment-client" }
 environment-protocol = { path = "../environment-protocol" }
-jsonschema = { version = "0.33", default-features = false }
+jsonschema = { version = "0.58", default-features = false }
 regex = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["fs", "net", "rt", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 vfs = { path = "../vfs" }

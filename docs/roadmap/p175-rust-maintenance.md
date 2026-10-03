@@ -234,3 +234,51 @@ Validation on Node 24.21.0 and npm 11.19.0:
 - Live Temporal, SSO, and PostgreSQL migration suites were not run; offline
   backend/auth tests passed, including their PGlite coverage. Container images
   were not rebuilt locally.
+
+## Coordinated Rust dependency update
+
+- [x] Review direct Cargo dependencies against stable registry releases and
+  refresh the workspace lockfile. Major updates include Temporal SDK 1.0.0
+  with its matching core 0.9.0, SQLx 0.9.0, Axum 0.8.9, Reqwest 0.13.5,
+  RMCP 3.5.0, Ratatui 0.30.2, and the RustCrypto libraries.
+- [x] Align rustup, CI, and the pinned release build image on Rust 1.99.0.
+- [x] Adapt workflow registration, signal-with-start, asynchronous heartbeats,
+  cancellation, retry policies, and typed failures. Workflow names and wire
+  payloads remain stable. Detached cancellation tokens preserve the existing
+  control loops and allow cleanup after workflow cancellation.
+- [x] Simplify deployment to role selection: each worker role runs its workflows
+  and activities together through the standard SDK runtime and worker constructor.
+  Remove the task-type flag/environment variable, custom core-worker construction,
+  experimental SDK feature, and direct core dependencies. Separate workflow-only
+  plugin and activity-only connector fixtures use their normal registrations.
+- [x] Review SQLx's explicit assertions for dynamically constructed SQL:
+  identifiers and fragments come from internal schema definitions, while
+  request values remain bound parameters. Test schemas use generated UUIDs.
+- [x] Adapt cryptographic random generation and digest APIs, and add an
+  independent AES-256-GCM fixture that verifies persisted secret ciphertext,
+  authenticated metadata, tamper rejection, and nonce freshness.
+- [x] Retain `sse-stream` 0.2.6 because RMCP's transport trait exposes 0.2
+  types. `serde_yaml` remains at its final 0.9 release; replacing that
+  deprecated parser is separate from updating existing package versions.
+
+Validation completed on 2026-10-03:
+
+- Full `cargo clean` removed 119.4 GiB before the fresh build and tests.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `cargo test --workspace --locked` passed: 2,119 tests, with 237 live or
+  external tests ignored by the default run. Generated contracts remain unchanged.
+- Selected live tests passed, serialized against local PostgreSQL, MinIO, and
+  Temporal: 46 storage tests and nine workflow/MCP tests covering continuation,
+  checkpoints, cancellation, workflow tools, schedules, and channel replies.
+- Ten paid live tests passed against OpenAI, Anthropic, and DeepSeek: streaming,
+  endpoint/auth overrides, hosted tool round trips, compaction and continuation,
+  and recovery after a provider rejection.
+- RustSec audit findings decreased from 13 vulnerabilities, nine maintenance/
+  soundness warnings, and two yanked versions to zero vulnerabilities or warnings.
+- Formatting, release metadata verification, documentation checks, and
+  `git diff --check` passed. Linux release containers were not rebuilt locally.
+
+Worker simplification follow-up on 2026-10-03: role selection remains the
+scaling boundary; independent workflow/activity deployment has been removed.
+Deployment and environment-reference documentation now match. Validation of
+the simplified constructors and updated CLI is in progress.

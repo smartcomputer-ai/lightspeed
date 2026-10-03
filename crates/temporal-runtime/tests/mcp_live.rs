@@ -785,7 +785,7 @@ impl LiveMcpFixture {
             calls: Vec::new(),
         }));
         let app = Router::new()
-            .route("/:kind", post(fixture_handler).delete(fixture_delete))
+            .route("/{kind}", post(fixture_handler).delete(fixture_delete))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;

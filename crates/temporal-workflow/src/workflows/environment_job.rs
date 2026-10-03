@@ -1,3 +1,4 @@
+use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
 use futures::{FutureExt, pin_mut, select};
@@ -15,7 +16,7 @@ use crate::{
     WorkflowToolRecoveryResult, compose_environment_job_workflow_id,
 };
 
-#[workflow(name = "EnvironmentJobWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct EnvironmentJobWorkflow {
     snapshot: EnvironmentJobWorkflowSnapshot,
@@ -27,7 +28,7 @@ pub struct EnvironmentJobWorkflow {
 
 #[workflow_methods]
 impl EnvironmentJobWorkflow {
-    #[run]
+    #[run(name = "EnvironmentJobWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         input: EnvironmentJobWorkflowInput,
@@ -38,18 +39,22 @@ impl EnvironmentJobWorkflow {
                 if ctx.workflow_id() != start.execution_id
                     || start.universe_id != start.invocation.session_universe_id
                 {
-                    return Err(anyhow::anyhow!(
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                         "environment job workflow-tool execution identity is invalid"
-                    )
+                    ))
                     .into());
                 }
-                ctx.start_local_activity(
+                ctx.execute_local_activity(
                     WorkflowActivities::environment_job_prepare_workflow_tool,
                     crate::EnvironmentJobPrepareWorkflowToolRequest { start },
                     environment_job_activity_options(),
                 )
                 .await
-                .map_err(|error| anyhow::anyhow!("prepare environment job workflow: {error}"))?
+                .map_err(|error| {
+                    temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "prepare environment job workflow: {error}"
+                    ))
+                })?
             }
         };
         let expected_workflow_id = args
@@ -64,11 +69,11 @@ impl EnvironmentJobWorkflow {
                 )
             });
         if args.start.universe_id != args.universe_id || ctx.workflow_id() != expected_workflow_id {
-            return Err(anyhow::anyhow!(
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "environment job workflow id does not match its universe and job identity: workflow_id={} expected={}",
                 ctx.workflow_id(),
                 expected_workflow_id
-            )
+            ))
             .into());
         }
         ctx.state_mut(|state| {
@@ -90,7 +95,7 @@ impl EnvironmentJobWorkflow {
 
         if !ctx.state(|state| state.snapshot.started) {
             match ctx
-                .start_local_activity(
+                .execute_local_activity(
                     WorkflowActivities::environment_job_start,
                     args.start.clone(),
                     environment_job_activity_options(),
@@ -107,7 +112,10 @@ impl EnvironmentJobWorkflow {
                 }
                 Err(error) => {
                     ctx.state_mut(|state| state.snapshot.last_error = Some(error.to_string()));
-                    return Err(anyhow::anyhow!("environment job start failed: {error}").into());
+                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                        "environment job start failed: {error}"
+                    ))
+                    .into());
                 }
             }
         }
@@ -116,7 +124,7 @@ impl EnvironmentJobWorkflow {
             let cancels = ctx.state_mut(|state| std::mem::take(&mut state.pending_cancels));
             for cancel in cancels {
                 match ctx
-                    .start_local_activity(
+                    .execute_local_activity(
                         WorkflowActivities::environment_job_cancel,
                         EnvironmentJobCancelActivityRequest {
                             universe_id: args.universe_id,
@@ -150,7 +158,7 @@ impl EnvironmentJobWorkflow {
 
             if !ctx.state(|state| state.snapshot.terminal) {
                 match ctx
-                    .start_local_activity(
+                    .execute_local_activity(
                         WorkflowActivities::environment_job_poll,
                         EnvironmentJobPollActivityRequest {
                             universe_id: args.universe_id,
@@ -199,7 +207,7 @@ impl EnvironmentJobWorkflow {
                 });
                 next.poll_attempt = next.poll_attempt.saturating_add(1);
                 ctx.continue_as_new(
-                    &EnvironmentJobWorkflowInput::Job(next),
+                    EnvironmentJobWorkflowInput::Job(next),
                     ContinueAsNewOptions::default(),
                 )?;
             }
@@ -207,9 +215,9 @@ impl EnvironmentJobWorkflow {
             ctx.state_mut(|state| state.nudged = false);
             let was_cancelled = {
                 let wait =
-                    ctx.wait_condition(|state| state.nudged || !state.pending_cancels.is_empty());
+                    ctx.wait_for_state(|state| state.nudged || !state.pending_cancels.is_empty());
                 let timer = ctx
-                    .timer(Duration::from_millis(args.poll_ms.max(250)))
+                    .timer_with_manual_cancellation(Duration::from_millis(args.poll_ms.max(250)))
                     .fuse();
                 let cancelled = ctx.cancelled().fuse();
                 pin_mut!(wait, timer, cancelled);
@@ -221,7 +229,7 @@ impl EnvironmentJobWorkflow {
             };
             if was_cancelled {
                 cancel_workflow_jobs(ctx, &args).await;
-                return Err(temporalio_sdk::WorkflowTermination::Cancelled);
+                return Err(temporalio_sdk::WorkflowTermination::cancelled());
             }
         }
     }
@@ -284,7 +292,7 @@ async fn cancel_workflow_jobs(
         return;
     }
     let _ = ctx
-        .start_local_activity(
+        .execute_local_activity(
             WorkflowActivities::environment_job_cancel,
             EnvironmentJobCancelActivityRequest {
                 universe_id: args.universe_id,
@@ -303,11 +311,11 @@ async fn cancel_workflow_jobs(
 /// run as local activities: Temporal still records completion and retries, but
 /// does not route the calls through a separately versioned activity worker.
 fn environment_job_activity_options() -> LocalActivityOptions {
-    LocalActivityOptions {
-        schedule_to_close_timeout: Some(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT),
-        start_to_close_timeout: Some(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT),
-        ..Default::default()
-    }
+    LocalActivityOptions::builder()
+        .schedule_to_close_timeout(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        .start_to_close_timeout(crate::config::DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+        .build()
 }
 
 fn queue_workflow_tool_cancellation(
@@ -367,7 +375,11 @@ async fn flush_terminal_emissions(
     for (receiver_workflow_id, envelope) in emissions {
         let _ = ctx
             .external_workflow(receiver_workflow_id, None)
-            .signal(AgentSessionWorkflow::deliver_emission, envelope)
+            .signal(
+                AgentSessionWorkflow::deliver_emission,
+                envelope,
+                crate::workflows::signal_options(),
+            )
             .await;
     }
 }

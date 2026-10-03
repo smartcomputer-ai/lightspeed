@@ -503,7 +503,11 @@ pub(super) async fn await_environment_ready(
     };
     let deadline = tokio::time::Instant::now() + temporal_workflow::ENVIRONMENT_READY_WAIT;
     Ok(hosted
-        .await_environment_ready(&request, deadline, || ctx.record_heartbeat(Vec::new()))
+        .await_environment_ready(&request, deadline, || async {
+            ctx.record_heartbeat(())
+                .await
+                .expect("unit heartbeat serializes")
+        })
         .await)
 }
 

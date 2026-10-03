@@ -12,8 +12,10 @@ use temporalio_sdk::{
     activities::{ActivityContext, ActivityError},
 };
 
-pub(super) fn activity_error(error: impl Into<anyhow::Error>) -> ActivityError {
-    ActivityError::from(error.into())
+pub(super) fn activity_error(
+    error: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+) -> ActivityError {
+    ActivityError::application(ApplicationFailure::new(error))
 }
 
 /// Run `work` as a cancellable, heartbeating activity body. The
@@ -33,7 +35,10 @@ pub(super) async fn cancellable<T>(
             tokio::time::interval(temporal_workflow::ACTIVITY_CANCELLATION_HEARTBEAT_INTERVAL);
         loop {
             ticker.tick().await;
-            heartbeat_ctx.record_heartbeat(Vec::new());
+            heartbeat_ctx
+                .record_heartbeat(())
+                .await
+                .expect("unit heartbeat serializes");
         }
     };
     tokio::pin!(work);

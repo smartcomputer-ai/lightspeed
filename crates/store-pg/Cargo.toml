@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aes-gcm = "0.10"
+hex = "0.4"
+aes-gcm = "0.11"
 api = { path = "../api" }
 auth = { path = "../auth" }
-base64 = "0.22"
+base64 = "0.23"
 bots = { path = "../bots" }
 channels = { path = "../channels" }
 harness = { path = "../harness" }
@@ -17,14 +18,14 @@ environment-protocol = { path = "../environment-protocol" }
 futures-util = "0.3"
 async-trait = "0.1"
 mcp = { path = "../mcp" }
-object_store = { version = "0.13.1", features = ["aws"] }
+object_store = { version = "0.14", features = ["aws"] }
 profiles = { path = "../profiles" }
-rand = "0.8"
-sha2 = "0.10"
+rand = "0.10"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json"] }
-thiserror = "1"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json"] }
+thiserror = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt"] }
 uuid = { version = "1", features = ["v4"] }

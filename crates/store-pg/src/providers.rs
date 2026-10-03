@@ -6,6 +6,7 @@
 //! `auth_secrets` (ON DELETE RESTRICT), so a provider's private key cannot
 //! be deleted out from under it.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use async_trait::async_trait;
 use auth::{
     AuthProviderConfig, AuthProviderId, AuthProviderRecord, AuthProviderStatus, AuthProviderStore,
@@ -57,7 +58,7 @@ impl AuthProviderStore for PgStore {
             RETURNING {AUTH_PROVIDER_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.provider_id.as_str())
             .bind(provider_kind_to_str(record.provider_kind))
@@ -89,7 +90,7 @@ impl AuthProviderStore for PgStore {
             WHERE universe_id = $1 AND provider_id = $2
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(provider_id.as_str())
             .fetch_optional(&self.pool)
@@ -113,7 +114,7 @@ impl AuthProviderStore for PgStore {
             ORDER BY provider_id
             "#
         );
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
@@ -132,7 +133,7 @@ impl AuthProviderStore for PgStore {
             RETURNING {AUTH_PROVIDER_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(provider_id.as_str())
             .fetch_optional(&self.pool)

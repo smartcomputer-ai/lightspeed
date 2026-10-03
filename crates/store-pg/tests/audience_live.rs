@@ -28,7 +28,9 @@ async fn sessions_record_their_creator_and_children_follow_their_root() {
         .unwrap();
     let schema = format!("lightspeed_audience_test_{}", Uuid::new_v4().simple());
     admin
-        .execute(format!("CREATE SCHEMA \"{schema}\"").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA \"{schema}\""
+        ))))
         .await
         .unwrap();
     let options = PgConnectOptions::from_str(&url)
@@ -42,7 +44,9 @@ async fn sessions_record_their_creator_and_children_follow_their_root() {
     let outcome = AssertUnwindSafe(exercise(&pool)).catch_unwind().await;
     pool.close().await;
     admin
-        .execute(format!("DROP SCHEMA \"{schema}\" CASCADE").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        ))))
         .await
         .unwrap();
     admin.close().await;

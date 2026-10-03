@@ -1,7 +1,7 @@
 //! Live proof: workflow plugins run in their own Temporal worker
 //! and are reached only through data — an opaque bound endpoint or a
 //! CAS-backed start recipe. The session worker registers no plugin workflow
-//! type (`worker_with_activities` is used unchanged); the plugin workflows
+//! type (`sessions_worker` is used unchanged); the plugin workflows
 //! below are registered on a second worker with its own task queue.
 //!
 //! Run serially against the local stack:
@@ -36,7 +36,7 @@ use support::live::{
 use temporal_runtime::{
     gateway::GatewayAgentApi,
     pg_store_from_env,
-    worker::{ActivityState, SessionTools, WorkerActivities, core_runtime, worker_with_activities},
+    worker::{ActivityState, SessionTools, WorkerActivities, sessions_worker, worker_runtime},
 };
 use temporal_workflow::{
     AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET,
@@ -44,11 +44,10 @@ use temporal_workflow::{
     WorkflowToolStartArgs, compose_workflow_id, connect_temporal, workflow_tool_recipe_fingerprint,
 };
 use temporalio_client::{Client, WorkflowStartOptions, WorkflowTerminateOptions};
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    ContinueAsNewOptions, SyncWorkflowContext, Worker, WorkerOptions, WorkflowContext,
-    WorkflowContextView, WorkflowResult,
+    ContinueAsNewOptions, SyncWorkflowContext, WorkerOptions, WorkflowContext, WorkflowContextView,
+    WorkflowResult,
 };
 use tools::concurrency::AWAIT_TOOL_NAME;
 
@@ -81,7 +80,7 @@ pub struct BoundPluginSnapshot {
 /// through the fixed `deliver_emission` signal and resolves each keyed
 /// completion promise with a `SourceResolution` emission back to the
 /// producing session — sent twice to prove duplicate delivery is a no-op.
-#[workflow(name = "TestBoundPluginWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestBoundPluginWorkflow {
     inbox: Vec<EmissionEnvelope>,
@@ -91,10 +90,12 @@ pub struct TestBoundPluginWorkflow {
 
 #[workflow_methods]
 impl TestBoundPluginWorkflow {
-    #[run]
+    #[run(name = "TestBoundPluginWorkflow")]
     pub async fn run(ctx: &mut WorkflowContext<Self>, args: BoundPluginArgs) -> WorkflowResult<()> {
         loop {
-            ctx.wait_condition(|state| !state.inbox.is_empty()).await;
+            ctx.wait_condition(|state| !state.inbox.is_empty())
+                .await
+                .map_err(|_| temporalio_sdk::WorkflowTermination::cancelled())?;
             let envelopes = ctx.state_mut(|state| std::mem::take(&mut state.inbox));
             for envelope in envelopes {
                 match envelope.body {
@@ -134,7 +135,11 @@ impl TestBoundPluginWorkflow {
                             for _ in 0..2 {
                                 let _ = ctx
                                     .external_workflow(holder.clone(), None)
-                                    .signal(AgentSessionWorkflow::deliver_emission, reply.clone())
+                                    .signal(
+                                        AgentSessionWorkflow::deliver_emission,
+                                        reply.clone(),
+                                        Default::default(),
+                                    )
                                     .await;
                                 ctx.state_mut(|state| state.snapshot.replies_sent += 1);
                             }
@@ -197,7 +202,7 @@ pub struct SelfReceiverControllerArgs {
 /// Pushed invocations are processed directly from the workflow inbox while
 /// the managed run is active; run-terminal handling is a separate branch and
 /// is never a prerequisite for enqueue or reply.
-#[workflow(name = "TestSelfReceiverControllerWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestSelfReceiverControllerWorkflow {
     inbox: Vec<EmissionEnvelope>,
@@ -206,14 +211,16 @@ pub struct TestSelfReceiverControllerWorkflow {
 
 #[workflow_methods]
 impl TestSelfReceiverControllerWorkflow {
-    #[run]
+    #[run(name = "TestSelfReceiverControllerWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: SelfReceiverControllerArgs,
     ) -> WorkflowResult<()> {
         ctx.state_mut(|state| state.snapshot = args.snapshot.clone());
         loop {
-            ctx.wait_condition(|state| !state.inbox.is_empty()).await;
+            ctx.wait_condition(|state| !state.inbox.is_empty())
+                .await
+                .map_err(|_| temporalio_sdk::WorkflowTermination::cancelled())?;
             let envelopes = ctx.state_mut(|state| std::mem::take(&mut state.inbox));
             for envelope in envelopes {
                 match envelope.body {
@@ -254,7 +261,11 @@ impl TestSelfReceiverControllerWorkflow {
                             for _ in 0..2 {
                                 let _ = ctx
                                     .external_workflow(holder.clone(), None)
-                                    .signal(AgentSessionWorkflow::deliver_emission, reply.clone())
+                                    .signal(
+                                        AgentSessionWorkflow::deliver_emission,
+                                        reply.clone(),
+                                        Default::default(),
+                                    )
                                     .await;
                                 ctx.state_mut(|state| state.snapshot.replies_sent += 1);
                             }
@@ -280,7 +291,7 @@ impl TestSelfReceiverControllerWorkflow {
                 let mut next = args.clone();
                 ctx.state_mut(|state| state.snapshot.continue_as_new_count += 1);
                 next.snapshot = ctx.state(|state| state.snapshot.clone());
-                ctx.continue_as_new(&next, ContinueAsNewOptions::default())?;
+                ctx.continue_as_new(next, ContinueAsNewOptions::default())?;
             }
         }
     }
@@ -303,7 +314,7 @@ impl TestSelfReceiverControllerWorkflow {
 /// Start-on-call plugin: started by the generic adapter from a CAS recipe,
 /// resolves every keyed completion promise back to the holder, exposes the
 /// fixed recovery query, then completes.
-#[workflow(name = "TestStartPluginWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestStartPluginWorkflow {
     recovery: WorkflowToolRecoveryResult,
@@ -311,17 +322,17 @@ pub struct TestStartPluginWorkflow {
 
 #[workflow_methods]
 impl TestStartPluginWorkflow {
-    #[run]
+    #[run(name = "TestStartPluginWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: WorkflowToolStartArgs,
     ) -> WorkflowResult<()> {
         if ctx.workflow_id() != args.execution_id {
-            return Err(anyhow::anyhow!(
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "started execution id mismatch: workflow_id={} execution_id={}",
                 ctx.workflow_id(),
                 args.execution_id
-            )
+            ))
             .into());
         }
         for (key, promise_id) in args.invocation.completion_promises.iter().flatten() {
@@ -341,7 +352,11 @@ impl TestStartPluginWorkflow {
             );
             let _ = ctx
                 .external_workflow(args.holder_workflow_id.clone(), None)
-                .signal(AgentSessionWorkflow::deliver_emission, envelope)
+                .signal(
+                    AgentSessionWorkflow::deliver_emission,
+                    envelope,
+                    Default::default(),
+                )
                 .await;
         }
         // Keep the started execution alive after its semantic reply. Joined
@@ -359,7 +374,7 @@ impl TestStartPluginWorkflow {
 /// Start-on-call plugin that never signals its result: the holder's slow
 /// recovery poll must recover the keyed resolutions through the fixed query
 /// after the execution completes.
-#[workflow(name = "TestSilentStartPluginWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestSilentStartPluginWorkflow {
     recovery: WorkflowToolRecoveryResult,
@@ -367,7 +382,7 @@ pub struct TestSilentStartPluginWorkflow {
 
 #[workflow_methods]
 impl TestSilentStartPluginWorkflow {
-    #[run]
+    #[run(name = "TestSilentStartPluginWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: WorkflowToolStartArgs,
@@ -391,13 +406,13 @@ impl TestSilentStartPluginWorkflow {
 
 /// A bound receiver that has already completed by the time the session
 /// binds to it: push delivery must exhaust and fail terminally.
-#[workflow(name = "TestClosedPluginWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestClosedPluginWorkflow {}
 
 #[workflow_methods]
 impl TestClosedPluginWorkflow {
-    #[run]
+    #[run(name = "TestClosedPluginWorkflow")]
     pub async fn run(
         _ctx: &mut WorkflowContext<Self>,
         _args: BoundPluginArgs,
@@ -410,7 +425,7 @@ impl TestClosedPluginWorkflow {
 /// exercise holder continue-as-new during a parked completion (the rebuilt
 /// start work re-issues the deterministic start and `AlreadyStarted` is
 /// success).
-#[workflow(name = "TestSlowStartPluginWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestSlowStartPluginWorkflow {
     recovery: WorkflowToolRecoveryResult,
@@ -418,7 +433,7 @@ pub struct TestSlowStartPluginWorkflow {
 
 #[workflow_methods]
 impl TestSlowStartPluginWorkflow {
-    #[run]
+    #[run(name = "TestSlowStartPluginWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: WorkflowToolStartArgs,
@@ -427,13 +442,19 @@ impl TestSlowStartPluginWorkflow {
         // against the cancellation request and end as cancelled.
         {
             use futures_util::FutureExt;
-            let work = ctx.timer(Duration::from_secs(20)).fuse();
+            let work = ctx
+                .timer(
+                    temporalio_sdk::TimerOptions::builder(Duration::from_secs(20))
+                        .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+                        .build(),
+                )
+                .fuse();
             let cancelled = ctx.cancelled();
             futures_util::pin_mut!(work, cancelled);
             futures_util::select! {
                 _ = work => {}
                 _ = cancelled => {
-                    return Err(temporalio_sdk::WorkflowTermination::Cancelled);
+                    return Err(temporalio_sdk::WorkflowTermination::cancelled());
                 }
             }
         }
@@ -454,7 +475,11 @@ impl TestSlowStartPluginWorkflow {
             );
             let _ = ctx
                 .external_workflow(args.holder_workflow_id.clone(), None)
-                .signal(AgentSessionWorkflow::deliver_emission, envelope)
+                .signal(
+                    AgentSessionWorkflow::deliver_emission,
+                    envelope,
+                    Default::default(),
+                )
                 .await;
         }
         Ok(())
@@ -477,19 +502,19 @@ impl TestSlowStartPluginWorkflow {
 
 /// A started execution that can only finish by cancellation. A timed fake
 /// could complete on a busy machine before the holder's cancellation arrives.
-#[workflow(name = "TestCancellationPluginWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct TestCancellationPluginWorkflow;
 
 #[workflow_methods]
 impl TestCancellationPluginWorkflow {
-    #[run]
+    #[run(name = "TestCancellationPluginWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         _args: WorkflowToolStartArgs,
     ) -> WorkflowResult<()> {
         ctx.cancelled().await;
-        Err(temporalio_sdk::WorkflowTermination::Cancelled)
+        Err(temporalio_sdk::WorkflowTermination::cancelled())
     }
 
     #[signal(name = "deliver_emission")]
@@ -830,7 +855,7 @@ where
     let namespace = std::env::var("TEMPORAL_NAMESPACE")
         .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
 
-    let runtime = core_runtime()?;
+    let runtime = worker_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let store = pg_store_from_env().await?;
     let blobs: Arc<dyn BlobStore> = store.clone();
@@ -851,25 +876,25 @@ where
             .with_workflow_tool_executions(client.clone()),
     );
     let mut session_worker =
-        worker_with_activities(&runtime, client.clone(), session_queue.clone(), activities)?;
+        sessions_worker(&runtime, client.clone(), session_queue.clone(), activities)?;
     let shutdown_session_worker = session_worker.shutdown_handle();
-    let session_worker_future = session_worker.run();
+    let session_worker_future = async { session_worker.run().await.map_err(anyhow::Error::from) };
     tokio::pin!(session_worker_future);
 
     let plugin_worker_options = WorkerOptions::new(plugin_queue.clone())
-        .register_workflow::<TestBoundPluginWorkflow>()
-        .register_workflow::<TestSelfReceiverControllerWorkflow>()
-        .register_workflow::<TestStartPluginWorkflow>()
-        .register_workflow::<TestSilentStartPluginWorkflow>()
-        .register_workflow::<TestClosedPluginWorkflow>()
-        .register_workflow::<TestSlowStartPluginWorkflow>()
-        .register_workflow::<TestCancellationPluginWorkflow>()
-        .task_types(WorkerTaskTypes::workflow_only())
+        .register_workflow::<TestBoundPluginWorkflow>()?
+        .register_workflow::<TestSelfReceiverControllerWorkflow>()?
+        .register_workflow::<TestStartPluginWorkflow>()?
+        .register_workflow::<TestSilentStartPluginWorkflow>()?
+        .register_workflow::<TestClosedPluginWorkflow>()?
+        .register_workflow::<TestSlowStartPluginWorkflow>()?
+        .register_workflow::<TestCancellationPluginWorkflow>()?
         .build();
-    let mut plugin_worker = Worker::new(&runtime, client.clone(), plugin_worker_options)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let mut plugin_worker =
+        temporalio_sdk::Worker::new(&runtime, client.clone(), plugin_worker_options)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
     let shutdown_plugin_worker = plugin_worker.shutdown_handle();
-    let plugin_worker_future = plugin_worker.run();
+    let plugin_worker_future = async { plugin_worker.run().await.map_err(anyhow::Error::from) };
     tokio::pin!(plugin_worker_future);
 
     let client_future = temporal_runtime::gateway::request_context::with_request_context(
@@ -1890,7 +1915,7 @@ async fn workflow_tool_start_on_call_resolves_via_plugin_worker() -> anyhow::Res
             })
             .ok_or_else(|| anyhow::anyhow!("Start + Joined execution event was not projected"))?;
         let handle = client.get_workflow_handle::<TestStartPluginWorkflow>(execution_id);
-        use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+        use temporalio_client::WorkflowExecutionStatus;
         let description = handle
             .describe(temporalio_client::WorkflowDescribeOptions::default())
             .await
@@ -2293,7 +2318,7 @@ async fn workflow_tool_closed_receiver_fails_delivery_terminally() -> anyhow::Re
                 .describe(temporalio_client::WorkflowDescribeOptions::default())
                 .await
                 .map_err(|error| anyhow::anyhow!("describe closed plugin: {error}"))?;
-            use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+            use temporalio_client::WorkflowExecutionStatus;
             if description.status() == WorkflowExecutionStatus::Completed {
                 break;
             }
@@ -2640,7 +2665,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
             if started.elapsed() > Duration::from_secs(60) {
                 anyhow::bail!("started execution was never cancelled");
             }
-            use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+            use temporalio_client::WorkflowExecutionStatus;
             let status = match handle
                 .describe(temporalio_client::WorkflowDescribeOptions::default())
                 .await

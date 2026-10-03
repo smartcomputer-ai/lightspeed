@@ -1871,11 +1871,11 @@ impl SessionTools {
     /// Poll the registry (and probe the route) until the environment is
     /// ready for use, terminally unusable, or `deadline` passes. `heartbeat` is
     /// invoked on every poll so the hosting activity stays alive.
-    pub async fn await_environment_ready(
+    pub async fn await_environment_ready<F: std::future::Future<Output = ()>>(
         &self,
         request: &temporal_workflow::AwaitEnvironmentReadyActivityRequest,
         deadline: tokio::time::Instant,
-        heartbeat: impl Fn(),
+        heartbeat: impl Fn() -> F,
     ) -> temporal_workflow::AwaitEnvironmentReadyActivityResult {
         use temporal_workflow::AwaitEnvironmentReadyActivityResult as Outcome;
         let Some(resolver) = self.environment_resolver.as_ref() else {
@@ -1893,7 +1893,7 @@ impl SessionTools {
         };
         let mut last_status;
         loop {
-            heartbeat();
+            heartbeat().await;
             let now = i64::try_from(now_unix_ms().unwrap_or_default()).unwrap_or(i64::MAX);
             match resolver.ready_for_use(&environment_id, now).await {
                 Ok(_) => return Outcome::Ready,
@@ -4111,7 +4111,7 @@ mod tests {
                     environment_policy: None,
                 },
                 tokio::time::Instant::now() + std::time::Duration::from_millis(50),
-                || {},
+                || async {},
             )
             .await;
         // No gateway on this runtime, so the probe fails and the bounded wait
@@ -4150,7 +4150,7 @@ mod tests {
                     environment_policy: None,
                 },
                 tokio::time::Instant::now() + std::time::Duration::from_secs(30),
-                || {},
+                || async {},
             )
             .await;
         assert!(matches!(

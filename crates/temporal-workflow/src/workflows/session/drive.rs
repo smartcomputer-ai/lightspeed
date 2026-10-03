@@ -347,7 +347,7 @@ pub(super) async fn append_events(
         return Ok(Vec::new());
     }
     let appended = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::append_events,
             AppendEventsRequest {
                 session_id: drive.session_id().clone(),
@@ -506,7 +506,7 @@ async fn put_detached_followup_blob(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     bytes: Vec<u8>,
 ) -> anyhow::Result<BlobRef> {
-    ctx.start_activity(
+    ctx.execute_activity(
         WorkflowActivities::put_blob,
         PutBlobRequest { bytes },
         activity_options(),

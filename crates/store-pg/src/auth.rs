@@ -5,6 +5,7 @@
 //! be swapped or relabeled without failing decryption. Plaintext exists only
 //! inside [`auth::SecretValue`] wrappers in adapter memory.
 
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use ::auth::{
     AuthGrantExposure, AuthGrantId, AuthGrantRecord, AuthGrantStatus, AuthGrantStore,
     AuthGrantTokenRefresh, AuthProviderKind, AuthRegistryError, CreateAuthGrantRecord,
@@ -12,10 +13,10 @@ use ::auth::{
     SecretValue,
 };
 use aes_gcm::aead::{Aead, Payload};
-use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use api::Attribution;
 use async_trait::async_trait;
-use rand::RngCore;
+use rand::TryRng;
 use sqlx::Row;
 
 use crate::PgStore;
@@ -32,7 +33,7 @@ impl PgStore {
             });
         };
         Ok((
-            Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.bytes())),
+            Aes256Gcm::new_from_slice(key.bytes()).expect("32-byte master key"),
             LOCAL_KEY_ID,
         ))
     }
@@ -54,10 +55,12 @@ fn seal_secret(
     value: &SecretValue,
 ) -> Result<(Vec<u8>, Vec<u8>), AuthRegistryError> {
     let mut nonce = [0u8; NONCE_LEN];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut nonce)
+        .expect("OS random source unavailable");
     let ciphertext = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &nonce.into(),
             Payload {
                 msg: value.expose().as_bytes(),
                 aad,
@@ -82,7 +85,7 @@ fn open_secret(
     }
     let plaintext = cipher
         .decrypt(
-            Nonce::from_slice(nonce),
+            &Nonce::try_from(nonce).expect("nonce length validated"),
             Payload {
                 msg: ciphertext,
                 aad,
@@ -273,7 +276,7 @@ impl AuthGrantStore for PgStore {
             RETURNING {GRANT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(record.grant_id.as_str())
             .bind(&record.provider_id)
@@ -320,7 +323,7 @@ impl AuthGrantStore for PgStore {
             WHERE universe_id = $1 AND grant_id = $2
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .fetch_optional(&self.pool)
@@ -349,7 +352,7 @@ impl AuthGrantStore for PgStore {
                     ORDER BY grant_id
                     "#
                 );
-                sqlx::query(&query)
+                sqlx::query(sqlx::AssertSqlSafe(query))
                     .bind(self.config.universe_id)
                     .bind(grant_status_to_str(status))
                     .fetch_all(&self.pool)
@@ -364,7 +367,7 @@ impl AuthGrantStore for PgStore {
                     ORDER BY grant_id
                     "#
                 );
-                sqlx::query(&query)
+                sqlx::query(sqlx::AssertSqlSafe(query))
                     .bind(self.config.universe_id)
                     .fetch_all(&self.pool)
                     .await
@@ -389,7 +392,7 @@ impl AuthGrantStore for PgStore {
             RETURNING {GRANT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .bind(grant_status_to_str(status))
@@ -422,7 +425,7 @@ impl AuthGrantStore for PgStore {
             RETURNING {GRANT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .bind(refresh.access_token_secret.as_str())
@@ -455,7 +458,7 @@ impl AuthGrantStore for PgStore {
             RETURNING {GRANT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .bind(leased_at_ms)
@@ -486,7 +489,7 @@ impl AuthGrantStore for PgStore {
             RETURNING {GRANT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .bind(expires_at_ms)
@@ -514,7 +517,7 @@ impl AuthGrantStore for PgStore {
             RETURNING {GRANT_COLUMNS}
             "#
         );
-        let row = sqlx::query(&query)
+        let row = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(grant_id.as_str())
             .fetch_optional(&self.pool)
@@ -722,5 +725,61 @@ pub(crate) fn auth_store_error(action: &str, error: crate::PgStoreError) -> Auth
 pub(crate) fn auth_sql_error(action: &str, error: sqlx::Error) -> AuthRegistryError {
     AuthRegistryError::Store {
         message: format!("{action}: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine as _;
+
+    use super::*;
+
+    #[test]
+    fn persisted_aes_gcm_ciphertext_remains_readable_and_bound_to_its_aad() {
+        let key = std::array::from_fn::<_, 32, _>(|i| i as u8);
+        let cipher = Aes256Gcm::new_from_slice(&key).expect("32-byte key");
+        let nonce = std::array::from_fn::<_, NONCE_LEN, _>(|i| i as u8);
+        let aad = b"universe/secret/oauth_client_secret";
+        // Independent AES-256-GCM fixture: ciphertext followed by the 16-byte tag,
+        // produced with Node's crypto implementation and the key, nonce, and AAD above.
+        let ciphertext = base64::engine::general_purpose::STANDARD
+            .decode("N2ekaKyWtn7pbOTu0psdGW/9S3b73k/9ObzTEmBK3xs=")
+            .expect("fixture base64");
+        let secret = open_secret(&cipher, aad, &nonce, &ciphertext).expect("persisted secret");
+        assert_eq!(secret.expose(), "persisted-secret");
+        assert!(matches!(
+            open_secret(
+                &cipher,
+                b"another/secret/oauth_client_secret",
+                &nonce,
+                &ciphertext
+            ),
+            Err(AuthRegistryError::Store { .. })
+        ));
+        let mut tampered = ciphertext;
+        tampered[0] ^= 1;
+        assert!(matches!(
+            open_secret(&cipher, aad, &nonce, &tampered),
+            Err(AuthRegistryError::Store { .. })
+        ));
+    }
+
+    #[test]
+    fn sealed_secrets_use_distinct_nonces_and_round_trip() {
+        let cipher = Aes256Gcm::new_from_slice(&[7; 32]).expect("32-byte key");
+        let secret = SecretValue::new("secret".to_owned());
+        let aad = b"universe/secret/oauth_client_secret";
+        let first = seal_secret(&cipher, aad, &secret).expect("first encryption");
+        let second = seal_secret(&cipher, aad, &secret).expect("second encryption");
+        assert_ne!(first.0, second.0);
+        for (nonce, ciphertext) in [first, second] {
+            assert_eq!(nonce.len(), NONCE_LEN);
+            assert_eq!(
+                open_secret(&cipher, aad, &nonce, &ciphertext)
+                    .expect("decrypt")
+                    .expose(),
+                secret.expose()
+            );
+        }
     }
 }

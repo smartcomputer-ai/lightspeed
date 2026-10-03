@@ -14,7 +14,7 @@ use super::{
 /// Search attribute Temporal stamps on workflows started by a Schedule.
 pub const TEMPORAL_SCHEDULED_START_TIME: &str = "TemporalScheduledStartTime";
 
-#[workflow(name = "BotTriggerFireWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct BotTriggerFireWorkflow {
     outcome: Option<BotTriggerFireOutcome>,
@@ -29,7 +29,7 @@ pub enum BotTriggerFireOutcome {
 
 #[workflow_methods]
 impl BotTriggerFireWorkflow {
-    #[run]
+    #[run(name = "BotTriggerFireWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         args: BotTriggerFireArgs,
@@ -49,24 +49,32 @@ impl BotTriggerFireWorkflow {
         let outcome = match args.kind {
             BotTriggerFireKind::Schedule => {
                 let result = ctx
-                    .start_activity(
+                    .execute_activity(
                         BotActivities::admit_schedule_event,
                         request,
                         bot_activity_options(),
                     )
                     .await
-                    .map_err(|error| anyhow::anyhow!("schedule fire failed: {error}"))?;
+                    .map_err(|error| {
+                        temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                            "schedule fire failed: {error}"
+                        ))
+                    })?;
                 BotTriggerFireOutcome::Schedule(result)
             }
             BotTriggerFireKind::Poll => {
                 let result = ctx
-                    .start_activity(
+                    .execute_activity(
                         BotActivities::poll_trigger,
                         request,
                         bot_poll_activity_options(),
                     )
                     .await
-                    .map_err(|error| anyhow::anyhow!("poll fire failed: {error}"))?;
+                    .map_err(|error| {
+                        temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                            "poll fire failed: {error}"
+                        ))
+                    })?;
                 BotTriggerFireOutcome::Poll(result)
             }
         };
@@ -84,9 +92,7 @@ impl BotTriggerFireWorkflow {
 /// search attribute, when present.
 fn scheduled_start_time_ms(ctx: &WorkflowContext<BotTriggerFireWorkflow>) -> Option<i64> {
     let attributes = ctx.search_attributes();
-    let payload = attributes
-        .indexed_fields
-        .get(TEMPORAL_SCHEDULED_START_TIME)?;
+    let payload = attributes.raw_payload(TEMPORAL_SCHEDULED_START_TIME)?;
     parse_search_attribute_time_ms(&payload.data)
 }
 

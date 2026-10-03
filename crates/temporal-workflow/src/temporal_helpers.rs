@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
-use temporalio_sdk_core::Url;
+use url::Url;
 
 pub async fn connect_temporal(target_url: &str, namespace: &str) -> anyhow::Result<Client> {
     let connection_options = ConnectionOptions::new(temporal_target_url(target_url)?).build();

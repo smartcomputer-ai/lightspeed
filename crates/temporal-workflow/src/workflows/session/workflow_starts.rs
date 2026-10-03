@@ -120,7 +120,7 @@ pub(super) async fn process_pending_starts(
     for (invocation, execution_id, start) in due {
         let invocation_key = invocation.invocation_id.as_str().to_owned();
         let result = ctx
-            .start_activity(
+            .execute_activity(
                 WorkflowActivities::start_workflow_tool_execution,
                 crate::WorkflowToolStartActivityRequest {
                     execution_id,
@@ -185,7 +185,7 @@ async fn terminal_start_failure(
         invocation.invocation_id
     );
     let error_ref = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::put_blob,
             PutBlobRequest {
                 bytes: detail.into_bytes(),
@@ -260,7 +260,7 @@ pub(super) async fn process_execution_cancels(
     });
     for execution_id in due {
         if let Err(error) = ctx
-            .start_activity(
+            .execute_activity(
                 WorkflowActivities::cancel_workflow_tool_execution,
                 crate::WorkflowToolExecutionCancelRequest {
                     execution_id: execution_id.clone(),

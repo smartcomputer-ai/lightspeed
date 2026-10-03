@@ -5,6 +5,7 @@
 //! admissions, admit them against the live drive, and abandon the activity
 //! when the harness no longer wants its result.
 
+use crate::workflows::WorkflowContextExt as _;
 use temporalio_sdk::CancellableFuture;
 
 use super::*;
@@ -34,12 +35,12 @@ pub(super) async fn race_activity_with_admissions<T, F>(
     still_wanted: impl Fn(&CoreAgentState) -> bool,
 ) -> anyhow::Result<Raced<T>>
 where
-    F: CancellableFuture<T>,
+    F: CancellableFuture<Output = T>,
 {
     pin_mut!(activity);
     loop {
         let admissions_pending = {
-            let wait = ctx.wait_condition(admissions::has_admissible_admissions);
+            let wait = ctx.wait_for_state(admissions::has_admissible_admissions);
             pin_mut!(wait);
             select! {
                 result = activity => return Ok(Raced::Completed(result)),

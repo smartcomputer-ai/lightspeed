@@ -13,7 +13,7 @@ use harness::SessionId;
 use support::live::{LIVE_TEST_LOCK, require_storage_live_env};
 use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
-    worker::{WorkerActivities, core_runtime, worker_with_activities},
+    worker::{WorkerActivities, sessions_worker, worker_runtime},
 };
 use temporal_workflow::{
     AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal,
@@ -37,7 +37,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
         env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
     let namespace =
         env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-    let runtime = core_runtime()?;
+    let runtime = worker_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let stores = DeploymentStores::from_env().await?;
     let universes = Arc::new(UniverseRuntime::new(
@@ -48,10 +48,9 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
     )?);
 
     let activities = WorkerActivities::with_runtime(universes.clone());
-    let mut worker =
-        worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
+    let mut worker = sessions_worker(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();
-    let worker_future = worker.run();
+    let worker_future = async { worker.run().await.map_err(anyhow::Error::from) };
     tokio::pin!(worker_future);
 
     let universe_a = uuid::Uuid::new_v4();

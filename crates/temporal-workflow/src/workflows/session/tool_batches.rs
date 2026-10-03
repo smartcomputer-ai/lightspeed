@@ -7,6 +7,7 @@
 //! workflow-tool calls) still execute as one unit behind the same
 //! progressive-completion harness contract.
 
+use crate::workflows::WorkflowContextExt as _;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -69,7 +70,7 @@ async fn invoke_tool_batch_as_unit(
     let run_id = request.run_id;
     let batch_id = request.batch_id;
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::tool_invoke_batch,
         ToolInvokeBatchActivityRequest {
             request: request.clone(),
@@ -144,7 +145,7 @@ type CallActivityOutcome = Result<ToolInvokeCallActivityResult, ActivityExecutio
 /// detector ([TMPRL1100]) and must not be used inside workflow code.
 struct InflightCall<'a> {
     index: usize,
-    activity: Pin<Box<dyn CancellableFuture<CallActivityOutcome> + 'a>>,
+    activity: Pin<Box<dyn CancellableFuture<Output = CallActivityOutcome> + 'a>>,
 }
 
 /// Resolve the first ready in-flight call, removing it from `inflight`.
@@ -200,7 +201,7 @@ async fn execute_call_group(
         // queued run is admitted and execution continues; a cancel that
         // ends this batch abandons every in-flight call.
         let ready = {
-            let wait = ctx.wait_condition(admissions::has_admissible_admissions);
+            let wait = ctx.wait_for_state(admissions::has_admissible_admissions);
             let next = first_ready_call(&mut inflight).fuse();
             pin_mut!(wait, next);
             select! {
@@ -244,7 +245,7 @@ fn call_activity<'a>(
     state: &CoreAgentState,
     request: &ToolInvocationBatchRequest,
     index: usize,
-) -> impl CancellableFuture<CallActivityOutcome> + use<'a> {
+) -> impl CancellableFuture<Output = CallActivityOutcome> + use<'a> {
     let call = &request.calls[index];
     // The harness materialized the native MCP routing facts on the call when
     // it built this dispatch; the workflow only selects the execution class.
@@ -256,7 +257,7 @@ fn call_activity<'a>(
     let call_request = request
         .call_request(index, execution)
         .expect("group indices come from this batch request");
-    activity_ctx.start_activity(
+    activity_ctx.execute_activity(
         WorkflowActivities::tool_invoke_call,
         ToolInvokeCallActivityRequest {
             request: call_request,
@@ -381,7 +382,7 @@ async fn await_environment_then_redispatch(
     let still_wanted =
         |state: &CoreAgentState| control::tool_batch_still_wanted(state, run_id, batch_id);
     let activity_ctx = ctx.clone();
-    let readiness = activity_ctx.start_activity(
+    let readiness = activity_ctx.execute_activity(
         WorkflowActivities::await_environment_ready,
         AwaitEnvironmentReadyActivityRequest {
             session_id: request.session_id.clone(),
@@ -479,7 +480,7 @@ async fn put_boundary_error_blob(
         }
         message.truncate(end);
     }
-    ctx.start_activity(
+    ctx.execute_activity(
         WorkflowActivities::put_blob,
         PutBlobRequest {
             bytes: message.into_bytes(),

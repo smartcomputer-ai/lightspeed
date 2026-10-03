@@ -18,7 +18,7 @@ use temporal_runtime::{
     pg_store_from_env,
     worker::{
         ActivityState, AudioTranscoder, AudioTranscriber, FakeLlm, FakeRuntimeCounters, FakeTools,
-        WorkerActivities, core_runtime, worker_with_activities,
+        WorkerActivities, sessions_worker, worker_runtime,
     },
 };
 use temporal_workflow::{
@@ -117,13 +117,12 @@ where
     let namespace =
         env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
 
-    let runtime = core_runtime()?;
+    let runtime = worker_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let activities = build_activities(client.clone(), task_queue.clone()).await?;
-    let mut worker =
-        worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
+    let mut worker = sessions_worker(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();
-    let worker_future = worker.run();
+    let worker_future = async { worker.run().await.map_err(anyhow::Error::from) };
     tokio::pin!(worker_future);
 
     // A fixture may explicitly target a fresh universe. Preserve its request

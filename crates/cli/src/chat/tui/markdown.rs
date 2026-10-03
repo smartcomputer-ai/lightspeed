@@ -71,7 +71,9 @@ impl MarkdownWriter {
         match event {
             Event::Start(tag) => self.start_tag(tag),
             Event::End(tag) => self.end_tag(tag),
-            Event::Text(text) => self.text(text),
+            Event::Text(text) | Event::InlineMath(text) | Event::DisplayMath(text) => {
+                self.text(text)
+            }
             Event::Code(code) => self.code(code),
             Event::SoftBreak | Event::HardBreak => self.soft_break(),
             Event::Rule => self.rule(),
@@ -84,7 +86,7 @@ impl MarkdownWriter {
         match tag {
             Tag::Paragraph => self.start_paragraph(),
             Tag::Heading { level, .. } => self.start_heading(level),
-            Tag::BlockQuote => self.start_blockquote(),
+            Tag::BlockQuote(_) => self.start_blockquote(),
             Tag::CodeBlock(kind) => self.start_code_block(kind),
             Tag::List(start) => self.list_stack.push(ListContext { next_number: start }),
             Tag::Item => self.start_item(),
@@ -103,7 +105,12 @@ impl MarkdownWriter {
             | Tag::TableRow
             | Tag::TableCell
             | Tag::Image { .. }
-            | Tag::MetadataBlock(_) => {}
+            | Tag::MetadataBlock(_)
+            | Tag::DefinitionList
+            | Tag::DefinitionListTitle
+            | Tag::DefinitionListDefinition
+            | Tag::Superscript
+            | Tag::Subscript => {}
         }
     }
 
@@ -118,7 +125,7 @@ impl MarkdownWriter {
                 self.pop_inline_style();
                 self.needs_blank = true;
             }
-            TagEnd::BlockQuote => {
+            TagEnd::BlockQuote(_) => {
                 self.flush_current();
                 self.block_stack.pop();
                 self.needs_blank = true;
@@ -142,7 +149,12 @@ impl MarkdownWriter {
             | TagEnd::TableRow
             | TagEnd::TableCell
             | TagEnd::Image
-            | TagEnd::MetadataBlock(_) => {}
+            | TagEnd::MetadataBlock(_)
+            | TagEnd::DefinitionList
+            | TagEnd::DefinitionListTitle
+            | TagEnd::DefinitionListDefinition
+            | TagEnd::Superscript
+            | TagEnd::Subscript => {}
         }
     }
 

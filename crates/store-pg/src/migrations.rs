@@ -356,7 +356,7 @@ async fn apply_one(
 }
 
 fn checksum(sql: &str) -> String {
-    format!("{:x}", Sha256::digest(sql.as_bytes()))
+    hex::encode(Sha256::digest(sql.as_bytes()))
 }
 
 #[cfg(test)]

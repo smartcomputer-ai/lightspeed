@@ -190,7 +190,7 @@ impl FakeLlm {
 
     fn take_scripted_transient_failure(&self) -> bool {
         self.transient_failures_remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
                 remaining.checked_sub(1)
             })
             .is_ok()

@@ -3082,7 +3082,8 @@ async fn live_store(test_name: &str, inline_threshold_bytes: usize) -> PgStore {
 
 fn random_master_key() -> SecretsMasterKey {
     let mut bytes = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, &mut bytes)
+        .expect("OS random source unavailable");
     SecretsMasterKey::from_bytes(bytes)
 }
 

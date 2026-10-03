@@ -274,9 +274,9 @@ With no flags, the `lightspeed-runtime` binary runs every role — the JSON-RPC
 `gateway`, the `environment-gateway` (worker environment routes, the public
 daemon registration routes, and the environment reconcilers), plus the
 `sessions`, `bots`, and `channels` Temporal workers, each on its own task
-queue — in one process. For split-role runs, select roles per shell
-(`--task-types workflows|activities` splits a worker role further); keep the
-`environment-gateway` role on exactly one process and point the others at it
+queue — in one process. Each worker runs its workflows and activities together.
+For split-role runs, select roles per shell; keep the `environment-gateway`
+role on exactly one process and point the others at it
 through `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL`:
 
 ```bash

@@ -1282,7 +1282,7 @@ pub fn validate_fork_point(
         });
     }
     for range in core_run_ranges(entries).values() {
-        let end_exclusive = range.terminal_seq.map_or(head.saturating_add(1), |seq| seq);
+        let end_exclusive = range.terminal_seq.unwrap_or(head.saturating_add(1));
         if source_seq_u64 >= range.first_seq && source_seq_u64 < end_exclusive {
             return Err(SessionStoreError::InvalidForkPoint {
                 session_id: session_id.clone(),

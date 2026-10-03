@@ -158,7 +158,7 @@ pub(super) async fn materialize(
                     if bytes > quota.max_total_bytes {
                         return Err(invalid("inline byte quota exceeded"));
                     }
-                    let digest = format!("sha256:{:x}", Sha256::digest(data.as_slice()));
+                    let digest = format!("sha256:{}", hex::encode(Sha256::digest(data.as_slice())));
                     content.insert(digest.clone(), data.as_slice());
                     InventoryContent::File {
                         digest,

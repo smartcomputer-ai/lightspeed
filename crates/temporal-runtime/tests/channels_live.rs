@@ -40,7 +40,7 @@ use temporal_runtime::{
     pg_store_from_env,
     worker::{
         ActivityState, BotWorkerActivities, ChannelWorkerActivities, FakeLlm, FakeTools,
-        WorkerActivities, bots_worker, channels_worker, core_runtime, worker_with_activities,
+        WorkerActivities, bots_worker, channels_worker, sessions_worker, worker_runtime,
     },
 };
 use temporal_workflow::{
@@ -52,10 +52,9 @@ use temporal_workflow::{
     connect_temporal,
 };
 use temporalio_client::Client;
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    Worker, WorkerOptions,
+    WorkerOptions,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -123,7 +122,9 @@ impl FakeConnector {
     ) -> Result<(), ActivityError> {
         *self.typing_started.lock().expect("typing lock") += 1;
         loop {
-            ctx.record_heartbeat(Vec::new());
+            ctx.record_heartbeat(())
+                .await
+                .expect("unit heartbeat serializes");
             tokio::select! {
                 _ = ctx.cancelled() => return Ok(()),
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {}
@@ -157,7 +158,7 @@ where
         std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
     let namespace = std::env::var("TEMPORAL_NAMESPACE")
         .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-    let runtime = core_runtime()?;
+    let runtime = worker_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let api = Arc::new(
         GatewayAgentApi::builder(client.clone(), store.clone())
@@ -173,7 +174,7 @@ where
     let blobs: Arc<dyn BlobStore> = store.clone();
     let llm = Arc::new(FakeLlm::new(blobs.clone()).with_tool_rounds(0)) as Arc<dyn CoreAgentLlm>;
     let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
-    let mut sessions_worker = worker_with_activities(
+    let mut sessions_worker = sessions_worker(
         &runtime,
         client.clone(),
         queues.sessions.clone(),
@@ -189,14 +190,12 @@ where
         client.clone(),
         queues.bots.clone(),
         BotWorkerActivities::for_universe(universe, api.clone()),
-        WorkerTaskTypes::all(),
     )?;
     let mut channels = channels_worker(
         &runtime,
         client.clone(),
         queues.channels.clone(),
         ChannelWorkerActivities::for_universe(universe, api.clone()),
-        WorkerTaskTypes::all(),
     )?;
     // The account is created before the connector worker so the queue name
     // is known; every test uses one fresh account.
@@ -221,7 +220,7 @@ where
     .await?;
     let connector_queue =
         connector_task_queue(universe, &ChannelProvider::new("telegram"), &account_id);
-    let mut connector_worker = Worker::new(
+    let mut connector_worker = temporalio_sdk::Worker::new(
         &runtime,
         client.clone(),
         WorkerOptions::new(connector_queue)
@@ -229,12 +228,6 @@ where
             // SDK to cancel them on shutdown instead of draining forever.
             .graceful_shutdown_period(Duration::from_millis(100))
             .register_activities(connector.clone())
-            .task_types(WorkerTaskTypes {
-                enable_workflows: false,
-                enable_local_activities: false,
-                enable_remote_activities: true,
-                enable_nexus: false,
-            })
             .build(),
     )
     .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -253,6 +246,7 @@ where
             connector_worker.run()
         )
         .map(|_| ())
+        .map_err(anyhow::Error::from)
     };
     tokio::pin!(workers);
     let body = temporal_runtime::gateway::request_context::with_request_context(

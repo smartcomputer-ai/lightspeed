@@ -26,7 +26,7 @@ use temporal_runtime::{
     gateway::GatewayAgentApi,
     pg_store_from_env,
     subagents::AgentApiSubagentRuntime,
-    worker::{ActivityState, SessionTools, WorkerActivities, core_runtime, worker_with_activities},
+    worker::{ActivityState, SessionTools, WorkerActivities, sessions_worker, worker_runtime},
 };
 use temporal_workflow::{
     AgentSessionWorkflow, DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal,
@@ -564,7 +564,7 @@ where
     let namespace =
         env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
 
-    let runtime = core_runtime()?;
+    let runtime = worker_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let store = pg_store_from_env().await?;
     let model = support::live::openai_live_model();
@@ -586,10 +586,9 @@ where
             .with_workflow_tool_executions(client.clone())
             .with_subagent_runtime(Arc::new(AgentApiSubagentRuntime::new(api.clone()))),
     );
-    let mut worker =
-        worker_with_activities(&runtime, client.clone(), task_queue.clone(), activities)?;
+    let mut worker = sessions_worker(&runtime, client.clone(), task_queue.clone(), activities)?;
     let shutdown_worker = worker.shutdown_handle();
-    let worker_future = worker.run();
+    let worker_future = async { worker.run().await.map_err(anyhow::Error::from) };
     tokio::pin!(worker_future);
 
     let blobs_for_client: Arc<dyn BlobStore> = store.clone();
@@ -1645,7 +1644,7 @@ async fn run_agent_spawn_cancel_live_client(
         "cancelled child supervisor to finish",
         Duration::from_secs(30),
         async || {
-            use temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+            use temporalio_client::WorkflowExecutionStatus;
             let status = execution
                 .describe(temporalio_client::WorkflowDescribeOptions::default())
                 .await?

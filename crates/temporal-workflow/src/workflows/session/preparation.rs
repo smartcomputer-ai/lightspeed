@@ -2,6 +2,7 @@
 //! pass an outstanding observation; derived tools publish at a safe boundary.
 use super::preparation_candidate::PreparationCandidate;
 use super::*;
+use crate::workflows::WorkflowContextExt as _;
 use crate::{
     SessionOperation, SessionOperationOutcome, SessionOperationRequest, SessionToolsetPreparation,
     SessionToolsetSource,
@@ -39,11 +40,12 @@ impl SessionAdmission {
 
 pub(super) fn activity_options() -> temporalio_sdk::ActivityOptions {
     temporalio_sdk::ActivityOptions::with_close_timeouts(
-        temporalio_sdk::ActivityCloseTimeouts::Both {
+        temporalio_sdk::ActivityCloseTimeouts::ScheduleAndStartToClose {
             start_to_close: Duration::from_secs(30),
             schedule_to_close: Duration::from_secs(90),
         },
     )
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(
         temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
             maximum_attempts: 3,
@@ -68,13 +70,13 @@ pub(super) async fn await_activity<T, F>(
     activity: F,
 ) -> Result<T, AgentApiError>
 where
-    F: CancellableFuture<T>,
+    F: CancellableFuture<Output = T>,
 {
     pin_mut!(activity);
     loop {
         {
             let wait =
-                ctx.wait_condition(|state| state.pending_admissions.iter().any(control_admission));
+                ctx.wait_for_state(|state| state.pending_admissions.iter().any(control_admission));
             pin_mut!(wait);
             futures::select_biased! {
                 _ = wait => {},
@@ -429,7 +431,7 @@ async fn configure(
     let mut source = original.clone();
     source.config = config.clone();
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::prepare_session_toolset,
         crate::SessionToolsetRequest {
             source: source.clone(),
@@ -483,7 +485,7 @@ async fn apply_profile(
         source: source.clone(),
     };
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::prepare_session_profile,
         request,
         activity_options(),
@@ -538,7 +540,7 @@ async fn apply_profile(
     desired.remove(&ContextEntryKey::new("instructions.000.default"));
     if desired.is_empty() {
         let activity_ctx = ctx.clone();
-        let activity = activity_ctx.start_activity(
+        let activity = activity_ctx.execute_activity(
             WorkflowActivities::put_blob,
             PutBlobRequest {
                 bytes: default_instructions().as_bytes().to_vec(),
@@ -635,10 +637,10 @@ pub(super) fn begin_run_preparation(
 /// or tool activity is in flight. Only the driver publishes the observation.
 pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkflow>) {
     loop {
-        ctx.wait_condition(|state| state.run_preparation.is_some())
+        ctx.wait_for_state(|state| state.run_preparation.is_some())
             .await;
         let pending = ctx.state(|state| state.run_preparation.clone()).unwrap();
-        let activity = ctx.start_activity(
+        let activity = ctx.execute_activity(
             WorkflowActivities::prepare_session_toolset,
             crate::SessionToolsetRequest {
                 source: pending.source,
@@ -646,7 +648,7 @@ pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkfl
             },
             activity_options(),
         );
-        let abandoned = ctx.wait_condition(|state| state.run_preparation.is_none());
+        let abandoned = ctx.wait_for_state(|state| state.run_preparation.is_none());
         pin_mut!(activity, abandoned);
         let result = futures::select_biased! {
             result = activity => result.map_err(|error| AgentApiError::internal(format!("tool preparation failed: {error}"))).and_then(|result| result),

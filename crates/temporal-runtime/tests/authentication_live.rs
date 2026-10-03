@@ -29,7 +29,9 @@ async fn keys_scope_groups_actors_and_revocation() {
         .unwrap();
     let schema = format!("lightspeed_auth_test_{}", Uuid::new_v4().simple());
     admin
-        .execute(format!("CREATE SCHEMA \"{schema}\"").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA \"{schema}\""
+        ))))
         .await
         .unwrap();
     let pool = PgPoolOptions::new()
@@ -44,7 +46,9 @@ async fn keys_scope_groups_actors_and_revocation() {
     let outcome = AssertUnwindSafe(exercise(&pool)).catch_unwind().await;
     pool.close().await;
     admin
-        .execute(format!("DROP SCHEMA \"{schema}\" CASCADE").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        ))))
         .await
         .unwrap();
     admin.close().await;

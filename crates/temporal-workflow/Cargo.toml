@@ -9,7 +9,7 @@ bots = { path = "../bots" }
 channels = { path = "../channels" }
 harness = { path = "../harness", features = ["contract"] }
 schemars = { version = "1", features = ["uuid1"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 environment-protocol = { path = "../environment-protocol" }
 anyhow = "1"
@@ -18,13 +18,14 @@ futures = "0.3"
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-temporalio-client = "0.4.0"
-temporalio-common = "0.4.0"
-temporalio-macros = "0.4.0"
-temporalio-sdk = "0.4.0"
-temporalio-sdk-core = "0.4.0"
+temporalio-client = "1"
+temporalio-common = "1"
+temporalio-macros = "1"
+temporalio-sdk = "1"
+temporalio-workflow = "1"
+url = "2"
 tracing = "0.1"
 uuid = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
-jsonschema = { version = "0.33", default-features = false }
+jsonschema = { version = "0.58", default-features = false }

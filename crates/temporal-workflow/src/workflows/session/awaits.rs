@@ -89,7 +89,7 @@ pub(super) async fn process_satisfied_await(
         harness::ToolBatchSuspension::AwaitTool { .. } => {
             let request = AwaitMaterializationRequest { outcome, results };
             let materialized = ctx
-                .start_activity(
+                .execute_activity(
                     WorkflowActivities::materialize_await_result,
                     request,
                     activity_options(),
@@ -104,7 +104,7 @@ pub(super) async fn process_satisfied_await(
         }
         harness::ToolBatchSuspension::JoinedWorkflowCalls { .. } => {
             let additional_context = if has_resolved_payload {
-                ctx.start_activity(
+                ctx.execute_activity(
                     WorkflowActivities::prepare_joined_context,
                     JoinedContextPreparationRequest { results },
                     activity_options(),

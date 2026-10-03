@@ -266,7 +266,7 @@ impl GatewayAgentApi {
         let handle = self
             .temporal_client()
             .get_schedule_handle(schedule_id.clone());
-        match handle.delete().await {
+        match handle.delete(Default::default()).await {
             Ok(()) => Ok(()),
             Err(ScheduleError::Rpc(status)) if status.code() == tonic::Code::NotFound => Ok(()),
             Err(error) => Err(anyhow::anyhow!("delete schedule {schedule_id}: {error}")),

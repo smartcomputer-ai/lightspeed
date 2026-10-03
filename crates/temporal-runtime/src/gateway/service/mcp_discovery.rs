@@ -13,7 +13,7 @@ use mcp::{
     McpToolDiscoveryFailureKind as FailureKind, McpToolDiscoveryLimits,
 };
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ClientInfo, ClientJsonRpcMessage, ClientRequest,
+    CallToolRequestParams, CallToolResult, ClientConfig, ClientJsonRpcMessage, ClientRequest,
     Implementation, PaginatedRequestParams, ProtocolVersion, ServerJsonRpcMessage, Tool,
 };
 use rmcp::transport::{
@@ -215,7 +215,7 @@ impl ResponseBudget {
 
     fn reserve(&self, bytes: usize) -> Result<(), ResponseLimitError> {
         self.consumed
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |consumed| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |consumed| {
                 consumed
                     .checked_add(bytes)
                     .filter(|total| *total <= self.max)
@@ -751,7 +751,7 @@ impl McpToolDiscoverer for HttpMcpToolDiscoverer {
     }
 }
 
-type McpClientService = RunningService<RoleClient, ClientInfo>;
+type McpClientService = RunningService<RoleClient, ClientConfig>;
 
 struct StartServiceFailure {
     failure: McpToolDiscoveryFailure,
@@ -779,7 +779,7 @@ async fn start_service_once(
     let client = BoundedReqwestClient::new(client.clone(), max_response_bytes, operation);
     let diagnostics = client.diagnostics.clone();
     let transport = StreamableHttpClientTransport::with_client(client, config);
-    let result = ClientInfo::new(
+    let result = ClientConfig::new(
         Default::default(),
         Implementation::new("lightspeed", env!("CARGO_PKG_VERSION")),
     )
@@ -829,7 +829,7 @@ fn client_lifecycle() -> ClientLifecycleMode {
 }
 
 async fn discover_pages(
-    service: &rmcp::service::RunningService<rmcp::RoleClient, ClientInfo>,
+    service: &rmcp::service::RunningService<rmcp::RoleClient, ClientConfig>,
     limits: McpToolDiscoveryLimits,
     diagnostics: &TransportDiagnostics,
 ) -> Result<(Vec<DiscoveredMcpTool>, Option<u64>), McpToolDiscoveryFailure> {

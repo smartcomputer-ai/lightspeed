@@ -1,5 +1,6 @@
-use temporalio_common::{error::IncomingError, protos::temporal::api::enums::v1::TimeoutType};
+use temporalio_common::error::IncomingError;
 use temporalio_sdk::ActivityExecutionError;
+use temporalio_sdk::TimeoutType;
 
 use super::*;
 
@@ -28,7 +29,7 @@ pub(super) async fn call_llm_generate(
     let run_id = request.run_id;
     let turn_id = request.turn_id;
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::llm_generate,
         LlmGenerateActivityRequest { request },
         crate::llm_activity_options(),
@@ -83,7 +84,7 @@ pub(super) async fn call_context_compact(
         .pending_plan()
         .and_then(|plan| plan.run_id);
     let activity_ctx = ctx.clone();
-    let activity = activity_ctx.start_activity(
+    let activity = activity_ctx.execute_activity(
         WorkflowActivities::context_compact,
         crate::ContextCompactActivityRequest { request },
         crate::llm_activity_options(),
@@ -194,6 +195,7 @@ fn timeout_type_label(timeout_type: TimeoutType) -> &'static str {
         TimeoutType::ScheduleToClose => "schedule-to-close",
         TimeoutType::Heartbeat => "heartbeat",
         TimeoutType::Unspecified => "unspecified",
+        _ => "unknown",
     }
 }
 
@@ -240,7 +242,7 @@ async fn put_llm_boundary_error_blob(
     failure: &LlmBoundaryFailure,
 ) -> BlobRef {
     let message = llm_boundary_error_message(operation, failure);
-    ctx.start_activity(
+    ctx.execute_activity(
         WorkflowActivities::put_blob,
         PutBlobRequest {
             bytes: message.into_bytes(),
@@ -255,7 +257,7 @@ pub(super) async fn call_tool_prepare_promise_controls(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     request: harness::PromiseControlArgumentRequest,
 ) -> anyhow::Result<harness::PromiseControlArgumentFacts> {
-    ctx.start_activity(
+    ctx.execute_activity(
         WorkflowActivities::tool_prepare_promise_controls,
         ToolPreparePromiseControlsActivityRequest { request },
         activity_options(),
@@ -285,14 +287,14 @@ mod tests {
     /// Decode a proto failure exactly the way the SDK does for an activity
     /// resolution, so the recognizer is exercised against the real shape.
     fn activity_error(failure: Failure) -> ActivityExecutionError {
-        let incoming = DefaultFailureConverter
+        let incoming = DefaultFailureConverter::default()
             .to_error(
                 failure,
                 &PayloadConverter::default(),
                 &SerializationContextData::None,
             )
             .expect("failure decodes");
-        ActivityExecutionDecodeHint { cancelled: false }.adapt(incoming)
+        ActivityExecutionDecodeHint::new(false).adapt(incoming)
     }
 
     fn activity_failure(retry_state: RetryState, cause: Failure) -> Failure {
@@ -309,11 +311,21 @@ mod tests {
     }
 
     fn timeout_failure(timeout_type: TimeoutType, cause: Option<Failure>) -> Failure {
+        use temporalio_common::protos::temporal::api::enums::v1::TimeoutType as WireTimeoutType;
+
         Failure {
             message: format!("activity {} timeout", timeout_type_label(timeout_type)),
             cause: cause.map(Box::new),
             failure_info: Some(FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
-                timeout_type: timeout_type.into(),
+                timeout_type: match timeout_type {
+                    TimeoutType::Unspecified => WireTimeoutType::Unspecified,
+                    TimeoutType::StartToClose => WireTimeoutType::StartToClose,
+                    TimeoutType::ScheduleToStart => WireTimeoutType::ScheduleToStart,
+                    TimeoutType::ScheduleToClose => WireTimeoutType::ScheduleToClose,
+                    TimeoutType::Heartbeat => WireTimeoutType::Heartbeat,
+                    _ => panic!("test requires a known timeout type"),
+                }
+                .into(),
                 last_heartbeat_details: None,
             })),
             ..Default::default()
@@ -407,8 +419,8 @@ mod tests {
 
     #[test]
     fn cancellation_and_unknown_application_failures_propagate() {
-        let cancelled = ActivityExecutionDecodeHint { cancelled: true }.adapt(
-            DefaultFailureConverter
+        let cancelled = ActivityExecutionDecodeHint::new(true).adapt(
+            DefaultFailureConverter::default()
                 .to_error(
                     Failure {
                         message: "cancelled".to_owned(),

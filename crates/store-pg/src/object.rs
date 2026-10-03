@@ -178,7 +178,8 @@ pub(crate) async fn put_streamed_object(
                 part = Vec::with_capacity(part_size + 256 * 1024);
             }
         }
-        if length != size || format!("sha256:{:x}", hash.finalize()) != expected.as_str() {
+        if length != size || format!("sha256:{}", hex::encode(hash.finalize())) != expected.as_str()
+        {
             return Err(BlobStoreError::Store {
                 message: "blob stream length/digest mismatch".into(),
             });

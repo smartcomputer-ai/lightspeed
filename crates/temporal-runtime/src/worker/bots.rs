@@ -53,12 +53,11 @@ impl BotWorkerActivities {
         ActivityError,
     > {
         let api = self.universes.api_for(universe_id).await?;
-        let workflow_id = &ctx
+        let workflow_id = ctx
             .info()
-            .workflow_execution
-            .as_ref()
-            .ok_or_else(|| authority_error("missing controller workflow identity"))?
-            .workflow_id;
+            .workflow_id
+            .as_deref()
+            .ok_or_else(|| authority_error("missing controller workflow identity"))?;
         let authority = api
             .bot_activity_authority(workflow_id, bot)
             .await

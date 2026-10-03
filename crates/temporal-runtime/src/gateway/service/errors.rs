@@ -100,8 +100,8 @@ pub(super) fn map_workflow_start_error(error: WorkflowStartError) -> AgentApiErr
 pub(super) fn map_workflow_query_error(error: WorkflowQueryError) -> AgentApiError {
     match error {
         WorkflowQueryError::NotFound(_) => AgentApiError::not_found("agent workflow not found"),
-        WorkflowQueryError::Rejected(rejection) => {
-            AgentApiError::internal(format!("{rejection:?}"))
+        WorkflowQueryError::Rejected { status } => {
+            AgentApiError::internal(format!("query rejected for workflow status {status:?}"))
         }
         WorkflowQueryError::PayloadConversion(error) => AgentApiError::internal(error.to_string()),
         WorkflowQueryError::Rpc(status) => AgentApiError::internal(status.to_string()),

@@ -11,7 +11,7 @@ use temporal_runtime::{
         DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, gateway_router,
         prewarm_single_universe,
     },
-    roles::{Role, RoleSet, TaskTypes},
+    roles::{Role, RoleSet},
     universe::UniverseRuntime,
     worker::{self, BotWorkerActivities, ChannelWorkerActivities, WorkerActivities},
 };
@@ -23,8 +23,8 @@ use tracing_subscriber::{EnvFilter, fmt};
     version = release_info::LONG_VERSION,
     about = "Run the Lightspeed hosted runtime",
     after_help = "When no command is supplied, the server runs every role in this process: \
-gateway, sessions, bots, channels. Select a subset with --roles (or LIGHTSPEED_ROLES) and \
-split worker roles into workflow-only or activity-only pollers with --task-types."
+gateway, environment-gateway, sessions, bots, channels. Select a subset with --roles \
+(or LIGHTSPEED_ROLES). Each worker role runs its workflows and activities together."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -137,10 +137,6 @@ struct RunArgs {
     #[arg(long, env = "LIGHTSPEED_ROLES")]
     roles: Option<String>,
 
-    /// Task types the worker roles poll: all, workflows, or activities.
-    #[arg(long, env = "LIGHTSPEED_WORKER_TASK_TYPES")]
-    task_types: Option<String>,
-
     #[arg(long, env = "LIGHTSPEED_GATEWAY_BIND", default_value = DEFAULT_GATEWAY_BIND)]
     bind: SocketAddr,
 
@@ -177,11 +173,6 @@ struct RunArgs {
 impl RunArgs {
     fn roles(&self) -> anyhow::Result<RoleSet> {
         RoleSet::parse(self.roles.as_deref().unwrap_or("")).map_err(|error| anyhow::anyhow!(error))
-    }
-
-    fn task_types(&self) -> anyhow::Result<TaskTypes> {
-        TaskTypes::parse(self.task_types.as_deref().unwrap_or(""))
-            .map_err(|error| anyhow::anyhow!(error))
     }
 
     fn task_queues(&self) -> anyhow::Result<TaskQueues> {
@@ -532,10 +523,9 @@ async fn mint(
 async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     temporal_runtime::config::validate_model_environment()?;
     let roles = args.roles()?;
-    let task_types = args.task_types()?;
     let task_queues = args.task_queues()?;
     let mode = gateway_auth_mode_from_env()?;
-    let runtime = worker::core_runtime()?;
+    let runtime = worker::worker_runtime()?;
     let client =
         temporal_runtime::gateway::connect_temporal(&args.temporal_target, &args.namespace).await?;
     let stores = DeploymentStores::from_env()
@@ -561,7 +551,6 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     tracing::info!(
         target: "temporal_runtime",
         roles = %roles,
-        task_types = %task_types,
         temporal_target = %args.temporal_target,
         namespace = %args.namespace,
         sessions_queue = %task_queues.sessions,
@@ -586,7 +575,6 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 client.clone(),
                 task_queues.sessions.clone(),
                 activities,
-                task_types.worker_task_types(),
             )?,
         ));
         background.push(tokio::spawn(
@@ -614,7 +602,6 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 client.clone(),
                 task_queues.bots.clone(),
                 activities,
-                task_types.worker_task_types(),
             )?,
         ));
         background.push(tokio::spawn(
@@ -630,7 +617,6 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 client.clone(),
                 task_queues.channels.clone(),
                 activities,
-                task_types.worker_task_types(),
             )?,
         ));
     }
@@ -701,7 +687,7 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
             let _ = tokio::time::timeout(Duration::from_secs(10), futures::future::join_all(remaining)).await;
             match worker_result {
                 (role, Ok(())) => anyhow::bail!("{role} worker stopped while the process was still running"),
-                (role, Err(error)) => Err(error.context(format!("{role} worker failed"))),
+                (role, Err(error)) => Err(anyhow::Error::from(error).context(format!("{role} worker failed"))),
             }
         }
         gateway_result = gateway_future.as_mut() => {
@@ -760,6 +746,16 @@ fn init_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_deployment_is_selected_by_role() {
+        let cli = Cli::try_parse_from(["lightspeed-runtime", "--roles", "sessions,bots"])
+            .expect("select worker roles");
+        assert_eq!(cli.run.roles().unwrap().to_string(), "sessions,bots");
+        let error = Cli::try_parse_from(["lightspeed-runtime", "--task-types", "workflows"])
+            .expect_err("removed polling override must be rejected");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
 
     #[test]
     fn changed_migration_explains_safe_recovery_without_hashes() {

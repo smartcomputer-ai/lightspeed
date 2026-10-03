@@ -155,7 +155,8 @@ impl BlobStore for FsBlobStore {
                 .await
                 .map_err(|e| blob_io_error("write blob spool", &paths.dir, e))?;
         }
-        if length != size || format!("sha256:{:x}", hash.finalize()) != expected.as_str() {
+        if length != size || format!("sha256:{}", hex::encode(hash.finalize())) != expected.as_str()
+        {
             return Err(BlobStoreError::Store {
                 message: "blob stream length/digest mismatch".into(),
             });

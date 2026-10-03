@@ -11,9 +11,7 @@ mod session_tools;
 mod universes;
 
 use temporalio_client::Client;
-use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
-use temporalio_sdk::{Worker, WorkerOptions};
-use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
+use temporalio_sdk::{Runtime, Worker, WorkerOptions, runtime::RuntimeOptions};
 
 use temporal_workflow::{
     BotControllerWorkflow, BotTriggerFireWorkflow, ChannelConversationWorkflow,
@@ -62,81 +60,55 @@ pub use temporal_workflow::{
     AwaitEnvironmentReadyActivityResult, ToolInvokeCallActivityResult,
 };
 
-pub fn core_runtime() -> anyhow::Result<CoreRuntime> {
-    CoreRuntime::new_assume_tokio(
-        RuntimeOptions::builder()
-            .telemetry_options(TelemetryOptions::builder().build())
-            .build()
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
-    )
+pub fn worker_runtime() -> anyhow::Result<Runtime> {
+    Ok(Runtime::from_current_tokio(RuntimeOptions::default())?)
 }
 
-/// The `sessions` worker: session, environment-job, and sub-agent
-/// workflows with their activities, polling every task type.
-pub fn worker_with_activities(
-    runtime: &CoreRuntime,
-    client: Client,
-    task_queue: String,
-    activities: WorkerActivities,
-) -> anyhow::Result<Worker> {
-    sessions_worker(
-        runtime,
-        client,
-        task_queue,
-        activities,
-        WorkerTaskTypes::all(),
-    )
-}
-
+/// The `sessions` worker runs session, environment-job, and sub-agent
+/// workflows together with their activities.
 pub fn sessions_worker(
-    runtime: &CoreRuntime,
+    runtime: &Runtime,
     client: Client,
     task_queue: String,
     activities: WorkerActivities,
-    task_types: WorkerTaskTypes,
 ) -> anyhow::Result<Worker> {
     let worker_options = WorkerOptions::new(task_queue)
-        .register_workflow::<AgentSessionWorkflow>()
-        .register_workflow::<temporal_workflow::TranscriptionWorkflow>()
-        .register_workflow::<EnvironmentJobWorkflow>()
-        .register_workflow::<SubagentExecutionWorkflow>()
+        .register_workflow::<AgentSessionWorkflow>()?
+        .register_workflow::<temporal_workflow::TranscriptionWorkflow>()?
+        .register_workflow::<EnvironmentJobWorkflow>()?
+        .register_workflow::<SubagentExecutionWorkflow>()?
         .register_activities(activities)
-        .task_types(task_types)
         .build();
-    Worker::new(runtime, client, worker_options).map_err(|error| anyhow::anyhow!("{error}"))
+    Ok(Worker::new(runtime, client, worker_options)?)
 }
 
 /// The `bots` worker: bot controllers and trigger fires with their
 /// activities.
 pub fn bots_worker(
-    runtime: &CoreRuntime,
+    runtime: &Runtime,
     client: Client,
     task_queue: String,
     activities: BotWorkerActivities,
-    task_types: WorkerTaskTypes,
 ) -> anyhow::Result<Worker> {
     let worker_options = WorkerOptions::new(task_queue)
-        .register_workflow::<BotControllerWorkflow>()
-        .register_workflow::<BotTriggerFireWorkflow>()
+        .register_workflow::<BotControllerWorkflow>()?
+        .register_workflow::<BotTriggerFireWorkflow>()?
         .register_activities(activities)
-        .task_types(task_types)
         .build();
-    Worker::new(runtime, client, worker_options).map_err(|error| anyhow::anyhow!("{error}"))
+    Ok(Worker::new(runtime, client, worker_options)?)
 }
 
 /// The `channels` worker: conversation workflows with their core-side
 /// activities.
 pub fn channels_worker(
-    runtime: &CoreRuntime,
+    runtime: &Runtime,
     client: Client,
     task_queue: String,
     activities: ChannelWorkerActivities,
-    task_types: WorkerTaskTypes,
 ) -> anyhow::Result<Worker> {
     let worker_options = WorkerOptions::new(task_queue)
-        .register_workflow::<ChannelConversationWorkflow>()
+        .register_workflow::<ChannelConversationWorkflow>()?
         .register_activities(activities)
-        .task_types(task_types)
         .build();
-    Worker::new(runtime, client, worker_options).map_err(|error| anyhow::anyhow!("{error}"))
+    Ok(Worker::new(runtime, client, worker_options)?)
 }

@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use temporalio_client::WorkflowExecutionStatus;
 
 use api::{
     AgentApiService, AgentProfileInput, BotBreaker, BotCloseParams, BotCoalescePolicy,
@@ -38,14 +39,11 @@ use temporal_runtime::{
     pg_store_from_env,
     worker::{
         ActivityState, BotWorkerActivities, FakeLlm, FakeTools, WorkerActivities, bots_worker,
-        core_runtime, worker_with_activities,
+        sessions_worker, worker_runtime,
     },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
 use temporalio_client::{Client, WorkflowDescribeOptions};
-use temporalio_common::{
-    protos::temporal::api::enums::v1::WorkflowExecutionStatus, worker::WorkerTaskTypes,
-};
 
 const WAIT: Duration = Duration::from_secs(90);
 
@@ -74,7 +72,7 @@ where
         std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
     let namespace = std::env::var("TEMPORAL_NAMESPACE")
         .unwrap_or_else(|_| DEFAULT_TEMPORAL_NAMESPACE.to_owned());
-    let runtime = core_runtime()?;
+    let runtime = worker_runtime()?;
     let client = connect_temporal(&temporal_target, &namespace).await?;
 
     let builder = GatewayAgentApi::builder(client.clone(), store.clone())
@@ -93,7 +91,7 @@ where
     };
     let api = Arc::new(builder.build());
 
-    let mut sessions_worker = worker_with_activities(
+    let mut sessions_worker = sessions_worker(
         &runtime,
         client.clone(),
         queues.sessions.clone(),
@@ -104,11 +102,14 @@ where
         client.clone(),
         queues.bots.clone(),
         BotWorkerActivities::for_universe(universe, api.clone()),
-        WorkerTaskTypes::all(),
     )?;
     let shutdown_sessions = sessions_worker.shutdown_handle();
     let shutdown_bots = bots.shutdown_handle();
-    let workers = async { tokio::try_join!(sessions_worker.run(), bots.run()).map(|_| ()) };
+    let workers = async {
+        tokio::try_join!(sessions_worker.run(), bots.run())
+            .map(|_| ())
+            .map_err(anyhow::Error::from)
+    };
     tokio::pin!(workers);
     let body = temporal_runtime::gateway::request_context::with_request_context(
         support::live::local_request_context().await?,
@@ -763,7 +764,7 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
 
         let schedule_id = bot_schedule_id(live_universe_id()?, &bot_id, &trigger_id);
         let handle = client.get_schedule_handle(schedule_id.clone());
-        let described = handle.describe().await?;
+        let described = handle.describe(Default::default()).await?;
         assert!(!described.paused());
         assert!(
             !described.future_action_times().is_empty(),
@@ -772,7 +773,10 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
 
         // A manual trigger of the Schedule admits one schedule event.
         handle
-            .trigger(temporalio_client::schedules::ScheduleOverlapPolicy::AllowAll)
+            .trigger(
+                temporalio_client::schedules::ScheduleOverlapPolicy::AllowAll,
+                Default::default(),
+            )
             .await?;
         let events = wait_for_outcomes(&api, &bot_id, 1).await?;
         assert_eq!(events[0].kind, "schedule");
@@ -796,7 +800,7 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
             expected_revision: Some(bot.revision),
         })
         .await?;
-        assert!(handle.describe().await?.paused());
+        assert!(handle.describe(Default::default()).await?.paused());
 
         api.delete_bot_trigger(BotTriggerDeleteParams {
             bot_id: bot_id.clone(),
@@ -804,7 +808,7 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
         })
         .await?;
         assert!(
-            handle.describe().await.is_err(),
+            handle.describe(Default::default()).await.is_err(),
             "schedule deleted with the trigger"
         );
         // Disabling reconciles the main session; let it finish before the

@@ -79,8 +79,9 @@ One `lightspeed-runtime` executable supplies five roles:
 | `bots` | Bot controllers, trigger work, and bot activities |
 | `channels` | Chat conversation workflows and core channel activities |
 
-By default, all five run in one process. Worker roles use their own task queues,
-and a role can be split further into workflow and activity workers.
+By default, all five run in one process. Each worker role runs its workflows
+and activities together on its own task queue. Select roles to deploy them
+separately and add replicas of the worker roles that need more capacity.
 Cross-component work reaches other workflows through starts and signals.
 
 Run exactly one `environment-gateway` process per deployment. It owns live

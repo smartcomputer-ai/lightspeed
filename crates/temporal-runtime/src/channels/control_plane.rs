@@ -20,12 +20,12 @@ use channels::{
 };
 use temporal_workflow::channels::{CHAT_INBOUND_SIGNAL, CHAT_STATE_QUERY, ChannelConversationArgs};
 use temporalio_client::{
-    UntypedQuery, UntypedWorkflow, WorkflowQueryOptions, WorkflowStartOptions, WorkflowStartSignal,
+    UntypedQuery, UntypedSignal, UntypedWorkflow, WorkflowQueryOptions, WorkflowStartOptions,
     errors::WorkflowQueryError,
 };
 use temporalio_common::{
     data_converters::{PayloadConverter, RawValue},
-    protos::{coresdk::AsJsonPayloadExt as _, temporal::api::common::v1::Payloads},
+    protos::coresdk::AsJsonPayloadExt as _,
 };
 
 use super::map_channel_error;
@@ -337,23 +337,18 @@ impl GatewayAgentApi {
         let payload = admitted
             .as_json_payload()
             .map_err(|error| AgentApiError::internal(format!("encode inbound: {error}")))?;
-        let options = WorkflowStartOptions::new(self.channel_task_queue.clone(), workflow_id)
-            .start_signal(
-                WorkflowStartSignal::new(CHAT_INBOUND_SIGNAL)
-                    .input(Payloads {
-                        payloads: vec![payload],
-                    })
-                    .build(),
-            )
-            .build();
+        let options =
+            WorkflowStartOptions::new(self.channel_task_queue.clone(), workflow_id).build();
         let input = RawValue::from_value(
             &ChannelConversationArgs { start, carry: None },
             &PayloadConverter::default(),
         );
         self.temporal_client()
-            .start_workflow(
+            .signal_with_start_workflow(
                 UntypedWorkflow::new(CHANNEL_CONVERSATION_WORKFLOW_TYPE),
                 input,
+                UntypedSignal::new(CHAT_INBOUND_SIGNAL),
+                RawValue::new(vec![payload]),
                 options,
             )
             .await

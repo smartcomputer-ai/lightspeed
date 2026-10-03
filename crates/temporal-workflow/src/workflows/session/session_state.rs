@@ -285,6 +285,7 @@ pub(super) async fn flush_pending_emissions(
             .signal(
                 AgentSessionWorkflow::deliver_emission,
                 pending.envelope.clone(),
+                crate::workflows::signal_options(),
             )
             .await
             .is_ok();
@@ -325,7 +326,7 @@ async fn terminal_tool_invocation_delivery_failure(
         invocation.invocation_id, pending.receiver_workflow_id, pending.attempts
     );
     let error_ref = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::put_blob,
             PutBlobRequest {
                 bytes: message.into_bytes(),

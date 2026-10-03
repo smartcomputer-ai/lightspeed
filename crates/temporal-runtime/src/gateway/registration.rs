@@ -533,9 +533,11 @@ async fn control_session(
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) -> anyhow::Result<()> {
     let nonce = {
-        use rand::RngCore as _;
+        use rand::TryRng as _;
         let mut bytes = [0u8; REGISTRATION_NONCE_BYTES];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::rngs::SysRng
+            .try_fill_bytes(&mut bytes)
+            .expect("OS random source unavailable");
         bytes
     };
     send_control(
@@ -754,7 +756,7 @@ async fn control_session(
                 None => break "command channel closed",
             },
             _ = heartbeat.tick() => {
-                if socket.send(Message::Ping(Vec::new())).await.is_err() {
+                if socket.send(Message::Ping(Default::default())).await.is_err() {
                     break "ping failed";
                 }
             }
@@ -804,7 +806,7 @@ async fn send_control(
     message: &GatewayControlMessage,
 ) -> anyhow::Result<()> {
     socket
-        .send(Message::Text(serde_json::to_string(message)?))
+        .send(Message::Text(serde_json::to_string(message)?.into()))
         .await
         .map_err(|error| anyhow::anyhow!("send control message: {error}"))
 }
@@ -847,9 +849,11 @@ async fn next_daemon_message(
 
 fn new_token() -> String {
     use base64::Engine as _;
-    use rand::RngCore as _;
+    use rand::TryRng as _;
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS random source unavailable");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 

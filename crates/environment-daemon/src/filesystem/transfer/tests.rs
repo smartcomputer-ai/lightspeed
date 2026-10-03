@@ -120,7 +120,7 @@ fn repeated_ref(size: u64) -> BlobRef {
         hash.update(&chunk[..n]);
         remaining -= n as u64;
     }
-    BlobRef::parse(format!("sha256:{:x}", hash.finalize())).unwrap()
+    BlobRef::parse(format!("sha256:{}", hex::encode(hash.finalize()))).unwrap()
 }
 #[tokio::test(flavor = "current_thread")]
 async fn rpc_vfs_roundtrip_streams_large_files_reuses_bytes_and_preserves_retry_receipt() {

@@ -43,7 +43,9 @@ pub fn default_instructions() -> &'static str {
 }
 
 pub fn activity_options() -> ActivityOptions {
-    ActivityOptions::start_to_close_timeout(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+    ActivityOptions::with_start_to_close_timeout(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
+        .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+        .build()
 }
 
 // Tool execution classes. Every tool activity carries a bounded
@@ -104,10 +106,11 @@ pub const MAX_CONCURRENT_TOOL_CALLS_PER_BATCH: usize = 8;
 /// unlimited retries; when these attempts are exhausted the workflow falls
 /// back to the harness's well-known boundary-failure blob.
 pub fn boundary_error_blob_activity_options() -> ActivityOptions {
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: Duration::from_secs(30),
         schedule_to_close: Duration::from_secs(120),
     })
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(tool_retry_policy(TOOL_RETRY_SAFE_MAX_ATTEMPTS))
     .build()
 }
@@ -146,11 +149,12 @@ pub const ACTIVITY_CANCELLATION_HEARTBEAT_INTERVAL: Duration = Duration::from_se
 /// default unlimited retries. Heartbeated so the session workflow can cancel
 /// an in-flight generation.
 pub fn llm_activity_options() -> ActivityOptions {
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: LLM_START_TO_CLOSE,
         schedule_to_close: LLM_SCHEDULE_TO_CLOSE,
     })
     .heartbeat_timeout(ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT)
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(RetryPolicy {
         initial_interval: Some(
             LLM_RETRY_INITIAL_INTERVAL
@@ -226,11 +230,12 @@ pub fn tool_call_activity_options(execution: ToolExecutionSpec) -> ActivityOptio
     } else {
         1
     };
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close,
         schedule_to_close,
     })
     .heartbeat_timeout(ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT)
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(tool_retry_policy(max_attempts))
     .build()
 }
@@ -240,11 +245,12 @@ pub fn tool_call_activity_options(execution: ToolExecutionSpec) -> ActivityOptio
 /// failures. Never Temporal's default unlimited retries.
 pub fn environment_ready_activity_options() -> ActivityOptions {
     let start_to_close = ENVIRONMENT_READY_WAIT + ENVIRONMENT_READY_GRACE;
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close,
         schedule_to_close: start_to_close * 2,
     })
     .heartbeat_timeout(ENVIRONMENT_READY_HEARTBEAT_TIMEOUT)
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(tool_retry_policy(TOOL_RETRY_SAFE_MAX_ATTEMPTS))
     .build()
 }
@@ -253,11 +259,12 @@ pub fn environment_ready_activity_options() -> ActivityOptions {
 /// workflow-tool batches execute as one unit). Bounded: one attempt and an
 /// explicit total deadline, never Temporal's default unlimited retries.
 pub fn tool_batch_activity_options() -> ActivityOptions {
-    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT,
         schedule_to_close: DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT + Duration::from_secs(60),
     })
     .heartbeat_timeout(ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT)
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
     .retry_policy(tool_retry_policy(1))
     .build()
 }
@@ -295,7 +302,7 @@ mod tests {
     fn tool_call_options_keep_the_deadline_invariant_for_every_class() {
         for execution in all_execution_specs() {
             let options = tool_call_activity_options(execution);
-            let ActivityCloseTimeouts::Both {
+            let ActivityCloseTimeouts::ScheduleAndStartToClose {
                 start_to_close,
                 schedule_to_close,
             } = options.close_timeouts
@@ -317,7 +324,7 @@ mod tests {
     #[test]
     fn environment_ready_options_are_heartbeated_bounded_and_leave_tool_classes_alone() {
         let options = environment_ready_activity_options();
-        let ActivityCloseTimeouts::Both {
+        let ActivityCloseTimeouts::ScheduleAndStartToClose {
             start_to_close,
             schedule_to_close,
         } = options.close_timeouts
@@ -332,7 +339,7 @@ mod tests {
         );
         assert!(ENVIRONMENT_READY_POLL_INTERVAL < ENVIRONMENT_READY_HEARTBEAT_TIMEOUT);
         let retry = options.retry_policy.expect("bounded retry policy");
-        assert!(retry.maximum_attempts > 0);
+        assert!(retry.raw().maximum_attempts > 0);
         // The readiness wait must not have loosened the per-class tool
         // deadlines: interactive calls stay well below the wait window.
         assert!(TOOL_INTERACTIVE_START_TO_CLOSE < ENVIRONMENT_READY_WAIT);
@@ -354,26 +361,29 @@ mod tests {
             } else {
                 1
             };
-            assert_eq!(retry.maximum_attempts, expected, "{execution:?}");
+            assert_eq!(retry.raw().maximum_attempts, expected, "{execution:?}");
         }
         let batch_retry = tool_batch_activity_options()
             .retry_policy
             .expect("batch options declare a retry policy");
-        assert_eq!(batch_retry.maximum_attempts, 1);
+        assert_eq!(batch_retry.raw().maximum_attempts, 1);
         let blob_retry = boundary_error_blob_activity_options()
             .retry_policy
             .expect("boundary blob options declare a retry policy");
-        assert_eq!(blob_retry.maximum_attempts, TOOL_RETRY_SAFE_MAX_ATTEMPTS);
+        assert_eq!(
+            blob_retry.raw().maximum_attempts,
+            TOOL_RETRY_SAFE_MAX_ATTEMPTS
+        );
         assert!(matches!(
             boundary_error_blob_activity_options().close_timeouts,
-            ActivityCloseTimeouts::Both { .. }
+            ActivityCloseTimeouts::ScheduleAndStartToClose { .. }
         ));
     }
 
     #[test]
     fn llm_options_keep_the_deadline_invariant_and_a_bounded_retry_policy() {
         let options = llm_activity_options();
-        let ActivityCloseTimeouts::Both {
+        let ActivityCloseTimeouts::ScheduleAndStartToClose {
             start_to_close,
             schedule_to_close,
         } = options.close_timeouts
@@ -390,10 +400,10 @@ mod tests {
         let retry = options
             .retry_policy
             .expect("llm options declare a retry policy");
-        assert_eq!(retry.maximum_attempts, LLM_RETRY_MAX_ATTEMPTS);
-        assert!(retry.maximum_attempts > 1);
+        assert_eq!(retry.raw().maximum_attempts, LLM_RETRY_MAX_ATTEMPTS);
+        assert!(retry.raw().maximum_attempts > 1);
         assert_eq!(
-            retry.maximum_interval,
+            retry.raw().maximum_interval,
             Some(
                 LLM_RETRY_MAX_INTERVAL
                     .try_into()
@@ -405,7 +415,7 @@ mod tests {
     #[test]
     fn retry_safe_calls_get_headroom_for_their_attempts() {
         let execution = ToolExecutionSpec::new(ToolExecutionClass::Interactive, true);
-        let ActivityCloseTimeouts::Both {
+        let ActivityCloseTimeouts::ScheduleAndStartToClose {
             start_to_close,
             schedule_to_close,
         } = tool_call_activity_options(execution).close_timeouts

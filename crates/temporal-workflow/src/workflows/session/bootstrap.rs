@@ -29,7 +29,7 @@ pub(super) async fn initialize(
     // bootstrap path is bounded by active context plus retained run metadata,
     // rather than transcript-sized event history.
     let loaded = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::create_or_load_session,
             CreateOrLoadSessionRequest {
                 session_id: args.session_id.clone(),
@@ -79,7 +79,7 @@ async fn open_new_session(
     args: AgentSessionArgs,
 ) -> anyhow::Result<()> {
     let instructions_ref = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::put_blob,
             PutBlobRequest {
                 bytes: default_instructions().as_bytes().to_vec(),

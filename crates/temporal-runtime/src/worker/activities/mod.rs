@@ -117,16 +117,11 @@ impl WorkerActivities {
     /// Resolve the universe of the invoking workflow from the activity
     /// context's workflow id and return that universe's activity state.
     async fn state_for(&self, ctx: &ActivityContext) -> Result<Arc<ActivityState>, ActivityError> {
-        let workflow_id = ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .map(|execution| execution.workflow_id.as_str())
-            .ok_or_else(|| {
-                ActivityError::application(ApplicationFailure::non_retryable(anyhow::anyhow!(
-                    "activity task carries no workflow execution info"
-                )))
-            })?;
+        let workflow_id = ctx.info().workflow_id.as_deref().ok_or_else(|| {
+            ActivityError::application(ApplicationFailure::non_retryable(anyhow::anyhow!(
+                "activity task carries no workflow execution info"
+            )))
+        })?;
         let Some((universe_id, _session_id)) = temporal_workflow::split_workflow_id(workflow_id)
         else {
             return Err(ActivityError::application(
@@ -469,11 +464,7 @@ impl WorkerActivities {
         ctx: ActivityContext,
         args: temporal_workflow::TranscriptionWorkflowArgs,
     ) -> Result<temporal_workflow::TranscriptionActivityResult, ActivityError> {
-        if ctx
-            .info()
-            .workflow_execution
-            .as_ref()
-            .map(|w| w.workflow_id.as_str())
+        if ctx.info().workflow_id.as_deref()
             != Some(temporal_workflow::transcription_workflow_id(&args).as_str())
         {
             return Err(common::activity_error(anyhow::anyhow!(

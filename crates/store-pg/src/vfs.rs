@@ -1,3 +1,4 @@
+// Formatted SQL uses internal schema fragments; request values use bind parameters.
 use async_trait::async_trait;
 use harness::BlobRef;
 use sqlx::Row;
@@ -101,7 +102,7 @@ impl VfsWorkspaceStore for PgStore {
             .as_ref()
             .map(catalog_digest)
             .transpose()?;
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             INSERT INTO vfs_workspaces (
                 universe_id,
@@ -119,7 +120,7 @@ impl VfsWorkspaceStore for PgStore {
             ON CONFLICT (universe_id, workspace_id) DO NOTHING
             RETURNING {WORKSPACE_COLUMNS}
             "#
-        ))
+        )))
         .bind(self.config.universe_id)
         .bind(record.workspace_id.as_str())
         .bind(record.display_name.as_deref())
@@ -145,13 +146,13 @@ impl VfsWorkspaceStore for PgStore {
         &self,
         workspace_id: &VfsWorkspaceId,
     ) -> Result<VfsWorkspaceRecord, VfsCatalogError> {
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT {WORKSPACE_COLUMNS}
             FROM vfs_workspaces
             WHERE universe_id = $1 AND workspace_id = $2
             "#
-        ))
+        )))
         .bind(self.config.universe_id)
         .bind(workspace_id.as_str())
         .fetch_optional(&self.pool)
@@ -168,14 +169,14 @@ impl VfsWorkspaceStore for PgStore {
     }
 
     async fn list_workspaces(&self) -> Result<Vec<VfsWorkspaceRecord>, VfsCatalogError> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT {WORKSPACE_COLUMNS}
             FROM vfs_workspaces
             WHERE universe_id = $1
             ORDER BY updated_at_ms DESC, workspace_id
             "#
-        ))
+        )))
         .bind(self.config.universe_id)
         .fetch_all(&self.pool)
         .await
@@ -193,14 +194,14 @@ impl VfsWorkspaceStore for PgStore {
             .begin()
             .await
             .map_err(|error| catalog_sql_error("begin vfs workspace transaction", error))?;
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             SELECT {WORKSPACE_COLUMNS}
             FROM vfs_workspaces
             WHERE universe_id = $1 AND workspace_id = $2
             FOR UPDATE
             "#
-        ))
+        )))
         .bind(self.config.universe_id)
         .bind(request.workspace_id.as_str())
         .fetch_optional(&mut *tx)
@@ -233,7 +234,7 @@ impl VfsWorkspaceStore for PgStore {
                         current.workspace_id
                     ),
                 })?;
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             UPDATE vfs_workspaces
             SET
@@ -246,7 +247,7 @@ impl VfsWorkspaceStore for PgStore {
             WHERE universe_id = $1 AND workspace_id = $2
             RETURNING {WORKSPACE_COLUMNS}
             "#
-        ))
+        )))
         .bind(self.config.universe_id)
         .bind(current.workspace_id.as_str())
         .bind(request.display_name.as_deref())
@@ -271,13 +272,13 @@ impl VfsWorkspaceStore for PgStore {
         self.ensure_universe()
             .await
             .map_err(|error| catalog_store_error("ensure universe", error))?;
-        let row = sqlx::query(&format!(
+        let row = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
             DELETE FROM vfs_workspaces
             WHERE universe_id = $1 AND workspace_id = $2
             RETURNING {WORKSPACE_COLUMNS}
             "#
-        ))
+        )))
         .bind(self.config.universe_id)
         .bind(workspace_id.as_str())
         .fetch_optional(&self.pool)

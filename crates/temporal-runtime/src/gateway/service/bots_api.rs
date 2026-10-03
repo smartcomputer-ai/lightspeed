@@ -17,7 +17,7 @@ use ::bots::{
     validate::{validate_pairing_code, validate_trigger_document},
 };
 use ::channels::ChannelAccountStore;
-use rand::RngCore as _;
+use rand::TryRng as _;
 use serde_json::Value;
 use temporalio_client::{UntypedQuery, UntypedSignal, UntypedWorkflow, errors::WorkflowQueryError};
 use temporalio_common::data_converters::{PayloadConverter, RawValue};
@@ -50,7 +50,9 @@ pub fn webhook_ingest_path(
 
 fn random_bytes(len: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; len];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("OS random source unavailable");
     bytes
 }
 

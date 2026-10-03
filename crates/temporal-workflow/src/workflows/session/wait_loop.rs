@@ -1,4 +1,5 @@
 use super::*;
+use crate::workflows::WorkflowContextExt as _;
 
 pub(super) const ACTIVE_RUN_ROLLOVER_PATCH: &str = "p105_active_run_rollover_v1";
 
@@ -9,7 +10,7 @@ pub(super) async fn wait_for_workflow_work(ctx: &mut WorkflowContext<AgentSessio
     }
 
     let Some(deadline_ms) = nearest_workflow_wake_ms(ctx) else {
-        let wait = ctx.wait_condition(workflow_state_has_immediate_work);
+        let wait = ctx.wait_for_state(workflow_state_has_immediate_work);
         pin_mut!(wait);
         wait.await;
         return;
@@ -20,8 +21,8 @@ pub(super) async fn wait_for_workflow_work(ctx: &mut WorkflowContext<AgentSessio
 
     let duration = Duration::from_millis(deadline_ms - now);
     let wake = {
-        let wait = ctx.wait_condition(workflow_state_has_immediate_work);
-        let timer = ctx.timer(duration).fuse();
+        let wait = ctx.wait_for_state(workflow_state_has_immediate_work);
+        let timer = ctx.timer_with_manual_cancellation(duration).fuse();
         pin_mut!(wait, timer);
         select! {
             _ = wait => WorkflowWake::State,

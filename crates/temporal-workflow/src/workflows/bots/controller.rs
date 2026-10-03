@@ -15,6 +15,7 @@
 mod lanes;
 mod state;
 
+use crate::workflows::WorkflowContextExt as _;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -101,7 +102,7 @@ pub struct BotControllerCarry {
     pub tools_revision: Option<u32>,
 }
 
-#[workflow(name = "BotControllerWorkflow")]
+#[workflow]
 pub struct BotControllerWorkflow {
     state: ControllerState,
 }
@@ -139,7 +140,7 @@ impl BotControllerWorkflow {
     #[init]
     pub fn new(ctx: &WorkflowContextView, args: BotControllerArgs) -> Self {
         let now = ctx
-            .start_time
+            .start_time()
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map(|elapsed| elapsed.as_millis() as i64)
             .unwrap_or(0);
@@ -148,7 +149,7 @@ impl BotControllerWorkflow {
         }
     }
 
-    #[run]
+    #[run(name = "BotControllerWorkflow")]
     pub async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         run_controller(ctx).await
     }
@@ -274,12 +275,14 @@ async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) {
     let now = now_ms(ctx);
     let (lane_tick, event_tick, deadline) =
         ctx.state(|state| (state.lane_tick, state.event_tick, state.wake_deadline(now)));
-    let wait = ctx.wait_condition(move |state| state.wake_ready(lane_tick, event_tick));
+    let wait = ctx.wait_for_state(move |state| state.wake_ready(lane_tick, event_tick));
     match deadline {
         None => with_lanes(lanes, wait).await,
         Some(deadline) => {
             let timer = ctx
-                .timer(Duration::from_millis((deadline - now).max(1) as u64))
+                .timer_with_manual_cancellation(Duration::from_millis(
+                    (deadline - now).max(1) as u64
+                ))
                 .fuse();
             with_lanes(lanes, async move {
                 pin_mut!(wait, timer);
@@ -330,7 +333,7 @@ fn request_continue_as_new(ctx: &Ctx) -> WorkflowResult<()> {
         config: state.config.clone(),
         carry: Some(state.carry()),
     });
-    match ctx.continue_as_new(&args, ContinueAsNewOptions::default()) {
+    match ctx.continue_as_new(args, ContinueAsNewOptions::default()) {
         Ok(never) => match never {},
         Err(termination) => Err(termination),
     }
@@ -368,7 +371,7 @@ pub(super) async fn activity<AD: temporalio_common::ActivityDefinition>(
     definition: AD,
     input: AD::Input,
 ) -> Result<AD::Output, String> {
-    ctx.start_activity(definition, input, bot_activity_options())
+    ctx.execute_activity(definition, input, bot_activity_options())
         .await
         .map_err(|error| error.to_string())
 }
@@ -614,7 +617,8 @@ pub(super) async fn wait_until_session_idle(ctx: &Ctx, target: &str) -> Result<(
             BotSessionStatus::Closed => return Err(format!("session {target} is closed")),
             BotSessionStatus::Missing => return Err(format!("session {target} is missing")),
         }
-        ctx.timer(BOT_BUSY_RETRY_DELAY).await;
+        ctx.timer_with_manual_cancellation(BOT_BUSY_RETRY_DELAY)
+            .await;
     }
 }
 

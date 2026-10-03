@@ -6,6 +6,7 @@
 //! closes the child. To the parent this is indistinguishable from an
 //! environment job; the session workflow carries no sub-agent code.
 
+use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
 use futures::{FutureExt, pin_mut, select};
@@ -19,7 +20,7 @@ use crate::{
     WorkflowToolRecoveryResult, WorkflowToolStartArgs, activity_options,
 };
 
-#[workflow(name = "SubagentExecutionWorkflow")]
+#[workflow]
 #[derive(Default)]
 pub struct SubagentExecutionWorkflow {
     snapshot: SubagentExecutionSnapshot,
@@ -36,7 +37,7 @@ pub struct SubagentExecutionWorkflow {
 
 #[workflow_methods]
 impl SubagentExecutionWorkflow {
-    #[run]
+    #[run(name = "SubagentExecutionWorkflow")]
     pub async fn run(
         ctx: &mut WorkflowContext<Self>,
         start: WorkflowToolStartArgs,
@@ -44,9 +45,9 @@ impl SubagentExecutionWorkflow {
         if ctx.workflow_id() != start.execution_id
             || start.universe_id != start.invocation.session_universe_id
         {
-            return Err(anyhow::anyhow!(
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "subagent execution identity is invalid: workflow id or universe mismatch"
-            )
+            ))
             .into());
         }
         let Some(reply_promise_id) = start
@@ -56,9 +57,9 @@ impl SubagentExecutionWorkflow {
             .and_then(|promises| promises.get(harness::REPLY_COMPLETION_KEY))
             .cloned()
         else {
-            return Err(anyhow::anyhow!(
+            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                 "subagent execution invocation is missing its reply completion promise"
-            )
+            ))
             .into());
         };
         ctx.state_mut(|state| {
@@ -72,7 +73,7 @@ impl SubagentExecutionWorkflow {
         // A. prepare: validate the pinned grant, reserve the tree slot,
         // create the child from the pinned profile, start its run.
         let prepared = ctx
-            .start_activity(
+            .execute_activity(
                 WorkflowActivities::subagent_prepare,
                 SubagentPrepareActivityRequest {
                     start: start.clone(),
@@ -80,7 +81,11 @@ impl SubagentExecutionWorkflow {
                 activity_options(),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("subagent prepare failed: {error}"))?;
+            .map_err(|error| {
+                temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                    "subagent prepare failed: {error}"
+                ))
+            })?;
         let (child, deadline_ms) = match prepared {
             SubagentPrepareActivityResult::Prepared { child, deadline_ms } => (child, deadline_ms),
             SubagentPrepareActivityResult::Rejected { error_ref } => {
@@ -110,8 +115,10 @@ impl SubagentExecutionWorkflow {
                 break WaitOutcome::HolderCancelled;
             }
             ctx.state_mut(|state| state.nudged = false);
-            let wait = ctx.wait_condition(|state| state.nudged);
-            let deadline = ctx.timer(Duration::from_millis(deadline_ms.max(1))).fuse();
+            let wait = ctx.wait_for_state(|state| state.nudged);
+            let deadline = ctx
+                .timer_with_manual_cancellation(Duration::from_millis(deadline_ms.max(1)))
+                .fuse();
             let cancelled = ctx.cancelled().fuse();
             pin_mut!(wait, deadline, cancelled);
             select! {
@@ -126,7 +133,7 @@ impl SubagentExecutionWorkflow {
                 // C. resolve: build the envelope, close the child, tell the
                 // holder.
                 let resolution = ctx
-                    .start_activity(
+                    .execute_activity(
                         WorkflowActivities::subagent_resolve,
                         SubagentResolveActivityRequest {
                             universe_id: start.universe_id,
@@ -136,7 +143,11 @@ impl SubagentExecutionWorkflow {
                         activity_options(),
                     )
                     .await
-                    .map_err(|error| anyhow::anyhow!("subagent resolve failed: {error}"))?;
+                    .map_err(|error| {
+                        temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                            "subagent resolve failed: {error}"
+                        ))
+                    })?;
                 ctx.state_mut(|state| {
                     state.snapshot.phase = SubagentExecutionPhase::Resolved;
                     state.snapshot.resolution = Some(resolution.clone());
@@ -154,7 +165,7 @@ impl SubagentExecutionWorkflow {
             WaitOutcome::Cancelled => {
                 close_child(ctx, start.universe_id, &child).await;
                 ctx.state_mut(|state| state.snapshot.phase = SubagentExecutionPhase::Cancelled);
-                Err(temporalio_sdk::WorkflowTermination::Cancelled)
+                Err(temporalio_sdk::WorkflowTermination::cancelled())
             }
         }
     }
@@ -308,7 +319,11 @@ async fn emit_resolution(
     );
     let _ = ctx
         .external_workflow(holder, None)
-        .signal(AgentSessionWorkflow::deliver_emission, envelope)
+        .signal(
+            AgentSessionWorkflow::deliver_emission,
+            envelope,
+            crate::workflows::signal_options(),
+        )
         .await;
 }
 
@@ -318,7 +333,7 @@ async fn close_child(
     child: &SubagentChildRef,
 ) {
     let _ = ctx
-        .start_activity(
+        .execute_activity(
             WorkflowActivities::subagent_close,
             SubagentCloseActivityRequest {
                 universe_id,

@@ -22,7 +22,9 @@ async fn keys_persist_their_scope_groups_and_actor_flag() {
         .expect("connect to live Postgres");
     let schema = format!("lightspeed_api_keys_test_{}", Uuid::new_v4().simple());
     admin
-        .execute(format!("CREATE SCHEMA \"{schema}\"").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA \"{schema}\""
+        ))))
         .await
         .expect("create isolated schema");
     let pool = PgPoolOptions::new()
@@ -37,7 +39,9 @@ async fn keys_persist_their_scope_groups_and_actor_flag() {
     let outcome = AssertUnwindSafe(exercise(&pool)).catch_unwind().await;
     pool.close().await;
     admin
-        .execute(format!("DROP SCHEMA \"{schema}\" CASCADE").as_str())
+        .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        ))))
         .await
         .expect("drop isolated schema");
     admin.close().await;
