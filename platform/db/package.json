@@ -11,12 +11,13 @@
     "test:migrations": "tsx scripts/check-migrations.ts"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.0",
-    "pg": "^8.16.0"
+    "drizzle-orm": "^0.45.3",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
-    "@types/pg": "^8.15.0",
-    "drizzle-kit": "^0.31.0"
+    "@types/pg": "^8.23.1",
+    "better-auth": "1.7.7",
+    "drizzle-kit": "^0.31.11"
   },
   "engines": {
     "node": ">=24"

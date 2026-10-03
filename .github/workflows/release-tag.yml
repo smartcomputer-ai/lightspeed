@@ -78,7 +78,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.13.0
+          node-version: 24.21.0
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Test the exact tagged source
@@ -289,7 +289,7 @@ jobs:
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.13.0
+          node-version: 24.21.0
           registry-url: https://registry.npmjs.org
       - name: Retrieve and verify this build's bundle by digest
         run: |

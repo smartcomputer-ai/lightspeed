@@ -184,3 +184,53 @@ workspace commands, publication metadata, and the bundled `sdk.tgz` agree.
 `npm run check`, `npm run check:docs`, and `npm run test:build` passed.
 Staged SDK, Configurator, backend, and connector packaging/import checks passed;
 no package was published. Dependency versions remain unchanged.
+
+## Coordinated JavaScript dependency update
+
+Implemented 2026-10-03:
+
+- [x] Update Node to 24.21.0 across CI and all four container images, including
+  verified image digests, and require that version for repository development.
+- [x] Align shared dependencies across workspaces and refresh the root, SDK,
+  and Configurator lockfiles. Major toolchain updates include TypeScript 6.0.3,
+  Vite 8.3.2, Vitest 5.0.3, jsdom 30.1.1, and React's Vite plugin 6.1.1.
+  React/React DOM are 19.3.0; Temporal packages are uniformly 1.24.0;
+  MCP client/server are 2.3.0 with their compatible Node adapter 2.1.1.
+- [x] Declare Better Auth explicitly for database auth code generation,
+  remove TypeScript's deprecated `baseUrl`, and adapt test mock types and
+  browser/Markdown assertions to the upgraded libraries.
+- [x] Retain TypeScript 6 while `@astrojs/check` supports only 5/6, Mermaid 11
+  while `astro-mermaid` supports only 10/11, and Node type declarations on 24
+  to match the runtime. Retain stable Drizzle releases and the existing
+  Baileys release-candidate track.
+
+Security review after the update:
+
+- Root audit findings decreased from 28 to 17 package entries (13 high,
+  four moderate), arising from three underlying advisories. SDK and
+  Configurator standalone audits are clean, including development dependencies;
+  the connectors' production audit is also clean.
+- The remaining high findings are
+  [braces in shadcn tooling](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+  and [http-cache-semantics in Astro](https://github.com/advisories/GHSA-ch52-4w7c-c8xp).
+  Neither advisory currently has a patched release. The documentation site
+  and web UI are built as static assets.
+- The four moderate findings are the deprecated esbuild-kit chain in stable
+  Drizzle Kit, ending in [esbuild's development-server advisory](https://github.com/advisories/GHSA-67mh-4wv8-2f99).
+  Better Auth's optional peer also brings this chain into the backend's
+  production dependency graph; the application does not run an esbuild server.
+  No forced downgrades or unverified dependency overrides were applied.
+
+Validation on Node 24.21.0 and npm 11.19.0:
+
+- Clean `npm ci`, `npm run check`, `npm test` (1,170 workspace tests),
+  `npm run test:build` (16 checks), and `npm run check:docs` passed.
+  Generated contracts and consumer files remain unchanged.
+- The SDK tarball builds from its standalone lockfile; the staged Configurator
+  installs and imports it. Both runtime bundles stage and import successfully.
+  Temporal's native core initializes and shuts down without a server.
+- Workspace dependency ranges agree, all three lockfiles match their manifests,
+  and `git diff --check` passes. No package was published.
+- Live Temporal, SSO, and PostgreSQL migration suites were not run; offline
+  backend/auth tests passed, including their PGlite coverage. Container images
+  were not rebuilt locally.

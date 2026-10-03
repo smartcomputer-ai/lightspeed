@@ -49,7 +49,7 @@ You need:
 - A Lightspeed source checkout, with a terminal open at its root.
 - Rust and Cargo through rustup. The repository's `rust-toolchain.toml`
   selects the required compiler version.
-- Node.js 24 or newer, including npm.
+- Node.js 24.21.0 or newer, including npm.
 - Docker running, with Docker Compose v2.
 - A native build toolchain and the Protocol Buffers compiler (`protoc`),
   including its standard `.proto` include files, for the Rust dependencies.

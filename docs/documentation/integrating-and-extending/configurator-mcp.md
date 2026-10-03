@@ -33,7 +33,7 @@ See [API keys and service access](../access-and-security/api-keys-and-service-ac
 ## Run the service
 
 Use a Configurator artifact from the same release as the runtime. For source
-development, build it from the repository root with Node.js 24 or newer:
+development, build it from the repository root with Node.js 24.21.0 or newer:
 
 ```bash
 npm install

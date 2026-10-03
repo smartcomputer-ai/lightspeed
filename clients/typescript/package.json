@@ -44,12 +44,12 @@
     "check": "npm run check:generated && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
-    "@noble/hashes": "2.2.0"
+    "@noble/hashes": "2.4.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "json-schema-to-typescript": "^15.0.4",
-    "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "@types/node": "^24.19.1",
+    "json-schema-to-typescript": "^16.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.3"
   }
 }

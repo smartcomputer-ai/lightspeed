@@ -13,7 +13,7 @@ find the code that owns a behavior, and keep local state useful while developing
 ## Prepare the checkout
 
 Run the commands below from the repository root. The complete local product
-needs Rust and Cargo through rustup, Node.js 24 or newer with npm, and a running
+needs Rust and Cargo through rustup, Node.js 24.21.0 or newer with npm, and a running
 Docker daemon with Docker Compose v2. The checked-in
 [Rust toolchain](../../../rust-toolchain.toml) selects the compiler. Rust
 dependencies also need a native build toolchain and `protoc`, including its

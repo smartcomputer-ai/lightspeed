@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "fflate": "^0.8.3",
-    "zod": "^4.4.0"
+    "zod": "^4.6.5"
   },
   "engines": {
     "node": ">=24"

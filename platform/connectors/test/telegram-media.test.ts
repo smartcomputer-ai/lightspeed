@@ -6,8 +6,8 @@ import { UNIVERSE_A } from "./fixtures.js";
 
 const route = { provider: "telegram" as const, accountId: "primary", chatId: "123" };
 
-function token(value = "secret-token"): TokenSource & { invalidate: ReturnType<typeof vi.fn> } {
-  return { get: async () => value, invalidate: vi.fn() };
+function token(value = "secret-token") {
+  return { get: async () => value, invalidate: vi.fn<() => void>() } satisfies TokenSource;
 }
 
 describe("Telegram media activities", () => {

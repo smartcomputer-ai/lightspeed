@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
 import { waitForUi } from "@/test/wait-for-ui";
 import { SessionComposer } from "./composer";
 
@@ -15,8 +15,8 @@ let container: HTMLDivElement;
 let finish: (text: string) => void;
 let failTranscription: (error: Error) => void;
 let finishUpload: (result: unknown) => void;
-let stop: ReturnType<typeof vi.fn>;
-let onSend: ReturnType<typeof vi.fn>;
+let stop: Mock<() => void>;
+let onSend: Mock<ComponentProps<typeof SessionComposer>["onSend"]>;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();

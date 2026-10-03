@@ -85,7 +85,7 @@ installation.
 
 If you need an unreleased change or your own build, use the source path below.
 In addition to Docker and the utilities above, it needs GNU Make, Git, and
-Node.js 24 or newer. The release build container supplies the Rust compiler
+Node.js 24.21.0 or newer. The release build container supplies the Rust compiler
 and package-build dependencies.
 
 Use a fresh release checkout. Replace `RELEASE_REF` below with the exact tag

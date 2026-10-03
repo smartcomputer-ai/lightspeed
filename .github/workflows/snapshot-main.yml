@@ -64,7 +64,7 @@ jobs:
           toolchain: ${{ steps.identity.outputs.rust_version }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.13.0
+          node-version: 24.21.0
       - name: Fetch locked dependencies for offline metadata verification
         run: cargo fetch --locked
       - name: Verify release metadata
