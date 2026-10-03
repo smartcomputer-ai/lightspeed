@@ -261,7 +261,7 @@ Validation on Node 24.21.0 and npm 11.19.0:
   types. `serde_yaml` remains at its final 0.9 release; replacing that
   deprecated parser is separate from updating existing package versions.
 
-Validation completed on 2026-10-03:
+Initial dependency-upgrade validation completed on 2026-10-03:
 
 - Full `cargo clean` removed 119.4 GiB before the fresh build and tests.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
@@ -280,5 +280,16 @@ Validation completed on 2026-10-03:
 
 Worker simplification follow-up on 2026-10-03: role selection remains the
 scaling boundary; independent workflow/activity deployment has been removed.
-Deployment and environment-reference documentation now match. Validation of
-the simplified constructors and updated CLI is in progress.
+Deployment and environment-reference documentation now match.
+
+- A second `cargo clean` removed 52.1 GiB before rebuilding.
+- `cargo test -p temporal-runtime -p temporal-workflow --locked` passed:
+  523 tests, with 79 external tests ignored by the default run. The CLI test
+  checks role selection and rejects the removed task-type flag.
+- Ten serialized live tests passed: session execution and continuation,
+  cancellation, workflow-tool plugins, bot schedules, channel replies, and
+  three paid hosted tool round trips using OpenAI and Anthropic. These exercise
+  combined workers, workflow-only plugins, and activity-only connectors through
+  the standard SDK constructor.
+- The exact workspace Clippy gate, formatting, documentation checks, and
+  `git diff --check` passed. The resolved SDK features exclude `experimental`.
