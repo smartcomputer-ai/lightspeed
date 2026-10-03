@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ModelOption } from "@/api";
+import { waitForUi } from "@/test/wait-for-ui";
 import { SessionComposer } from "./composer";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
@@ -57,8 +58,6 @@ async function attach(...files: File[]) {
   const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, "files", { value: files, configurable: true });
   await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
-  // The base64 read is asynchronous; let it reach the upload call.
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
 }
 const png = (name = "screen.png", size = 3) => new File([new Uint8Array(size)], name, { type: "image/png" });
 
@@ -91,6 +90,7 @@ it("keeps the draft and explains when nothing can be steered", async () => {
 it("uploads attachments on pick and sends them with the message", async () => {
   const { onSend } = await setup({ runActive: false });
   await attach(png());
+  await waitForUi(() => expect(uploads).toHaveLength(1));
   expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/u1/attachments", { bytesBase64: btoa("\0\0\0") }, expect.any(AbortSignal));
   expect(container.textContent).toContain("Uploading…");
   await act(async () => uploads[0]!(`sha256:${"a".repeat(64)}`));
@@ -108,6 +108,7 @@ it("waits for uploads when Enter is pressed early, then sends", async () => {
   await attach(png());
   await press("Enter");
   expect(onSend).not.toHaveBeenCalled();
+  await waitForUi(() => expect(uploads).toHaveLength(1));
   await act(async () => uploads[0]!(`sha256:${"b".repeat(64)}`));
   expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: "", attachments: [expect.objectContaining({ name: "screen.png" })] }), null);
 });
@@ -128,7 +129,7 @@ it("blocks sending while an upload has failed until it is removed", async () => 
   mocks.api.mockRejectedValueOnce(new Error("Gateway unavailable"));
   const { onSend } = await setup({ runActive: false });
   await attach(png());
-  expect(container.textContent).toContain("Upload failed");
+  await waitForUi(() => expect(container.textContent).toContain("Upload failed"));
   await act(async () => button("Send message").click());
   expect(onSend).not.toHaveBeenCalled();
   expect(container.textContent).toContain("Remove or retry the attachments that failed to upload.");

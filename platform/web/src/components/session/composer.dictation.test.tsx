@@ -2,6 +2,7 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { waitForUi } from "@/test/wait-for-ui";
 import { SessionComposer } from "./composer";
 
 const mocks = vi.hoisted(() => ({ capture: vi.fn(), transcribe: vi.fn(), cancel: vi.fn(), api: vi.fn() }));
@@ -230,8 +231,7 @@ it.each(["transcript", "upload"])("waits for both the transcript and attachments
   const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, "files", { value: [new File(["pdf"], "notes.pdf", { type: "application/pdf" })] });
   await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
-  expect(mocks.api).toHaveBeenCalled();
+  await waitForUi(() => expect(mocks.api).toHaveBeenCalled());
   await record();
   await click("Send message");
   const completeTranscript = async () => { await act(async () => finish("Spoken text")); };
@@ -250,8 +250,7 @@ it("keeps the completed transcript for review when an attachment upload fails", 
   const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
   Object.defineProperty(input, "files", { value: [new File(["pdf"], "notes.pdf", { type: "application/pdf" })] });
   await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
-  expect(container.textContent).toContain("Upload failed");
+  await waitForUi(() => expect(container.textContent).toContain("Upload failed"));
   await record();
   await click("Send message");
   await act(async () => finish("Spoken text"));

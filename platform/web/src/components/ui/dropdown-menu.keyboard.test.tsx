@@ -13,6 +13,7 @@ import { Button } from "./button";
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
+  vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   vi.stubGlobal(
@@ -48,17 +49,18 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.clearAllTimers();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
-const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
 async function key(target: Element, key: string) {
   await act(async () => {
     target.dispatchEvent(
       new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
     );
-    await settle();
   });
+  await act(async () => { await vi.runAllTimersAsync(); });
 }
 it("opens with the keyboard, moves between actions and restores focus on Escape", async () => {
   const download = vi.fn();
@@ -89,8 +91,9 @@ it("opens with the keyboard, moves between actions and restores focus on Escape"
     trigger.dispatchEvent(
       new MouseEvent("click", { bubbles: true, detail: 1 }),
     );
-    await settle();
   });
+  await act(async () => { await vi.runAllTimersAsync(); });
+  expect(document.activeElement?.getAttribute("role")).toBe("menu");
   await key(document.activeElement!, "ArrowDown");
   expect(document.activeElement?.textContent).toBe("Upload replacement");
   await key(document.activeElement!, "ArrowDown");

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { waitForUi } from "@/test/wait-for-ui";
 import { WorkspacesPage } from "./WorkspacesPage";
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), editable: true }));
@@ -59,6 +60,7 @@ const tree = () => ({
 });
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  notifyManager.setNotifyFunction((notify) => act(notify));
   mocks.editable = true;
   blobRef = `sha256:${digest}`;
   mocks.api
@@ -77,6 +79,8 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  client.clear();
+  notifyManager.setNotifyFunction((notify) => notify());
   container.remove();
   vi.unstubAllGlobals();
 });
@@ -99,16 +103,7 @@ async function render() {
       </QueryClientProvider>,
     ),
   );
-  for (
-    let attempt = 0;
-    attempt < 20 && !container.querySelector("textarea");
-    attempt++
-  ) {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
-  }
-  expect(container.querySelector("textarea")).not.toBeNull();
+  await waitForUi(() => expect(container.querySelector("textarea")).not.toBeNull());
 }
 const link = () =>
   container.querySelector<HTMLAnchorElement>(
@@ -153,12 +148,8 @@ it("keeps unsaved edits local and updates the link when the saved blob changes",
   await act(async () => {
     blobRef = `sha256:${nextDigest}`;
     client.setQueryData(["workspace-tree", "u", "ws"], tree());
-    await new Promise((resolve) => setTimeout(resolve, 20));
   });
-  await vi.waitFor(async () => {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+  await waitForUi(() => {
     expect(link()!.href).toContain(nextDigest);
   });
   expect(editor.value).toBe("unsaved edit");

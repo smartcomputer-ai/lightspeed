@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { waitForUi } from "@/test/wait-for-ui";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { ToolGroupTrace } from "./tool-trace";
 import { MarkdownContent } from "./markdown-content";
@@ -19,14 +20,17 @@ const file: FileReference = {
 };
 let root: Root;
 let container: HTMLDivElement;
+let client: QueryClient;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  client.clear();
   container.remove();
   vi.unstubAllGlobals();
 });
@@ -137,9 +141,6 @@ it("continues to sanitize unsafe links", async () => {
 });
 
 it.each([false, true])("resolves a reference outside the loaded history and scopes the lookup to its session (image: %s)", async (showImage) => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
   const resolved = showImage ? { ...file, type: "image/jpeg" } : file;
   const load = vi.fn(async () => resolved);
   vi.stubGlobal("URL", class extends URL {
@@ -162,8 +163,9 @@ it.each([false, true])("resolves a reference outside the loaded history and scop
       </QueryClientProvider>,
     ),
   );
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitForUi(() => {
+    expect(container.querySelector("a")?.href).toContain("session=s1");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(showImage ? "blob:http://localhost/historical-image" : undefined);
   });
   expect(load).toHaveBeenCalledWith(file.handle, expect.any(AbortSignal));
   expect(container.querySelector("a")!.href).toContain("session=s1");
@@ -178,7 +180,6 @@ it.each([false, true])("resolves a reference outside the loaded history and scop
 
 
 it("checks history even for a visible reference and refreshes when new metadata arrives", async () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const load = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(file);
   const show = async (known: boolean) => {
     await act(async () => root.render(
@@ -192,7 +193,11 @@ it("checks history even for a visible reference and refreshes when new metadata 
         </TranscriptLinksContext.Provider>
       </QueryClientProvider>,
     ));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await waitForUi(() => {
+      expect(load).toHaveBeenCalledTimes(known ? 2 : 1);
+      expect(client.isFetching()).toBe(0);
+      expect(client.getQueryCache().getAll().at(-1)?.state.status).toBe("success");
+    });
   };
   await show(false);
   expect(container.querySelector("a")).toBeNull();
