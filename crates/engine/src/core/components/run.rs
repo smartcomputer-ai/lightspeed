@@ -652,7 +652,7 @@ pub(crate) fn apply_event(
                     config_revision, state.lifecycle.config_revision
                 )));
             }
-            crate::core::components::config::validate_run_config_for_state(state, run_config)?;
+            crate::core::components::config::validate_recorded_run_config(state, run_config)?;
             let expected_run_id =
                 state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                     DomainError::InvariantViolation("run id cursor exhausted".into())

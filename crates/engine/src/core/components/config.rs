@@ -45,11 +45,20 @@ pub(crate) fn validate_config_update_for_state(
     state: &CoreAgentState,
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
+    validate_recorded_config_update(state, config)?;
+    validate_retained_native_model(state, &config.model)
+}
+
+/// Replay keeps structural invariants, but does not reapply a newer admission
+/// policy to model changes already recorded in the log.
+pub(crate) fn validate_recorded_config_update(
+    state: &CoreAgentState,
+    config: &SessionConfig,
+) -> Result<(), DomainError> {
     let current = current_config(state)?;
     validate_session_is_idle_for_config_update(state)?;
     config.validate()?;
     validate_session_provider_is_pinned(&current.model, &config.model)?;
-    validate_retained_native_model(state, &config.model)?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
     validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
     Ok(())
@@ -671,6 +680,20 @@ pub(crate) fn validate_run_config_for_state(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
+    validate_recorded_run_config(state, run_config)?;
+    let config = current_config(state)?;
+    validate_retained_native_model(
+        state,
+        run_config.model_override.as_ref().unwrap_or(&config.model),
+    )
+}
+
+/// A committed run has already passed admission. Preserve its model selection
+/// even if the current native-state admission policy would refuse it now.
+pub(crate) fn validate_recorded_run_config(
+    state: &CoreAgentState,
+    run_config: &RunConfig,
+) -> Result<(), DomainError> {
     if run_config.input_limit_tokens == Some(0) {
         return Err(DomainError::ProviderCompatibility(
             "input_limit_tokens must be positive".into(),
@@ -678,10 +701,6 @@ pub(crate) fn validate_run_config_for_state(
     }
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
-    validate_retained_native_model(
-        state,
-        run_config.model_override.as_ref().unwrap_or(&config.model),
-    )?;
     validate_active_context_api_kind(state, &config.model.api_kind)?;
     validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
     Ok(())
@@ -1270,6 +1289,150 @@ mod tests {
                 compaction,
             },
             features: FeaturesConfig::default(),
+        }
+    }
+
+    #[test]
+    fn recorded_native_model_changes_replay_but_new_changes_are_rejected() {
+        use crate::{
+            AcceptedRunEvent, BlobRef, CommandError, CommandRejectionKind, ContentRef,
+            ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
+            ContextEvent, ContextMessageRole, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
+            CoreAgentLifecycleEvent, EventSeq, RunEvent, RunId, RunRequestCommand,
+            RunRequestSource, RunSource, SessionPosition, admit_command, apply_event,
+        };
+        for (api_kind, kind, provider_kind) in [
+            (
+                ProviderApiKind::OpenAiResponses,
+                ContextEntryKind::ReasoningState,
+                None,
+            ),
+            (
+                ProviderApiKind::OpenAiResponses,
+                ContextEntryKind::ProviderOpaque,
+                Some(crate::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND),
+            ),
+            (
+                ProviderApiKind::AnthropicMessages,
+                ContextEntryKind::ProviderOpaque,
+                Some(crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND),
+            ),
+        ] {
+            let original = config(api_kind, None);
+            let changed = SessionConfig {
+                model: ModelSelection {
+                    model: "another-model".into(),
+                    ..original.model.clone()
+                },
+                ..original.clone()
+            };
+            let native = ContextEntry {
+                entry_id: ContextEntryId::new(1),
+                key: None,
+                kind,
+                source: ContextEntrySource::ContextEdit,
+                content: ContentRef {
+                    content_ref: BlobRef::from_bytes(b"native state"),
+                    media_type: None,
+                    provider_kind: provider_kind.map(str::to_owned),
+                },
+                preview: None,
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+                supersedes: None,
+            };
+            let events = [
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened { config: original }),
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                    base_revision: 0,
+                    entries: vec![native],
+                }),
+            ];
+            let entry = |seq, event| CoreAgentEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(seq),
+                },
+                observed_at_ms: seq,
+                joins: Default::default(),
+                event,
+            };
+            let history = vec![entry(1, events[0].clone()), entry(2, events[1].clone())];
+            let mut state = CoreAgentState::new();
+            for event in &history {
+                apply_event(&mut state, event).unwrap();
+            }
+            let run_config = RunConfig {
+                model_override: Some(changed.model.clone()),
+                ..Default::default()
+            };
+            let input = vec![ContextEntryInput {
+                kind: ContextEntryKind::Message {
+                    role: ContextMessageRole::User,
+                },
+                content: ContentRef {
+                    content_ref: BlobRef::from_bytes(b"continue"),
+                    media_type: Some("text/plain".into()),
+                    provider_kind: None,
+                },
+                preview: None,
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+            }];
+            for command in [
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: changed.clone(),
+                },
+                CoreAgentCommand::RequestRun(RunRequestCommand {
+                    submission_id: None,
+                    source: RunRequestSource::Input {
+                        input: input.clone(),
+                    },
+                    run_config: run_config.clone(),
+                    notify_on_terminal: vec![],
+                    requested_by: None,
+                }),
+            ] {
+                assert!(matches!(admit_command(&state, command, 3),
+                    Err(CommandError::Rejected(rejection)) if rejection.kind == CommandRejectionKind::ProviderCompatibility));
+            }
+            for recorded in [
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {
+                    config: changed.clone(),
+                    revision: 1,
+                }),
+                CoreAgentEvent::Run(RunEvent::Accepted(AcceptedRunEvent {
+                    run_id: RunId::new(1),
+                    submission_id: None,
+                    source: RunSource::Input { input },
+                    run_config,
+                    config_revision: 0,
+                    notify_on_terminal: vec![],
+                    requested_by: None,
+                })),
+            ] {
+                let mut committed = history.clone();
+                committed.push(entry(3, recorded));
+                let serialized = serde_json::to_vec(&committed).unwrap();
+                let decoded: Vec<CoreAgentEntry> = serde_json::from_slice(&serialized).unwrap();
+                let mut replay = CoreAgentState::new();
+                for event in &decoded {
+                    apply_event(&mut replay, event).expect("recorded model change replays");
+                }
+                let mut applied = state.clone();
+                apply_event(&mut applied, committed.last().unwrap()).unwrap();
+                assert_eq!(replay, applied);
+                if let Some(run) = replay.runs.queued.first() {
+                    assert_eq!(run.run_config.model_override.as_ref(), Some(&changed.model));
+                } else {
+                    assert_eq!(
+                        replay.lifecycle.config.as_ref().unwrap().model,
+                        changed.model
+                    );
+                }
+            }
         }
     }
 

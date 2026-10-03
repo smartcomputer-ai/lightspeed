@@ -12,14 +12,16 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-use api_projection::{MAX_EVENT_PAGE_LIMIT, read_all_session_entries, replay_core_agent_state};
+use anyhow::Context as _;
+use api_projection::MAX_EVENT_PAGE_LIMIT;
 use async_trait::async_trait;
 use engine::{
-    BlobRef, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentState, CoreAgentStatus,
-    Promise, PromiseId, PromiseResolution, PromiseScope, PromiseSource, SessionId,
+    BlobRef, CodecError, CoreAgentAction, CoreAgentCodec, CoreAgentCommand, CoreAgentDrive,
+    CoreAgentState, CoreAgentStatus, DomainError, EventSeq, Promise, PromiseId, PromiseResolution,
+    PromiseScope, PromiseSource, SessionId,
     storage::{
-        AppendSessionEvents, DeleteClosedSessions, ListSessions, SessionListCursor, SessionRecord,
-        SessionStore, SessionStoreError, engine_blob_refs,
+        AppendSessionEvents, DeleteClosedSessions, ListSessions, ReadSessionEvents,
+        SessionListCursor, SessionRecord, SessionStore, SessionStoreError, engine_blob_refs,
     },
 };
 use store_pg::{
@@ -618,7 +620,7 @@ impl PromiseReaper {
                 Err(error) => {
                     tracing::warn!(
                         target: "temporal_server",
-                        %error,
+                        error = %format_args!("{error:#}"),
                         "promise reaper pass failed"
                     );
                 }
@@ -631,7 +633,9 @@ impl PromiseReaper {
         let workflows: Arc<dyn WorkflowRepairClient> = Arc::new(TemporalWorkflowRepairClient {
             client: self.client.clone(),
         });
-        let universes = store_pg::list_universes(self.stores.pool()).await?;
+        let universes = store_pg::list_universes(self.stores.pool())
+            .await
+            .context("list universes for promise repair")?;
         let mut stats = ReaperStats::default();
         for (universe_id, _) in universes {
             let store = self.stores.store_for(universe_id);
@@ -644,7 +648,7 @@ impl PromiseReaper {
                 workflows.clone(),
                 now_ms(),
             )
-            .await?;
+            .await;
             stats.merge(universe_stats);
         }
         Ok(stats)
@@ -668,14 +672,13 @@ pub(super) async fn reap_universe_once(
     append_store: Arc<dyn SessionStore>,
     workflows: Arc<dyn WorkflowRepairClient>,
     now_ms: u64,
-) -> anyhow::Result<ReaperStats> {
-    let snapshots = load_session_snapshots(sessions.as_ref()).await?;
+) -> ReaperStats {
     let mut workflow_status_cache = BTreeMap::<SessionId, SessionWorkflowStatus>::new();
     let mut stats = ReaperStats {
         universes_scanned: 1,
-        sessions_scanned: snapshots.len(),
         ..ReaperStats::default()
     };
+    let snapshots = load_session_snapshots(universe_id, sessions.as_ref(), &mut stats).await;
     observe_active_projection_statuses(
         universe_id,
         &snapshots,
@@ -696,7 +699,7 @@ pub(super) async fn reap_universe_once(
         &mut stats,
     )
     .await;
-    Ok(stats)
+    stats
 }
 
 fn plan_repair(
@@ -990,28 +993,42 @@ async fn append_commands_direct(
 }
 
 async fn load_session_snapshots(
+    universe_id: Uuid,
     sessions: &dyn SessionStore,
-) -> anyhow::Result<BTreeMap<SessionId, LoadedSessionSnapshot>> {
+    stats: &mut ReaperStats,
+) -> BTreeMap<SessionId, LoadedSessionSnapshot> {
     let mut cursor: Option<SessionListCursor> = None;
     let mut snapshots = BTreeMap::new();
     loop {
-        let page = sessions
+        let page = match sessions
             .list_sessions(ListSessions {
                 cursor,
                 limit: SESSION_PAGE_LIMIT,
                 ..Default::default()
             })
-            .await?;
-        for record in page.sessions {
-            let entries = read_all_session_entries(
-                sessions,
-                &record.session_id,
-                MAX_EVENT_PAGE_LIMIT as usize,
-            )
             .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
-            let state =
-                replay_core_agent_state(&entries).map_err(|error| anyhow::anyhow!("{error}"))?;
+        {
+            Ok(page) => page,
+            Err(error) => {
+                stats.errors += 1;
+                tracing::warn!(target: "temporal_server", %universe_id, operation = "list_sessions",
+                    %error, "promise reaper could not list sessions");
+                return snapshots;
+            }
+        };
+        for record in page.sessions {
+            stats.sessions_scanned += 1;
+            let state = match load_session_state(sessions, &record.session_id).await {
+                Ok(state) => state,
+                Err(error) => {
+                    stats.errors += 1;
+                    tracing::warn!(target: "temporal_server", %universe_id,
+                        session_id = %record.session_id, operation = error.operation(),
+                        event_seq = error.event_seq().map(EventSeq::as_u64),
+                        %error, "promise reaper skipped unreadable session");
+                    continue;
+                }
+            };
             snapshots.insert(
                 record.session_id.clone(),
                 LoadedSessionSnapshot { record, state },
@@ -1019,8 +1036,68 @@ async fn load_session_snapshots(
         }
         cursor = page.next_cursor;
         if cursor.is_none() {
-            return Ok(snapshots);
+            return snapshots;
         }
+    }
+}
+
+#[derive(Debug, Error)]
+enum SessionLoadError {
+    #[error("read history after {after:?}: {source}")]
+    Read {
+        after: Option<EventSeq>,
+        source: SessionStoreError,
+    },
+    #[error("decode event {seq}: {source}")]
+    Decode { seq: EventSeq, source: CodecError },
+    #[error("replay event {seq}: {source}")]
+    Replay { seq: EventSeq, source: DomainError },
+}
+
+impl SessionLoadError {
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Read { .. } => "read_history",
+            Self::Decode { .. } => "decode",
+            Self::Replay { .. } => "replay",
+        }
+    }
+
+    fn event_seq(&self) -> Option<EventSeq> {
+        match self {
+            Self::Read { .. } => None,
+            Self::Decode { seq, .. } | Self::Replay { seq, .. } => Some(*seq),
+        }
+    }
+}
+
+async fn load_session_state(
+    sessions: &dyn SessionStore,
+    session_id: &SessionId,
+) -> Result<CoreAgentState, SessionLoadError> {
+    let mut state = CoreAgentState::new();
+    let mut after = None;
+    loop {
+        let page = sessions
+            .read_after(ReadSessionEvents {
+                session_id: session_id.clone(),
+                after,
+                limit: MAX_EVENT_PAGE_LIMIT as usize,
+            })
+            .await
+            .map_err(|source| SessionLoadError::Read { after, source })?;
+        for stored in &page.entries {
+            let seq = stored.position.seq;
+            let entry = CoreAgentCodec
+                .decode_entry(stored)
+                .map_err(|source| SessionLoadError::Decode { seq, source })?;
+            engine::apply_event(&mut state, &entry)
+                .map_err(|source| SessionLoadError::Replay { seq, source })?;
+        }
+        if page.complete {
+            return Ok(state);
+        }
+        after = page.next_after;
     }
 }
 
@@ -1118,6 +1195,160 @@ mod tests {
     use temporal_workflow::{default_run_config, default_session_config};
 
     use super::*;
+
+    async fn stored_session(
+        store: &engine::storage::InMemorySessionStore,
+        id: &str,
+        events: Vec<engine::StoredEvent>,
+    ) -> SessionId {
+        let session_id = SessionId::new(id);
+        store
+            .create_session(engine::storage::CreateSession {
+                session_id: session_id.clone(),
+                display_name: None,
+                metadata: Default::default(),
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head: None,
+                events: events
+                    .into_iter()
+                    .map(|event| engine::session::UncommittedStoredEvent {
+                        observed_at_ms: 1,
+                        joins: Default::default(),
+                        event,
+                    })
+                    .collect(),
+            })
+            .await
+            .unwrap();
+        session_id
+    }
+
+    #[derive(Clone)]
+    struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unreadable_sessions_are_identified_without_blocking_healthy_repairs() {
+        use engine::{
+            CoreAgentEvent, CoreAgentLifecycleEvent, PromiseEvent, PromiseOwnership, PromiseStatus,
+            StoredEvent,
+        };
+        let store = Arc::new(engine::storage::InMemorySessionStore::new());
+        let opened = CoreAgentCodec
+            .encode_event(&CoreAgentEvent::Lifecycle(
+                CoreAgentLifecycleEvent::Opened {
+                    config: default_session_config(test_model()),
+                },
+            ))
+            .unwrap();
+        let malformed = stored_session(
+            &store,
+            "malformed",
+            vec![
+                opened.clone(),
+                StoredEvent::new(
+                    "lightspeed.core.context.unknown",
+                    1,
+                    serde_json::json!({"context":{"unknown":{}}}),
+                ),
+            ],
+        )
+        .await;
+        let invalid = stored_session(&store, "invalid", vec![opened.clone(), opened.clone()]).await;
+        let promise_id = PromiseId::from_number(1);
+        let healthy = stored_session(
+            &store,
+            "healthy",
+            vec![
+                opened,
+                CoreAgentCodec
+                    .encode_event(&CoreAgentEvent::Promise(PromiseEvent::Created {
+                        promise: Promise {
+                            promise_id: promise_id.clone(),
+                            source: PromiseSource::Timer { fire_at_ms: 5 },
+                            scope: PromiseScope::Session,
+                            ownership: PromiseOwnership::Model,
+                            status: PromiseStatus::Pending,
+                            payload_ref: None,
+                            error_ref: None,
+                            deadline_ms: None,
+                        },
+                    }))
+                    .unwrap(),
+            ],
+        )
+        .await;
+        assert!(
+            matches!(load_session_state(store.as_ref(), &malformed).await,
+            Err(SessionLoadError::Decode { seq, .. }) if seq == EventSeq::new(2))
+        );
+        assert!(matches!(load_session_state(store.as_ref(), &invalid).await,
+            Err(SessionLoadError::Replay { seq, source: DomainError::InvariantViolation(_) }) if seq == EventSeq::new(2)));
+        assert!(matches!(
+            load_session_state(store.as_ref(), &SessionId::new("missing")).await,
+            Err(SessionLoadError::Read {
+                after: None,
+                source: SessionStoreError::SessionNotFound { .. }
+            })
+        ));
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let writer = LogWriter(logs.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let universe_id = Uuid::new_v4();
+        let stats = reap_universe_once(
+            universe_id,
+            store.clone(),
+            store.clone(),
+            Arc::new(FakeWorkflows::default()),
+            10,
+        )
+        .await;
+        assert_eq!(stats.sessions_scanned, 3);
+        assert_eq!(stats.errors, 2);
+        assert_eq!(stats.holder_repairs_appended, 1);
+        let state = load_session_state(store.as_ref(), &healthy).await.unwrap();
+        assert_eq!(
+            state.promises.promises[&promise_id].status,
+            PromiseStatus::Resolved
+        );
+        let captured = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        let fields: Vec<serde_json::Value> = captured
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["fields"].clone())
+            .collect();
+        for (session, operation) in [(&malformed, "decode"), (&invalid, "replay")] {
+            let log = fields
+                .iter()
+                .find(|log| log["session_id"] == session.as_str())
+                .expect("session-specific warning");
+            assert_eq!(log["universe_id"], universe_id.to_string());
+            assert_eq!(log["operation"], operation);
+            assert_eq!(log["event_seq"], 2);
+            assert!(log["error"].as_str().is_some_and(|error| !error.is_empty()));
+        }
+    }
 
     #[derive(Default)]
     struct FakeWorkflows {
