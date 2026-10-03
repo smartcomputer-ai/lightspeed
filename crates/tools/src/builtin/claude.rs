@@ -47,7 +47,7 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> ToolResult<S
     };
     let text = match (tool.operation(), tool.variant()) {
         (BuiltinToolOperation::ReadFile, _) => {
-            "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference."
+            "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle. Use [label](media:handle) to link them or ![description](media:handle) to display an image inline."
         }
         (BuiltinToolOperation::WriteFile, _) => "Writes a file to the filesystem.",
         (BuiltinToolOperation::EditFile, _) => "Performs exact string replacements in a file.",

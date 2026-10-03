@@ -72,9 +72,38 @@ struct ReferenceArgs {
     snapshot_ref: Option<engine::BlobRef>,
 }
 
+/// Origin is navigation metadata, independent of the immutable content identity.
+fn reference_source(
+    path: &crate::fs::FsPath,
+    mounts: &[vfs::ResolvedWorkspaceAttachment],
+) -> Option<AttachmentSource> {
+    let path = vfs::VfsPath::parse(path.as_str()).ok()?;
+    let components = path.components();
+    let mount = mounts
+        .iter()
+        .filter(|mount| components.starts_with(&mount.path.components()))
+        .max_by_key(|mount| mount.path.depth())?;
+    let path = components[mount.path.depth()..].join("/");
+    let (kind, id) = match &mount.target {
+        vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace } => {
+            ("vfs_workspace", workspace.workspace_id.to_string())
+        }
+        vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref } => {
+            ("vfs_snapshot", snapshot_ref.to_string())
+        }
+        vfs::ResolvedWorkspaceAttachmentTarget::Unavailable { .. } => return None,
+    };
+    Some(AttachmentSource {
+        kind: kind.into(),
+        id,
+        path,
+    })
+}
+
 /// Resolve exactly one immutable manifest selection. Does not read file bytes.
 pub(crate) async fn invoke_reference(
     ctx: &crate::fs::FsToolContext,
+    mounts: &[vfs::ResolvedWorkspaceAttachment],
     arguments: serde_json::Value,
 ) -> crate::error::ToolResult<crate::runtime::ToolInvocationOutput> {
     use crate::fs::tools::{invalid_request, resolve_path};
@@ -103,7 +132,11 @@ pub(crate) async fn invoke_reference(
         )
     } else {
         let path = resolve_path(ctx, &args.path)?;
-        (ctx.fs.export_vfs(&path).await?, path.to_string(), None)
+        (
+            ctx.fs.export_vfs(&path).await?,
+            path.to_string(),
+            reference_source(&path, mounts),
+        )
     };
     let vfs::VfsEntry::File(file) = entry else {
         return Err(invalid_request(
@@ -121,8 +154,8 @@ pub(crate) async fn invoke_reference(
         ctx.blobs.retain_blob(&blob).await?;
     }
     let visible = format!(
-        "File attachment: {}\nReference: {}\nInclude [label]({}) in your message to share this file version with the user.",
-        descriptor.name, descriptor.handle, descriptor.handle
+        "File attachment: {}\nReference: {}\nUse [label]({}) to link this file version, or ![description]({}) to display it inline if it is an image.",
+        descriptor.name, descriptor.handle, descriptor.handle, descriptor.handle
     );
     let mut result = crate::runtime::encode_output(&descriptor, visible)?;
     result.attachments.push(Attachment::File(descriptor));
@@ -235,7 +268,7 @@ mod tests {
             .await
             .unwrap();
         let ctx = crate::fs::FsToolContext::new(Arc::new(fs), store);
-        let result = invoke_reference(&ctx, serde_json::json!({"path":"/report.md"}))
+        let result = invoke_reference(&ctx, &[], serde_json::json!({"path":"/report.md"}))
             .await
             .unwrap();
         assert!(result.effects.is_empty());
@@ -244,6 +277,7 @@ mod tests {
         assert!(result.attachments[0].context_entry().is_none());
         let explicit = invoke_reference(
             &ctx,
+            &[],
             serde_json::json!({"path":"/report.md", "snapshot_ref": snapshot}),
         )
         .await
@@ -253,7 +287,7 @@ mod tests {
             result.attachments[0].handle()
         );
         assert!(
-            invoke_reference(&ctx, serde_json::json!({"path":"/"}))
+            invoke_reference(&ctx, &[], serde_json::json!({"path":"/"}))
                 .await
                 .is_err()
         );

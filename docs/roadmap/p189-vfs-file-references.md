@@ -26,7 +26,13 @@ PDF supplies media to the model, and mentioning its `media:` link in the final
 answer forwards it. Images are immutable blobs too, and may also have a VFS
 path. A file reference to an image does not automatically load it as model
 input. Receiving a file attachment preserves a link; receiving media retains
-the existing native-media admission and presentation rules.
+the existing native-media admission rules.
+
+Message presentation follows Markdown for both reference types: `[label](ref)`
+renders a text link, while `![description](ref)` displays an image inline and
+links it to the blob viewer. Image syntax for a non-image falls back to a file
+link. Browser previews do not admit media into model context or change attachment
+handoff. Either syntax in a successful final answer can forward the attachment.
 
 ## Identity and representation
 
@@ -61,6 +67,11 @@ Unknown, malformed, or ambiguous references are unavailable. Renames,
 overwrites, deletion, and workspace detachment do not retarget an attachment.
 Source information is optional navigation context and never controls the bytes
 opened by a file link.
+References created from attached workspaces record the workspace ID and relative
+path. The blob viewer links back to both the conversation and that workspace;
+the workspace file link follows the current path while the blob remains the
+referenced version. VFS mount metadata stays in the tool context, outside generic
+filesystem interfaces, and survives sub-agent handoff.
 
 Canonical references on recorded attachments and result-envelope containment
 edges keep the bytes reachable for the receiving session. A digest embedded
@@ -106,3 +117,14 @@ Fresh validation for the revised contract:
 
 Local live suites use Temporal, PostgreSQL, MinIO, and scripted models. External
 model-provider suites were not run.
+
+Workspace-origin follow-up: all 252 tools tests, 36 focused file-link/blob-viewer
+tests, and the web typecheck passed. All three live attachment handoff tests
+passed, including workspace ID and relative-path assertions for joined and
+spawned/awaited results.
+
+Markdown presentation follow-up: all 795 web tests passed with two workers,
+including historical image references, text-link behavior for both handle types,
+preview cleanup, and non-image fallbacks. All 252 tools tests and the web
+typecheck passed. Tool descriptions and reference-result guidance describe both
+Markdown forms.

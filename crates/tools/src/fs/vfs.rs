@@ -1331,7 +1331,10 @@ mod tests {
             };
             let read = BuiltinTool::vfs(Op::ReadFile, surface)
                 .invoke_json(
-                    BuiltinToolContext::Vfs(&ctx),
+                    BuiltinToolContext::Vfs {
+                        filesystem: &ctx,
+                        attachments: &[],
+                    },
                     serde_json::json!({key:"/report.md"}),
                 )
                 .await
@@ -1340,7 +1343,10 @@ mod tests {
             assert!(read.attachments.is_empty());
             let reference = BuiltinTool::vfs(Op::Reference, surface)
                 .invoke_json(
-                    BuiltinToolContext::Vfs(&ctx),
+                    BuiltinToolContext::Vfs {
+                        filesystem: &ctx,
+                        attachments: &[],
+                    },
                     serde_json::json!({"path":"/report.md"}),
                 )
                 .await
@@ -1349,14 +1355,17 @@ mod tests {
             assert!(reference.effects.is_empty());
             let write = BuiltinTool::vfs(Op::WriteFile, surface)
                 .invoke_json(
-                    BuiltinToolContext::Vfs(&ctx),
+                    BuiltinToolContext::Vfs {
+                        filesystem: &ctx,
+                        attachments: &[],
+                    },
                     serde_json::json!({key:"/report.md", "content":"replacement"}),
                 )
                 .await
                 .unwrap();
             assert_eq!(write.model_visible_text, "Wrote 11 bytes to /report.md");
             assert!(write.attachments.is_empty());
-            let edit = BuiltinTool::vfs(Op::EditFile, surface).invoke_json(BuiltinToolContext::Vfs(&ctx), serde_json::json!({key:"/report.md", "old_string":"replacement", "new_string":"edited"})).await.unwrap();
+            let edit = BuiltinTool::vfs(Op::EditFile, surface).invoke_json(BuiltinToolContext::Vfs { filesystem: &ctx, attachments: &[] }, serde_json::json!({key:"/report.md", "old_string":"replacement", "new_string":"edited"})).await.unwrap();
             assert_eq!(
                 edit.model_visible_text,
                 "Replaced 1 match(es) in /report.md"
@@ -1364,7 +1373,10 @@ mod tests {
             assert!(edit.attachments.is_empty());
             let after = BuiltinTool::vfs(Op::Reference, surface)
                 .invoke_json(
-                    BuiltinToolContext::Vfs(&ctx),
+                    BuiltinToolContext::Vfs {
+                        filesystem: &ctx,
+                        attachments: &[],
+                    },
                     serde_json::json!({"path":"/report.md"}),
                 )
                 .await
@@ -1510,6 +1522,68 @@ mod tests {
         .expect("attached fs");
 
         (blobs, store, fs, workspace_id)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reference_preserves_workspace_origin_and_immutable_bytes() {
+        use crate::runtime::{InlineToolRuntime, ToolBinding, ToolCatalog, ToolRuntime};
+        let (blobs, _, fs, workspace_id) = test_attached_fs().await;
+        let path = FsPath::new("/workspace/docs/report.md").unwrap();
+        fs.create_directory(
+            &FsPath::new("/workspace/docs").unwrap(),
+            CreateDirectoryOptions { recursive: true },
+        )
+        .await
+        .unwrap();
+        fs.write_file(&path, b"original".to_vec()).await.unwrap();
+        let mounts = fs.attachments().to_vec();
+        let fs = Arc::new(fs);
+        let ctx = crate::fs::FsToolContext::new(fs.clone(), blobs.clone())
+            .with_cwd(FsPath::new("/workspace/docs").unwrap());
+        let mut catalog = ToolCatalog::new();
+        catalog.insert(ToolBinding::new(
+            engine::ToolName::new("vfs_reference"),
+            "vfs.reference",
+        ));
+        let runtime =
+            InlineToolRuntime::with_vfs_filesystem(ctx, catalog).with_vfs_attachments(mounts);
+        let result = runtime
+            .invoke_json(
+                &engine::ToolName::new("vfs_reference"),
+                serde_json::json!({"path":"report.md"}),
+            )
+            .await
+            .unwrap();
+        let engine::Attachment::File(file) = &result.attachments[0] else {
+            panic!("file attachment")
+        };
+        assert_eq!(
+            file.source,
+            Some(engine::AttachmentSource {
+                kind: "vfs_workspace".into(),
+                id: workspace_id.to_string(),
+                path: "docs/report.md".into(),
+            })
+        );
+        assert_eq!(result.output_json["source"]["id"], workspace_id.as_str());
+        fs.write_file(&path, b"updated".to_vec()).await.unwrap();
+        assert_eq!(
+            blobs.read_bytes(&file.content_ref).await.unwrap(),
+            b"original"
+        );
+        let snapshot = runtime
+            .invoke_json(
+                &engine::ToolName::new("vfs_reference"),
+                serde_json::json!({"path":"/skills/rust/SKILL.md"}),
+            )
+            .await
+            .unwrap();
+        let engine::Attachment::File(file) = &snapshot.attachments[0] else {
+            panic!("file attachment")
+        };
+        let source = file.source.as_ref().unwrap();
+        assert_eq!(source.kind, "vfs_snapshot");
+        assert_eq!(source.path, "SKILL.md");
     }
 
     #[tokio::test(flavor = "current_thread")]

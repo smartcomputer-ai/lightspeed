@@ -967,6 +967,13 @@ async fn run_file_attachment_live_client(
     assert_eq!(attachment.kind, api::ToolAttachmentKind::File);
     assert_eq!(attachment.handle, reference.handle);
     assert_eq!(attachment.content_ref, reference.content_ref.as_str());
+    let source = attachment
+        .source
+        .as_ref()
+        .expect("workspace origin travels with the file");
+    assert_eq!(source.kind, "vfs_workspace");
+    assert_eq!(source.id, workspace.workspace_id);
+    assert_eq!(source.path, "report.md");
     assert!(call.effects.is_empty(), "attachments are not effects");
     assert!(
         call.media.is_empty(),

@@ -64,11 +64,34 @@ describe("media links", () => {
     expect(link.target).toBe("_blank");
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(loadMedia).toHaveBeenCalledWith(media.blobRef, media.mime);
-    if (media.kind === "image") expect(link.querySelector("img")?.src).toBe(link.href);
+    if (_label === "tool thumbnail" || _label === "markdown image") {
+      expect(link.querySelector("img")?.src).toBe(link.href);
+    } else {
+      expect(link.querySelector("img")).toBeNull();
+      expect(link.textContent).toBe(media.kind === "image" ? "open" : "report");
+    }
     expect(revokeObjectURL).not.toHaveBeenCalled();
 
     await show(loadMedia, null);
     expect(revokeObjectURL).toHaveBeenCalledWith(link.href);
+  });
+
+  it.each([
+    [image, `[**open image**](${image.handle})`, "open image"],
+    [pdf, `[report](${pdf.handle})`, "report"],
+    [pdf, `![report preview](${pdf.handle})`, "report preview"],
+  ] as const)("uses text links without loading bytes when a blob page is available: %s", async (media, markdown, label) => {
+    const loadMedia = vi.fn();
+    await act(async () => root.render(
+      <TranscriptLinksContext.Provider value={{
+        loadMedia, mediaByHandle: new Map([[media.handle, media]]),
+        blobHref: () => "/u/acme/blobs/example?session=s1",
+      }}><MarkdownContent>{markdown}</MarkdownContent></TranscriptLinksContext.Provider>,
+    ));
+    expect(container.querySelector("a")?.getAttribute("href")).toBe("/u/acme/blobs/example?session=s1");
+    expect(container.querySelector("a")?.textContent).toBe(label);
+    expect(container.querySelector("img")).toBeNull();
+    expect(loadMedia).not.toHaveBeenCalled();
   });
 
   it("shares a read while keeping each mounted image's URL alive independently", async () => {

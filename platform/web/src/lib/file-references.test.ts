@@ -33,6 +33,13 @@ it("treats names as descriptions but rejects conflicting content identities", ()
 it("does not turn an invalid origin path into a workspace backlink", () => {
   expect(filesFromAttachments([attachment({ source: { kind: "vfs_workspace", id: "ws", path: "../secret" } })]).get(handle)?.workspace).toBeUndefined();
 });
+it("preserves a known workspace origin when another reference to the same bytes has none", () => {
+  const withoutSource = attachment({ source: undefined });
+  for (const items of [[withoutSource, attachment()], [attachment(), withoutSource]]) {
+    expect(filesFromAttachments(items).get(handle)?.workspace).toBe("ws");
+    expect(filesFromAttachments(items).get(handle)?.path).toBe("docs/résumé #?.txt");
+  }
+});
 it("restores attachments from completion events on reload and history pagination", () => {
   const event = completion();
   const live = applyEvents(emptyTranscript(), [event]);

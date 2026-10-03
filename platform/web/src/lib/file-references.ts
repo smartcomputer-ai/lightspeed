@@ -35,6 +35,7 @@ export function filesFromAttachments(attachments: ToolAttachmentView[]): Map<str
     };
     if (!files.has(file.handle)) files.set(file.handle, file);
     else if (files.get(file.handle)?.blobRef !== file.blobRef) files.set(file.handle, null);
+    else if (!files.get(file.handle)?.workspace && file.workspace) files.set(file.handle, file);
   }
   return files;
 }

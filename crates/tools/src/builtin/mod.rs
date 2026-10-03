@@ -104,7 +104,10 @@ pub struct BuiltinTool {
 
 #[derive(Clone, Copy)]
 pub enum BuiltinToolContext<'a> {
-    Vfs(&'a FsToolContext),
+    Vfs {
+        filesystem: &'a FsToolContext,
+        attachments: &'a [vfs::ResolvedWorkspaceAttachment],
+    },
     Environment(&'a EnvironmentToolContext),
     Transfer {
         vfs: &'a FsToolContext,
@@ -116,7 +119,9 @@ pub enum BuiltinToolContext<'a> {
 impl<'a> BuiltinToolContext<'a> {
     pub fn filesystem(self) -> ToolResult<&'a FsToolContext> {
         match self {
-            Self::Vfs(ctx) => Ok(ctx),
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => Ok(ctx),
             Self::Environment(ctx) => {
                 ctx.filesystem
                     .as_ref()
@@ -132,10 +137,20 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn vfs(self) -> ToolResult<&'a FsToolContext> {
         match self {
-            Self::Vfs(vfs) | Self::Transfer { vfs, .. } => Ok(vfs),
+            Self::Vfs {
+                filesystem: vfs, ..
+            }
+            | Self::Transfer { vfs, .. } => Ok(vfs),
             Self::Environment(_) => Err(ToolError::InvalidRequest {
                 message: "no_vfs_workspace_attachments".into(),
             }),
+        }
+    }
+
+    pub fn workspace_attachments(self) -> &'a [vfs::ResolvedWorkspaceAttachment] {
+        match self {
+            Self::Vfs { attachments, .. } => attachments,
+            _ => &[],
         }
     }
 
@@ -150,7 +165,7 @@ impl<'a> BuiltinToolContext<'a> {
         match self {
             Self::Environment(ctx) => Ok(ctx),
             Self::Transfer { environment, .. } => Ok(environment),
-            Self::Vfs(_) => Err(ToolError::InvalidRequest {
+            Self::Vfs { .. } => Err(ToolError::InvalidRequest {
                 message: "environment tool cannot use a VFS context".to_owned(),
             }),
         }
@@ -158,7 +173,9 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn blobs(self) -> &'a std::sync::Arc<dyn engine::storage::BlobStore> {
         match self {
-            Self::Vfs(ctx) => &ctx.blobs,
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => &ctx.blobs,
             Self::Transfer { vfs, .. } => &vfs.blobs,
             Self::Environment(ctx) => &ctx.blobs,
         }
@@ -166,7 +183,9 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn limits(self) -> crate::limits::ToolLimits {
         match self {
-            Self::Vfs(ctx) => ctx.limits,
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => ctx.limits,
             Self::Transfer { vfs, .. } => vfs.limits,
             Self::Environment(ctx) => ctx.limits,
         }
@@ -174,7 +193,9 @@ impl<'a> BuiltinToolContext<'a> {
 
     pub fn drain_tool_effects(self) -> Vec<engine::ToolEffect> {
         match self {
-            Self::Vfs(ctx) => ctx.fs.drain_tool_effects(),
+            Self::Vfs {
+                filesystem: ctx, ..
+            } => ctx.fs.drain_tool_effects(),
             Self::Environment(ctx) => ctx
                 .filesystem
                 .as_ref()

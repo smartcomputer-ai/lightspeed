@@ -39,10 +39,10 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
     };
     let text = match tool.operation() {
         BuiltinToolOperation::Reference => {
-            "Get a reference to an immutable file version to share with the user. Include [label](file:handle) in your message using the returned handle. Does not read or modify file contents. Use path in the attached VFS, or provide snapshot_ref and a path inside a captured snapshot. Subagents can also include the link in their final answer to pass the attachment to their parent."
+            "Get a reference to an immutable file version to share with the user. Use [label](file:handle) to link the file, or ![description](file:handle) to display an image inline, using the returned handle. Does not read or modify file contents. Use path in the attached VFS, or provide snapshot_ref and a path inside a captured snapshot. Subagents can also include the link in their final answer to pass the attachment to their parent."
         }
         BuiltinToolOperation::ReadFile => {
-            "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle you can reference."
+            "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle. Use [label](media:handle) to link them or ![description](media:handle) to display an image inline."
         }
         BuiltinToolOperation::WriteFile => {
             "Write full UTF-8 file content, creating parent directories when needed."
@@ -344,7 +344,8 @@ pub(super) async fn invoke_json(
             .await
         }
         BuiltinToolOperation::Reference => {
-            crate::attachments::invoke_reference(ctx.vfs()?, arguments).await
+            crate::attachments::invoke_reference(ctx.vfs()?, ctx.workspace_attachments(), arguments)
+                .await
         }
         BuiltinToolOperation::ReadFile => {
             let fs_ctx = ctx.filesystem()?;

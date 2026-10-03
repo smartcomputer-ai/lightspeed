@@ -23,6 +23,7 @@ use crate::{
 #[derive(Clone)]
 pub struct InlineToolRuntime {
     vfs: Option<FsToolContext>,
+    vfs_attachments: Vec<vfs::ResolvedWorkspaceAttachment>,
     environment: Option<EnvironmentToolContext>,
     catalog: ToolCatalog,
     blobs: Arc<dyn BlobStore>,
@@ -51,11 +52,21 @@ impl InlineToolRuntime {
     ) -> Self {
         Self {
             vfs,
+            vfs_attachments: Vec::new(),
             environment,
             catalog,
             blobs,
             limits,
         }
+    }
+
+    /// Origin metadata from the same mounts used to construct the VFS filesystem.
+    pub fn with_vfs_attachments(
+        mut self,
+        attachments: Vec<vfs::ResolvedWorkspaceAttachment>,
+    ) -> Self {
+        self.vfs_attachments = attachments;
+        self
     }
 
     pub fn vfs_context(&self) -> Option<&crate::fs::FsToolContext> {
@@ -188,14 +199,16 @@ impl InlineToolRuntime {
             });
         }
         match tool.domain() {
-            BuiltinToolDomain::Vfs => {
-                self.vfs
-                    .as_ref()
-                    .map(BuiltinToolContext::Vfs)
-                    .ok_or_else(|| ToolError::InvalidRequest {
-                        message: "no_vfs_workspace_attachments".to_owned(),
-                    })
-            }
+            BuiltinToolDomain::Vfs => self
+                .vfs
+                .as_ref()
+                .map(|filesystem| BuiltinToolContext::Vfs {
+                    filesystem,
+                    attachments: &self.vfs_attachments,
+                })
+                .ok_or_else(|| ToolError::InvalidRequest {
+                    message: "no_vfs_workspace_attachments".to_owned(),
+                }),
             BuiltinToolDomain::Environment => {
                 let ctx = self
                     .environment

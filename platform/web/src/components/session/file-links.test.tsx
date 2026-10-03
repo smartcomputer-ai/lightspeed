@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { appHref, blobHref } from "@/lib/blob-view";
 import { ToolGroupTrace } from "./tool-trace";
 import { MarkdownContent } from "./markdown-content";
-import { TranscriptLinksContext } from "./transcript-links";
+import { TranscriptLinksContext, type TranscriptLinks } from "./transcript-links";
 import type { FileReference } from "@/lib/file-references";
 
 const file: FileReference = {
@@ -30,7 +30,7 @@ afterEach(async () => {
   container.remove();
   vi.unstubAllGlobals();
 });
-async function render(text: string, references = [file]) {
+async function render(text: string, references = [file], extra: TranscriptLinks = {}) {
   await act(async () =>
     root.render(
       <TranscriptLinksContext.Provider
@@ -42,6 +42,7 @@ async function render(text: string, references = [file]) {
             const path = blobHref("acme", ref, { ...hints, session: "s1" });
             return path && appHref(path);
           },
+          ...extra,
         }}
       >
         <MarkdownContent>{text}</MarkdownContent>
@@ -81,10 +82,52 @@ it.each([`file:${"c".repeat(24)}`, "file:bad", "file://evil.example/file"])(
     expect(container.textContent).toContain("report (unavailable)");
   },
 );
-it("renders image syntax as a file link without loading the custom protocol", async () => {
-  await render(`![report](${file.handle})`);
+it("falls back to a file link for image syntax targeting a text file", async () => {
+  const loadMedia = vi.fn();
+  await render(`![report](${file.handle})`, [file], { loadMedia });
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector("a")!.textContent).toBe("report");
+  expect(loadMedia).not.toHaveBeenCalled();
+});
+it("keeps ordinary links to image files as text without loading the image", async () => {
+  const loadMedia = vi.fn();
+  await render(`[**open image**](${file.handle})`, [{ ...file, type: "image/jpeg" }], { loadMedia });
+  expect(container.querySelector("a strong")?.textContent).toBe("open image");
+  expect(container.querySelector("img")).toBeNull();
+  expect(loadMedia).not.toHaveBeenCalled();
+});
+it.each(["image/jpeg", undefined])("renders image syntax for a file with type %s and preserves its origin", async (type) => {
+  const createObjectURL = vi.fn(() => "blob:http://localhost/image");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = createObjectURL;
+    static revokeObjectURL = revokeObjectURL;
+  });
+  const loadMedia = vi.fn().mockResolvedValue(new Blob(["image bytes"]));
+  await render(`![A cartoon](${file.handle})`, [{ ...file, type }], { loadMedia });
+  const img = container.querySelector("img")!;
+  expect(img.src).toBe("blob:http://localhost/image");
+  expect(img.alt).toBe("A cartoon");
+  const target = new URL(img.closest("a")!.href);
+  expect(target.pathname).toContain(`/blobs/${"b".repeat(64)}`);
+  expect(target.searchParams.get("session")).toBe("s1");
+  expect(target.searchParams.get("workspace")).toBe("ws");
+  expect(target.searchParams.get("path")).toBe(file.path);
+  expect(loadMedia).toHaveBeenCalledWith(file.blobRef, type ?? "application/octet-stream");
+  await render("removed");
+  expect(revokeObjectURL).toHaveBeenCalledWith("blob:http://localhost/image");
+});
+it("falls back to the file link when bytes cannot be displayed as an image", async () => {
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = () => "blob:http://localhost/not-an-image";
+    static revokeObjectURL = vi.fn();
+  });
+  const loadMedia = vi.fn().mockResolvedValue(new Blob(["not image bytes"]));
+  await render(`![report](${file.handle})`, [{ ...file, type: undefined }], { loadMedia });
+  await act(async () => container.querySelector("img")!.dispatchEvent(new Event("error")));
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector("a")!.textContent).toBe("report");
+  expect(container.querySelector("a")!.href).toContain(`/blobs/${"b".repeat(64)}`);
 });
 it("continues to sanitize unsafe links", async () => {
   await render("[bad](javascript:alert%281%29)");
@@ -93,22 +136,28 @@ it("continues to sanitize unsafe links", async () => {
   );
 });
 
-it("resolves a reference outside the loaded history and scopes the lookup to its session", async () => {
+it.each([false, true])("resolves a reference outside the loaded history and scopes the lookup to its session (image: %s)", async (showImage) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const load = vi.fn(async () => file);
+  const resolved = showImage ? { ...file, type: "image/jpeg" } : file;
+  const load = vi.fn(async () => resolved);
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL = () => "blob:http://localhost/historical-image";
+    static revokeObjectURL = vi.fn();
+  });
   await act(async () =>
     root.render(
       <QueryClientProvider client={client}>
         <TranscriptLinksContext.Provider
           value={{
             fileReferenceSource: { universeId: "u", sessionId: "s1", load },
+            loadMedia: async () => new Blob(["image bytes"]),
             blobHref: (ref, hints) =>
               blobHref("acme", ref, { ...hints, session: "s1" }),
           }}
         >
-          <MarkdownContent>{`[report](${file.handle})`}</MarkdownContent>
+          <MarkdownContent>{`${showImage ? "!" : ""}[report](${file.handle})`}</MarkdownContent>
         </TranscriptLinksContext.Provider>
       </QueryClientProvider>,
     ),
@@ -118,9 +167,10 @@ it("resolves a reference outside the loaded history and scopes the lookup to its
   });
   expect(load).toHaveBeenCalledWith(file.handle, expect.any(AbortSignal));
   expect(container.querySelector("a")!.href).toContain("session=s1");
+  expect(container.querySelector("img")?.getAttribute("src")).toBe(showImage ? "blob:http://localhost/historical-image" : undefined);
   expect(
     client.getQueryData(["file-reference", "u", "s1", file.handle, undefined]),
-  ).toEqual(file);
+  ).toEqual(resolved);
   expect(
     client.getQueryData(["file-reference", "u", "s2", file.handle, undefined]),
   ).toBeUndefined();

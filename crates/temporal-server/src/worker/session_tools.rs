@@ -1263,7 +1263,8 @@ impl SessionTools {
             self.blobs.clone(),
             ToolLimits::default(),
             ToolCatalog::new(),
-        ))
+        )
+        .with_vfs_attachments(attachments))
     }
 }
 
