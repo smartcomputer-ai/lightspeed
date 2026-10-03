@@ -10,7 +10,7 @@ auth = { path = "../auth" }
 base64 = "0.22"
 bots = { path = "../bots" }
 channels = { path = "../channels" }
-engine = { path = "../engine" }
+harness = { path = "../harness" }
 moka = { version = "0.12", features = ["sync"] }
 environments = { path = "../environments" }
 environment-protocol = { path = "../environment-protocol" }

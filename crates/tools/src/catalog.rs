@@ -1,7 +1,7 @@
 //! Publication of runtime-owned catalogs as immutable text with structured provenance.
 
-use engine::storage::{BlobStore, BlobStoreError};
-use engine::{BlobRef, ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentCommand};
+use harness::storage::{BlobStore, BlobStoreError};
+use harness::{BlobRef, ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentCommand};
 
 pub const VFS_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.vfs";
 pub const SKILL_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.skills.vfs";
@@ -20,7 +20,7 @@ pub async fn catalog_context_input(
         kind: ContextEntryKind::Catalog {
             title: title.to_owned(),
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: blobs.put_bytes(body.into_bytes()).await?,
             media_type: Some("text/markdown".to_owned()),
             provider_kind: None,
@@ -57,7 +57,7 @@ pub fn clear_catalog_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     #[tokio::test(flavor = "current_thread")]
     async fn publication_tracks_text_and_provenance_independently() {

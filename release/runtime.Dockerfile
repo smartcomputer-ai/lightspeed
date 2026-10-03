@@ -11,6 +11,6 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY dist/bin/lightspeed-server /usr/local/bin/lightspeed-server
+COPY dist/bin/lightspeed-runtime /usr/local/bin/lightspeed-runtime
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/lightspeed-server"]
+ENTRYPOINT ["/usr/local/bin/lightspeed-runtime"]

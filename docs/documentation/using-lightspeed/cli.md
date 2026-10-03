@@ -61,12 +61,12 @@ On the server host, configure the runtime stores and secrets as described in
 [Self-hosting](../deployment/self-hosting.md), then run:
 
 ```bash
-lightspeed-server migrate
-lightspeed-server api-key provision --name "Initial operator"
+lightspeed-runtime migrate
+lightspeed-runtime api-key provision --name "Initial operator"
 ```
 
-From source, replace `lightspeed-server` with
-`cargo run -p temporal-server --`. The provision command prints JSON containing
+From source, replace `lightspeed-runtime` with
+`cargo run -p temporal-runtime --`. The provision command prints JSON containing
 the secret; capture it securely. It creates a deployment key with every method
 group and no actor assertion. No universe is needed yet.
 

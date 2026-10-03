@@ -15,7 +15,7 @@ use environment_protocol::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use engine::{
+use harness::{
     BlobRef,
     storage::{BlobEdge, BlobGraphStore, BlobStore, BlobStoreError},
 };
@@ -209,7 +209,7 @@ impl JobSubmitSpecArgs {
         // The model's job id keys the job's promise, so it must fit the
         // completion-key shape; checking here keeps key derivation from
         // ever failing on an accepted job.
-        engine::validate_completion_key(job_id.as_str()).map_err(|error| {
+        harness::validate_completion_key(job_id.as_str()).map_err(|error| {
             JobError::InvalidRequest {
                 message: format!("job_id {:?} is invalid: {error}", job_id.as_str()),
             }
@@ -464,8 +464,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use engine::storage::{BlobEdge, BlobGraphStore, BlobStore, BlobStoreError, InMemoryBlobStore};
     use environment_protocol::data::jobs::{JobOutputStream, JobStatus};
+    use harness::storage::{
+        BlobEdge, BlobGraphStore, BlobStore, BlobStoreError, InMemoryBlobStore,
+    };
     use serde_json::json;
 
     use super::*;

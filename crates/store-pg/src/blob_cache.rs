@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use engine::BlobRef;
+use harness::BlobRef;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

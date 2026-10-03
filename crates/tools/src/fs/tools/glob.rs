@@ -127,7 +127,7 @@ fn glob_matches(pattern: &Pattern, pattern_text: &str, path: &FsPath, root: &FsP
 mod tests {
     use std::sync::Arc;
 
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::fs::{CreateDirectoryOptions, FileSystem, InMemoryFileSystem};

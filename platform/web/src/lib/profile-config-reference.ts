@@ -2,11 +2,11 @@
 /// Source: crates/api/contract/api.schema.json (SessionConfig).
 /// Regenerate with: node platform/scripts/generate-config-reference.mjs
 
-export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit anything to keep engine defaults.
+export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit anything to keep harness defaults.
 // Union values are written a | b — pick one.
 {
   "context": {
-    // Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
+    // Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
     "compaction": // one of:
       { "mode": "disabled" } |
       { "compactThresholdTokens": 0, "mode": "providerTriggered" } |
@@ -129,7 +129,7 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
       { "type": "requiredAny" } |
       { "toolId": "string", "type": "specific" },
   },
-  // Run budget defaults enforced by the engine drive loop.
+  // Run budget defaults enforced by the harness drive loop.
   "limits": {
     "maxToolRounds": 0,
     "maxTurns": 0,

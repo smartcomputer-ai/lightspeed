@@ -1,9 +1,9 @@
 //! Bounded environment prompt assembly from a complete filesystem observation.
-use engine::{
+use environment_protocol::data::inventory::ScanResponse;
+use harness::{
     ContentRef, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     storage::{BlobStore, BlobStoreError},
 };
-use environment_protocol::data::inventory::ScanResponse;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use engine::{ModelSelection, ProviderApiKind};
+use harness::{ModelSelection, ProviderApiKind};
 use llm_clients::EndpointOverride;
 use thiserror::Error;
 
@@ -143,7 +143,7 @@ pub(crate) async fn resolve_model_provider(
     })
 }
 
-/// Resolve a protocol route without extending the engine's generation model enum.
+/// Resolve a protocol route without extending the harness's generation model enum.
 /// Only built-in providers may use deployment transport defaults.
 pub async fn resolve_provider_route(
     resolver: &dyn ModelProviderResolver,

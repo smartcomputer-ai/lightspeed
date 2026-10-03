@@ -1,6 +1,6 @@
 //! Compact model references; canonical IDs remain the routing and storage identity.
 
-use engine::{BlobRef, EnvironmentId};
+use harness::{BlobRef, EnvironmentId};
 
 pub fn environment_handle(id: &str) -> String {
     if id.len() <= 24 && !id.starts_with("env:") {

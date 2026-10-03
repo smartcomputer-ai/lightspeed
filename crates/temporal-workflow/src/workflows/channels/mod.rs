@@ -1,7 +1,7 @@
 //! Channels workflows: one conversation workflow per chat, the
 //! source of that conversation's bot events and the receiver of its
 //! `message_*` tools. Runs in the `channels` worker role on its own task
-//! queue; its core-side activities are implemented in `temporal-server`,
+//! queue; its core-side activities are implemented in `temporal-runtime`,
 //! its connector-side activities by the TypeScript connector host on the
 //! account's own task queue.
 

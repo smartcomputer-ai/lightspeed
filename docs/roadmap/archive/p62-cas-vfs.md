@@ -4,7 +4,7 @@
 - Complete for the accepted P62 scope.
 - Implemented: G1-G2.5, first-cut G3, first-cut G4, and G7 across
   `crates/vfs`, `crates/tools`, `crates/store-fs`, `crates/store-pg`,
-  `crates/api`, `crates/temporal-server`, and `crates/cli`.
+  `crates/api`, `crates/temporal-runtime`, and `crates/cli`.
 - Out of scope for P62 completion: G5 and the host-target portion of G6,
   deferred until real VM host targets exist.
 - Out of scope for P62 completion: G3 workspace quotas and mount policy limits,
@@ -62,7 +62,7 @@ The missing abstraction is a stable, content-addressed filesystem tree.
 ## Non-Goals
 
 - Do not build a full POSIX filesystem in the first cut.
-- Do not put VFS scanning, materialization, or path I/O in `engine`.
+- Do not put VFS scanning, materialization, or path I/O in `harness`.
 - Do not require every VFS snapshot to be materialized into a Unix directory.
 - Do not make process execution work against CAS by pretending a process can
   see virtual paths.
@@ -75,7 +75,7 @@ The missing abstraction is a stable, content-addressed filesystem tree.
 
 Build VFS as a runtime/storage concern, not as a reducer concern.
 
-`engine` may store and replay `BlobRef`s that point at VFS manifests, and it
+`harness` may store and replay `BlobRef`s that point at VFS manifests, and it
 may record context items whose payload is a VFS snapshot ref. It should not
 parse manifests, list directories, enforce mount policy, or perform I/O.
 
@@ -721,7 +721,7 @@ later.
 
 Implementation note: expose commit refs as structured, non-model-visible tool
 result metadata. Prefer a generic tool-effect contract over embedding VFS
-knowledge in `engine`; for VFS commits, carry the workspace id, new snapshot
+knowledge in `harness`; for VFS commits, carry the workspace id, new snapshot
 manifest ref, and new revision inline. Do not write a separate effect blob just
 to link this metadata; use refs only when the effect naturally points at an
 existing CAS object or the metadata is too large for the event/result shape.

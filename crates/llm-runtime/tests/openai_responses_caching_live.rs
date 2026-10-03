@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextEntrySource, ContextMessageRole, ContextSnapshot, LlmGenerationRequest,
     LlmGenerationStatus, LlmRequest, LlmUsage, ModelSelection, ProviderApiKind, RunId, SessionId,
@@ -43,7 +43,7 @@ fn entry(
         entry_id: ContextEntryId::new(id),
         kind,
         source,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,

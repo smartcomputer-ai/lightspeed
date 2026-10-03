@@ -3,7 +3,7 @@
 `lightspeed-provider-incus` is a stateless controller, passive data endpoint,
 optional application edge, and single-node/cluster Incus adapter. It depends
 on the public host
-protocol crate, not Lightspeed's database, API implementation, engine, or
+protocol crate, not Lightspeed's database, API implementation, harness, or
 Temporal runtime.
 
 Start from `config.example.json`. Application-level authentication for both

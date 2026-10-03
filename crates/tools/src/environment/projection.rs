@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use engine::{
+use harness::{
     BlobRef, ContextEntryInput, CoreAgentCommand, WorkspaceAccess, WorkspaceAttachmentTarget,
     storage::{BlobGraphStore, BlobStore, BlobStoreError, record_contains_edges},
 };
@@ -230,7 +230,7 @@ fn stable_revision(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use engine::{WorkspaceAccess, storage::InMemoryBlobStore};
+    use harness::{WorkspaceAccess, storage::InMemoryBlobStore};
     use vfs::{
         ResolvedWorkspaceAttachment, ResolvedWorkspaceAttachmentTarget, VfsPath, VfsWorkspaceId,
     };
@@ -261,7 +261,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn projection_writes_record_an_edge_for_every_embedded_ref() {
         let blobs = InMemoryBlobStore::new();
-        let snapshot_ref = engine::storage::BlobStore::put_bytes(&blobs, b"snapshot".to_vec())
+        let snapshot_ref = harness::storage::BlobStore::put_bytes(&blobs, b"snapshot".to_vec())
             .await
             .expect("put snapshot");
         let catalog = VfsCatalog::new(
@@ -291,7 +291,7 @@ mod tests {
             .await
             .expect("publication");
 
-        let embedded = engine::storage::collect_blob_refs(
+        let embedded = harness::storage::collect_blob_refs(
             &serde_json::from_slice(&publication.snapshot_bytes).expect("catalog json"),
         );
         let recorded: BTreeSet<BlobRef> = blobs

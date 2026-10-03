@@ -4,7 +4,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 source release/metadata.env
 expected_sha="${LIGHTSPEED_GIT_SHA:-$(git rev-parse HEAD)}"
-for binary in dist/bin/lightspeed-server dist/bin/lightspeed-provider-incus \
+for binary in dist/bin/lightspeed-runtime dist/bin/lightspeed-provider-incus \
   dist/bin/lightspeed-envd dist/bin/lightspeed; do
   version_output="$($binary --version)"
   grep -F "$expected_sha" <<<"$version_output" >/dev/null

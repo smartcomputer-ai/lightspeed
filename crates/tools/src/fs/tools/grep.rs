@@ -222,7 +222,7 @@ fn path_matches_include(pattern: &Pattern, path: &FsPath, root: &FsPath) -> bool
 mod tests {
     use std::sync::Arc;
 
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::{

@@ -28,7 +28,7 @@
   dispatch-time P144 approvals, CAS-backed rich-result placeholders, the
   deployment plus record private-egress gate, Platform/CLI/generated clients,
   an ignored Temporal live acceptance against the Configurator MCP, and a
-  standalone `temporal-server/tests/mcp_live.rs` matrix over local Stateless
+  standalone `temporal-runtime/tests/mcp_live.rs` matrix over local Stateless
   Streamable HTTP servers.
 
 ## Why
@@ -277,7 +277,7 @@ below has a TTL rather than none). The injected tools appear identically in
 the send request and the redacted persisted blob; there is nothing secret in
 them.
 
-The `temporal-server` implementation adapts the P143 transport — the same
+The `temporal-runtime` implementation adapts the P143 transport — the same
 bounded `rmcp` Streamable HTTP client, SSRF policy, and
 `McpToolDiscoveryLimits` (which already bound schema bytes/depth for exactly
 this moment) — plus:
@@ -413,7 +413,7 @@ hosting. Sessions are per-activity; Streamable HTTP only.
 - `McpInventoryResolver` in `llm-runtime`, lowering in all three adapters
   (sorted, canonical, in-place expansion), redacted-blob parity, typed
   injection failures, aggregate bounds.
-- `temporal-server` resolver over the shared transport with broker + TTL
+- `temporal-runtime` resolver over the shared transport with broker + TTL
   single-flight cache.
 
 ### Slice 3 — Call execution
@@ -440,7 +440,7 @@ hosting. Sessions are per-activity; Streamable HTTP only.
 
 ### Slice 6 — Live acceptance
 
-- **Standalone native matrix**: `temporal-server/tests/mcp_live.rs` runs
+- **Standalone native matrix**: `temporal-runtime/tests/mcp_live.rs` runs
   through the real registry/API, Postgres, Temporal worker, approval
   continuation, `rmcp` client, and local Stateless Streamable HTTP servers.
   It covers a small Selected/injected server; a paginated 45-tool All/search

@@ -89,7 +89,7 @@ fn vectors_cover_all_derivations_and_round_trips() {
         vectors["inputs"]["sessionId"]
     );
     for envelope in vectors["envelopes"].as_array().expect("envelope vectors") {
-        let decoded: engine::EmissionEnvelope =
+        let decoded: harness::EmissionEnvelope =
             serde_json::from_value(envelope.clone()).expect("vector envelope decodes");
         assert_eq!(
             serde_json::to_value(decoded).expect("vector re-encodes"),

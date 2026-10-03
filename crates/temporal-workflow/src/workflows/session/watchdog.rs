@@ -71,7 +71,7 @@ pub(super) async fn process_cancelling_watchdog(
     };
     let mut drive = drive_from_state(ctx)?;
     let command = CoreAgentCommand::ForceCancelRun {
-        run_id: engine::RunId::new(run_id),
+        run_id: harness::RunId::new(run_id),
     };
     match admit_and_append_command(ctx, &mut drive, command, None).await? {
         CommandAdmissionResult::Accepted => {}

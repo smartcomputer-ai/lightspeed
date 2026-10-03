@@ -327,7 +327,7 @@ pub enum ToolChoice {
     Specific { tool_id: String },
 }
 
-/// Run budget defaults enforced by the engine drive loop.
+/// Run budget defaults enforced by the harness drive loop.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LimitsConfig {
@@ -343,7 +343,7 @@ pub struct ContextConfig {
     /// Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
-    /// Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
+    /// Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
 }
@@ -1452,7 +1452,7 @@ pub enum SessionEventKindView {
         run_id: RunId,
         output: Option<crate::ContentRefView>,
     },
-    /// The run ended in failure. `kind` is the engine's classification;
+    /// The run ended in failure. `kind` is the harness's classification;
     /// `message` is free text for display, and the provider's own message for
     /// `request_rejected`.
     RunFailed {
@@ -1632,7 +1632,7 @@ pub enum SessionEventKindView {
     },
 }
 
-/// Why a run failed, as the engine classified it.
+/// Why a run failed, as the harness classified it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKindView {

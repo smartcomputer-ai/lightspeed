@@ -1,5 +1,5 @@
 //! Activity definitions of the `bots` worker role. Definition only: the
-//! implementations live in `temporal-server::worker::bots` and must keep
+//! implementations live in `temporal-runtime::worker::bots` and must keep
 //! these names (a test there asserts they match).
 
 use temporalio_macros::activities;
@@ -169,7 +169,7 @@ impl BotActivities {
     }
 
     /// Put the `bot:directory` catalog into the session before a delivery
-    /// (same content is an engine no-op, so the prefix cache holds).
+    /// (same content is an harness no-op, so the prefix cache holds).
     #[activity(name = ACTIVITY_BOT_PUBLISH_DIRECTORY)]
     pub async fn publish_directory(
         _ctx: ActivityContext,

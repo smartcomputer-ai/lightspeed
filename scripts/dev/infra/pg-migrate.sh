@@ -8,4 +8,4 @@ source "${SCRIPT_DIR}/../lib/common.sh"
 # create an unledgered schema that the server correctly refuses to start.
 export LIGHTSPEED_POSTGRES_URL
 cd "${REPO_ROOT}"
-cargo run -p temporal-server -- migrate
+cargo run -p temporal-runtime -- migrate

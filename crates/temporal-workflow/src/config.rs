@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use engine::{ModelSelection, RunConfig, SessionConfig, ToolExecutionClass, ToolExecutionSpec};
+use harness::{ModelSelection, RunConfig, SessionConfig, ToolExecutionClass, ToolExecutionSpec};
 use temporalio_common::protos::temporal::api::common::v1::RetryPolicy;
 use temporalio_sdk::{ActivityCloseTimeouts, ActivityOptions};
 
@@ -71,7 +71,7 @@ pub const TOOL_REMOTE_SCHEDULE_TO_CLOSE: Duration = Duration::from_secs(600);
 /// Deployment-owned ceiling on a validated `run_process` timeout. The worker
 /// clamps requested process timeouts to the same ceiling
 /// (`tools::ToolLimits::max_process_timeout_ms`, asserted equal by a
-/// temporal-server test); the process activity deadline derives from it.
+/// temporal-runtime test); the process activity deadline derives from it.
 pub const PROCESS_TIMEOUT_CEILING: Duration = Duration::from_secs(30 * 60);
 /// Transport/completion grace added on top of the process timeout ceiling.
 pub const TOOL_PROCESS_GRACE: Duration = Duration::from_secs(60);
@@ -102,7 +102,7 @@ pub const MAX_CONCURRENT_TOOL_CALLS_PER_BATCH: usize = 8;
 /// Bounded options for materializing a boundary-failure error blob. The
 /// failure-conversion path must never reintroduce Temporal's default
 /// unlimited retries; when these attempts are exhausted the workflow falls
-/// back to the engine's well-known boundary-failure blob.
+/// back to the harness's well-known boundary-failure blob.
 pub fn boundary_error_blob_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
         start_to_close: Duration::from_secs(30),

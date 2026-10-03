@@ -1,8 +1,8 @@
-use engine::{StringIdError, validate_general_string_id};
+use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::fmt;
 
-/// Runtime catalog identity. The deterministic engine does not interpret skills.
+/// Runtime catalog identity. The deterministic harness does not interpret skills.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SkillId(String);
 

@@ -25,9 +25,9 @@ pub struct SubagentExecutionWorkflow {
     snapshot: SubagentExecutionSnapshot,
     /// Identity fixed at start: which promise this execution resolves and
     /// which holder to tell.
-    reply_promise_id: Option<engine::PromiseId>,
+    reply_promise_id: Option<harness::PromiseId>,
     holder_workflow_id: Option<String>,
-    invocation_id: Option<engine::WorkflowToolInvocationId>,
+    invocation_id: Option<harness::WorkflowToolInvocationId>,
     universe_id: Option<uuid::Uuid>,
     pending_terminal: Option<SubagentTerminal>,
     holder_cancelled: bool,
@@ -53,7 +53,7 @@ impl SubagentExecutionWorkflow {
             .invocation
             .completion_promises
             .as_ref()
-            .and_then(|promises| promises.get(engine::REPLY_COMPLETION_KEY))
+            .and_then(|promises| promises.get(harness::REPLY_COMPLETION_KEY))
             .cloned()
         else {
             return Err(anyhow::anyhow!(
@@ -84,7 +84,7 @@ impl SubagentExecutionWorkflow {
         let (child, deadline_ms) = match prepared {
             SubagentPrepareActivityResult::Prepared { child, deadline_ms } => (child, deadline_ms),
             SubagentPrepareActivityResult::Rejected { error_ref } => {
-                let resolution = engine::PromiseResolution::Failed {
+                let resolution = harness::PromiseResolution::Failed {
                     error_ref: Some(error_ref),
                 };
                 ctx.state_mut(|state| {
@@ -165,7 +165,7 @@ impl SubagentExecutionWorkflow {
     pub fn deliver_emission(
         &mut self,
         _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: engine::EmissionEnvelope,
+        envelope: harness::EmissionEnvelope,
     ) {
         let identity = SignalIdentity {
             reply_promise_id: self.reply_promise_id.as_ref(),
@@ -201,9 +201,9 @@ impl SubagentExecutionWorkflow {
 /// but `child` is fixed at start; `child` is known only once the prepare
 /// activity's result has been recorded.
 pub(crate) struct SignalIdentity<'a> {
-    pub reply_promise_id: Option<&'a engine::PromiseId>,
+    pub reply_promise_id: Option<&'a harness::PromiseId>,
     pub holder_workflow_id: Option<&'a str>,
-    pub invocation_id: Option<&'a engine::WorkflowToolInvocationId>,
+    pub invocation_id: Option<&'a harness::WorkflowToolInvocationId>,
     pub child: Option<&'a SubagentChildRef>,
 }
 
@@ -217,10 +217,10 @@ pub(crate) enum SignalEffect {
 /// is not addressed to this execution and is dropped.
 pub(crate) fn classify_emission(
     identity: &SignalIdentity<'_>,
-    envelope: engine::EmissionEnvelope,
+    envelope: harness::EmissionEnvelope,
 ) -> Option<SignalEffect> {
     match envelope.body {
-        engine::EmissionBody::RunTerminal {
+        harness::EmissionBody::RunTerminal {
             token,
             run_id,
             status,
@@ -235,11 +235,11 @@ pub(crate) fn classify_emission(
             // child.
             let expected_token = identity.reply_promise_id.map(|promise| promise.as_str());
             let from_child = match (&envelope.producer, identity.child) {
-                (engine::EmissionProducer::Session { session_id, .. }, Some(child)) => {
+                (harness::EmissionProducer::Session { session_id, .. }, Some(child)) => {
                     session_id.as_str() == child.session_id && run_id.as_u64() == child.run_id
                 }
-                (engine::EmissionProducer::Session { .. }, None) => true,
-                (engine::EmissionProducer::Workflow { .. }, _) => false,
+                (harness::EmissionProducer::Session { .. }, None) => true,
+                (harness::EmissionProducer::Workflow { .. }, _) => false,
             };
             (expected_token == Some(token.as_str()) && from_child).then_some(
                 SignalEffect::Terminal(SubagentTerminal::Run {
@@ -249,13 +249,13 @@ pub(crate) fn classify_emission(
                 }),
             )
         }
-        engine::EmissionBody::InvocationCancellation {
+        harness::EmissionBody::InvocationCancellation {
             invocation_id,
             completion_key,
             ..
         } => {
             let from_holder = match &envelope.producer {
-                engine::EmissionProducer::Session {
+                harness::EmissionProducer::Session {
                     universe_id,
                     session_id,
                     ..
@@ -263,15 +263,15 @@ pub(crate) fn classify_emission(
                     identity.holder_workflow_id
                         == Some(crate::compose_workflow_id(*universe_id, session_id).as_str())
                 }
-                engine::EmissionProducer::Workflow { .. } => false,
+                harness::EmissionProducer::Workflow { .. } => false,
             };
             (from_holder
                 && identity.invocation_id == Some(&invocation_id)
-                && completion_key == engine::REPLY_COMPLETION_KEY)
+                && completion_key == harness::REPLY_COMPLETION_KEY)
                 .then_some(SignalEffect::HolderCancelled)
         }
-        engine::EmissionBody::SourceResolution { .. }
-        | engine::EmissionBody::ToolInvocation { .. } => None,
+        harness::EmissionBody::SourceResolution { .. }
+        | harness::EmissionBody::ToolInvocation { .. } => None,
     }
 }
 
@@ -279,7 +279,7 @@ pub(crate) fn classify_emission(
 pub(crate) fn recovery_result(snapshot: &SubagentExecutionSnapshot) -> WorkflowToolRecoveryResult {
     let mut resolutions = std::collections::BTreeMap::new();
     if let Some(resolution) = &snapshot.resolution {
-        resolutions.insert(engine::REPLY_COMPLETION_KEY.to_owned(), resolution.clone());
+        resolutions.insert(harness::REPLY_COMPLETION_KEY.to_owned(), resolution.clone());
     }
     WorkflowToolRecoveryResult { resolutions }
 }
@@ -293,13 +293,13 @@ enum WaitOutcome {
 async fn emit_resolution(
     ctx: &mut WorkflowContext<SubagentExecutionWorkflow>,
     universe_id: uuid::Uuid,
-    reply_promise_id: &engine::PromiseId,
-    resolution: engine::PromiseResolution,
+    reply_promise_id: &harness::PromiseId,
+    resolution: harness::PromiseResolution,
 ) {
     let Some(holder) = ctx.state(|state| state.holder_workflow_id.clone()) else {
         return;
     };
-    let envelope = engine::EmissionEnvelope::source_resolution(
+    let envelope = harness::EmissionEnvelope::source_resolution(
         universe_id,
         ctx.workflow_id().to_owned(),
         &holder,
@@ -331,7 +331,7 @@ async fn close_child(
 
 #[cfg(test)]
 mod tests {
-    use engine::{
+    use harness::{
         BlobRef, EmissionEnvelope, EventSeq, PromiseId, PromiseResolution, REPLY_COMPLETION_KEY,
         RunId, RunStatus, SessionId, WorkflowToolInvocationId,
     };
@@ -372,7 +372,7 @@ mod tests {
             token.to_owned(),
             RunId::new(run_id),
             RunStatus::Completed,
-            Some(engine::ContentRef::text(BlobRef::from_bytes(b"\"done\""))),
+            Some(harness::ContentRef::text(BlobRef::from_bytes(b"\"done\""))),
             None,
         )
     }
@@ -413,7 +413,7 @@ mod tests {
     fn expected_terminal() -> SignalEffect {
         SignalEffect::Terminal(SubagentTerminal::Run {
             status: RunStatus::Completed,
-            output: Some(engine::ContentRef::text(BlobRef::from_bytes(b"\"done\""))),
+            output: Some(harness::ContentRef::text(BlobRef::from_bytes(b"\"done\""))),
             failure_message_ref: None,
         })
     }
@@ -462,7 +462,7 @@ mod tests {
             None
         );
         let mut from_workflow = run_terminal("agent_child", 1, reply_promise().as_str());
-        from_workflow.producer = engine::EmissionProducer::Workflow {
+        from_workflow.producer = harness::EmissionProducer::Workflow {
             universe_id: UNIVERSE,
             workflow_id: "wte:other".to_owned(),
         };

@@ -228,7 +228,7 @@ workflow execution. Total: 105 passing live tests (68 runtime, 37 storage).
 ### Earlier validation and deployment requirements
 
 - Shared environment discovery: 331 server unit tests passed (one ignored),
-  along with `cargo check -p temporal-server --all-targets`.
+  along with `cargo check -p temporal-runtime --all-targets`.
   Regression coverage verifies one connection/initialization/directory check for
   two scans, fresh edits, disabled and controller-owned sources, unchanged skill
   observations, independent failure publication, and reconnection after a scan
@@ -257,7 +257,7 @@ readiness and operation receipts, and steering always names its target run.
 - Compatibility cleanup validation passed: 222 engine and 133 workflow unit
   tests, plus `cargo check --workspace --all-targets`. The workflow contract
   exporter produced no artifact changes. Live histories were not replayed.
-- Rust tests passed for `engine`, `temporal-workflow`, `temporal-server`,
+- Rust tests passed for `harness`, `temporal-workflow`, `temporal-runtime`,
   `profiles`, `environments`, `store-pg`, and `api`, including engine replay
   and committed contract checks. Final workflow/runtime unit reruns passed.
 - `cargo check --workspace --all-targets` passed. Live suites, including the

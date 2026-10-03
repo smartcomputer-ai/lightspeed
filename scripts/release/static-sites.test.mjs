@@ -31,7 +31,7 @@ function fixture(t) {
   for (const contract of ['api.schema.json', 'methods.json', 'openrpc.json', 'api-reference.md']) {
     write(`dist/contracts/${contract}`, `fixture ${contract}`);
   }
-  for (const component of ['server', 'provider-incus', 'cli', 'demo']) {
+  for (const component of ['runtime', 'provider-incus', 'cli', 'demo']) {
     write(`dist/archives/lightspeed-${component}-${version}.tar.gz`, `fixture ${component}`);
   }
   write(`dist/archives/lightspeed-envd-${version}-${metadata.LIGHTSPEED_ENVD_TARGET}.tar.gz`, 'fixture envd');
@@ -41,7 +41,7 @@ function fixture(t) {
     ...cleanEnv, LIGHTSPEED_RELEASE_BUILD_IMAGE: `${registry}/build-env@${digest}`,
     SOURCE_DATE_EPOCH: '1700000000',
   };
-  for (const name of ['SERVER', 'PROVIDER_INCUS', 'ENVD', 'CLI']) {
+  for (const name of ['RUNTIME', 'PROVIDER_INCUS', 'ENVD', 'CLI']) {
     env[`LIGHTSPEED_BINARY_URL_${name}`] = `oci://${registry}/${name.toLowerCase().replaceAll('_', '-')}-bundle@${digest}`;
   }
   for (const name of ['DEMO', 'DOCS']) {
@@ -64,7 +64,11 @@ for (const channel of ['main', 'release']) {
     f.env.LIGHTSPEED_RELEASE_CHANNEL = channel;
     if (channel === 'release') f.env.LIGHTSPEED_ENVD_PUBLIC_URL_BASE = 'https://example.test/releases/v1';
     f.create();
-    const docs = f.manifest().artifacts.docs;
+    const manifest = f.manifest();
+    assert.deepEqual(Object.keys(manifest.binaries).sort(), ['cli', 'envd', 'providerIncus', 'runtime']);
+    assert.equal(manifest.binaries.runtime.file, `lightspeed-runtime-${version}.tar.gz`);
+    assert.equal(manifest.binaries.runtime.url, `oci://${registry}/runtime-bundle@${digest}`);
+    const docs = manifest.artifacts.docs;
     assert.equal(docs.file, `lightspeed-docs-${version}.tar.gz`);
     assert.equal(docs.sha256, hash(readFileSync(join(f.cwd, 'dist/archives', docs.file))));
     assert.equal(docs.basePath, '/docs/');

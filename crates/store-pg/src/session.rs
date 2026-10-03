@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
-use engine::storage::SessionActivity;
-use engine::{
+use harness::storage::SessionActivity;
+use harness::{
     BlobRef,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
     storage::{
@@ -1270,7 +1270,7 @@ impl SessionStore for PgStore {
             .try_get("state_digest")
             .map_err(|error| session_sql_error("decode checkpoint digest", error))?;
         let state_ref =
-            engine::BlobRef::parse(format!("sha256:{state_digest}")).map_err(|error| {
+            harness::BlobRef::parse(format!("sha256:{state_digest}")).map_err(|error| {
                 SessionStoreError::Store {
                     message: format!("decode checkpoint blob ref: {error}"),
                 }

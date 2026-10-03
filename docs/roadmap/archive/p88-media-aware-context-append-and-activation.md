@@ -104,7 +104,7 @@ concepts.
   and documents become model-visible media/document context exactly as
   `run/start` admits them today.
 - No channel-specific methods or server-side channel policy.
-- No provider calls or filesystem/network side effects inside `engine`.
+- No provider calls or filesystem/network side effects inside `harness`.
 
 ## API Shape
 
@@ -322,7 +322,7 @@ Workflow-owned preprocessing is still required:
 
 - provider calls, transcoding, and blob reads/writes stay in worker activities;
 - workflow history records the activity outcome;
-- `engine` only admits deterministic `CoreAgentCommand` values;
+- `harness` only admits deterministic `CoreAgentCommand` values;
 - typed admission/preprocessing failures remain machine-readable.
 
 Because append preprocessing can rewrite entries, gateway waiting and

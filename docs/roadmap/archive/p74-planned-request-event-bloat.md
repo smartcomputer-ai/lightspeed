@@ -37,14 +37,14 @@
 Every `lightspeed.core.turn.planned` event embeds a full `LlmRequest`:
 
 ```rust
-// crates/engine/src/core/components/turn.rs
+// crates/harness/src/core/components/turn.rs
 Planned {
     turn_id: TurnId,
     run_id: RunId,
     request: LlmRequest,
 },
 
-// crates/engine/src/core/components/llm.rs
+// crates/harness/src/core/components/llm.rs
 pub struct LlmRequest {
     pub model: ModelSelection,
     pub request_fingerprint: String,

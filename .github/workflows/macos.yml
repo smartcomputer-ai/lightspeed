@@ -25,9 +25,9 @@ jobs:
       - name: Compile and smoke-test native Apple Silicon executables
         run: |
           cargo build --locked \
-            -p temporal-server -p environment-provider-incus \
+            -p temporal-runtime -p environment-provider-incus \
             -p environment-daemon -p cli
-          target/debug/lightspeed-server --version | grep -F "$(git rev-parse HEAD)"
+          target/debug/lightspeed-runtime --version | grep -F "$(git rev-parse HEAD)"
           target/debug/lightspeed-provider-incus --version | grep -F "$(git rev-parse HEAD)"
           target/debug/lightspeed-envd --version | grep -F "$(git rev-parse HEAD)"
           target/debug/lightspeed --version | grep -F "$(git rev-parse HEAD)"

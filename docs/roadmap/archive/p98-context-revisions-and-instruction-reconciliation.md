@@ -279,7 +279,7 @@ correlation model.
 ## Implementation
 
 1. **Completed.** Add optional expected revisions and a shared validator to the
-   three direct context commands in `engine`. Add structured revision-conflict
+   three direct context commands in `harness`. Add structured revision-conflict
    rejection details and admission tests.
 2. **Completed.** Update command constructors with `expected_revision: None`,
    and preserve the supplied value through workflow input preprocessing.

@@ -21,7 +21,7 @@
 - Added a fake-process environment test proving a single runtime can read VFS
   files through `fs:session` and execute a command through `env:test`.
 - Verified with:
-  `cargo test -p temporal-server -p tools -p llm-runtime --tests`
+  `cargo test -p temporal-runtime -p tools -p llm-runtime --tests`
 
 ## Goal
 
@@ -99,4 +99,4 @@ The test proves:
 - Active environment projection is non-empty when the default env target points
   at a registered environment.
 - A fake process environment test covers file-tool plus process-tool routing.
-- Focused tools, LLM-rendering, and temporal-server tests pass.
+- Focused tools, LLM-rendering, and temporal-runtime tests pass.

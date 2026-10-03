@@ -25,14 +25,14 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use engine::{
+use futures::{FutureExt, pin_mut, select};
+use harness::{
     BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextMessageRole, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
     CoreAgentEntry, CoreAgentEvent, CoreAgentState, CoreAgentStatus, EmissionEnvelope,
     LlmGenerationRequest, RunEvent, RunStatus, SessionId, SessionPosition, SubmissionId,
     ToolInvocationBatchRequest,
 };
-use futures::{FutureExt, pin_mut, select};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
@@ -281,7 +281,7 @@ impl AgentSessionWorkflow {
 
     /// Fixed inbound funnel for cross-workflow facts. Promise-bearing
     /// emissions become ordinary `ResolvePromise` admissions, preserving the
-    /// engine's idempotent first-writer-wins semantics.
+    /// harness's idempotent first-writer-wins semantics.
     #[signal(name = "deliver_emission")]
     pub fn deliver_emission(
         &mut self,

@@ -389,7 +389,7 @@ Everything fleet, deleted rather than deprecated:
 | Area | Goes |
 |---|---|
 | tools | `crates/tools/src/fleet/` (all seven tools, args, outputs); `FleetToolsetConfig`; `config.fleet` in `resolve_toolset`; the `VfsPolicy::Isolate` workspace derivation |
-| server | `temporal-server/src/fleet.rs` except the spawn body that becomes the prepare activity; `AgentApiFleetRuntime`; `start_session_for_fleet_with_profile`, `start_run_for_fleet`, `enqueue_run_for_fleet`, `deliver_message_for_fleet`; the fleet branches and message-dedup path in `worker/session_tools.rs`; fleet wiring in `universe.rs`, `lib.rs`, `main.rs`, `worker/activities/{mod,state}.rs` |
+| server | `temporal-runtime/src/fleet.rs` except the spawn body that becomes the prepare activity; `AgentApiFleetRuntime`; `start_session_for_fleet_with_profile`, `start_run_for_fleet`, `enqueue_run_for_fleet`, `deliver_message_for_fleet`; the fleet branches and message-dedup path in `worker/session_tools.rs`; fleet wiring in `universe.rs`, `lib.rs`, `main.rs`, `worker/activities/{mod,state}.rs` |
 | engine | `FleetFeature`, `FleetProfilesConfig`, `FleetSpawnConfig`, `FleetSpawnBase`; `fleet_policy` on tool-batch requests (renamed `subagents_policy`); `PromiseSource::Run` and its arms in cancellation and source polling (`RunTerminalNotifyIntent` stays — bots and the execution workflow use it) |
 | api | `FleetFeature` family; `FeaturesConfig.fleet` → `subagents`; `api-projection` fleet mapping; regenerated contract, OpenRPC, TS client, Configurator tools, web reference |
 | store | `session_links` table, `SessionLinkRecord`, `UpsertSessionLink`, `ListSessionLinks`, `SessionLinkDirection`, the store trait methods and `store-pg` implementations |
@@ -434,7 +434,7 @@ the retired `session_links` table is absent. Existing dev databases are reset
    `CreateSession` with origin and the transactional root reservation,
    `SessionOrigin` on both views, `session/list` filters, link traits
    deleted, contract regenerated.
-2. **Grant** (½ day): `SubagentsFeature` in `engine` + `api` replacing the
+2. **Grant** (½ day): `SubagentsFeature` in `harness` + `api` replacing the
    fleet family; admission validation of `agents[]`; `subagents_policy` on
    the batch request; `api-projection`; Configurator/TS/web regeneration;
    the web config-editor card.

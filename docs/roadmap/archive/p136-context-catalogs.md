@@ -4,8 +4,8 @@
 
 - Proposed 2026-08-26, surfaced by the P135 review question "where does a
   refreshed catalog land in the context, and does it invalidate the prompt
-  cache?" — it does, from the front. Core tier (`engine`, `llm-runtime`,
-  `temporal-server` projection, `api` views). Not yet sliced for a sprint;
+  cache?" — it does, from the front. Core tier (`harness`, `llm-runtime`,
+  `temporal-runtime` projection, `api` views). Not yet sliced for a sprint;
   the design is settled enough to build. Implemented the same day; see
   the entry below.
 - Extended the same day at Lukas's request: the supersede mechanism is
@@ -105,7 +105,7 @@ the message list, before the first user message.
 `UpsertContext` is a keyed `EntriesApplied`, and the reducer implements a
 keyed replace as **remove the previous entry wherever it is, then push the
 new one at the tail with a fresh id** (`apply_entries_applied`,
-`crates/engine/src/core/components/context.rs`). Two consequences:
+`crates/harness/src/core/components/context.rs`). Two consequences:
 
 1. **The prefix moves.** Removing a message from the front shifts every
    byte after it. Provider prompt caches are prefix caches (Anthropic at

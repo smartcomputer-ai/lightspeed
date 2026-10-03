@@ -6,9 +6,9 @@
   have to pass around?" Weaker models drop and transpose characters in long
   ids; a mistyped promise id costs a turn. The facts below were verified in
   code the same day.
-- Core tier: `engine` (`PromiseId`, `IdCursors`, the tool batch request,
+- Core tier: `harness` (`PromiseId`, `IdCursors`, the tool batch request,
   promise effects), `tools` (concurrency, workflow-tool adapter, job
-  arguments), `temporal-server` (session tool runtime, job and sub-agent
+  arguments), `temporal-runtime` (session tool runtime, job and sub-agent
   activities), `temporal-workflow` (reply tokens, the source-resolution
   emission id), `api` (promise views, key-source input), and both contract
   exports. Core only: the bot-side ids (`bot_emit`'s return, the digest
@@ -239,7 +239,7 @@ copies. Registry and API change, not core; not sliced here.
 
 ## Tests
 
-- `engine`: `Promise(Created)` below the base or duplicate is an invariant
+- `harness`: `Promise(Created)` below the base or duplicate is an invariant
   violation; the cursor bumps to the max; a recorded batch with
   out-of-order numbers reduces identically on replay; continue-as-new keeps
   the cursor.
@@ -248,7 +248,7 @@ copies. Registry and API change, not core; not sliced here.
   duplicate, and invalid field values; `await` / `cancel` / `detach` accept
   `promise_<n>` and turn a malformed id into a tool error, never an
   invariant violation.
-- `temporal-server`: parallel calls in one batch get disjoint ids; the
+- `temporal-runtime`: parallel calls in one batch get disjoint ids; the
   sub-agent reply token round-trips; job subscriptions are keyed by job id;
   `job_read` without `environment_id` reads the active environment.
 - `temporal-workflow`: two holders resolving `promise_1` through one

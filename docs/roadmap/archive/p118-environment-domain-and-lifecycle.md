@@ -154,7 +154,7 @@ environment records.
 ## Lifecycle reconciliation
 
 Lightspeed Postgres is authoritative for lifecycle intent and the current
-incarnation. One reconciliation loop in `temporal-server` scans pending and
+incarnation. One reconciliation loop in `temporal-runtime` scans pending and
 closing rows, calls the provider controller with stable IDs, and records the
 provider target ID plus the logical lifecycle status.
 

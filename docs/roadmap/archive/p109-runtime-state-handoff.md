@@ -587,6 +587,6 @@ P109 does not:
       reads across the covered hot paths, including activity retry tests.
 - [x] Existing bootstrap, continue-as-new, reaper/recovery, gateway projection,
       and explicit history-read behavior remains intact.
-- [x] Engine, temporal-workflow, temporal-server, tools, and Fleet suites pass;
+- [x] Engine, temporal-workflow, temporal-runtime, tools, and Fleet suites pass;
       relevant opt-in Temporal live paths pass serially against the local
       Temporal/Postgres/host-bridge stack.

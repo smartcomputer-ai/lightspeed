@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use engine::BlobRef;
 use futures_util::StreamExt;
+use harness::BlobRef;
 use reqwest::{
     StatusCode, Url,
     header::{CONTENT_TYPE, LOCATION},

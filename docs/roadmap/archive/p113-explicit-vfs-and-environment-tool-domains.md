@@ -54,7 +54,7 @@ Offline verification completed on 2026-08-02:
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace
-cargo test -p engine -p tools -p llm-runtime -p temporal-workflow -p temporal-server -p api --no-fail-fast
+cargo test -p harness -p tools -p llm-runtime -p temporal-workflow -p temporal-runtime -p api --no-fail-fast
 cargo test -p eval
 cargo run -p api --bin export-schema
 cd clients/typescript && npm run typecheck && npm run test && npm run build
@@ -67,8 +67,8 @@ local Temporal/PostgreSQL/host-bridge stack:
 
 ```bash
 source scripts/dev/env.sh
-cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1 --nocapture
-cargo test -p temporal-server --test sessions_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --test-threads=1 --nocapture
+cargo test -p temporal-runtime --test environment_provider_live -- --ignored --test-threads=1 --nocapture
+cargo test -p temporal-runtime --test sessions_live temporal_live_session_start_then_run_start_completes_fake_runs -- --ignored --test-threads=1 --nocapture
 ```
 
 The environment-provider suite includes a focused P113 case that writes and
@@ -773,11 +773,11 @@ current.
 Run at least:
 
 ```bash
-cargo test -p engine
+cargo test -p harness
 cargo test -p tools
 cargo test -p llm-runtime
 cargo test -p temporal-workflow
-cargo test -p temporal-server
+cargo test -p temporal-runtime
 cargo test -p api
 ```
 

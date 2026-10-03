@@ -2,7 +2,7 @@
 //! a fully prepared candidate can become one durable event batch.
 use super::*;
 use api::AgentApiError;
-use engine::storage::{StoredSessionEntry, UncommittedStoredEvent};
+use harness::storage::{StoredSessionEntry, UncommittedStoredEvent};
 
 pub(super) struct PreparationCandidate {
     drive: CoreAgentDrive,
@@ -76,7 +76,7 @@ impl PreparationCandidate {
                         })?;
                         Ok(StoredSessionEntry {
                             position: SessionPosition {
-                                seq: engine::EventSeq::new(seq),
+                                seq: harness::EventSeq::new(seq),
                             },
                             observed_at_ms: event.observed_at_ms,
                             joins: event.joins.clone(),
@@ -166,7 +166,7 @@ mod tests {
             .enumerate()
             .map(|(index, event)| StoredSessionEntry {
                 position: SessionPosition {
-                    seq: engine::EventSeq::new(start + index as u64 + 1),
+                    seq: harness::EventSeq::new(start + index as u64 + 1),
                 },
                 observed_at_ms: event.observed_at_ms,
                 joins: event.joins,
@@ -186,8 +186,8 @@ mod tests {
         candidate
             .push(
                 CoreAgentCommand::OpenSession {
-                    config: crate::default_session_config(engine::ModelSelection {
-                        api_kind: engine::ProviderApiKind::OpenAiResponses,
+                    config: crate::default_session_config(harness::ModelSelection {
+                        api_kind: harness::ProviderApiKind::OpenAiResponses,
                         provider_id: "openai".into(),
                         model: "test-model".into(),
                     }),
@@ -203,7 +203,7 @@ mod tests {
     fn instructions(text: &str) -> ContextEntryInput {
         ContextEntryInput {
             kind: ContextEntryKind::Instructions,
-            content: engine::ContentRef::text(BlobRef::from_bytes(text.as_bytes())),
+            content: harness::ContentRef::text(BlobRef::from_bytes(text.as_bytes())),
             preview: None,
             origin: None,
             provenance_ref: None,
@@ -211,11 +211,11 @@ mod tests {
         }
     }
 
-    fn attachment(id: &str) -> engine::EnvironmentAttachment {
-        engine::EnvironmentAttachment {
+    fn attachment(id: &str) -> harness::EnvironmentAttachment {
+        harness::EnvironmentAttachment {
             environment_id: id.to_owned(),
             default: false,
-            access: engine::EnvironmentAccess::Read,
+            access: harness::EnvironmentAccess::Read,
             working_directory: None,
         }
     }
@@ -227,7 +227,7 @@ mod tests {
         let mut config = live.state().lifecycle.config.clone().unwrap();
         let mut environment = attachment("new-default");
         environment.default = true;
-        config.features.environments = Some(engine::EnvironmentsFeature {
+        config.features.environments = Some(harness::EnvironmentsFeature {
             environments: vec![environment],
             ..Default::default()
         });
@@ -244,7 +244,7 @@ mod tests {
             admissions::runtime_projection_request(live.session_id(), candidate.state());
         assert_eq!(
             projection.active_environment_id,
-            Some(engine::EnvironmentId::new("new-default"))
+            Some(harness::EnvironmentId::new("new-default"))
         );
         assert!(live.state().environment.active_environment_id.is_none());
         let batch = candidate.finish(&live).unwrap();
@@ -257,16 +257,16 @@ mod tests {
 
     fn proposed(live: &CoreAgentDrive) -> PreparationCandidate {
         let mut candidate = PreparationCandidate::new(live);
-        let tool = engine::ToolSpec {
-            name: engine::ToolName::new("new_tool"),
-            kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+        let tool = harness::ToolSpec {
+            name: harness::ToolName::new("new_tool"),
+            kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                 description_ref: None,
                 input_schema_ref: BlobRef::from_bytes(b"schema"),
                 output_schema_ref: None,
                 strict: None,
                 provider_options_ref: None,
             }),
-            parallelism: engine::ToolParallelism::ParallelSafe,
+            parallelism: harness::ToolParallelism::ParallelSafe,
             execution: Default::default(),
         };
         let tools = BTreeMap::from([(tool.name.clone(), tool)]);
@@ -282,12 +282,12 @@ mod tests {
             )
             .unwrap();
         let mut config = live.state().lifecycle.config.clone().unwrap();
-        config.features.environments = Some(engine::EnvironmentsFeature {
+        config.features.environments = Some(harness::EnvironmentsFeature {
             environments: vec![attachment("selected")],
             ..Default::default()
         });
-        config.generation.tool_choice = Some(engine::ToolChoice::Specific {
-            tool_name: engine::ToolName::new("new_tool"),
+        config.generation.tool_choice = Some(harness::ToolChoice::Specific {
+            tool_name: harness::ToolName::new("new_tool"),
         });
         candidate
             .push(
@@ -301,7 +301,7 @@ mod tests {
         candidate
             .push(
                 CoreAgentCommand::SetActiveEnvironment {
-                    environment_id: engine::EnvironmentId::new("selected"),
+                    environment_id: harness::EnvironmentId::new("selected"),
                 },
                 2,
             )
@@ -331,7 +331,7 @@ mod tests {
         assert!(request.environments.is_some());
         assert_eq!(
             request.active_environment_id,
-            Some(engine::EnvironmentId::new("selected"))
+            Some(harness::EnvironmentId::new("selected"))
         );
         assert_eq!(
             request.active_instruction_inputs[&ContextEntryKey::new("instructions.050.profile")],
@@ -424,7 +424,7 @@ mod tests {
         let mut live = live();
         let mut initial = PreparationCandidate::new(&live);
         let mut config = live.state().lifecycle.config.clone().unwrap();
-        config.features.environments = Some(engine::EnvironmentsFeature {
+        config.features.environments = Some(harness::EnvironmentsFeature {
             prompts: Some(Default::default()),
             environments: vec![attachment("old"), attachment("new")],
             ..Default::default()
@@ -441,7 +441,7 @@ mod tests {
         initial
             .push(
                 CoreAgentCommand::SetActiveEnvironment {
-                    environment_id: engine::EnvironmentId::new("old"),
+                    environment_id: harness::EnvironmentId::new("old"),
                 },
                 2,
             )
@@ -482,7 +482,7 @@ mod tests {
         candidate
             .push(
                 CoreAgentCommand::SetActiveEnvironment {
-                    environment_id: engine::EnvironmentId::new("new"),
+                    environment_id: harness::EnvironmentId::new("new"),
                 },
                 3,
             )
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(batch.events.len(), 2);
         commit(&mut live, batch);
         assert!(drive::invalid_environment_prompt_command(live.state()).is_none());
-        assert!(engine::current_context_entry(live.state(), &catalog_key).is_some());
+        assert!(harness::current_context_entry(live.state(), &catalog_key).is_some());
         let mut candidate = PreparationCandidate::new(&live);
         candidate.push(old_catalog, 4).unwrap();
         let error = candidate

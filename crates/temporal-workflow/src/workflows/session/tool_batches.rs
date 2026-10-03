@@ -5,14 +5,14 @@
 //! on its own, so a slow or failed call never restarts a completed sibling.
 //! Batches that need batch-level orchestration (an `await` call or admitted
 //! workflow-tool calls) still execute as one unit behind the same
-//! progressive-completion engine contract.
+//! progressive-completion harness contract.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use engine::{ToolCallStatus, ToolExecutionSpec, ToolInvocationResult, ToolName, ToolParallelism};
 use futures::FutureExt;
 use futures::future::poll_fn;
+use harness::{ToolCallStatus, ToolExecutionSpec, ToolInvocationResult, ToolName, ToolParallelism};
 use temporalio_sdk::{ActivityExecutionError, CancellableFuture};
 
 use crate::{
@@ -38,7 +38,7 @@ pub(super) async fn invoke_tool_batch(
     }
     for group in execution_groups(drive.state(), &request) {
         if !control::tool_batch_still_wanted(drive.state(), request.run_id, request.batch_id) {
-            // A cancel landed while an earlier group ran; the engine has
+            // A cancel landed while an earlier group ran; the harness has
             // resolved the rest of the batch itself.
             break;
         }
@@ -102,7 +102,7 @@ async fn invoke_tool_batch_as_unit(
                 .collect();
             drive
                 .resume_tool_batch(
-                    engine::ToolInvocationBatchResult {
+                    harness::ToolInvocationBatchResult {
                         run_id: request.run_id,
                         turn_id: request.turn_id,
                         batch_id: request.batch_id,
@@ -162,7 +162,7 @@ async fn first_ready_call(inflight: &mut Vec<InflightCall<'_>>) -> (usize, CallA
 }
 
 /// Cancel every in-flight call (`TryCancel`) and let the futures resolve;
-/// their results are discarded — the engine already recorded the calls as
+/// their results are discarded — the harness already recorded the calls as
 /// cancelled.
 async fn abandon_inflight_calls(inflight: Vec<InflightCall<'_>>) {
     for call in inflight {
@@ -246,10 +246,10 @@ fn call_activity<'a>(
     index: usize,
 ) -> impl CancellableFuture<CallActivityOutcome> + use<'a> {
     let call = &request.calls[index];
-    // The engine materialized the native MCP routing facts on the call when
+    // The harness materialized the native MCP routing facts on the call when
     // it built this dispatch; the workflow only selects the execution class.
     let execution = if call.remote_mcp.is_some() {
-        ToolExecutionSpec::new(engine::ToolExecutionClass::RemoteInteractive, false)
+        ToolExecutionSpec::new(harness::ToolExecutionClass::RemoteInteractive, false)
     } else {
         call_execution_spec(state, call.tool_id.as_ref())
     };
@@ -283,7 +283,7 @@ async fn resume_call(
     if let Ok(ToolInvokeCallActivityResult::NeedsApproval { subject }) = &outcome {
         let action = drive.request_native_mcp_approvals(
             request.batch_id,
-            vec![engine::NativeMcpApprovalRequest {
+            vec![harness::NativeMcpApprovalRequest {
                 call_id: request.calls[index].call_id.clone(),
                 subject: subject.clone(),
             }],
@@ -307,7 +307,7 @@ async fn resume_call(
                 .await?
             {
                 Some(outcome) => outcome,
-                // Preempted by a cancel: the engine recorded the call as
+                // Preempted by a cancel: the harness recorded the call as
                 // cancelled; nothing to resume.
                 None => return Ok(()),
             }
@@ -465,7 +465,7 @@ fn call_parallelism(state: &CoreAgentState, tool_name: Option<&ToolName>) -> Too
 
 /// Materialize the boundary error text with bounded attempts. This path must
 /// never reintroduce unlimited retries: when the bounded put fails, fall back
-/// to the engine's well-known boundary-failure blob, which every runtime
+/// to the harness's well-known boundary-failure blob, which every runtime
 /// guarantees exists.
 async fn put_boundary_error_blob(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
@@ -487,11 +487,11 @@ async fn put_boundary_error_blob(
         boundary_error_blob_activity_options(),
     )
     .await
-    .unwrap_or_else(|_| engine::tool_runtime_boundary_failure_ref())
+    .unwrap_or_else(|_| harness::tool_runtime_boundary_failure_ref())
 }
 
 fn boundary_call_result(
-    call_id: engine::ToolCallId,
+    call_id: harness::ToolCallId,
     status: ToolCallStatus,
     error_ref: BlobRef,
 ) -> ToolInvocationResult {
@@ -515,7 +515,7 @@ fn boundary_call_result(
 
 #[cfg(test)]
 mod tests {
-    use engine::{BlobRef, ToolCallId, ToolInvocationRequest, ToolSpec};
+    use harness::{BlobRef, ToolCallId, ToolInvocationRequest, ToolSpec};
 
     use super::*;
 
@@ -540,9 +540,9 @@ mod tests {
         ToolInvocationBatchRequest {
             vfs_working_directory: None,
             session_id: SessionId::new("session-a"),
-            run_id: engine::RunId::new(1),
-            turn_id: engine::TurnId::new(1),
-            batch_id: engine::ToolBatchId::new(1),
+            run_id: harness::RunId::new(1),
+            turn_id: harness::TurnId::new(1),
+            batch_id: harness::ToolBatchId::new(1),
             promise_id_base: 1,
             workspace_attachments: Vec::new(),
             active_environment_id: None,
@@ -559,7 +559,7 @@ mod tests {
                 ToolName::new(name),
                 ToolSpec {
                     name: ToolName::new(name),
-                    kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+                    kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                         description_ref: None,
                         input_schema_ref: BlobRef::from_bytes(b"{}"),
                         output_schema_ref: None,

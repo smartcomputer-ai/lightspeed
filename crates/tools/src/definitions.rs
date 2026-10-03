@@ -1,6 +1,6 @@
 //! Code-owned definitions resolved from admitted logical identities.
 
-use engine::{
+use harness::{
     BuiltinToolSpec, ProviderApiKind, ToolExecutionSpec, ToolKind, ToolName, ToolParallelism,
     ToolSpec,
 };

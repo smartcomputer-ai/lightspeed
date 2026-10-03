@@ -12,7 +12,7 @@
   been updated to the new names.
 - The prototype Temporal package was split into `workflow`, `worker`, and
   `gateway`, then folded into the current `temporal-workflow` plus
-  `temporal-server` shape: `temporal-server` owns worker and gateway modules
+  `temporal-runtime` shape: `temporal-runtime` owns worker and gateway modules
   plus a `server` binary with `worker`, `gateway`, and combined modes.
 - Public deployable names, server metadata, task queue defaults, and local dev
   env vars have moved off the Claw codename.
@@ -29,7 +29,7 @@
 - Workflow admission now wraps a single encoded CoreAgent command. Gateway owns
   `run/start` input CAS writes and `CoreAgentCommand::RequestRun` construction;
   the old workflow-local text-run admission variant has been removed.
-- The CLI no longer depends on `engine`; public session id validation now lives
+- The CLI no longer depends on `harness`; public session id validation now lives
   at the `api` boundary.
 
 **Decision, 2026-05-30**
@@ -50,9 +50,9 @@ Restructure the workspace so the crate layout matches the product runtime:
 ```text
 client
   -> api
-  -> temporal-server gateway module
+  -> temporal-runtime gateway module
   -> temporal-workflow
-  -> temporal-server worker activities
+  -> temporal-runtime worker activities
   -> engine
   -> store-pg / CAS
 ```
@@ -65,9 +65,9 @@ execution should no longer be maintained as a parallel production runtime.
 ```text
 crates/api/              client protocol DTOs, method constants, JSON-RPC envelopes/errors
 crates/api-projection/   engine log/state -> api views
-crates/engine/           deterministic reducer, event log domain, drive machine
+crates/harness/           deterministic reducer, event log domain, drive machine
 crates/temporal-workflow/ Temporal workflow, signals, queries, activity DTOs
-crates/temporal-server/   hosted worker, HTTP/JSON-RPC gateway, and combined binary
+crates/temporal-runtime/   hosted worker, HTTP/JSON-RPC gateway, and combined binary
 crates/tools/            host/tool package
 crates/llm-clients/      provider-native OpenAI/Anthropic clients
 crates/llm-runtime/      product LLM adapters from engine requests to llm-clients
@@ -86,9 +86,9 @@ It should not expose a second supported `AgentApiService` implementation.
 ```text
 crates/agent-api/        -> crates/api/
 crates/agent-projection/ -> crates/api-projection/
-crates/agent-core/       -> crates/engine/
+crates/agent-core/       -> crates/harness/
 agents/claw/             -> split across workflow, worker, and gateway
-                         -> current shape is temporal-workflow plus temporal-server modules
+                         -> current shape is temporal-workflow plus temporal-runtime modules
 crates/agent-tools/      -> crates/tools/
 crates/agent-eval/       -> crates/eval/
 crates/agent-local/      -> remove or repurpose as crates/test-support/
@@ -109,7 +109,7 @@ Own the stable client boundary:
 - JSON-RPC request/response/notification envelopes
 - API error kinds and transport-neutral service traits
 
-`api` must not depend on `engine`, Temporal, stores, provider clients, tools, or
+`api` must not depend on `harness`, Temporal, stores, provider clients, tools, or
 gateway code.
 
 ### `api-projection`
@@ -119,7 +119,7 @@ Project committed engine state and log entries into `api` views.
 It may depend on:
 
 - `api`
-- `engine`
+- `harness`
 - blob-store read traits needed to materialize user-visible text
 
 It must not admit commands, append events, execute tools, call LLM providers, or
@@ -128,7 +128,7 @@ talk to Temporal.
 If the gateway becomes the only user of this crate, we can later fold it into
 `gateway`, but projection logic should not move into `api`.
 
-### `engine`
+### `harness`
 
 Own the central deterministic machinery:
 
@@ -139,11 +139,11 @@ Own the central deterministic machinery:
 - tool request/result records required by the reducer
 - substrate-neutral drive actions
 
-`engine` must stay deterministic. It must not perform provider calls, shell
+`harness` must stay deterministic. It must not perform provider calls, shell
 commands, filesystem operations, network I/O, Temporal activities, or database
 I/O.
 
-The rename from `agent-core` to `engine` is intentional. The crate is the
+The rename from `agent-core` to `harness` is intentional. The crate is the
 central product engine, not a generic external SDK core.
 
 ### `temporal-workflow`
@@ -154,13 +154,13 @@ Own Temporal workflow code and workflow-facing types:
 - signals and queries
 - workflow args
 - activity request/response DTOs
-- Temporal helper types that must be shared by temporal-server gateway and
+- Temporal helper types that must be shared by temporal-runtime gateway and
   worker modules
 
 `temporal-workflow` should contain orchestration logic only. Activity
-implementations and process wiring belong in `temporal-server`.
+implementations and process wiring belong in `temporal-runtime`.
 
-### `temporal-server`
+### `temporal-runtime`
 
 Own hosted runtime process concerns:
 
@@ -176,7 +176,7 @@ Own hosted runtime process concerns:
 - future auth, tenancy, rate limits, and streaming transports
 
 The gateway and worker roles remain separate modules and runtime modes inside
-`temporal-server`. Split deployment uses the `server gateway` and
+`temporal-runtime`. Split deployment uses the `server gateway` and
 `server worker` subcommands; local and small deployments can use the combined
 mode.
 
@@ -189,7 +189,7 @@ Own host/tool packages used by the product:
 - tool catalogs/profiles
 - tool runtime helpers
 
-It may depend on `engine` for tool request/result types, but it should not
+It may depend on `harness` for tool request/result types, but it should not
 depend on `gateway` or `temporal-workflow`.
 
 ### `llm-clients`
@@ -208,7 +208,7 @@ crate while it has real tests and reuse. It should not grow into an SDK layer.
 
 Become API-first.
 
-The normal CLI path should talk to the temporal-server gateway. Local mode
+The normal CLI path should talk to the temporal-runtime gateway. Local mode
 should not require a separate production runtime; local development should run
 the local Temporal stack and the `server` binary in combined mode, or split
 `server worker` and `server gateway` processes when needed. A fast in-process
@@ -337,7 +337,7 @@ Move in coarse, breaking slices:
 
 1. Done. Rename `agent-api` to `api` and update imports.
 2. Done. Rename `agent-projection` to `api-projection` and update imports.
-3. Done. Rename `agent-core` to `engine` and update imports.
+3. Done. Rename `agent-core` to `harness` and update imports.
 4. Done. Split `agents/claw` into hosted workflow/runtime crates.
 5. Done. Move activity implementations and worker binary into hosted runtime
    code.

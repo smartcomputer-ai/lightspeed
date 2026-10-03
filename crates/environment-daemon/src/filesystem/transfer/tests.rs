@@ -1,13 +1,13 @@
 use super::*;
 use async_trait::async_trait;
-use engine::{
-    BlobRef,
-    storage::{BlobSource, BlobStore, BlobStoreError},
-};
 use environment_client::{EnvironmentClientResult, EnvironmentDataClient, JsonRpcTransport};
 use environment_protocol::{
     data::{inventory::*, transfer_session::*},
     shared::EnvironmentPath,
+};
+use harness::{
+    BlobRef,
+    storage::{BlobSource, BlobStore, BlobStoreError},
 };
 use std::path::Path;
 use std::{
@@ -431,7 +431,7 @@ async fn rpc_materialize_creates_missing_parents_for_files_and_trees() {
     let environment = tempfile::tempdir().unwrap();
     std::fs::write(environment.path().join("sibling"), b"preserved").unwrap();
     let (remote, _, _) = remote(runtime(environment.path(), false));
-    let store = engine::storage::InMemoryBlobStore::new();
+    let store = harness::storage::InMemoryBlobStore::new();
     let entry = vfs::VfsEntry::File(vfs::VfsFile {
         blob_ref: store.put_bytes(b"content".to_vec()).await.unwrap(),
         size_bytes: 7,
@@ -584,7 +584,7 @@ async fn secure_replacement_rejects_links_and_uses_private_staging_without_readi
     .await
     .unwrap();
     let (remote, _, _) = remote(runtime.clone());
-    let store = engine::storage::InMemoryBlobStore::new();
+    let store = harness::storage::InMemoryBlobStore::new();
     let blob = store.put_bytes(b"new".to_vec()).await.unwrap();
     let entry = vfs::VfsEntry::File(vfs::VfsFile {
         blob_ref: blob,
@@ -932,7 +932,7 @@ async fn scan_installer_layouts_aliases_collisions_and_semantic_publication() {
     std::fs::write(home.join(".codex/skills/copy/SKILL.md"), doc).unwrap();
     symlink(&canonical, root.join("project/.agents/skills/review")).unwrap();
     symlink(&canonical, root.join("project/.agents/skills/alias")).unwrap();
-    let config = engine::EnvironmentSkillsConfig {
+    let config = harness::EnvironmentSkillsConfig {
         roots: Some(vec![
             root.join("project/.agents/skills")
                 .to_string_lossy()
@@ -980,8 +980,8 @@ async fn scan_installer_layouts_aliases_collisions_and_semantic_publication() {
             .unwrap()
             .ends_with("body two")
     );
-    let blobs = engine::storage::InMemoryBlobStore::new();
-    let Some(engine::CoreAgentCommand::UpsertContext { entry, .. }) =
+    let blobs = harness::storage::InMemoryBlobStore::new();
+    let Some(harness::CoreAgentCommand::UpsertContext { entry, .. }) =
         publish_environment_skill_catalog(&blobs, None, &catalog)
             .await
             .unwrap()

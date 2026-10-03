@@ -134,7 +134,7 @@ Replace the pruned backlog span with meaning instead of dropping it (consumed
 history already gets this from normal compaction):
 
 - before pruning, generate a summary of the outgoing span (worker activity or
-  a dedicated run, never inside `engine`);
+  a dedicated run, never inside `harness`);
 - the prune commits one updated `channel.room.<room>.summary` entry alongside
   the batch removal;
 - summary updates fold the previous summary with the newly pruned span so the
@@ -165,7 +165,7 @@ never block ingestion on the summarizer.
 
 ## Non-Goals
 
-- No engine-side channel awareness. `engine` keeps generic keyed context; all
+- No engine-side channel awareness. `harness` keeps generic keyed context; all
   room semantics stay in bridge policy.
 - No per-message TTL scheduling; retention triggers on append, not timers.
 - No cross-room/global summarization in this item.

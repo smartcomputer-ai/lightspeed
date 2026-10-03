@@ -13,7 +13,7 @@ roles when you need to scale or operate them independently.
 
 | Component | Responsibility | Needed for |
 | --- | --- | --- |
-| `lightspeed-server` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
+| `lightspeed-runtime` | JSON-RPC gateway, environment gateway, and Temporal workers for sessions, bots, and channels | Every hosted Lightspeed installation |
 | Temporal | Durable workflow execution and coordination | The hosted runtime |
 | Runtime PostgreSQL database | Session events, blobs, workspaces, credentials, profiles, bots, channels, and environment records | The hosted runtime |
 | Platform server and web app | Sign-in, membership and role enforcement, universe management, and browser access | The full web product |
@@ -69,7 +69,7 @@ for shared infrastructure and isolation limits.
 
 ## Runtime roles and scaling
 
-One `lightspeed-server` executable supplies five roles:
+One `lightspeed-runtime` executable supplies five roles:
 
 | Role | Work it owns |
 | --- | --- |

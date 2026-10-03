@@ -27,9 +27,9 @@ use bots::{
     BOT_CONFIG_SIGNAL, BOT_EVENT_SIGNAL, BOT_SESSION_ROTATE_SIGNAL, BOT_STATE_QUERY,
     BotControllerConfig, BotEvent, BotSessionRotate,
 };
-use engine::{EmissionEnvelope, WorkflowEndpointRef};
 use futures::future::poll_fn;
 use futures::{FutureExt, pin_mut, select};
+use harness::{EmissionEnvelope, WorkflowEndpointRef};
 use serde::{Deserialize, Serialize};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{

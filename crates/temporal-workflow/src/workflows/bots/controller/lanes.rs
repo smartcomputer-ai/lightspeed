@@ -5,8 +5,8 @@
 
 use api::{BotEventOutcome, BotRecentDeliverySnapshot, LlmUsageView};
 use bots::{BotDeliveryPhase, RoutedSession, ids};
-use engine::{BlobRef, EmissionEnvelope, PromiseResolution, REPLY_COMPLETION_KEY};
 use futures::{FutureExt, pin_mut, select};
+use harness::{BlobRef, EmissionEnvelope, PromiseResolution, REPLY_COMPLETION_KEY};
 
 use super::super::{
     BOT_BUSY_RETRY_DELAY, BOT_EVENT_TERMINAL_TIMEOUT, BOT_EXTRA_SESSION_CAP, BotActivities,

@@ -30,7 +30,7 @@ and then applies the defaults from `scripts/dev/env.sh`.
 
 ## Core runtime
 
-These variables configure `lightspeed-server`, including its JSON-RPC gateway,
+These variables configure `lightspeed-runtime`, including its JSON-RPC gateway,
 Temporal worker, PostgreSQL stores, CAS, provider clients, and preprocessing.
 They do not configure the TypeScript Platform server.
 
@@ -57,14 +57,14 @@ They do not configure the TypeScript Platform server.
 | `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (no credential check, ordinary methods use one configured universe; local development only) or `authenticated` (bearer keys with a scope and allowed method groups). There is no default: the process refuses to start without it. Configurator uses the same mode. |
 | `LIGHTSPEED_SECRETS_MASTER_KEY` | Unset | Base64-encoded 32-byte AES key for encrypted secret values and grant tokens. Required before encrypted secret material can be persisted or resolved. Keep stable across restarts. |
 | `LIGHTSPEED_BLOB_CACHE_BYTES` | `268435456` | Per-process CAS blob-cache budget. `0` disables the cache. |
-| `LIGHTSPEED_CAS_SWEEP_GRACE_MS` | `604800000` (seven days) | Minimum time since a blob's last put or API admission before an unheld blob is eligible for collection; reads do not refresh it. `0` disables background collection. One elected `sessions` process examines up to 100,000 old catalog rows per universe per hourly pass in pages of at most 1,024 rows, resuming its cursor next time. Passes have a soft 10-minute budget between pages; database statements have a five-second timeout and a one-second lock timeout. `lightspeed-server cas-sweep [--dry-run]` runs one bounded pass; deletion yields to an active background leader. Profiles and uncommitted workflow handoffs do not retain blobs; a handoff stalled beyond grace may require resubmission. |
+| `LIGHTSPEED_CAS_SWEEP_GRACE_MS` | `604800000` (seven days) | Minimum time since a blob's last put or API admission before an unheld blob is eligible for collection; reads do not refresh it. `0` disables background collection. One elected `sessions` process examines up to 100,000 old catalog rows per universe per hourly pass in pages of at most 1,024 rows, resuming its cursor next time. Passes have a soft 10-minute budget between pages; database statements have a five-second timeout and a one-second lock timeout. `lightspeed-runtime cas-sweep [--dry-run]` runs one bounded pass; deletion yields to an active background leader. Profiles and uncommitted workflow handoffs do not retain blobs; a handoff stalled beyond grace may require resubmission. |
 | `LIGHTSPEED_LLM_DEBUG_DUMPS` | `false` | Store every generation's raw provider request (credentials redacted) and raw response as unreferenced CAS blobs and log their refs at debug level. Nothing references the dumps, so they are collected after one grace period. Each request carries the whole context; leave this off outside debugging. |
 | `LIGHTSPEED_ALLOW_UNLEDGERED_SCHEMA` | `false` | Allows runtime startup against externally managed Lightspeed tables without a migration ledger. It does not relax `migrate` or schema diagnostics. |
 | `LIGHTSPEED_LOG_FORMAT` | `compact` | Log renderer: `compact`, `pretty`, or `json`. |
-| `RUST_LOG` | Built-in service filter | Standard tracing filter override, for example `temporal_server=debug`. |
+| `RUST_LOG` | Built-in service filter | Standard tracing filter override, for example `temporal_runtime=debug`. |
 
 `LIGHTSPEED_UNIVERSE_AUTO_CREATE` is retired. Setting it is an error; create
-universes explicitly through the deployment API or `lightspeed-server universe
+universes explicitly through the deployment API or `lightspeed-runtime universe
 create`.
 
 In authenticated mode, the gateway checks the key's status, scope, and allowed
@@ -80,7 +80,7 @@ See [API keys and service access](../access-and-security/api-keys-and-service-ac
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-server api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url. Stores the hash in the normal key store; does not bypass revocation or enable provisioning on ordinary production startup. |
+| `LIGHTSPEED_BOOTSTRAP_API_KEY` | Unset (generate a key) | Secret input to `lightspeed-runtime api-key provision`, also accepted on first development setup. Must be `lsk_` plus 32 random bytes in unpadded base64url. Stores the hash in the normal key store; does not bypass revocation or enable provisioning on ordinary production startup. |
 
 The development opt-out is the launcher option `--no-api-key-bootstrap`, not
 an environment variable. It skips API-key provisioning without disabling
@@ -255,7 +255,7 @@ acceptance checks, follow [Company sign-in (SSO)](../access-and-security/single-
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | The Platform's deployment key: every method group and allowed to assert actors. Create with `lightspeed-server api-key create --deployment --assert-actor`. Interactive calls name the universe and assert the signed-in user as the actor after Platform permission checks. Full development provisions a key when omitted. |
+| `LIGHTSPEED_PLATFORM_API_KEY` | Unset | The Platform's deployment key: every method group and allowed to assert actors. Create with `lightspeed-runtime api-key create --deployment --assert-actor`. Interactive calls name the universe and assert the signed-in user as the actor after Platform permission checks. Full development provisions a key when omitted. |
 | `LIGHTSPEED_PLATFORM_DATABASE_URL` | **Required** | Platform PostgreSQL connection URL. |
 | `LIGHTSPEED_PLATFORM_AUTH_SECRET` | **Required** | Better Auth signing/encryption secret. Use a strong, stable deployment secret. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `http://localhost:3000` | Public Platform origin used by authentication and trusted-origin checks. |
@@ -451,7 +451,7 @@ them on services.
 | `LIGHTSPEED_GIT_SHA` | Full source revision embedded in binaries and image labels. |
 | `LIGHTSPEED_RELEASE_BUILD_IMAGE` | Digest-pinned build environment recorded in the manifest. |
 | `SOURCE_DATE_EPOCH` | Reproducible SBOM/archive timestamp. |
-| `LIGHTSPEED_BINARY_URL_SERVER` | Published server archive URL recorded in the manifest. |
+| `LIGHTSPEED_BINARY_URL_RUNTIME` | Published runtime archive URL recorded in the manifest. |
 | `LIGHTSPEED_BINARY_URL_PROVIDER_INCUS` | Published Incus-provider archive URL. |
 | `LIGHTSPEED_BINARY_URL_ENVD` | Published environment-daemon archive URL. |
 | `LIGHTSPEED_BINARY_URL_CLI` | Published CLI archive URL. |

@@ -19,12 +19,12 @@ const MAX_LLM_BOUNDARY_ERROR_BYTES: usize = 16 * 1024;
 ///
 /// Run the generation activity while client admissions keep landing.
 /// A cancel that makes the turn obsolete preempts the call; the
-/// engine has already cancelled the turn by then.
+/// harness has already cancelled the turn by then.
 pub(super) async fn call_llm_generate(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: LlmGenerationRequest,
-) -> anyhow::Result<control::Raced<engine::LlmGenerationResult>> {
+) -> anyhow::Result<control::Raced<harness::LlmGenerationResult>> {
     let run_id = request.run_id;
     let turn_id = request.turn_id;
     let activity_ctx = ctx.clone();
@@ -47,16 +47,16 @@ pub(super) async fn call_llm_generate(
             Some(failure) => {
                 let failure_ref =
                     put_llm_boundary_error_blob(ctx, "LLM generation", &failure).await;
-                Ok(control::Raced::Completed(engine::LlmGenerationResult {
+                Ok(control::Raced::Completed(harness::LlmGenerationResult {
                     run_id,
                     turn_id,
-                    status: engine::LlmGenerationStatus::Failed,
+                    status: harness::LlmGenerationStatus::Failed,
                     failure_ref: Some(failure_ref),
                     context_entries: Vec::new(),
-                    facts: engine::LlmGenerationFacts {
+                    facts: harness::LlmGenerationFacts {
                         duration_ms: None,
                         provider_response_id: None,
-                        finish: engine::LlmFinish::Failed,
+                        finish: harness::LlmFinish::Failed,
                         usage: None,
                         tool_calls: Vec::new(),
                         approval_requests: Vec::new(),
@@ -72,8 +72,8 @@ pub(super) async fn call_llm_generate(
 pub(super) async fn call_context_compact(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
-    request: engine::ContextCompactionRequest,
-) -> anyhow::Result<control::Raced<engine::ContextCompactionResult>> {
+    request: harness::ContextCompactionRequest,
+) -> anyhow::Result<control::Raced<harness::ContextCompactionResult>> {
     let session_id = request.session_id.clone();
     let context_revision = request.request.context.context_revision;
     let run_id = drive
@@ -109,15 +109,17 @@ pub(super) async fn call_context_compact(
             Some(failure) => {
                 let failure_ref =
                     put_llm_boundary_error_blob(ctx, "context compaction", &failure).await;
-                Ok(control::Raced::Completed(engine::ContextCompactionResult {
-                    usage: None,
-                    calls: 0,
-                    session_id,
-                    context_revision,
-                    status: engine::ContextCompactionStatus::Failed,
-                    failure_ref: Some(failure_ref),
-                    context_entries: Vec::new(),
-                }))
+                Ok(control::Raced::Completed(
+                    harness::ContextCompactionResult {
+                        usage: None,
+                        calls: 0,
+                        session_id,
+                        context_revision,
+                        status: harness::ContextCompactionStatus::Failed,
+                        failure_ref: Some(failure_ref),
+                        context_entries: Vec::new(),
+                    },
+                ))
             }
             None => Err(anyhow::anyhow!("{error}")),
         },
@@ -230,7 +232,7 @@ fn llm_boundary_error_message(operation: &str, failure: &LlmBoundaryFailure) -> 
 }
 
 /// Materialize the boundary failure text with bounded attempts; fall back
-/// to the well-known engine blob so the failure path itself can never retry
+/// to the well-known harness blob so the failure path itself can never retry
 /// unbounded.
 async fn put_llm_boundary_error_blob(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
@@ -246,13 +248,13 @@ async fn put_llm_boundary_error_blob(
         crate::boundary_error_blob_activity_options(),
     )
     .await
-    .unwrap_or_else(|_| engine::llm_runtime_boundary_failure_ref())
+    .unwrap_or_else(|_| harness::llm_runtime_boundary_failure_ref())
 }
 
 pub(super) async fn call_tool_prepare_promise_controls(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    request: engine::PromiseControlArgumentRequest,
-) -> anyhow::Result<engine::PromiseControlArgumentFacts> {
+    request: harness::PromiseControlArgumentRequest,
+) -> anyhow::Result<harness::PromiseControlArgumentFacts> {
     ctx.start_activity(
         WorkflowActivities::tool_prepare_promise_controls,
         ToolPreparePromiseControlsActivityRequest { request },

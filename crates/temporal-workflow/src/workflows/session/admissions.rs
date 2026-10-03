@@ -315,7 +315,7 @@ pub(super) fn runtime_projection_request(
         vfs_prompt_roots,
         active_instruction_inputs: active_instruction_inputs(state),
         vfs_skills,
-        active_catalogs: engine::current_catalog_inputs(state),
+        active_catalogs: harness::current_catalog_inputs(state),
         subagents: state
             .lifecycle
             .config

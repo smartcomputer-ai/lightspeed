@@ -156,14 +156,14 @@ jobs:
         run: |
           set -euo pipefail
           declare -A files=(
-            [server]="$(find dist/archives -name '*-server-*' -print -quit)"
+            [runtime]="$(find dist/archives -name '*-runtime-*' -print -quit)"
             [provider-incus]="$(find dist/archives -name '*-provider-incus-*' -print -quit)"
             [envd]="$(find dist/archives -name '*-envd-*' -print -quit)"
             [cli]="$(find dist/archives -name '*-cli-*' -print -quit)"
             [demo]="$(find dist/archives -name '*-demo-*' -print -quit)"
             [docs]="$(find dist/archives -name '*-docs-*' -print -quit)"
           )
-          for name in server provider-incus envd cli demo docs; do
+          for name in runtime provider-incus envd cli demo docs; do
             test -n "${files[$name]}"
             ref="$GHCR_ROOT/${name}-bundle:$STAGING_TAG"
             oras push "$ref" "${files[$name]}:application/gzip"
@@ -181,7 +181,7 @@ jobs:
           LIGHTSPEED_PLATFORM_IMAGE: ghcr.io/${{ github.repository }}/platform@${{ steps.platform.outputs.digest }}
           LIGHTSPEED_PLATFORM_WORKERS_IMAGE: ghcr.io/${{ github.repository }}/platform-workers@${{ steps.platform_workers.outputs.digest }}
           LIGHTSPEED_RELEASE_BUILD_IMAGE: ghcr.io/${{ github.repository }}/build-env@${{ steps.build_environment.outputs.digest }}
-          LIGHTSPEED_BINARY_URL_SERVER: ${{ steps.archives.outputs.SERVER_URL }}
+          LIGHTSPEED_BINARY_URL_RUNTIME: ${{ steps.archives.outputs.RUNTIME_URL }}
           LIGHTSPEED_BINARY_URL_PROVIDER_INCUS: ${{ steps.archives.outputs.PROVIDER_INCUS_URL }}
           LIGHTSPEED_BINARY_URL_ENVD: ${{ steps.archives.outputs.ENVD_URL }}
           LIGHTSPEED_BINARY_URL_CLI: ${{ steps.archives.outputs.CLI_URL }}
@@ -218,8 +218,8 @@ jobs:
           container_id="$(docker create "$RUNTIME_IMAGE" --version)"
           trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
           mkdir image-check
-          docker cp "$container_id:/usr/local/bin/lightspeed-server" image-check/lightspeed-server
-          cmp dist/bin/lightspeed-server image-check/lightspeed-server
+          docker cp "$container_id:/usr/local/bin/lightspeed-runtime" image-check/lightspeed-runtime
+          cmp dist/bin/lightspeed-runtime image-check/lightspeed-runtime
           docker run --rm "$RUNTIME_IMAGE" --version | grep -F "$EXPECTED_SHA"
           scripts/release/smoke-images.sh
       - name: Confirm this is still the current main commit

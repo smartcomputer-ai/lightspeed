@@ -1,4 +1,4 @@
-use engine::{BlobRef, ContextEntryKey, WorkspaceAccess};
+use harness::{BlobRef, ContextEntryKey, WorkspaceAccess};
 use serde::{Deserialize, Serialize};
 use vfs::{VfsPath, VfsWorkspaceId};
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     BlobRef,
     storage::{BlobInfo, BlobStore, BlobStoreError},
 };
@@ -117,7 +117,7 @@ impl BlobStore for FsBlobStore {
         &self,
         expected: &BlobRef,
         size: u64,
-        source: &mut dyn engine::storage::BlobSource,
+        source: &mut dyn harness::storage::BlobSource,
     ) -> Result<BlobRef, BlobStoreError> {
         use sha2::{Digest, Sha256};
         use tokio::io::AsyncWriteExt;
@@ -246,7 +246,7 @@ fn blob_io_error(action: &str, path: &Path, error: io::Error) -> BlobStoreError 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::storage::BlobStore;
+    use harness::storage::BlobStore;
 
     #[tokio::test(flavor = "current_thread")]
     async fn fs_blob_store_persists_bytes() {

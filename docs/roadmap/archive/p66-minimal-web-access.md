@@ -83,7 +83,7 @@ https://developers.openai.com/api/docs/guides/tools-web-search
   credentials, or internal-network access.
 - Do not implement browser automation or page interaction.
 - Do not make OpenAI Chat Completions search models part of the first cut.
-- Do not make `engine` perform provider calls, network I/O, DNS resolution, or
+- Do not make `harness` perform provider calls, network I/O, DNS resolution, or
   page extraction.
 - Do not parse web-search result content in reducers for branching decisions.
 
@@ -179,7 +179,7 @@ disables the provider-native search tool for a session.
 
 ### G1 Implementation Shape
 
-Keep the provider-native tool builder outside `engine`.
+Keep the provider-native tool builder outside `harness`.
 
 Candidate crate shape:
 

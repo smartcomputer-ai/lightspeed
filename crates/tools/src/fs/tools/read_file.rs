@@ -1,6 +1,6 @@
 //! Canonical read-file operation.
 
-use engine::{
+use harness::{
     BlobRef,
     media::{
         MediaDescriptor, MediaKind, admit_tool_media, media_handle, sniff_media_type,
@@ -199,7 +199,7 @@ pub async fn invoke_read_file(
 mod tests {
     use std::sync::Arc;
 
-    use engine::storage::InMemoryBlobStore;
+    use harness::storage::InMemoryBlobStore;
 
     use super::*;
     use crate::{
@@ -591,7 +591,7 @@ mod tests {
     async fn oversized_media_is_an_error_result_with_its_size() {
         let (fs, ctx) = media_context().await;
         let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
-        png.resize(engine::media::MAX_TOOL_MEDIA_BYTES as usize + 1, 0);
+        png.resize(harness::media::MAX_TOOL_MEDIA_BYTES as usize + 1, 0);
         write(&fs, "/huge.png", png).await;
         let error = read(&ctx, "/huge.png").await.expect_err("too large");
         let message = error.to_string();

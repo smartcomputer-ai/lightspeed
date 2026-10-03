@@ -5,7 +5,7 @@
 //! long-lived session are best-effort. The session id is the natural key:
 //! every turn of a session shares its prefix, and nothing else does.
 
-use engine::{BlobRef, SessionId};
+use harness::{BlobRef, SessionId};
 
 /// OpenAI accepts short opaque keys; longer session ids are hashed so the
 /// key stays stable and within bounds.

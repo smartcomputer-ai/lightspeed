@@ -1,6 +1,6 @@
 //! Bounded standalone compaction shared by native and summary adapters.
 use crate::{LlmAdapterError, LlmAdapterResult, LlmCompactionAdapter};
-use engine::{
+use harness::{
     ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus, ContextEntry,
     ContextEntryInput, ContextEntryKind, ContextEntrySource,
 };
@@ -47,7 +47,7 @@ fn safe_cuts(entries: &[ContextEntry]) -> Vec<usize> {
         let same_native_window = index > 0
             && matches!((&entries[index - 1].source, &entry.source),
             (ContextEntrySource::Runtime { label: previous }, ContextEntrySource::Runtime { label })
-                if previous == engine::STANDALONE_COMPACTION_SOURCE && label == previous);
+                if previous == harness::STANDALONE_COMPACTION_SOURCE && label == previous);
         if index > 0
             && !same_native_window
             && (turn != previous || turn.is_none())
@@ -109,7 +109,7 @@ pub(crate) async fn compact(
     let mut window: Vec<ContextEntryInput> = Vec::new();
     let mut calls = 0;
     let mut spent = 0u64;
-    let mut usage: Option<engine::LlmUsage> = None;
+    let mut usage: Option<harness::LlmUsage> = None;
     while start < prefix.len() {
         let mut end = prefix.len();
         loop {
@@ -246,7 +246,7 @@ async fn estimate(
 
 fn synthetic_entry(input: ContextEntryInput, id: u64) -> ContextEntry {
     ContextEntry {
-        entry_id: engine::ContextEntryId::new(id),
+        entry_id: harness::ContextEntryId::new(id),
         key: None,
         source: ContextEntrySource::Runtime {
             label: "rolling_compaction".into(),
@@ -261,7 +261,7 @@ fn synthetic_entry(input: ContextEntryInput, id: u64) -> ContextEntry {
     }
 }
 
-fn add_usage(total: &mut Option<engine::LlmUsage>, value: engine::LlmUsage) {
+fn add_usage(total: &mut Option<harness::LlmUsage>, value: harness::LlmUsage) {
     if let Some(total) = total {
         for (target, value) in [
             (&mut total.input_tokens, value.input_tokens),
@@ -291,7 +291,7 @@ fn add_usage(total: &mut Option<engine::LlmUsage>, value: engine::LlmUsage) {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use engine::{
+    use harness::{
         BlobRef, ContentRef, ContextCompactionTask, ContextEntryId, ContextMessageRole,
         ContextSnapshot, ModelSelection, ProviderApiKind, SessionId, TokenEstimate,
         TokenEstimateQuality, ToolCallId, ToolName,
@@ -336,7 +336,7 @@ mod tests {
                 status: ContextCompactionStatus::Succeeded,
                 failure_ref: None,
                 calls: 1,
-                usage: Some(engine::LlmUsage {
+                usage: Some(harness::LlmUsage {
                     input_tokens: Some(10),
                     output_tokens: Some(2),
                     total_tokens: Some(12),
@@ -491,7 +491,7 @@ mod tests {
         let mut entries: Vec<_> = (1..=4).map(entry).collect();
         for entry in &mut entries[..3] {
             entry.source = ContextEntrySource::Runtime {
-                label: engine::STANDALONE_COMPACTION_SOURCE.into(),
+                label: harness::STANDALONE_COMPACTION_SOURCE.into(),
             };
         }
         assert_eq!(safe_cuts(&entries), vec![0, 3, 4]);

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use engine::{ToolEffect, storage::BlobStore};
+use harness::{ToolEffect, storage::BlobStore};
 
 pub mod access;
 pub mod apply_patch;
@@ -231,7 +231,7 @@ pub struct FsRangedRead {
 /// any environment bytes move; commit never merges concurrent workspace edits.
 #[async_trait]
 pub trait VfsCaptureTarget: Send + Sync {
-    fn blob_graph(&self) -> Option<Arc<dyn engine::storage::BlobGraphStore>> {
+    fn blob_graph(&self) -> Option<Arc<dyn harness::storage::BlobGraphStore>> {
         None
     }
     async fn commit(&self, entry: ::vfs::VfsEntry) -> FsResult<()>;

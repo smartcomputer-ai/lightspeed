@@ -349,7 +349,7 @@ auto-approve under any name.
 - `ApprovalId` counter, generic request/decision/cancellation events, the
   `McpToolCall` subject and MCP continuation variants, reducer state,
   single-funnel parked-run behavior, and cancel-terminates-pending.
-- Remove `providerDefault` across `mcp`, `engine`, `api`, generated clients,
+- Remove `providerDefault` across `mcp`, `harness`, `api`, generated clients,
   the Platform editor, CLI, and demo fixtures; the OpenAI lowering emits
   `require_approval` explicitly for both remaining values.
 - OpenAI Responses parsing of `mcp_approval_request` into facts alongside the

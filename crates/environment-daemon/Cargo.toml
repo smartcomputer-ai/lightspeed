@@ -42,7 +42,7 @@ libc = "0.2"
 async-trait = "0.1"
 store-fs = { path = "../store-fs" }
 vfs = { path = "../vfs" }
-engine = { path = "../engine" }
+harness = { path = "../harness" }
 environment-client = { path = "../environment-client" }
 tools = { path = "../tools" }
 

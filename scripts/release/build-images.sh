@@ -27,8 +27,8 @@ container_id="$(docker create "${tag}-runtime" --version)"
 trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 tmp_dir="$(mktemp -d)"
 trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true; rm -rf "$tmp_dir"' EXIT
-docker cp "$container_id:/usr/local/bin/lightspeed-server" "$tmp_dir/lightspeed-server"
-cmp dist/bin/lightspeed-server "$tmp_dir/lightspeed-server"
+docker cp "$container_id:/usr/local/bin/lightspeed-runtime" "$tmp_dir/lightspeed-runtime"
+cmp dist/bin/lightspeed-runtime "$tmp_dir/lightspeed-runtime"
 docker run --rm "${tag}-runtime" --version
 docker run --rm --entrypoint node "${tag}-configurator-mcp" \
   --input-type=module -e 'await import("/app/dist/index.js")'

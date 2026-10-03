@@ -23,7 +23,7 @@
   API activation and model-visible context share the same registry.
 - Regenerated committed API contract artifacts under `crates/api/contract/`.
 - Verified with:
-  `cargo test -p api -p temporal-server --tests`
+  `cargo test -p api -p temporal-runtime --tests`
 - Also checked adjacent environment/runtime crates with:
   `cargo test -p tools -p llm-runtime -p api-projection -p test-support --tests`
 

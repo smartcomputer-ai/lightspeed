@@ -2,13 +2,13 @@
 //! File payloads never enter model arguments or tool results.
 use crate::error::{ToolError, ToolResult};
 use async_trait::async_trait;
-use engine::{
-    BlobRef,
-    storage::{BlobSource, BlobStore, BlobStoreError},
-};
 use environment_protocol::{
     data::{inventory::*, transfer::TransferOnExisting, transfer_session::*},
     shared::{ByteChunk, EnvironmentPath},
+};
+use harness::{
+    BlobRef,
+    storage::{BlobSource, BlobStore, BlobStoreError},
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -265,7 +265,7 @@ pub struct CapturedSelection {
 pub async fn capture(
     remote: &dyn EnvironmentTransfer,
     blobs: &dyn BlobStore,
-    graph: Option<&dyn engine::storage::BlobGraphStore>,
+    graph: Option<&dyn harness::storage::BlobGraphStore>,
     id: &str,
     source: EnvironmentPath,
 ) -> ToolResult<CapturedSelection> {
@@ -551,17 +551,17 @@ pub async fn invoke_capture(
 
 async fn persist_capture_result(
     blobs: &dyn BlobStore,
-    graph: Option<&dyn engine::storage::BlobGraphStore>,
+    graph: Option<&dyn harness::storage::BlobGraphStore>,
     output: &crate::runtime::ToolInvocationOutput,
 ) -> ToolResult<()> {
     // The session retains the tool output. Its containment edge must retain the
     // snapshot too, especially when concurrent workspace edits prevent publication.
     let bytes = serde_json::to_vec(&output.output_json).map_err(blob_error)?;
     let output_ref = blobs.put_bytes(bytes).await.map_err(blob_error)?;
-    engine::storage::record_contains_edges(
+    harness::storage::record_contains_edges(
         graph,
         &output_ref,
-        engine::storage::collect_blob_refs(&output.output_json),
+        harness::storage::collect_blob_refs(&output.output_json),
     )
     .await
     .map_err(blob_error)
@@ -573,7 +573,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn unpublished_capture_is_retained_through_its_tool_result() {
-        let store = engine::storage::InMemoryBlobStore::new();
+        let store = harness::storage::InMemoryBlobStore::new();
         let file = store.put_bytes(b"captured bytes".to_vec()).await.unwrap();
         let mut manifest = vfs::VfsSnapshotManifest::empty();
         vfs::write_manifest_file_ref(
@@ -598,11 +598,11 @@ mod tests {
             .unwrap();
         let output_ref = BlobRef::from_bytes(&serde_json::to_vec(&output.output_json).unwrap());
         let edges = store.edges();
-        assert!(edges.contains(&engine::storage::BlobEdge::contains(
+        assert!(edges.contains(&harness::storage::BlobEdge::contains(
             output_ref,
             snapshot.snapshot_ref.clone(),
         )));
-        assert!(edges.contains(&engine::storage::BlobEdge::contains(
+        assert!(edges.contains(&harness::storage::BlobEdge::contains(
             snapshot.snapshot_ref,
             file,
         )));

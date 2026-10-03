@@ -46,7 +46,7 @@ P85 is implemented end-to-end with these concrete pieces:
 - **Postgres registry** in `crates/store-pg/`: migration
   `006_agent_profiles.sql` and `PgStore`'s `ProfileStore` implementation with
   optimistic revision checks and document JSONB storage.
-- **Hosted runtime applier** in `temporal-server`: resolves named or inline
+- **Hosted runtime applier** in `temporal-runtime`: resolves named or inline
   `ProfileSource`, merges profile config into `session/start` with explicit
   start config winning at the top level, and applies existing-session profiles in
   order: config, instructions, mounts, MCP, environments. Apply is convergent:
@@ -75,15 +75,15 @@ cargo test -p api
 cargo test -p tools
 cargo test -p cli --tests
 cargo test -p store-pg --lib
-cargo test -p temporal-server
+cargo test -p temporal-runtime
 npm --prefix clients/typescript run test
 npm --prefix clients/typescript run typecheck
 npm --prefix interop/messaging run test:bridge
 npm --prefix interop/messaging run typecheck:bridge
 npm --prefix interop/messaging run build:bridge
-source scripts/dev/env.sh && cargo test -p temporal-server --test profiles_live temporal_live_profiles_create_start_and_apply_idempotently -- --ignored --exact --nocapture
-source scripts/dev/env.sh && cargo test -p temporal-server --test subagents_live temporal_live_fleet_executor_spawns_profile_child -- --ignored --exact --nocapture
-source scripts/dev/env.sh && cargo test -p temporal-server --test environment_provider_live temporal_live_profile_attaches_host_environment -- --ignored --exact --nocapture
+source scripts/dev/env.sh && cargo test -p temporal-runtime --test profiles_live temporal_live_profiles_create_start_and_apply_idempotently -- --ignored --exact --nocapture
+source scripts/dev/env.sh && cargo test -p temporal-runtime --test subagents_live temporal_live_fleet_executor_spawns_profile_child -- --ignored --exact --nocapture
+source scripts/dev/env.sh && cargo test -p temporal-runtime --test environment_provider_live temporal_live_profile_attaches_host_environment -- --ignored --exact --nocapture
 ```
 
 ## Goal
@@ -155,7 +155,7 @@ boundary rather than in a separate crate:
 3. **`crates/store-pg/src/profile.rs`** + migration `006_agent_profiles.sql` — the
    Postgres-backed `ProfileStore`. A profile catalog table, exactly like the MCP
    server catalog (`003_mcp.sql`) and environment registry (`006_*`).
-4. **profile applier** in the hosted runtime (`temporal-server`) — resolves a
+4. **profile applier** in the hosted runtime (`temporal-runtime`) — resolves a
    profile reference to a concrete `AgentProfile`, then applies it against a
    target session through the internal `AgentApiService` and resource stores
    (the same calls the bridge makes today, now in Rust).
@@ -423,13 +423,13 @@ bridge starts the session with `tools.messaging = true`.
 ## Crash / Idempotency / Determinism
 
 - The registry is plain CRUD storage; no determinism concern (it is read by the
-  applier, never by `engine`).
+  applier, never by `harness`).
 - **Apply is idempotent and convergent**: keyed per mount/link/environment so a
   retry (tool-activity retry on `agent_spawn`, bridge retry, gateway restart
   mid-apply) re-issues only missing steps. This is the same property the bridge's
   old `startedSessions` set approximated, made real.
 - For `agent_spawn`, application happens in the **Fleet tool activity / hosted
-  runtime** (outside `engine`), exactly where P83 already does clone/fork/link
+  runtime** (outside `harness`), exactly where P83 already does clone/fork/link
   side effects. The engine learns nothing about profiles. The spawned child run's
   `submission_id` is still derived from the parent tool identity (P83), so spawn
   retries do not double-provision or double-admit.
@@ -453,7 +453,7 @@ bridge starts the session with `tools.messaging = true`.
   Postgres `ProfileStore` impl and an `agent_profiles` catalog table (id,
   display_name, description, revision, document JSONB, timestamps). (Pattern:
   `mcp.rs` / `003_mcp.sql`.)
-- `crates/temporal-server/`:
+- `crates/temporal-runtime/`:
   - **Profile applier**: resolve a `ProfileSource` (registry lookup for `named`,
     verbatim for `inline`; no merging), then apply to a session via internal
     `AgentApiService` + VFS/MCP/environment stores in the canonical order,
@@ -588,7 +588,7 @@ bridge starts the session with `tools.messaging = true`.
 - The **messaging bridge provisions through native profiles** (named id shorthand
   or inline `ProfileSource`). Legacy recipe JSON is rejected instead of converted;
   the bridge's manual mount/link/attach provisioning loop is gone.
-- No profile logic lives in `engine`; the applier runs in the hosted runtime
+- No profile logic lives in `harness`; the applier runs in the hosted runtime
   exactly where P83 performs clone/fork/link side effects.
 - Fleet children provisioned from a profile record the requested `ProfileSource`
   in spawn-link metadata so `agent_read` can explain profile-based child
@@ -709,7 +709,7 @@ tables and indexes). Only the API exposure layer is missing.
 
 Implemented following the existing `environmentProviders/register` pattern: new
 method constants + params/response DTOs in `crates/api/`, two `api_methods!`
-entries, two gateway handler wrappers in `temporal-server` that call the
+entries, two gateway handler wrappers in `temporal-runtime` that call the
 existing store methods and reuse the existing `environment_provider_view` /
 `environment_target_summary_view` mappers. Contract artifacts and the generated
 TS client were regenerated. No store, schema, or migration changes.

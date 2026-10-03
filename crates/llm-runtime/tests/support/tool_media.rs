@@ -2,7 +2,7 @@
 //! result hands the model two images and one PDF as media entries, and the
 //! answer shape every provider must produce from them.
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, FunctionToolSpec, RunId, ToolCallId, ToolExecutionSpec, ToolKind, ToolName,
     ToolParallelism, ToolSpec, TurnId,
@@ -162,7 +162,7 @@ pub async fn tool_media_entries_for(
         turn_id: TurnId::new(1),
         batch_id: None,
     };
-    let commit = |id: u64, input: engine::ContextEntryInput| ContextEntry {
+    let commit = |id: u64, input: harness::ContextEntryInput| ContextEntry {
         key: None,
         entry_id: ContextEntryId::new(id),
         kind: input.kind,
@@ -182,7 +182,7 @@ pub async fn tool_media_entries_for(
             is_error: false,
         },
         source: source.clone(),
-        content: engine::ContentRef::text(visible_ref),
+        content: harness::ContentRef::text(visible_ref),
         preview: None,
         origin: None,
         provenance_ref: None,
@@ -190,7 +190,7 @@ pub async fn tool_media_entries_for(
         supersedes: None,
     }];
     let mut next_id = first_entry_id + 1;
-    let mut push = |entries: &mut Vec<ContextEntry>, input: engine::ContextEntryInput| {
+    let mut push = |entries: &mut Vec<ContextEntry>, input: harness::ContextEntryInput| {
         entries.push(commit(next_id, input));
         next_id += 1;
     };
@@ -276,7 +276,7 @@ pub fn assert_tool_media_answer(text: &str, fixture: &ToolMediaFixture) {
     }
 }
 
-pub fn assistant_entry(execution: &llm_runtime::LlmGenerationExecution) -> engine::ContentRef {
+pub fn assistant_entry(execution: &llm_runtime::LlmGenerationExecution) -> harness::ContentRef {
     execution
         .result
         .context_entries
@@ -291,7 +291,7 @@ pub fn assistant_entry(execution: &llm_runtime::LlmGenerationExecution) -> engin
 }
 
 /// Commit a generation's output entries as retained assistant context.
-pub fn retained(first_entry_id: u64, outputs: &[engine::ContextEntryInput]) -> Vec<ContextEntry> {
+pub fn retained(first_entry_id: u64, outputs: &[harness::ContextEntryInput]) -> Vec<ContextEntry> {
     outputs
         .iter()
         .enumerate()

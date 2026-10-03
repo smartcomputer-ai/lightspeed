@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use engine::{
+use harness::{
     ContextConfig, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
     CoreAgentEvent, ModelSelection, ProviderApiKind, RemoteMcpApprovalPolicy, RemoteMcpToolSpec,
     RunConfig, RunStatus, SessionConfig, SessionId, ToolKind, ToolName, ToolParallelism, ToolSpec,
@@ -95,16 +95,16 @@ async fn openai_responses_live_core_session_uses_public_remote_mcp() {
         .drive_command(DriveCommand {
             session_id: session_id.clone(),
             observed_at_ms: 20,
-            command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                 requested_by: None,
                 notify_on_terminal: Vec::new(),
                 submission_id: None,
-                source: engine::RunRequestSource::Input {
+                source: harness::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
                         kind: ContextEntryKind::Message {
                             role: ContextMessageRole::User,
                         },
-                        content: engine::ContentRef {
+                        content: harness::ContentRef {
                             content_ref: input_ref,
                             media_type: None,
                             provider_kind: None,
@@ -164,8 +164,8 @@ fn remote_mcp_tools() -> BTreeMap<ToolName, ToolSpec> {
             server_url: MCP_TEST_SERVER_URL.to_string(),
             description_ref: None,
             allowed_tools: Some(vec![MCP_TEST_TOOL.to_string()]),
-            execution: engine::RemoteMcpExecution::Provider,
-            exposure: engine::RemoteMcpExposure::Inject,
+            execution: harness::RemoteMcpExecution::Provider,
+            exposure: harness::RemoteMcpExposure::Inject,
             approval: RemoteMcpApprovalPolicy::Never,
             defer_loading: None,
             auth_ref: None,
@@ -180,7 +180,7 @@ fn remote_mcp_tools() -> BTreeMap<ToolName, ToolSpec> {
 fn session_config(model: ModelSelection) -> SessionConfig {
     SessionConfig {
         model,
-        generation: engine::GenerationConfig {
+        generation: harness::GenerationConfig {
             max_output_tokens: Some(1024),
             reasoning_effort: None,
             tool_choice: None,
@@ -217,17 +217,17 @@ fn run_config() -> RunConfig {
     }
 }
 
-async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> String {
+async fn assistant_text(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
                 if matches!(
                     item.kind,
-                    engine::ContextEntryKind::Message {
-                        role: engine::ContextMessageRole::Assistant
+                    harness::ContextEntryKind::Message {
+                        role: harness::ContextMessageRole::Assistant
                     }
                 ) {
                     text.push_str(&support::content_text(blobs, &item.content).await);
@@ -239,15 +239,15 @@ async fn assistant_text(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
     text
 }
 
-async fn mcp_call_items(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry]) -> Vec<Value> {
+async fn mcp_call_items(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntry]) -> Vec<Value> {
     let mut items = Vec::new();
     for entry in entries {
-        if let CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied { entries, .. }) =
+        if let CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied { entries, .. }) =
             &entry.event
         {
             for item in entries {
                 if item.content.provider_kind.as_deref()
-                    == Some(engine::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
+                    == Some(harness::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
                 {
                     let bytes = blobs
                         .read_bytes(&item.content.content_ref)
@@ -261,7 +261,7 @@ async fn mcp_call_items(blobs: &dyn BlobStore, entries: &[engine::CoreAgentEntry
     items
 }
 
-async fn run_failure_text(blobs: &dyn BlobStore, state: &engine::CoreAgentState) -> String {
+async fn run_failure_text(blobs: &dyn BlobStore, state: &harness::CoreAgentState) -> String {
     let Some(run) = state.runs.completed.first() else {
         return "run did not complete".to_owned();
     };

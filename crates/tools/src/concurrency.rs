@@ -1,6 +1,6 @@
 //! Generic promise/concurrency tool contracts.
 
-use engine::{
+use harness::{
     PromiseControlCallRuntime, PromiseControlStateRuntime, PromiseId, PromiseOwnership,
     PromiseScope, PromiseStatus, RunId, ToolEffect, ToolName, promise_cancel_effect,
     promise_detach_effect,
@@ -169,7 +169,7 @@ impl PromiseControlError {
 fn supplied_promise_controls<'a>(
     requested_ids: &[PromiseId],
     runtime: Option<&'a PromiseControlCallRuntime>,
-) -> Result<&'a [engine::PromiseControlRuntime], PromiseControlError> {
+) -> Result<&'a [harness::PromiseControlRuntime], PromiseControlError> {
     let runtime = runtime
         .ok_or_else(|| PromiseControlError::new("promise control runtime facts are missing"))?;
     if runtime.version != PromiseControlCallRuntime::VERSION {
@@ -391,7 +391,7 @@ fn validated_non_empty_promise_ids(
 /// Parse the model's promise id list: every entry must be a `promise_<n>`
 /// handle as returned by a promise-creating tool. A malformed entry is an
 /// ordinary tool error, so a mistyped id costs the model one turn and
-/// never reaches the engine.
+/// never reaches the harness.
 fn validated_promise_ids(
     promises: &[String],
     max_promises: usize,
@@ -527,9 +527,9 @@ mod tests {
         ownership: PromiseOwnership,
         scope: PromiseScope,
         promise_status: PromiseStatus,
-    ) -> engine::PromiseControlRuntime {
-        engine::PromiseControlRuntime {
-            promise_id: engine::PromiseId::new(id),
+    ) -> harness::PromiseControlRuntime {
+        harness::PromiseControlRuntime {
+            promise_id: harness::PromiseId::new(id),
             state: PromiseControlStateRuntime::Known {
                 ownership,
                 scope,
@@ -538,7 +538,7 @@ mod tests {
         }
     }
 
-    fn runtime(controls: Vec<engine::PromiseControlRuntime>) -> PromiseControlCallRuntime {
+    fn runtime(controls: Vec<harness::PromiseControlRuntime>) -> PromiseControlCallRuntime {
         PromiseControlCallRuntime::v1(controls)
     }
 
@@ -579,7 +579,7 @@ mod tests {
             ]
         );
         assert_eq!(effects.len(), 1);
-        assert_eq!(effects[0].kind, engine::PROMISE_CANCEL_EFFECT_KIND);
+        assert_eq!(effects[0].kind, harness::PROMISE_CANCEL_EFFECT_KIND);
 
         let runtime_owned = runtime(vec![known_control(
             "promise_1",
@@ -605,8 +605,8 @@ mod tests {
         let args = CancelArgs {
             promises: vec!["promise_99".to_owned()],
         };
-        let unknown = runtime(vec![engine::PromiseControlRuntime {
-            promise_id: engine::PromiseId::new("promise_99"),
+        let unknown = runtime(vec![harness::PromiseControlRuntime {
+            promise_id: harness::PromiseId::new("promise_99"),
             state: PromiseControlStateRuntime::Unknown,
         }]);
         assert_eq!(
@@ -621,8 +621,8 @@ mod tests {
                 .to_string(),
             "promise control runtime facts are missing"
         );
-        let mismatched = runtime(vec![engine::PromiseControlRuntime {
-            promise_id: engine::PromiseId::new("promise_98"),
+        let mismatched = runtime(vec![harness::PromiseControlRuntime {
+            promise_id: harness::PromiseId::new("promise_98"),
             state: PromiseControlStateRuntime::Unknown,
         }]);
         assert_eq!(
@@ -670,7 +670,7 @@ mod tests {
             ]
         );
         assert_eq!(effects.len(), 1);
-        assert_eq!(effects[0].kind, engine::PROMISE_DETACH_EFFECT_KIND);
+        assert_eq!(effects[0].kind, harness::PROMISE_DETACH_EFFECT_KIND);
 
         for (facts, expected) in [
             (

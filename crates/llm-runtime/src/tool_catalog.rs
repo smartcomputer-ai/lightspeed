@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine::{
+use harness::{
     LlmGenerationResult, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpToolSpec,
     ToolChoice, ToolKind, ToolName, ToolSpec, storage::BlobStore,
 };
@@ -192,7 +192,7 @@ impl ToolCatalog {
 
 /// The exact function namespace advertised in this request, including expanded
 /// MCP functions and provider-hosted helpers. Only client functions can route
-/// back into the engine.
+/// back into the harness.
 #[derive(Default)]
 pub(crate) struct AdvertisedNames {
     exposed: BTreeSet<ToolName>,
@@ -229,7 +229,7 @@ pub(crate) fn valid_exposed_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{
+    use harness::{
         BlobRef, BuiltinToolSpec, FunctionToolSpec, LlmFinish, LlmGenerationFacts,
         LlmGenerationStatus, ObservedToolCall, RunId, ToolCallId, ToolParallelism, TurnId,
         storage::InMemoryBlobStore,
@@ -462,7 +462,7 @@ mod tests {
             .unwrap();
         let native = ToolSpec {
             name: ToolName::new("custom"),
-            kind: ToolKind::ProviderNative(engine::ProviderNativeToolSpec {
+            kind: ToolKind::ProviderNative(harness::ProviderNativeToolSpec {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 native_tool_ref,
                 execution: ProviderNativeToolExecution::ClientEffect,

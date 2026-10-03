@@ -53,7 +53,7 @@ capacity is bound to a session environment.
 
 ## Process Boundary
 
-Keep the registry in `temporal-server` first.
+Keep the registry in `temporal-runtime` first.
 
 This is a separate API boundary, not necessarily a separate service boundary.
 Splitting into a standalone provider-registry service is a deployment decision
@@ -489,7 +489,7 @@ session environment.
 
 Implemented as ignored live test
 `temporal_live_fake_provider_create_attach_and_process_tool` in
-`crates/temporal-server/tests/environment_provider_live.rs`. It starts an
+`crates/temporal-runtime/tests/environment_provider_live.rs`. It starts an
 in-process WebSocket fake provider, registers it through the gateway, exercises
 heartbeat/listTargets, bridge-style attach, sandbox-style create, process tool
 execution through the environment data plane, and close/detach semantics.

@@ -81,7 +81,7 @@ machine; presentation can fall back to full IDs for colliding attachments.
 
 Validation:
 
-- Library suites for engine, tools, temporal-workflow, temporal-server,
+- Library suites for engine, tools, temporal-workflow, temporal-runtime,
   llm-runtime, and test-support: 1,190 passed; the existing external ffmpeg
   smoke test remains ignored.
 - Discovery regression exercises local mock transport timeouts, incomplete

@@ -6,7 +6,7 @@
 //! drivers arrive in later milestones. Secret values only ever cross these
 //! boundaries wrapped in [`SecretValue`], whose `Debug` output is redacted.
 
-use engine::{StringIdError, validate_general_string_id};
+use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::fmt;
 use std::str::FromStr;

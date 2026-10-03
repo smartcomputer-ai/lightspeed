@@ -1,7 +1,7 @@
-//! Optional standard agent tools for `engine`.
+//! Optional standard agent tools for `harness`.
 //!
 //! This crate owns optional tool packages, model-visible tool contracts,
-//! and protocol/runtime adapters. The deterministic `engine` core stays
+//! and protocol/runtime adapters. The deterministic `harness` core stays
 //! independent from this crate.
 
 pub mod attachments;

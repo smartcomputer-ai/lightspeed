@@ -10,7 +10,7 @@ use api::{
 };
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use engine::BlobRef;
+use harness::BlobRef;
 use serde::Serialize;
 use vfs::{
     VfsDirectory, VfsEntry, VfsFile, VfsPath, VfsSnapshotLimits, VfsSnapshotManifest,

@@ -3,7 +3,7 @@
 //!
 //! Wire DTOs live in `api`; this crate adds what the runtime needs around
 //! them and nothing that does I/O. The Temporal workflows live in
-//! `temporal-workflow`, the activities and service in `temporal-server`, the
+//! `temporal-workflow`, the activities and service in `temporal-runtime`, the
 //! tables in `store-pg`.
 //!
 //! Module map:

@@ -83,7 +83,7 @@ what makes a second runtime plausible.
 
 | Piece | State today | Reusable as-is for local? |
 | --- | --- | --- |
-| `engine` (30k lines) incl. `CoreAgentDrive` | Deterministic, zero Temporal dependency. Emits `AppendEvents`, `GenerateLlm`, `CompactContext`, `InvokeTools`, `Idle`, `Closed`. | Yes |
+| `harness` (30k lines) incl. `CoreAgentDrive` | Deterministic, zero Temporal dependency. Emits `AppendEvents`, `GenerateLlm`, `CompactContext`, `InvokeTools`, `Idle`, `Closed`. | Yes |
 | `SessionRunner` in `test-support` (2.5k lines) | Substrate-neutral loop: `drive_until_quiescent` fulfils LLM, compaction and tool actions in-process. Used by `eval` and replay tests. | Yes, after promoting it out of test-support |
 | `llm-runtime` + `llm-clients` (31k lines) | `impl CoreAgentLlm for LlmRuntime`; Anthropic, OpenAI Responses, Completions. | Yes |
 | `tools` (27k lines) | `InlineToolRuntime`, local and scoped filesystem tools, VFS, skills. | Mostly. The local process executor is a one-line placeholder, so there is no in-process shell tool. |
@@ -108,7 +108,7 @@ abstraction between it and the SDK.
 
 | Option | What it means | Hosted runtime | Local install | Rough effort | Main risk |
 | --- | --- | --- | --- | --- | --- |
-| **A. Bundle the current stack** | A launcher starts the Temporal dev server (SQLite-backed), an embedded or managed Postgres, envd and `lightspeed-server` as subprocesses behind one command. | Unchanged | One command, but Go + Postgres binaries, several processes, and slow startup | 2–4 weeks | Feels like a server install, not a CLI tool, so it may not fix adoption |
+| **A. Bundle the current stack** | A launcher starts the Temporal dev server (SQLite-backed), an embedded or managed Postgres, envd and `lightspeed-runtime` as subprocesses behind one command. | Unchanged | One command, but Go + Postgres binaries, several processes, and slow startup | 2–4 weeks | Feels like a server install, not a CLI tool, so it may not fix adoption |
 | **B. Two runtimes** | Keep the Temporal runtime. Build a separate local runtime around `SessionRunner`, SQLite and the filesystem CAS that serves the same public API. | Unchanged | Single binary, no services | 2–3 months for interactive sessions | Orchestration semantics (admission, steering, cancel, promises, sub-agents) are re-implemented and drift from the hosted behaviour |
 | **C. One orchestration core, two substrates** | Do for the session workflow what the engine did for the agent loop: move admission racing, preparation, promise polling, emission delivery and the watchdog into a sans-IO orchestrator. Temporal and a local tokio/SQLite substrate each interpret it. | Temporal stays, behind a thinner shell | Single binary, no services | 3–5 months, mostly refactoring the hosted path first | A large refactor of working, live-validated code; Temporal's determinism rules (e.g. no custom wakers) constrain the shared design |
 | **D. Drop Temporal everywhere** | Option C, plus a Postgres-backed durable substrate (inbox, outbox, timers, leases) replaces Temporal in hosted too. | Postgres-only; we own scheduling, leases and failover | Same binary with SQLite | 6+ months | We take on the distributed-systems work Temporal does today: worker leases, failover, timer sweeps, at-least-once delivery, schedules |
@@ -187,10 +187,10 @@ The orchestration gets its own crate rather than living in the engine:
 
 | Crate | Role |
 | --- | --- |
-| `harness` (renamed from `engine`) | Lightspeed's native agent loop: events, session state, context, tool planning, `CoreAgentDrive`. Deterministic and event-sourced. |
+| `harness` (renamed from `harness`) | Lightspeed's native agent loop: events, session state, context, tool planning, `CoreAgentDrive`. Deterministic and event-sourced. |
 | `sessions` (new) | Sans-IO session orchestration: admission inbox, run slot, preparation steps, promise sources, emission outbox, workflow-start dedupe, wake computation, cancel watchdog. Depends on `harness`. |
 | `temporal-workflow` | Thin interpreters that run `sessions`, `bots` and `channels` state machines on Temporal. |
-| `temporal-runtime` (renamed from `temporal-server`) | Activities, roles and Temporal wiring. |
+| `temporal-runtime` (renamed from `temporal-runtime`) | Activities, roles and Temporal wiring. |
 | `local-runtime` (later) | Tokio interpreter of `sessions` over SQLite, filesystem CAS and embedded envd. |
 
 Why `sessions` is separate from `harness`:
@@ -276,7 +276,7 @@ notes where Option B differs.
 | --- | --- | --- | --- | --- | --- |
 | 1 | Local backend behind the public API | `AgentApiService` trait (about 119 methods, many with "unavailable" defaults) and a generic `dispatch_json_rpc` in `crates/api` | `LocalAgentApi` implementing the session, run, context, events, VFS and models subset. The CLI calls it in-process; `lightspeed serve` exposes it to the web UI. | 3–4 | Same |
 | 2 | Session orchestrator | `CoreAgentDrive`; `SessionRunner` (synchronous drive-until-quiescent); the Temporal session workflow | Admissions handled while a model or tool call runs (steer, cancel, approvals), awaits and timers, promises, queued runs, sub-agents spawned in-process | 8–12, which includes reshaping the hosted workflow | 5–7 on its own, then every later feature built twice |
-| 3 | SQLite store | Store traits in `engine`, `vfs`, `environments`, `auth`, `mcp`, `profiles`; `store-pg` as the reference | A `store-sqlite` crate with one-file migrations. jsonb containment becomes `json_each` or filtering in the app; `text[]` becomes JSON; advisory locks become a single-writer process lock. | 3–5 | Same |
+| 3 | SQLite store | Store traits in `harness`, `vfs`, `environments`, `auth`, `mcp`, `profiles`; `store-pg` as the reference | A `store-sqlite` crate with one-file migrations. jsonb containment becomes `json_each` or filtering in the app; `text[]` becomes JSON; advisory locks become a single-writer process lock. | 3–5 | Same |
 | 4 | Filesystem CAS + collection | `FsBlobStore` (sha256 layout) | Wire it in; reference roots and sweeps without Postgres | 1 | Same |
 | 5 | Local shell and process tools | envd (12k lines) runs on laptops today; the in-process `ProcessExecutor` is a placeholder | Embed envd as a library over an in-memory transport, or spawn it as a sidecar. Default the active environment to the working directory. | 2–3 | Same |
 | 6 | Permission model for a user's own machine | MCP approvals (`AwaitingApproval`, parked runs) | Approvals for shell and writes outside the workspace, with allow rules per session and per directory. Codex and Claude Code users expect this. | 2–3 | Same |
@@ -350,7 +350,7 @@ weeks for two engineers.
 | Phase | Duration | Work | Gate after |
 | --- | --- | --- | --- |
 | 0 · Spike | 2–4 weeks, in parallel with phase 1 | CLI over `SessionRunner`; in-memory or SQLite store; embedded envd; try with design partners | **Go / no-go on local:** spike used on real tasks |
-| 1 · Extract `sessions` | 5–7 weeks | Port one slice both ways and pick sync core or async host trait; sans-IO orchestrator; thin Temporal interpreter; `SessionControl` trait; neutral activity errors; `engine` → `harness` and `temporal-server` → `temporal-runtime` renames | **Hosted unchanged:** live Temporal suites green on the thin interpreter |
+| 1 · Extract `sessions` | 5–7 weeks | Port one slice both ways and pick sync core or async host trait; sans-IO orchestrator; thin Temporal interpreter; `SessionControl` trait; neutral activity errors; `harness` → `harness` and `temporal-runtime` → `temporal-runtime` renames | **Hosted unchanged:** live Temporal suites green on the thin interpreter |
 | 2 · Local substrate | 5–7 weeks | SQLite store; tokio interpreter of `sessions`; shell approvals; one-binary packaging | **Parity:** conformance suite green on both substrates |
 | 3 · Beta and bridge | 2–3 weeks | Public local release; push session to hosted; docs and onboarding | Then revisit Option D |
 

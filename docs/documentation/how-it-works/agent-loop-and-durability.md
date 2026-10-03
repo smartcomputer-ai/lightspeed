@@ -28,11 +28,11 @@ that should result. It may instead reject the command or recognize that an
 equivalent request was already admitted. Planning examines the resulting state
 and determines which internal transition or external operation should follow.
 
-Those are deterministic operations. Time is passed into the engine explicitly;
-the hosted workflow supplies its workflow clock. The engine does not read the
+Those are deterministic operations. Time is passed into the harness explicitly;
+the hosted workflow supplies its workflow clock. The harness does not read the
 wall clock, open a database connection, or ask a provider what happened last time.
 
-The [drive machine](../../../crates/engine/src/core/drive.rs) first emits an
+The [drive machine](../../../crates/harness/src/core/drive.rs) first emits an
 append action with an expected session head. The host commits that append and
 returns the committed entries. Only then does the reducer apply them. It checks
 their sequence and advances the state to the committed position.
@@ -115,7 +115,7 @@ records the history needed for its own responsibility:
 | Temporal workflow history | Workflow starts, delivered signals, activity results, timers, and orchestration progress. | The execution of the workflow code coordinating that work. |
 
 Temporal replay lets workflow code encounter the recorded result of an activity
-without executing that completed activity again. Session replay lets the engine
+without executing that completed activity again. Session replay lets the harness
 reconstruct its state from the committed domain events without asking the model
 to reproduce its old answer.
 
@@ -147,7 +147,7 @@ the workflow. It does not send the entire event history through the activity
 result. The same distinction lets a transcript reader load a bounded event
 range without reconstructing the full execution state first.
 
-The [checkpoint loader](../../../crates/temporal-server/src/checkpoint.rs)
+The [checkpoint loader](../../../crates/temporal-runtime/src/checkpoint.rs)
 validates checkpoints and checks that the required history is complete.
 
 ## Continue with a new Temporal execution

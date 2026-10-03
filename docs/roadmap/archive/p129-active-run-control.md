@@ -45,7 +45,7 @@ cancellation UI.
 
 ## Today
 
-### Engine (`crates/engine`) — mostly complete
+### Engine (`crates/harness`) — mostly complete
 
 - `CancelRun` → `CancellationRequested` → `Cancelling`; the planner waits
   for the open turn/tool batch to drain, then `CancellationGraceStarted` →
@@ -93,7 +93,7 @@ cancellation UI.
   `CancellationRequested` event exists, which is the part that never happens
   in time.
 
-### Gateway / API (`crates/api`, `crates/temporal-server`)
+### Gateway / API (`crates/api`, `crates/temporal-runtime`)
 
 - `session/runs/cancel` pre-validates against store state, signals
   `CancelRun`, then polls until the run leaves `Active` or a 90 s

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine::{
+use harness::{
     BlobRef, CompactionPolicy, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
     LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
@@ -85,7 +85,7 @@ async fn openai_responses_live_fast_mode_reports_effective_service_tier() {
                         run_id: RunId::new(1),
                         input_index: 0,
                     },
-                    content: engine::ContentRef {
+                    content: harness::ContentRef {
                         content_ref: input_ref,
                         media_type: None,
                         provider_kind: None,
@@ -103,7 +103,7 @@ async fn openai_responses_live_fast_mode_reports_effective_service_tier() {
             output_limit: Some(64),
             reasoning_effort: Some("none".to_owned()),
             parallel_tool_use: None,
-            processing_tier: Some(engine::ModelProcessingTier::Fast),
+            processing_tier: Some(harness::ModelProcessingTier::Fast),
             provider_response_id: None,
             compaction: None,
             params: Some(openai_params(&OpenAiResponsesParams {
@@ -166,7 +166,7 @@ async fn openai_responses_live_adapter_describes_image_input() {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: image_ref,
                 media_type: Some("image/png".to_owned()),
                 provider_kind: None,
@@ -187,7 +187,7 @@ async fn openai_responses_live_adapter_describes_image_input() {
                 run_id: RunId::new(1),
                 input_index: 1,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: question_ref,
                 media_type: None,
                 provider_kind: None,
@@ -322,7 +322,7 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
                 run_id: RunId::new(1),
                 input_index: 0,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: pdf_ref,
                 media_type: Some("application/pdf".to_owned()),
                 provider_kind: None,
@@ -343,7 +343,7 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
                 run_id: RunId::new(1),
                 input_index: 1,
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: question_ref,
                 media_type: None,
                 provider_kind: None,
@@ -438,7 +438,7 @@ async fn openai_responses_live_adapter_generates_result() {
             run_id: RunId::new(1),
             input_index: 0,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: input_ref,
             media_type: None,
             provider_kind: None,
@@ -565,7 +565,7 @@ async fn openai_responses_live_adapter_captures_provider_triggered_compaction() 
             run_id: RunId::new(1),
             input_index: 0,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: input_ref,
             media_type: None,
             provider_kind: None,
@@ -671,7 +671,7 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
             run_id: RunId::new(1),
             input_index: 0,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: input_ref,
             media_type: None,
             provider_kind: None,
@@ -704,17 +704,17 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
                 entries: vec![context_entry],
                 token_estimate: None,
             },
-            tools: vec![engine::ToolSpec {
-                name: engine::ToolName::new("web_search"),
-                kind: engine::ToolKind::ProviderNative(engine::ProviderNativeToolSpec {
+            tools: vec![harness::ToolSpec {
+                name: harness::ToolName::new("web_search"),
+                kind: harness::ToolKind::ProviderNative(harness::ProviderNativeToolSpec {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     native_tool_ref: blobs
                         .put_bytes(serde_json::to_vec(&native).expect("native json"))
                         .await
                         .expect("native definition"),
-                    execution: engine::ProviderNativeToolExecution::ProviderHosted,
+                    execution: harness::ProviderNativeToolExecution::ProviderHosted,
                 }),
-                parallelism: engine::ToolParallelism::ParallelSafe,
+                parallelism: harness::ToolParallelism::ParallelSafe,
                 execution: Default::default(),
             }],
             tool_choice: Some(ToolChoice::RequiredAny),
@@ -849,7 +849,7 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
             run_id: RunId::new(2),
             input_index: 0,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref: text_blob(&blobs, "Reply with exactly: replay ok").await,
             media_type: None,
             provider_kind: None,
@@ -930,7 +930,7 @@ async fn openai_responses_live_adapter_sees_tool_media() {
             run_id: RunId::new(1),
             input_index: 0,
         },
-        content: engine::ContentRef::text(input_ref),
+        content: harness::ContentRef::text(input_ref),
         preview: None,
         origin: None,
         provenance_ref: None,
@@ -1024,7 +1024,7 @@ fn user_message(entry_id: u64, content_ref: BlobRef, media_type: Option<&str>) -
             run_id: RunId::new(1),
             input_index: 0,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: media_type.map(str::to_owned),
             provider_kind: None,
@@ -1133,7 +1133,7 @@ async fn openai_responses_live_adapter_sees_oversized_image() {
     assert_eq!(execution.result.status, LlmGenerationStatus::Succeeded);
     let sent = support::content_text(
         blobs.as_ref(),
-        &engine::ContentRef::text(dumps(&execution).provider_request_ref.clone()),
+        &harness::ContentRef::text(dumps(&execution).provider_request_ref.clone()),
     )
     .await;
     let sent: Value = serde_json::from_str(&sent).expect("provider request json");

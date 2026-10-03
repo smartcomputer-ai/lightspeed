@@ -1,6 +1,6 @@
 //! Client-facing API contracts for Lightspeed agents.
 //!
-//! This crate is intentionally independent of `engine` core types. Hosts
+//! This crate is intentionally independent of `harness` core types. Hosts
 //! can implement these contracts from a local event-log runner, a Temporal
 //! workflow gateway, or another substrate while clients keep speaking the same
 //! session/run/item protocol.

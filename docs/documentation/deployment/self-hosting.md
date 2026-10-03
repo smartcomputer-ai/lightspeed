@@ -409,15 +409,15 @@ for LIGHTSPEED_COMPONENT in server cli; do
 done
 ```
 
-This extracts `lightspeed-server` and `lightspeed` into the current directory.
+This extracts `lightspeed-runtime` and `lightspeed` into the current directory.
 Their `--help` output lists the commands. The release page also provides
 archives for the Incus provider and environment daemon; choose those from the
 release matching your runtime when you need them.
 
 A native server needs the same runtime configuration, PostgreSQL migrations,
 and Temporal service as the container. Supply its environment through your
-process supervisor, run `lightspeed-server migrate`, and then start
-`lightspeed-server` with the configured roles. The `runtime.env` example above
+process supervisor, run `lightspeed-runtime migrate`, and then start
+`lightspeed-runtime` with the configured roles. The `runtime.env` example above
 uses container addresses; adapt those to the native process's network.
 Platform remains a separate application for the web app and authentication.
 Use [Configuration](configuration.md) for the runtime settings and

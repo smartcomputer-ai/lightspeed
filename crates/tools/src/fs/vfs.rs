@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     BlobRef, ToolEffect,
     storage::{BlobGraphStore, BlobStore, BlobStoreError},
 };
@@ -1031,7 +1031,7 @@ mod tests {
 
     use ::vfs::VfsWorkspaceStore;
     use async_trait::async_trait;
-    use engine::{
+    use harness::{
         CoreAgentTools, RunId, SessionId, ToolBatchId, ToolCallId, ToolCallStatus,
         ToolInvocationBatchRequest, ToolInvocationRequest, ToolName, TurnId,
         storage::{BlobStore, InMemoryBlobStore},
@@ -1464,7 +1464,7 @@ mod tests {
     fn resolved_attachment(
         path: &str,
         target: ::vfs::ResolvedWorkspaceAttachmentTarget,
-        access: engine::WorkspaceAccess,
+        access: harness::WorkspaceAccess,
     ) -> ::vfs::ResolvedWorkspaceAttachment {
         ::vfs::ResolvedWorkspaceAttachment {
             path: ::vfs::VfsPath::parse(path).unwrap(),
@@ -1510,12 +1510,12 @@ mod tests {
                     ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                         snapshot_ref: skill_snapshot.snapshot_ref,
                     },
-                    engine::WorkspaceAccess::Read,
+                    harness::WorkspaceAccess::Read,
                 ),
                 resolved_attachment(
                     "/workspace",
                     ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace },
-                    engine::WorkspaceAccess::Edit,
+                    harness::WorkspaceAccess::Edit,
                 ),
             ],
         )
@@ -1542,24 +1542,24 @@ mod tests {
             .with_cwd(FsPath::new("/workspace/docs").unwrap());
         let mut catalog = ToolCatalog::new();
         catalog.insert(ToolBinding::new(
-            engine::ToolName::new("vfs_reference"),
+            harness::ToolName::new("vfs_reference"),
             "vfs.reference",
         ));
         let runtime =
             InlineToolRuntime::with_vfs_filesystem(ctx, catalog).with_vfs_attachments(mounts);
         let result = runtime
             .invoke_json(
-                &engine::ToolName::new("vfs_reference"),
+                &harness::ToolName::new("vfs_reference"),
                 serde_json::json!({"path":"report.md"}),
             )
             .await
             .unwrap();
-        let engine::Attachment::File(file) = &result.attachments[0] else {
+        let harness::Attachment::File(file) = &result.attachments[0] else {
             panic!("file attachment")
         };
         assert_eq!(
             file.source,
-            Some(engine::AttachmentSource {
+            Some(harness::AttachmentSource {
                 kind: "vfs_workspace".into(),
                 id: workspace_id.to_string(),
                 path: "docs/report.md".into(),
@@ -1573,12 +1573,12 @@ mod tests {
         );
         let snapshot = runtime
             .invoke_json(
-                &engine::ToolName::new("vfs_reference"),
+                &harness::ToolName::new("vfs_reference"),
                 serde_json::json!({"path":"/skills/rust/SKILL.md"}),
             )
             .await
             .unwrap();
-        let engine::Attachment::File(file) = &snapshot.attachments[0] else {
+        let harness::Attachment::File(file) = &snapshot.attachments[0] else {
             panic!("file attachment")
         };
         let source = file.source.as_ref().unwrap();
@@ -1869,7 +1869,7 @@ mod tests {
         let (blobs, fs, workspace_id, _base_snapshot_ref) =
             test_workspace_fs(store.clone(), Vec::new()).await;
         let ctx = FsToolContext::new(Arc::new(fs), blobs.clone());
-        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses);
+        let target = ToolTarget::api_kind(harness::ProviderApiKind::OpenAiResponses);
         let toolset = register_toolset(&ToolsetConfig::workspace()).expect("toolset");
         let runtime =
             InlineToolRuntime::with_vfs_filesystem(ctx, crate::runtime::ToolCatalog::new());
@@ -1892,12 +1892,12 @@ mod tests {
                 subagents_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![ToolInvocationRequest {
-                    builtin: Some(engine::BuiltinToolCallRuntime {
+                    builtin: Some(harness::BuiltinToolCallRuntime {
                         spec: match &toolset.tools[&ToolName::new("vfs.write_file")].kind {
-                            engine::ToolKind::Builtin(spec) => spec.clone(),
+                            harness::ToolKind::Builtin(spec) => spec.clone(),
                             _ => panic!("built-in spec"),
                         },
-                        model: engine::ModelSelection {
+                        model: harness::ModelSelection {
                             api_kind: target.api_kind,
                             provider_id: "test".into(),
                             model: "test".into(),
@@ -2146,12 +2146,12 @@ mod tests {
                 ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace {
                     workspace: workspace.clone(),
                 },
-                engine::WorkspaceAccess::Edit,
+                harness::WorkspaceAccess::Edit,
             ),
             resolved_attachment(
                 "/workspace",
                 ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableWorkspace { workspace },
-                engine::WorkspaceAccess::Edit,
+                harness::WorkspaceAccess::Edit,
             ),
         ];
         assert!(matches!(
@@ -2165,14 +2165,14 @@ mod tests {
                 ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                     snapshot_ref: snapshot_ref.clone(),
                 },
-                engine::WorkspaceAccess::Read,
+                harness::WorkspaceAccess::Read,
             ),
             resolved_attachment(
                 "/skills/rust",
                 ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
                     snapshot_ref: snapshot_ref.clone(),
                 },
-                engine::WorkspaceAccess::Read,
+                harness::WorkspaceAccess::Read,
             ),
         ];
         assert!(matches!(
@@ -2183,7 +2183,7 @@ mod tests {
         let writable_snapshot = vec![resolved_attachment(
             "/skills/rust",
             ::vfs::ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref },
-            engine::WorkspaceAccess::Edit,
+            harness::WorkspaceAccess::Edit,
         )];
         assert!(matches!(
             AttachedVfsFileSystem::new(blobs, store, writable_snapshot),

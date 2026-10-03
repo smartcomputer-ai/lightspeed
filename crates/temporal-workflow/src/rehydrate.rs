@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use engine::{
+use harness::{
     CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, CoreAgentState, RunEvent, SubmissionId,
     storage::StoredSessionEntry,
 };
@@ -86,14 +86,14 @@ pub fn accumulate_session_entry(
             .run_submissions
             .insert(accepted.run_id.as_u64(), accepted.submission_id.clone());
     }
-    engine::apply_event(&mut reduced.core_state, entry)
+    harness::apply_event(&mut reduced.core_state, entry)
         .map_err(|error| RehydrateError::Apply(error.to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{
+    use harness::{
         CoreAgentEntry, CoreAgentJoins, CoreAgentLifecycleEvent, EventSeq, ModelSelection,
         ProviderApiKind, SessionPosition,
     };

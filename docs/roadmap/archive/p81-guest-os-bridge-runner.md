@@ -88,7 +88,7 @@ crates/host-bridge/
 Working binary name: `host-bridge`.
 
 The runner may depend on `api`, `environment-protocol`, and small transport helpers. It
-must not depend on `cli`, `temporal-server`, `store-pg`, `engine`, or any
+must not depend on `cli`, `temporal-runtime`, `store-pg`, `harness`, or any
 workflow/runtime crate. The dependency direction should be:
 
 ```text
@@ -99,7 +99,7 @@ host-bridge -> transport/json-rpc helper code
 
 If the existing JSON-RPC/WebSocket mechanics are too client-oriented, extract a
 small shared helper crate instead of making the runner depend on
-`temporal-server`.
+`temporal-runtime`.
 
 ## Runner Model
 
@@ -392,7 +392,7 @@ fake provider only simulated.
 
 ## Done When
 
-- A standalone `host-bridge` binary can run outside `temporal-server` and
+- A standalone `host-bridge` binary can run outside `temporal-runtime` and
   outside the Lightspeed CLI.
 - The runner registers and heartbeats as a bridge provider.
 - The gateway can attach its `local` target to a session and activate it.

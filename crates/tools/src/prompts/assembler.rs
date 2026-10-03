@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryInput, ContextEntryKey, ContextEntryKind, CoreAgentState,
     storage::{BlobGraphStore, BlobStore, BlobStoreError, record_contains_edges},
 };
@@ -246,7 +246,7 @@ pub fn prompt_source_instructions_context_input(
 ) -> ContextEntryInput {
     ContextEntryInput {
         kind: ContextEntryKind::Instructions,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some("text/markdown".to_owned()),
             provider_kind: Some(PROMPT_INSTRUCTIONS_PROVIDER_KIND.to_owned()),
@@ -396,7 +396,7 @@ async fn read_prompt_source(
         content_ref,
         text,
         bytes: bytes.len() as u64,
-        writable: input.root.access == engine::WorkspaceAccess::Edit,
+        writable: input.root.access == harness::WorkspaceAccess::Edit,
         warnings: Vec::new(),
     }))
 }
@@ -854,8 +854,8 @@ struct SourceFingerprintPayload<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use engine::WorkspaceAccess;
-    use engine::storage::{BlobStore, InMemoryBlobStore};
+    use harness::WorkspaceAccess;
+    use harness::storage::{BlobStore, InMemoryBlobStore};
 
     use super::*;
     use crate::fs::{CreateDirectoryOptions, InMemoryFileSystem};
@@ -971,7 +971,7 @@ mod tests {
         assert_eq!(build.entries.len(), 1, "the long source is truncated");
         assert_eq!(build.report.sources.len(), 2);
 
-        let embedded = engine::storage::collect_blob_refs(
+        let embedded = harness::storage::collect_blob_refs(
             &serde_json::from_slice(&build.report_bytes).expect("report json"),
         );
         let recorded: BTreeSet<BlobRef> = blobs

@@ -67,7 +67,7 @@ mod tests {
                     revision: None,
                 },
             ],
-            engine::SubagentLimits::default(),
+            harness::SubagentLimits::default(),
         );
         let text = subagent_catalog_text(&catalog);
         assert!(text.contains("- reviewer (Reviewer)"));

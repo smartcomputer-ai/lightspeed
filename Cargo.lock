@@ -173,8 +173,8 @@ name = "api-projection"
 version = "0.1.0"
 dependencies = [
  "api",
- "engine",
  "futures-util",
+ "harness",
  "llm-clients",
  "serde_json",
  "tokio",
@@ -213,8 +213,8 @@ dependencies = [
  "api",
  "async-trait",
  "base64 0.22.1",
- "engine",
  "futures-util",
+ "harness",
  "hex",
  "jsonwebtoken",
  "oauth2",
@@ -708,8 +708,8 @@ dependencies = [
  "clap",
  "crossterm",
  "dotenvy",
- "engine",
  "futures-util",
+ "harness",
  "pulldown-cmark 0.10.3",
  "ratatui",
  "release-info",
@@ -1197,21 +1197,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "hex",
- "schemars",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 1.0.69",
- "tokio",
- "uuid",
-]
-
-[[package]]
 name = "enum-iterator"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1267,7 +1252,6 @@ dependencies = [
  "clap",
  "dotenvy",
  "ed25519-dalek",
- "engine",
  "environment-client",
  "environment-protocol",
  "flate2",
@@ -1275,6 +1259,7 @@ dependencies = [
  "glob",
  "grep-regex",
  "grep-searcher",
+ "harness",
  "ignore",
  "libc",
  "portable-pty",
@@ -1337,8 +1322,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "auth",
- "engine",
  "environment-protocol",
+ "harness",
  "serde",
  "serde_json",
  "sha2",
@@ -1395,7 +1380,7 @@ dependencies = [
  "async-trait",
  "clap",
  "dotenvy",
- "engine",
+ "harness",
  "llm-clients",
  "llm-runtime",
  "serde",
@@ -1841,6 +1826,21 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "harness"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2534,7 +2534,7 @@ dependencies = [
  "api-projection",
  "async-trait",
  "base64 0.22.1",
- "engine",
+ "harness",
  "image",
  "llm-clients",
  "serde",
@@ -2613,7 +2613,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "auth",
- "engine",
+ "harness",
  "serde",
  "serde_json",
  "strsim",
@@ -4730,7 +4730,7 @@ name = "store-fs"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "engine",
+ "harness",
  "serde",
  "serde_json",
  "sha2",
@@ -4750,10 +4750,10 @@ dependencies = [
  "base64 0.22.1",
  "bots",
  "channels",
- "engine",
  "environment-protocol",
  "environments",
  "futures-util",
+ "harness",
  "mcp",
  "moka",
  "object_store",
@@ -4890,7 +4890,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "temporal-server"
+name = "temporal-runtime"
 version = "0.3.0"
 dependencies = [
  "anyhow",
@@ -4906,13 +4906,13 @@ dependencies = [
  "clap",
  "dotenvy",
  "ed25519-dalek",
- "engine",
  "environment-client",
  "environment-daemon",
  "environment-protocol",
  "environments",
  "futures",
  "futures-util",
+ "harness",
  "http",
  "ipnet",
  "jsonschema",
@@ -4960,10 +4960,10 @@ dependencies = [
  "bots",
  "channels",
  "chrono",
- "engine",
  "environment-protocol",
  "futures",
  "futures-util",
+ "harness",
  "hex",
  "jsonschema",
  "schemars",
@@ -5148,7 +5148,7 @@ name = "test-support"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "engine",
+ "harness",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -5467,11 +5467,11 @@ version = "0.1.0"
 dependencies = [
  "api",
  "async-trait",
- "engine",
  "environment-client",
  "environment-protocol",
  "futures-util",
  "glob",
+ "harness",
  "jsonschema",
  "regex",
  "reqwest 0.13.4",
@@ -5863,7 +5863,7 @@ name = "vfs"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "engine",
+ "harness",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -1,7 +1,7 @@
 //! Embedded, immutable PostgreSQL schema migrations.
 //!
 //! Production processes verify this ledger at startup. Only the explicit
-//! `lightspeed-server migrate` command applies migrations.
+//! `lightspeed-runtime migrate` command applies migrations.
 
 use std::collections::BTreeMap;
 

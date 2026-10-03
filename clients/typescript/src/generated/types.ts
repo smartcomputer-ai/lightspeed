@@ -817,7 +817,7 @@ export type RunAcceptedSourceView = {
  */
 export type ApprovalDecisionKind = "approve" | "reject";
 /**
- * Why a run failed, as the engine classified it.
+ * Why a run failed, as the harness classified it.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunFailureKindView".
@@ -2024,7 +2024,7 @@ export interface ContextCompactionView {
   thresholdSource: string;
 }
 /**
- * A session context entry, faithful to the stored engine entry: keyed,
+ * A session context entry, faithful to the stored harness entry: keyed,
  * kind-tagged, ref-backed. Keys are a stable extension point — clients
  * reconstruct derived surfaces (e.g. the prompted instruction set via the
  * `prompt_instructions/` key prefix) by filtering on `key` and fetching
@@ -2231,7 +2231,7 @@ export interface SessionConfig {
  */
 export interface ContextConfig {
   /**
-   * Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
+   * Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery.
    */
   compaction?: CompactionPolicy | null;
   /**
@@ -2559,7 +2559,7 @@ export interface GenerationConfig {
   toolChoice?: ToolChoice | null;
 }
 /**
- * Run budget defaults enforced by the engine drive loop.
+ * Run budget defaults enforced by the harness drive loop.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "LimitsConfig".

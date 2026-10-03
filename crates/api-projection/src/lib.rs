@@ -22,7 +22,8 @@ use api::{
     WorkflowToolDeclarationInput, WorkflowToolDefinitionInput, WorkflowToolKindInput,
     WorkflowToolSpecInput, WorkflowToolTargetInput,
 };
-use engine::{
+use futures_util::future::try_join_all;
+use harness::{
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
     CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
@@ -39,7 +40,6 @@ use engine::{
         SessionStoreError, StoredSessionEntry,
     },
 };
-use futures_util::future::try_join_all;
 use serde_json::Value;
 
 mod content;
@@ -63,11 +63,11 @@ pub struct ProjectRun<'a> {
     pub entries: &'a [CoreAgentEntry],
     pub run_id: RunId,
     pub status: ApiRunStatus,
-    pub output: Option<&'a engine::ContentRef>,
+    pub output: Option<&'a harness::ContentRef>,
     pub source: &'a RunSource,
     pub started_at_ms: Option<u64>,
     pub completed_at_ms: Option<u64>,
-    pub usage: Option<&'a engine::LlmUsage>,
+    pub usage: Option<&'a harness::LlmUsage>,
 }
 
 pub struct CoreAgentProjector<'a> {
@@ -77,9 +77,9 @@ pub struct CoreAgentProjector<'a> {
 /// One run in reducer state, whichever queue bucket holds it.
 #[derive(Clone, Copy)]
 pub enum RunStateRef<'a> {
-    Completed(&'a engine::RunRecord),
-    Active(&'a engine::ActiveRun),
-    Queued(&'a engine::AcceptedRun),
+    Completed(&'a harness::RunRecord),
+    Active(&'a harness::ActiveRun),
+    Queued(&'a harness::AcceptedRun),
 }
 
 impl RunStateRef<'_> {
@@ -353,18 +353,18 @@ impl<'a> CoreAgentProjector<'a> {
                 continue;
             };
             match event {
-                engine::ApprovalEvent::Requested { approval } if approval.run_id == run_id => {
+                harness::ApprovalEvent::Requested { approval } if approval.run_id == run_id => {
                     pending.insert(
                         approval.approval_id.clone(),
                         (entry.observed_at_ms, approval.subject.clone()),
                     );
                 }
-                engine::ApprovalEvent::Decided {
+                harness::ApprovalEvent::Decided {
                     approval_id,
                     run_id: event_run_id,
                     ..
                 }
-                | engine::ApprovalEvent::Cancelled {
+                | harness::ApprovalEvent::Cancelled {
                     approval_id,
                     run_id: event_run_id,
                 } if *event_run_id == run_id => {
@@ -386,10 +386,10 @@ impl<'a> CoreAgentProjector<'a> {
 
     async fn approval_subject_to_api(
         &self,
-        subject: &engine::ApprovalSubject,
+        subject: &harness::ApprovalSubject,
     ) -> Result<ApprovalSubjectView, AgentApiError> {
         match subject {
-            engine::ApprovalSubject::McpToolCall {
+            harness::ApprovalSubject::McpToolCall {
                 server_id,
                 server_label,
                 tool_name,
@@ -478,7 +478,7 @@ impl<'a> CoreAgentProjector<'a> {
     }
 
     /// Native identity is diagnostic; missing blobs or payload IDs do not invent one.
-    async fn native_item_id(&self, content: &engine::ContentRef) -> Option<String> {
+    async fn native_item_id(&self, content: &harness::ContentRef) -> Option<String> {
         if content.media_type.as_deref() != Some("application/json")
             || !content
                 .provider_kind
@@ -496,7 +496,7 @@ impl<'a> CoreAgentProjector<'a> {
     /// inline copy is a prefix of a longer body.
     async fn bounded_blob_text(
         &self,
-        content_ref: &engine::BlobRef,
+        content_ref: &harness::BlobRef,
     ) -> Result<(String, bool), AgentApiError> {
         let full = self.read_blob_text(content_ref).await?;
         let truncated = full.len() > MAX_INLINE_TEXT_BYTES;
@@ -687,7 +687,7 @@ impl<'a> CoreAgentProjector<'a> {
                 CoreAgentLifecycleEvent::Closed => Ok(SessionEventKindView::SessionClosed),
             },
             CoreAgentEvent::WorkflowToolConfig(event) => match event {
-                engine::WorkflowToolConfigEvent::ManagedBindingsAdmitted {
+                harness::WorkflowToolConfigEvent::ManagedBindingsAdmitted {
                     lifecycle_controller,
                     creation_fingerprint,
                     bindings,
@@ -702,7 +702,7 @@ impl<'a> CoreAgentProjector<'a> {
                         .map(|binding| binding.definition.tool_id.as_str().to_owned())
                         .collect(),
                 }),
-                engine::WorkflowToolConfigEvent::SystemBindingAdmitted { binding } => {
+                harness::WorkflowToolConfigEvent::SystemBindingAdmitted { binding } => {
                     Ok(SessionEventKindView::SystemWorkflowToolConfigured {
                         tool_id: binding.definition.tool_id.as_str().to_owned(),
                         binding_fingerprint: binding.binding_fingerprint.clone(),
@@ -710,7 +710,7 @@ impl<'a> CoreAgentProjector<'a> {
                 }
             },
             CoreAgentEvent::WorkflowTool(event) => match event {
-                engine::WorkflowToolEvent::Emitted { invocation } => {
+                harness::WorkflowToolEvent::Emitted { invocation } => {
                     Ok(SessionEventKindView::WorkflowToolEmitted {
                         invocation_id: invocation.invocation_id.as_str().to_owned(),
                         tool_id: invocation.tool_id.as_str().to_owned(),
@@ -734,7 +734,7 @@ impl<'a> CoreAgentProjector<'a> {
                         ),
                     })
                 }
-                engine::WorkflowToolEvent::StartRequested {
+                harness::WorkflowToolEvent::StartRequested {
                     invocation,
                     execution_id,
                 } => Ok(SessionEventKindView::WorkflowToolStartRequested {
@@ -762,14 +762,14 @@ impl<'a> CoreAgentProjector<'a> {
                         })
                         .unwrap_or_default(),
                 }),
-                engine::WorkflowToolEvent::StartFailed {
+                harness::WorkflowToolEvent::StartFailed {
                     invocation_id,
                     error_ref,
                 } => Ok(SessionEventKindView::WorkflowToolStartFailed {
                     invocation_id: invocation_id.as_str().to_owned(),
                     error_ref: error_ref.as_str().to_owned(),
                 }),
-                engine::WorkflowToolEvent::DeliveryFailed {
+                harness::WorkflowToolEvent::DeliveryFailed {
                     invocation_id,
                     error_ref,
                 } => Ok(SessionEventKindView::WorkflowToolDeliveryFailed {
@@ -836,19 +836,19 @@ impl<'a> CoreAgentProjector<'a> {
                 }),
             },
             CoreAgentEvent::Approval(event) => match event {
-                engine::ApprovalEvent::Requested { approval } => {
+                harness::ApprovalEvent::Requested { approval } => {
                     Ok(SessionEventKindView::ApprovalRequested {
                         run_id: api_run_id(approval.run_id),
                         approval_id: approval.approval_id.as_str().to_owned(),
                         subject: self.approval_subject_to_api(&approval.subject).await?,
                     })
                 }
-                engine::ApprovalEvent::RunParked { run_id } => {
+                harness::ApprovalEvent::RunParked { run_id } => {
                     Ok(SessionEventKindView::ApprovalRunParked {
                         run_id: api_run_id(*run_id),
                     })
                 }
-                engine::ApprovalEvent::Decided {
+                harness::ApprovalEvent::Decided {
                     approval_id,
                     run_id,
                     decision,
@@ -858,13 +858,13 @@ impl<'a> CoreAgentProjector<'a> {
                     run_id: api_run_id(*run_id),
                     approval_id: approval_id.as_str().to_owned(),
                     decision: match decision {
-                        engine::ApprovalDecision::Approved => ApprovalDecisionKind::Approve,
-                        engine::ApprovalDecision::Rejected => ApprovalDecisionKind::Reject,
+                        harness::ApprovalDecision::Approved => ApprovalDecisionKind::Approve,
+                        harness::ApprovalDecision::Rejected => ApprovalDecisionKind::Reject,
                     },
                     note: note.clone(),
                     decided_by: attribution(decided_by.as_ref()),
                 }),
-                engine::ApprovalEvent::Cancelled {
+                harness::ApprovalEvent::Cancelled {
                     approval_id,
                     run_id,
                 } => Ok(SessionEventKindView::ApprovalCancelled {
@@ -873,32 +873,32 @@ impl<'a> CoreAgentProjector<'a> {
                 }),
             },
             CoreAgentEvent::Promise(event) => match event {
-                engine::PromiseEvent::Created { promise } => {
+                harness::PromiseEvent::Created { promise } => {
                     Ok(SessionEventKindView::PromiseCreated {
                         promise_id: promise.promise_id.as_str().to_owned(),
                         source: promise_source_name(&promise.source).to_owned(),
                     })
                 }
-                engine::PromiseEvent::Resolved {
+                harness::PromiseEvent::Resolved {
                     promise_id,
                     payload_ref,
                 } => Ok(SessionEventKindView::PromiseResolved {
                     promise_id: promise_id.as_str().to_owned(),
                     payload_ref: payload_ref.as_ref().map(|ref_| ref_.as_str().to_owned()),
                 }),
-                engine::PromiseEvent::Failed {
+                harness::PromiseEvent::Failed {
                     promise_id,
                     error_ref,
                 } => Ok(SessionEventKindView::PromiseFailed {
                     promise_id: promise_id.as_str().to_owned(),
                     error_ref: error_ref.as_ref().map(|ref_| ref_.as_str().to_owned()),
                 }),
-                engine::PromiseEvent::Cancelled { promise_id } => {
+                harness::PromiseEvent::Cancelled { promise_id } => {
                     Ok(SessionEventKindView::PromiseCancelled {
                         promise_id: promise_id.as_str().to_owned(),
                     })
                 }
-                engine::PromiseEvent::Detached { promise_id } => {
+                harness::PromiseEvent::Detached { promise_id } => {
                     Ok(SessionEventKindView::PromiseDetached {
                         promise_id: promise_id.as_str().to_owned(),
                     })
@@ -1046,12 +1046,12 @@ impl<'a> CoreAgentProjector<'a> {
                 }),
             },
             CoreAgentEvent::Environment(event) => match event {
-                engine::EnvironmentEvent::ActiveEnvironmentSet { environment_id } => {
+                harness::EnvironmentEvent::ActiveEnvironmentSet { environment_id } => {
                     Ok(SessionEventKindView::ActiveEnvironmentChanged {
                         environment_id: Some(environment_id.as_str().to_owned()),
                     })
                 }
-                engine::EnvironmentEvent::ActiveEnvironmentCleared => {
+                harness::EnvironmentEvent::ActiveEnvironmentCleared => {
                     Ok(SessionEventKindView::ActiveEnvironmentChanged {
                         environment_id: None,
                     })
@@ -1256,7 +1256,7 @@ impl<'a> CoreAgentProjector<'a> {
                         call.started_at_ms = Some(entry.observed_at_ms);
                     }
                 }
-                // The durable per-call completion carries the engine's call
+                // The durable per-call completion carries the harness's call
                 // status; it distinguishes `cancelled` from `failed`, which
                 // the model-visible result entry alone cannot.
                 ToolEvent::CallCompleted {
@@ -1327,7 +1327,7 @@ impl<'a> CoreAgentProjector<'a> {
                 ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 } if matches!(item.source, ContextEntrySource::Tool { .. })
-                    && engine::media::is_media_content(&item.content) =>
+                    && harness::media::is_media_content(&item.content) =>
                 {
                     if let Some(call_id) = &current_call {
                         media_by_call
@@ -1387,7 +1387,7 @@ impl<'a> CoreAgentProjector<'a> {
         display(&value)
     }
 
-    async fn read_blob_text(&self, blob_ref: &engine::BlobRef) -> Result<String, AgentApiError> {
+    async fn read_blob_text(&self, blob_ref: &harness::BlobRef) -> Result<String, AgentApiError> {
         self.blobs
             .read_text(blob_ref)
             .await
@@ -1580,7 +1580,7 @@ fn session_management_to_api(state: &CoreAgentState) -> Option<SessionManagement
 }
 
 fn workflow_tool_declaration_to_api(
-    binding: &engine::WorkflowToolBinding,
+    binding: &harness::WorkflowToolBinding,
 ) -> Option<WorkflowToolDeclarationInput> {
     Some(WorkflowToolDeclarationInput {
         definition: WorkflowToolDefinitionInput {
@@ -1590,7 +1590,7 @@ fn workflow_tool_declaration_to_api(
             tool: WorkflowToolSpecInput {
                 name: binding.definition.tool.name.as_str().to_owned(),
                 kind: match &binding.definition.tool.kind {
-                    engine::ToolKind::Function(function) => WorkflowToolKindInput::Function {
+                    harness::ToolKind::Function(function) => WorkflowToolKindInput::Function {
                         description_ref: function
                             .description_ref
                             .as_ref()
@@ -1612,23 +1612,23 @@ fn workflow_tool_declaration_to_api(
             },
         },
         target: match &binding.target {
-            engine::WorkflowToolTarget::Bound { receiver, dispatch } => {
+            harness::WorkflowToolTarget::Bound { receiver, dispatch } => {
                 WorkflowToolTargetInput::Bound {
                     receiver: WorkflowEndpointInput {
                         workflow_id: receiver.workflow_id.clone(),
                         workflow_kind: receiver.workflow_kind.clone(),
                     },
                     dispatch: match dispatch {
-                        engine::BoundWorkflowToolDispatch::Pull => {
+                        harness::BoundWorkflowToolDispatch::Pull => {
                             BoundWorkflowToolDispatchInput::Pull
                         }
-                        engine::BoundWorkflowToolDispatch::Push => {
+                        harness::BoundWorkflowToolDispatch::Push => {
                             BoundWorkflowToolDispatchInput::Push
                         }
                     },
                 }
             }
-            engine::WorkflowToolTarget::Start { start } => WorkflowToolTargetInput::Start {
+            harness::WorkflowToolTarget::Start { start } => WorkflowToolTargetInput::Start {
                 start: WorkflowStartRefInput {
                     recipe_format: start.recipe_format,
                     revision: start.revision,
@@ -1638,8 +1638,8 @@ fn workflow_tool_declaration_to_api(
             },
         },
         completion: match &binding.completion {
-            engine::WorkflowToolCompletion::Accepted => WorkflowToolCompletionInput::Accepted,
-            engine::WorkflowToolCompletion::Joined {
+            harness::WorkflowToolCompletion::Accepted => WorkflowToolCompletionInput::Accepted,
+            harness::WorkflowToolCompletion::Joined {
                 reply_schema_ref,
                 deadline_after_ms,
             } => WorkflowToolCompletionInput::Joined {
@@ -1648,7 +1648,7 @@ fn workflow_tool_declaration_to_api(
                     .map(|value| value.as_str().to_owned()),
                 deadline_after_ms: *deadline_after_ms,
             },
-            engine::WorkflowToolCompletion::Promises {
+            harness::WorkflowToolCompletion::Promises {
                 reply_schema_ref,
                 deadline_after_ms,
                 max_promises,
@@ -1660,21 +1660,21 @@ fn workflow_tool_declaration_to_api(
                 deadline_after_ms: *deadline_after_ms,
                 max_promises: *max_promises,
                 key_source: match key_source {
-                    engine::WorkflowToolCompletionKeySource::Reply => {
+                    harness::WorkflowToolCompletionKeySource::Reply => {
                         WorkflowToolCompletionKeySourceInput::Reply
                     }
-                    engine::WorkflowToolCompletionKeySource::StringArray { pointer } => {
+                    harness::WorkflowToolCompletionKeySource::StringArray { pointer } => {
                         WorkflowToolCompletionKeySourceInput::StringArray {
                             pointer: pointer.clone(),
                         }
                     }
-                    engine::WorkflowToolCompletionKeySource::ArrayItemField { pointer, field } => {
+                    harness::WorkflowToolCompletionKeySource::ArrayItemField { pointer, field } => {
                         WorkflowToolCompletionKeySourceInput::ArrayItemField {
                             pointer: pointer.clone(),
                             field: field.clone(),
                         }
                     }
-                    engine::WorkflowToolCompletionKeySource::ArrayIndices { pointer, prefix } => {
+                    harness::WorkflowToolCompletionKeySource::ArrayIndices { pointer, prefix } => {
                         WorkflowToolCompletionKeySourceInput::ArrayIndices {
                             pointer: pointer.clone(),
                             prefix: prefix.clone(),
@@ -1697,11 +1697,11 @@ struct ProjectedToolResult {
 fn tool_call_media_view(entry: &ContextEntry) -> ToolCallMediaView {
     let mime = entry.content.media_type.clone().unwrap_or_default();
     ToolCallMediaView {
-        handle: engine::media::media_handle(&entry.content.content_ref),
+        handle: harness::media::media_handle(&entry.content.content_ref),
         blob_ref: entry.content.content_ref.as_str().to_owned(),
         kind: media_kind_for_mime(&mime),
         mime,
-        name: engine::media::media_preview_name(entry.preview.as_deref()),
+        name: harness::media::media_preview_name(entry.preview.as_deref()),
     }
 }
 
@@ -1794,7 +1794,7 @@ pub fn replay_core_agent_state(
 ) -> Result<CoreAgentState, AgentApiError> {
     let mut state = CoreAgentState::new();
     for entry in entries {
-        engine::apply_event(&mut state, entry)
+        harness::apply_event(&mut state, entry)
             .map_err(|error| AgentApiError::internal(error.to_string()))?;
     }
     Ok(state)
@@ -1912,19 +1912,19 @@ pub fn api_run_id(run_id: RunId) -> String {
     format!("run_{}", run_id.as_u64())
 }
 
-fn promise_source_name(source: &engine::PromiseSource) -> &'static str {
+fn promise_source_name(source: &harness::PromiseSource) -> &'static str {
     match source {
-        engine::PromiseSource::Timer { .. } => "timer",
-        engine::PromiseSource::Workflow { .. } => "workflow",
+        harness::PromiseSource::Timer { .. } => "timer",
+        harness::PromiseSource::Workflow { .. } => "workflow",
     }
 }
 
-fn attribution(value: Option<&engine::Attribution>) -> Option<api::Attribution> {
+fn attribution(value: Option<&harness::Attribution>) -> Option<api::Attribution> {
     Some(match value?.clone() {
-        engine::Attribution::Actor { id } => api::Attribution::Actor { id },
-        engine::Attribution::Key { prefix } => api::Attribution::Key { prefix },
-        engine::Attribution::Local => api::Attribution::Local,
-        engine::Attribution::Internal { component, cause } => {
+        harness::Attribution::Actor { id } => api::Attribution::Actor { id },
+        harness::Attribution::Key { prefix } => api::Attribution::Key { prefix },
+        harness::Attribution::Local => api::Attribution::Local,
+        harness::Attribution::Internal { component, cause } => {
             api::Attribution::Internal { component, cause }
         }
     })
@@ -2012,8 +2012,8 @@ fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompa
         Some(CompactionPolicy::ProviderStandalone { .. }) => "providerStandalone",
         _ => "disabled",
     };
-    let signed_window = state.context.entries.iter().any(|entry| entry.content.provider_kind.as_deref() == Some(engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
-        && matches!(entry.kind, ContextEntryKind::ProviderOpaque) && matches!(&entry.source, ContextEntrySource::Runtime { label } if label == engine::STANDALONE_COMPACTION_SOURCE));
+    let signed_window = state.context.entries.iter().any(|entry| entry.content.provider_kind.as_deref() == Some(harness::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND)
+        && matches!(entry.kind, ContextEntryKind::ProviderOpaque) && matches!(&entry.source, ContextEntrySource::Runtime { label } if label == harness::STANDALONE_COMPACTION_SOURCE));
     let effective = if requested == "providerTriggered" && signed_window {
         "providerStandalone"
     } else {
@@ -2032,7 +2032,7 @@ fn context_compaction_to_api(state: &CoreAgentState) -> Option<api::ContextCompa
         (_, ProviderApiKind::OpenAiCompletions) => "modelSummary",
         _ => "nativePreferred",
     };
-    let input_limit_tokens = engine::compaction_input_limit_tokens(state);
+    let input_limit_tokens = harness::compaction_input_limit_tokens(state);
     let override_threshold = match policy {
         Some(
             CompactionPolicy::ProviderTriggered {
@@ -2149,11 +2149,11 @@ pub fn session_activity(state: &CoreAgentState) -> api::SessionActivity {
 }
 
 /// The stored list projection of a session's activity.
-pub fn record_activity(record: &engine::storage::SessionRecord) -> api::SessionActivity {
+pub fn record_activity(record: &harness::storage::SessionRecord) -> api::SessionActivity {
     match record.activity {
-        engine::storage::SessionActivity::Idle => api::SessionActivity::Idle,
-        engine::storage::SessionActivity::Working => api::SessionActivity::Working,
-        engine::storage::SessionActivity::Waiting => api::SessionActivity::Waiting,
+        harness::storage::SessionActivity::Idle => api::SessionActivity::Idle,
+        harness::storage::SessionActivity::Working => api::SessionActivity::Working,
+        harness::storage::SessionActivity::Waiting => api::SessionActivity::Waiting,
     }
 }
 
@@ -2198,8 +2198,8 @@ fn tool_choice_to_api(choice: &ToolChoice) -> api::ToolChoice {
     }
 }
 
-/// Sparse engine-doc to wire-doc mapping: a section that equals its engine
-/// default projects to `None`; engine `Option` fields map 1:1.
+/// Sparse harness-doc to wire-doc mapping: a section that equals its harness
+/// default projects to `None`; harness `Option` fields map 1:1.
 pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfig, AgentApiError> {
     Ok(api::SessionConfig {
         model: Some(model_to_api(&config.model)),
@@ -2225,22 +2225,22 @@ pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfi
     })
 }
 
-fn generation_config_to_api(generation: &engine::GenerationConfig) -> api::GenerationConfig {
+fn generation_config_to_api(generation: &harness::GenerationConfig) -> api::GenerationConfig {
     api::GenerationConfig {
         max_output_tokens: generation.max_output_tokens,
         reasoning_effort: generation.reasoning_effort.clone(),
         tool_choice: generation.tool_choice.as_ref().map(tool_choice_to_api),
         parallel_tool_use: generation.parallel_tool_use,
         processing_tier: generation.processing_tier.map(|tier| match tier {
-            engine::ModelProcessingTier::Standard => api::ModelProcessingTier::Standard,
-            engine::ModelProcessingTier::Fast => api::ModelProcessingTier::Fast,
-            engine::ModelProcessingTier::Flex => api::ModelProcessingTier::Flex,
+            harness::ModelProcessingTier::Standard => api::ModelProcessingTier::Standard,
+            harness::ModelProcessingTier::Fast => api::ModelProcessingTier::Fast,
+            harness::ModelProcessingTier::Flex => api::ModelProcessingTier::Flex,
         }),
     }
 }
 
 fn features_config_to_api(
-    features: &engine::FeaturesConfig,
+    features: &harness::FeaturesConfig,
 ) -> Result<api::FeaturesConfig, AgentApiError> {
     Ok(api::FeaturesConfig {
         vfs: features.vfs.as_ref().map(vfs_feature_to_api),
@@ -2286,16 +2286,16 @@ fn features_config_to_api(
     })
 }
 
-pub fn environment_access_to_api(access: engine::EnvironmentAccess) -> api::EnvironmentAccess {
+pub fn environment_access_to_api(access: harness::EnvironmentAccess) -> api::EnvironmentAccess {
     match access {
-        engine::EnvironmentAccess::Read => api::EnvironmentAccess::Read,
-        engine::EnvironmentAccess::Edit => api::EnvironmentAccess::Edit,
-        engine::EnvironmentAccess::Exec => api::EnvironmentAccess::Exec,
-        engine::EnvironmentAccess::Jobs => api::EnvironmentAccess::Jobs,
+        harness::EnvironmentAccess::Read => api::EnvironmentAccess::Read,
+        harness::EnvironmentAccess::Edit => api::EnvironmentAccess::Edit,
+        harness::EnvironmentAccess::Exec => api::EnvironmentAccess::Exec,
+        harness::EnvironmentAccess::Jobs => api::EnvironmentAccess::Jobs,
     }
 }
 
-fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
+fn vfs_feature_to_api(vfs: &harness::VfsFeature) -> api::VfsFeature {
     api::VfsFeature {
         version: vfs.version,
         working_directory: vfs.working_directory.clone(),
@@ -2304,10 +2304,10 @@ fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
             .iter()
             .map(|attachment| {
                 let (workspace_id, snapshot_ref) = match &attachment.target {
-                    engine::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
+                    harness::WorkspaceAttachmentTarget::Workspace { workspace_id } => {
                         (Some(workspace_id.clone()), None)
                     }
-                    engine::WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
+                    harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
                         (None, Some(snapshot_ref.clone()))
                     }
                 };
@@ -2316,8 +2316,8 @@ fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
                     workspace_id,
                     snapshot_ref,
                     access: match attachment.access {
-                        engine::WorkspaceAccess::Read => api::WorkspaceAccess::Read,
-                        engine::WorkspaceAccess::Edit => api::WorkspaceAccess::Edit,
+                        harness::WorkspaceAccess::Read => api::WorkspaceAccess::Read,
+                        harness::WorkspaceAccess::Edit => api::WorkspaceAccess::Edit,
                     },
                 }
             })
@@ -2331,7 +2331,7 @@ fn vfs_feature_to_api(vfs: &engine::VfsFeature) -> api::VfsFeature {
     }
 }
 
-fn web_feature_to_api(web: &engine::WebFeature) -> api::WebFeature {
+fn web_feature_to_api(web: &harness::WebFeature) -> api::WebFeature {
     api::WebFeature {
         version: web.version,
         fetch: web.fetch.as_ref().map(|_| api::WebFetchFeature {}),
@@ -2343,7 +2343,7 @@ fn web_feature_to_api(web: &engine::WebFeature) -> api::WebFeature {
 }
 
 fn subagents_feature_to_api(
-    subagents: &engine::SubagentsFeature,
+    subagents: &harness::SubagentsFeature,
 ) -> Result<api::SubagentsFeature, AgentApiError> {
     Ok(api::SubagentsFeature {
         version: subagents.version,
@@ -2372,11 +2372,11 @@ fn subagents_feature_to_api(
 
 /// Project a session record's delegation provenance for API views.
 pub fn session_origin_to_api(
-    origin: &engine::storage::SessionOrigin,
+    origin: &harness::storage::SessionOrigin,
 ) -> Result<api::SessionOriginView, AgentApiError> {
     Ok(api::SessionOriginView {
         kind: match origin.kind {
-            engine::storage::SessionOriginKind::Subagent => api::SessionOriginKind::Subagent,
+            harness::storage::SessionOriginKind::Subagent => api::SessionOriginKind::Subagent,
         },
         parent_session_id: origin.parent_session_id.as_str().to_owned(),
         parent_run_id: format!("run_{}", origin.parent_run_id),
@@ -2396,7 +2396,7 @@ pub fn session_origin_to_api(
     })
 }
 
-pub fn subagent_limits_to_api(limits: engine::SubagentLimits) -> api::SubagentLimitsView {
+pub fn subagent_limits_to_api(limits: harness::SubagentLimits) -> api::SubagentLimitsView {
     api::SubagentLimitsView {
         max_depth: limits.max_depth,
         max_descendants: limits.max_descendants,
@@ -2405,7 +2405,7 @@ pub fn subagent_limits_to_api(limits: engine::SubagentLimits) -> api::SubagentLi
     }
 }
 
-fn mcp_feature_to_api(mcp: &engine::McpFeature) -> api::McpFeature {
+fn mcp_feature_to_api(mcp: &harness::McpFeature) -> api::McpFeature {
     api::McpFeature {
         version: mcp.version,
         servers: mcp
@@ -2420,17 +2420,17 @@ fn mcp_feature_to_api(mcp: &engine::McpFeature) -> api::McpFeature {
 }
 
 fn remote_mcp_approval_to_api(
-    policy: &engine::RemoteMcpApprovalPolicy,
+    policy: &harness::RemoteMcpApprovalPolicy,
 ) -> api::RemoteMcpApprovalPolicy {
     match policy {
-        engine::RemoteMcpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
-        engine::RemoteMcpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
+        harness::RemoteMcpApprovalPolicy::Always => api::RemoteMcpApprovalPolicy::Always,
+        harness::RemoteMcpApprovalPolicy::Never => api::RemoteMcpApprovalPolicy::Never,
     }
 }
 
 fn active_tools_to_api(
     revision: u64,
-    tools: &BTreeMap<engine::ToolName, ToolSpec>,
+    tools: &BTreeMap<harness::ToolName, ToolSpec>,
 ) -> ActiveToolsView {
     ActiveToolsView {
         revision,
@@ -2471,10 +2471,10 @@ fn tool_kind_to_api(kind: &ToolKind) -> ToolKindView {
             api_kind: api_kind_to_str(&native.api_kind).to_owned(),
             native_tool_ref: native.native_tool_ref.as_str().to_owned(),
             execution: match native.execution {
-                engine::ProviderNativeToolExecution::ProviderHosted => {
+                harness::ProviderNativeToolExecution::ProviderHosted => {
                     ProviderNativeToolExecutionView::ProviderHosted
                 }
-                engine::ProviderNativeToolExecution::ClientEffect => {
+                harness::ProviderNativeToolExecution::ClientEffect => {
                     ProviderNativeToolExecutionView::ClientEffect
                 }
             },
@@ -2596,7 +2596,7 @@ fn context_message_role_to_api(role: &ContextMessageRole) -> ContextMessageRoleV
     }
 }
 
-fn token_estimate_to_api(estimate: &engine::TokenEstimate) -> TokenEstimateView {
+fn token_estimate_to_api(estimate: &harness::TokenEstimate) -> TokenEstimateView {
     TokenEstimateView {
         tokens: estimate.tokens,
         quality: token_estimate_quality_to_api(estimate.quality),
@@ -2604,12 +2604,12 @@ fn token_estimate_to_api(estimate: &engine::TokenEstimate) -> TokenEstimateView 
 }
 
 fn token_estimate_quality_to_api(
-    quality: engine::TokenEstimateQuality,
+    quality: harness::TokenEstimateQuality,
 ) -> TokenEstimateQualityView {
     match quality {
-        engine::TokenEstimateQuality::Exact => TokenEstimateQualityView::Exact,
-        engine::TokenEstimateQuality::ProviderCounted => TokenEstimateQualityView::ProviderCounted,
-        engine::TokenEstimateQuality::Estimated => TokenEstimateQualityView::Estimated,
+        harness::TokenEstimateQuality::Exact => TokenEstimateQualityView::Exact,
+        harness::TokenEstimateQuality::ProviderCounted => TokenEstimateQualityView::ProviderCounted,
+        harness::TokenEstimateQuality::Estimated => TokenEstimateQualityView::Estimated,
     }
 }
 
@@ -2755,11 +2755,11 @@ fn tool_attachments_for_run(
         .collect()
 }
 
-fn tool_attachments_to_api(attachments: &[engine::Attachment]) -> Vec<api::ToolAttachmentView> {
+fn tool_attachments_to_api(attachments: &[harness::Attachment]) -> Vec<api::ToolAttachmentView> {
     attachments
         .iter()
         .map(|attachment| match attachment {
-            engine::Attachment::Media(media) => api::ToolAttachmentView {
+            harness::Attachment::Media(media) => api::ToolAttachmentView {
                 kind: api::ToolAttachmentKind::Media,
                 handle: media.handle.clone(),
                 content_ref: media.content_ref.to_string(),
@@ -2767,7 +2767,7 @@ fn tool_attachments_to_api(attachments: &[engine::Attachment]) -> Vec<api::ToolA
                 media_type: Some(media.media_type.clone()),
                 source: None,
             },
-            engine::Attachment::File(file) => api::ToolAttachmentView {
+            harness::Attachment::File(file) => api::ToolAttachmentView {
                 kind: api::ToolAttachmentKind::File,
                 handle: file.handle.clone(),
                 content_ref: file.content_ref.to_string(),
@@ -2786,10 +2786,10 @@ fn tool_attachments_to_api(attachments: &[engine::Attachment]) -> Vec<api::ToolA
         .collect()
 }
 
-fn tool_effects_to_api(effects: &[engine::ToolEffect]) -> Vec<ToolEffectView> {
+fn tool_effects_to_api(effects: &[harness::ToolEffect]) -> Vec<ToolEffectView> {
     effects
         .iter()
-        .filter(|effect| effect.kind != engine::WORKFLOW_TOOL_EMIT_EFFECT_KIND)
+        .filter(|effect| effect.kind != harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND)
         .map(|effect| ToolEffectView {
             kind: effect.kind.clone(),
             data: effect.data.clone(),
@@ -3330,7 +3330,7 @@ fn superseded_by_map(entries: &[&ContextEntry]) -> BTreeMap<ContextEntryId, Cont
 /// the whole prompt (the Anthropic adapter folds its separately reported
 /// cache read/write counts in and keeps the uncached count in
 /// `cache_miss_input_tokens`), so this is a field copy.
-fn llm_usage_to_api(usage: &engine::LlmUsage) -> LlmUsageView {
+fn llm_usage_to_api(usage: &harness::LlmUsage) -> LlmUsageView {
     LlmUsageView {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
@@ -3343,7 +3343,7 @@ fn llm_usage_to_api(usage: &engine::LlmUsage) -> LlmUsageView {
 
 #[cfg(test)]
 mod tests {
-    use engine::{
+    use harness::{
         BlobRef, ContextEntryId, CoreAgentJoins, EventSeq, SessionPosition, TokenEstimate,
         TokenEstimateQuality,
         storage::{BlobStore, InMemoryBlobStore},
@@ -3363,7 +3363,7 @@ mod tests {
             generation: Default::default(),
             limits: Default::default(),
             features: Default::default(),
-            context: engine::ContextConfig {
+            context: harness::ContextConfig {
                 compaction: Some(CompactionPolicy::ProviderTriggered {
                     compact_threshold_tokens: None,
                 }),
@@ -3376,11 +3376,11 @@ mod tests {
         let mut retained = context_entry(
             1,
             ContextEntrySource::Runtime {
-                label: engine::STANDALONE_COMPACTION_SOURCE.into(),
+                label: harness::STANDALONE_COMPACTION_SOURCE.into(),
             },
         );
         retained.content.provider_kind =
-            Some(engine::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.into());
+            Some(harness::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.into());
         state.context.entries.push(retained);
         assert_eq!(
             context_compaction_to_api(&state).unwrap().effective_mode,
@@ -3597,7 +3597,7 @@ mod tests {
     fn managed_session_projection_exposes_controller_ownership() {
         let mut state = CoreAgentState::new();
         state.workflow_tools.managed_declaration_version = Some(1);
-        state.workflow_tools.lifecycle_controller = Some(engine::WorkflowEndpointRef {
+        state.workflow_tools.lifecycle_controller = Some(harness::WorkflowEndpointRef {
             workflow_id: "channels/session-1".to_owned(),
             workflow_kind: "channelSessionWorkflowV1".to_owned(),
         });
@@ -3623,21 +3623,21 @@ mod tests {
         let universe_id = "00000000-0000-0000-0000-000000000001"
             .parse()
             .expect("universe id");
-        let receiver = engine::WorkflowEndpointRef {
+        let receiver = harness::WorkflowEndpointRef {
             workflow_id: "channels/session-1".to_owned(),
             workflow_kind: "channels.session".to_owned(),
         };
         let input_schema_ref = BlobRef::from_bytes(br#"{"type":"object"}"#);
-        let binding = engine::WorkflowToolBinding::admit(
+        let binding = harness::WorkflowToolBinding::admit(
             universe_id,
-            engine::WorkflowToolDefinition {
-                tool_id: engine::WorkflowToolId::new("message-send"),
+            harness::WorkflowToolDefinition {
+                tool_id: harness::WorkflowToolId::new("message-send"),
                 revision: 1,
                 semantic_type: "channels.message.send.v1".to_owned(),
                 tool: ToolSpec {
-                    name: engine::ToolName::new("message_send"),
+                    name: harness::ToolName::new("message_send"),
                     execution: Default::default(),
-                    kind: ToolKind::Function(engine::FunctionToolSpec {
+                    kind: ToolKind::Function(harness::FunctionToolSpec {
                         description_ref: None,
                         input_schema_ref,
                         output_schema_ref: None,
@@ -3647,22 +3647,22 @@ mod tests {
                     parallelism: ToolParallelism::ParallelSafe,
                 },
             },
-            engine::WorkflowToolTarget::Bound {
+            harness::WorkflowToolTarget::Bound {
                 receiver: receiver.clone(),
-                dispatch: engine::BoundWorkflowToolDispatch::Push,
+                dispatch: harness::BoundWorkflowToolDispatch::Push,
             },
-            engine::WorkflowToolCompletion::Joined {
+            harness::WorkflowToolCompletion::Joined {
                 reply_schema_ref: None,
                 deadline_after_ms: 30_000,
             },
         )
         .expect("joined binding");
         let mut system_definition = binding.definition.clone();
-        system_definition.tool_id = engine::WorkflowToolId::new("subagent-run");
+        system_definition.tool_id = harness::WorkflowToolId::new("subagent-run");
         system_definition.semantic_type = "lightspeed.subagent.run.v1".to_owned();
-        system_definition.tool.name = engine::ToolName::new("subagent.run");
+        system_definition.tool.name = harness::ToolName::new("subagent.run");
         system_definition.tool.kind = ToolKind::Builtin(Default::default());
-        let system_binding = engine::WorkflowToolBinding::admit(
+        let system_binding = harness::WorkflowToolBinding::admit(
             universe_id,
             system_definition,
             binding.target.clone(),
@@ -3735,14 +3735,14 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn content_projection_distinguishes_authored_json_native_json_and_media() {
         let blobs = InMemoryBlobStore::new();
-        let authored = engine::ContentRef::text(blobs.insert_text("{\"answer\":42}").await);
+        let authored = harness::ContentRef::text(blobs.insert_text("{\"answer\":42}").await);
         assert_eq!(
             project_content_text(&blobs, &authored)
                 .await
                 .expect("authored JSON"),
             Some("{\"answer\":42}".to_owned())
         );
-        let mut content = engine::ContentRef {
+        let mut content = harness::ContentRef {
             content_ref: blobs.insert_text("{\"answer\":42}").await,
             media_type: Some("application/json".to_owned()),
             provider_kind: Some(ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND.to_owned()),
@@ -3771,7 +3771,7 @@ mod tests {
         let projector = CoreAgentProjector::new(&blobs);
         let mut state = CoreAgentState::new();
         for id in 1..=3 {
-            state.runs.completed.push(engine::RunRecord {
+            state.runs.completed.push(harness::RunRecord {
                 run_id: RunId::new(id),
                 status: RunStatus::Completed,
                 submission_id: None,
@@ -3819,7 +3819,7 @@ mod tests {
             metadata: Default::default(),
             session_id: session_id.clone(),
             display_name: None,
-            lifecycle_status: engine::storage::SessionLifecycleStatus::New,
+            lifecycle_status: harness::storage::SessionLifecycleStatus::New,
             closed_at_seq: None,
             closed_at_ms: None,
             activity: Default::default(),
@@ -3890,7 +3890,7 @@ mod tests {
             kind: ContextEntryKind::Message {
                 role: ContextMessageRole::User,
             },
-            content: engine::ContentRef::text(blob_ref.clone()),
+            content: harness::ContentRef::text(blob_ref.clone()),
             preview: Some("hello".to_owned()),
             origin: None,
             provenance_ref: None,
@@ -3925,7 +3925,7 @@ mod tests {
                 kind: ContextEntryKind::Message {
                     role: ContextMessageRole::User,
                 },
-                content: engine::ContentRef {
+                content: harness::ContentRef {
                     content_ref: image_ref.clone(),
                     media_type: Some("image/jpeg".to_owned()),
                     provider_kind: None,
@@ -3997,7 +3997,7 @@ mod tests {
         let blobs = InMemoryBlobStore::new();
         let projector = CoreAgentProjector::new(&blobs);
         let universe_id = "00000000-0000-0000-0000-000000000001";
-        let config_event: engine::WorkflowToolConfigEvent =
+        let config_event: harness::WorkflowToolConfigEvent =
             serde_json::from_value(serde_json::json!({
                 "managed_bindings_admitted": {
                     "session_universe_id": universe_id,
@@ -4033,7 +4033,7 @@ mod tests {
         let arguments_ref = BlobRef::from_bytes(br#"{"status":"complete"}"#);
         let error_ref = BlobRef::from_bytes(b"delivery failed");
         let invocation_id = format!("wti:sha256:{}", "a".repeat(64));
-        let emitted: engine::WorkflowToolEvent = serde_json::from_value(serde_json::json!({
+        let emitted: harness::WorkflowToolEvent = serde_json::from_value(serde_json::json!({
             "emitted": {
                 "invocation": {
                     "invocation_id": invocation_id,
@@ -4073,8 +4073,8 @@ mod tests {
             }
         );
 
-        let failed = engine::WorkflowToolEvent::DeliveryFailed {
-            invocation_id: engine::WorkflowToolInvocationId::new(invocation_id.clone()),
+        let failed = harness::WorkflowToolEvent::DeliveryFailed {
+            invocation_id: harness::WorkflowToolInvocationId::new(invocation_id.clone()),
             error_ref: error_ref.clone(),
         };
         let projected = projector
@@ -4094,18 +4094,18 @@ mod tests {
                 run_id: RunId::new(2),
                 turn_id: TurnId::new(3),
                 batch_id: ToolBatchId::new(4),
-                result: engine::ToolCallResult {
+                result: harness::ToolCallResult {
                     attachments: Vec::new(),
                     duration_ms: None,
                     output_bytes: None,
                     truncated: false,
-                    call_id: engine::ToolCallId::new("call-5"),
-                    status: engine::ToolCallStatus::Succeeded,
+                    call_id: harness::ToolCallId::new("call-5"),
+                    status: harness::ToolCallStatus::Succeeded,
                     output_ref: None,
                     model_visible_context_entries: Vec::new(),
                     error_ref: None,
-                    effects: vec![engine::ToolEffect {
-                        kind: engine::WORKFLOW_TOOL_EMIT_EFFECT_KIND.to_owned(),
+                    effects: vec![harness::ToolEffect {
+                        kind: harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND.to_owned(),
                         data: Default::default(),
                     }],
                 },
@@ -4134,7 +4134,7 @@ mod tests {
                 run_id: RunId::new(7),
                 turn_id: TurnId::new(8),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: BlobRef::from_bytes(
                     br#"{"type":"compaction","id":"item_compaction_1"}"#,
                 ),
@@ -4213,7 +4213,7 @@ mod tests {
                 run_id: RunId::new(7),
                 turn_id: TurnId::new(8),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: content_ref.clone(),
                 media_type: Some("application/json".to_owned()),
                 provider_kind: Some(OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND.to_owned()),
@@ -4288,7 +4288,7 @@ mod tests {
                 run_id: RunId::new(7),
                 turn_id: TurnId::new(8),
             },
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref,
                 media_type: None,
                 provider_kind: Some(provider_kind.to_owned()),
@@ -4562,10 +4562,10 @@ mod tests {
                 provider_id: "openai".to_owned(),
                 model: "gpt-5".to_owned(),
             },
-            generation: engine::GenerationConfig::default(),
-            limits: engine::LimitsConfig::default(),
-            context: engine::ContextConfig::default(),
-            features: engine::FeaturesConfig::default(),
+            generation: harness::GenerationConfig::default(),
+            limits: harness::LimitsConfig::default(),
+            context: harness::ContextConfig::default(),
+            features: harness::FeaturesConfig::default(),
         };
 
         let projected = session_config_to_api(&config).expect("project sparse config");
@@ -4594,78 +4594,78 @@ mod tests {
                 provider_id: "anthropic".to_owned(),
                 model: "claude".to_owned(),
             },
-            generation: engine::GenerationConfig {
+            generation: harness::GenerationConfig {
                 max_output_tokens: Some(2048),
                 reasoning_effort: Some("high".to_owned()),
                 tool_choice: Some(ToolChoice::Specific {
-                    tool_name: engine::ToolName::new("read_file"),
+                    tool_name: harness::ToolName::new("read_file"),
                 }),
                 parallel_tool_use: Some(false),
                 processing_tier: None,
             },
-            limits: engine::LimitsConfig {
+            limits: harness::LimitsConfig {
                 max_turns: Some(12),
                 max_tool_rounds: Some(3),
             },
-            context: engine::ContextConfig {
+            context: harness::ContextConfig {
                 reported_input_limit_tokens: None,
                 input_limit_tokens: None,
-                compaction: Some(engine::CompactionPolicy::ProviderStandalone {
+                compaction: Some(harness::CompactionPolicy::ProviderStandalone {
                     compact_threshold_tokens: Some(20_000),
                     target_tokens: Some(8_000),
                 }),
             },
-            features: engine::FeaturesConfig {
-                vfs: Some(engine::VfsFeature {
+            features: harness::FeaturesConfig {
+                vfs: Some(harness::VfsFeature {
                     working_directory: None,
-                    version: engine::CURRENT_FEATURE_VERSION,
-                    workspaces: vec![engine::WorkspaceAttachment {
+                    version: harness::CURRENT_FEATURE_VERSION,
+                    workspaces: vec![harness::WorkspaceAttachment {
                         path: "/workspace".to_owned(),
-                        target: engine::WorkspaceAttachmentTarget::Workspace {
+                        target: harness::WorkspaceAttachmentTarget::Workspace {
                             workspace_id: "ws_1".to_owned(),
                         },
-                        access: engine::WorkspaceAccess::Read,
+                        access: harness::WorkspaceAccess::Read,
                     }],
-                    prompts: Some(engine::VfsPromptsConfig {
+                    prompts: Some(harness::VfsPromptsConfig {
                         roots: Some(vec!["/prompts".to_owned()]),
                     }),
-                    skills: Some(engine::VfsSkillsConfig {
+                    skills: Some(harness::VfsSkillsConfig {
                         roots: Some(vec!["/workspace/skills".into()]),
                     }),
                 }),
-                web: Some(engine::WebFeature {
-                    version: engine::CURRENT_FEATURE_VERSION,
-                    fetch: Some(engine::WebFetchFeature {}),
-                    search: Some(engine::WebSearchFeature {
+                web: Some(harness::WebFeature {
+                    version: harness::CURRENT_FEATURE_VERSION,
+                    fetch: Some(harness::WebFetchFeature {}),
+                    search: Some(harness::WebSearchFeature {
                         allowed_domains: Some(vec!["example.com".to_owned()]),
                         blocked_domains: vec!["blocked.example".to_owned()],
                     }),
                 }),
-                subagents: Some(engine::SubagentsFeature {
-                    version: engine::CURRENT_FEATURE_VERSION,
-                    agents: vec![engine::SubagentAgentConfig {
+                subagents: Some(harness::SubagentsFeature {
+                    version: harness::CURRENT_FEATURE_VERSION,
+                    agents: vec![harness::SubagentAgentConfig {
                         profile_id: "researcher".to_owned(),
                     }],
-                    limits: engine::SubagentLimits {
+                    limits: harness::SubagentLimits {
                         max_depth: 3,
                         max_descendants: 10,
                         max_concurrent: 2,
                         deadline_ms: 120_000,
                     },
                 }),
-                timers: Some(engine::TimersFeature::default()),
-                environments: Some(engine::EnvironmentsFeature {
-                    environments: vec![engine::EnvironmentAttachment {
+                timers: Some(harness::TimersFeature::default()),
+                environments: Some(harness::EnvironmentsFeature {
+                    environments: vec![harness::EnvironmentAttachment {
                         environment_id: "env_1".to_owned(),
                         default: true,
-                        access: engine::EnvironmentAccess::Exec,
+                        access: harness::EnvironmentAccess::Exec,
                         working_directory: Some("/srv".to_owned()),
                     }],
                     ..Default::default()
                 }),
-                mcp: Some(engine::McpFeature {
-                    version: engine::CURRENT_FEATURE_VERSION,
-                    servers: vec![engine::McpServerAttachment {
+                mcp: Some(harness::McpFeature {
+                    version: harness::CURRENT_FEATURE_VERSION,
+                    servers: vec![harness::McpServerAttachment {
                         server_id: "linear".to_owned(),
                         tools: Some(vec!["search".to_owned()]),
                     }],
@@ -4769,16 +4769,16 @@ mod tests {
 
     #[test]
     fn session_origin_projects_lineage_and_pinned_limits() {
-        let origin = engine::storage::SessionOrigin {
-            kind: engine::storage::SessionOriginKind::Subagent,
-            parent_session_id: engine::SessionId::new("parent"),
+        let origin = harness::storage::SessionOrigin {
+            kind: harness::storage::SessionOriginKind::Subagent,
+            parent_session_id: harness::SessionId::new("parent"),
             parent_run_id: 7,
-            root_session_id: engine::SessionId::new("root"),
+            root_session_id: harness::SessionId::new("root"),
             depth: 2,
             invocation_id: "wti_1".to_owned(),
             profile_id: "reviewer".to_owned(),
             profile_revision: 4,
-            limits: engine::SubagentLimits::default(),
+            limits: harness::SubagentLimits::default(),
         };
         let projected = session_origin_to_api(&origin).expect("project origin");
         assert_eq!(projected.kind, api::SessionOriginKind::Subagent);
@@ -4790,7 +4790,7 @@ mod tests {
         assert_eq!(projected.agent.revision, 4);
         assert_eq!(
             projected.limits,
-            subagent_limits_to_api(engine::SubagentLimits::default())
+            subagent_limits_to_api(harness::SubagentLimits::default())
         );
     }
 
@@ -4858,19 +4858,19 @@ mod tests {
         let pdf_ref = blobs.put_bytes(b"%PDF".to_vec()).await.unwrap();
         let mut result = context_entry(1, tool_source.clone());
         result.kind = ContextEntryKind::ToolResult {
-            call_id: engine::ToolCallId::new("call_1"),
+            call_id: harness::ToolCallId::new("call_1"),
             is_error: false,
         };
-        result.content = engine::ContentRef::text(result_ref);
+        result.content = harness::ContentRef::text(result_ref);
         let mut image = context_entry(2, tool_source.clone());
-        image.content = engine::ContentRef {
+        image.content = harness::ContentRef {
             content_ref: png_ref.clone(),
             media_type: Some("image/png".into()),
             provider_kind: None,
         };
         image.preview = Some("[image]".into());
         let mut pdf = context_entry(3, tool_source.clone());
-        pdf.content = engine::ContentRef {
+        pdf.content = harness::ContentRef {
             content_ref: pdf_ref.clone(),
             media_type: Some("application/pdf".into()),
             provider_kind: None,
@@ -4883,7 +4883,7 @@ mod tests {
                 input_index: 0,
             },
         );
-        unrelated.content = engine::ContentRef {
+        unrelated.content = harness::ContentRef {
             content_ref: png_ref.clone(),
             media_type: Some("image/png".into()),
             provider_kind: None,
@@ -4900,7 +4900,7 @@ mod tests {
             2,
             "run-input media never attaches to a call"
         );
-        assert_eq!(call.media[0].handle, engine::media::media_handle(&png_ref));
+        assert_eq!(call.media[0].handle, harness::media::media_handle(&png_ref));
         assert_eq!(call.media[0].kind, MediaKind::Image);
         assert_eq!(call.media[0].name, None);
         assert_eq!(call.media[1].mime, "application/pdf");
@@ -4908,7 +4908,7 @@ mod tests {
         assert_eq!(call.media[1].name.as_deref(), Some("report.pdf"));
         assert_eq!(
             content_ref_to_api(&image.content).media_handle,
-            Some(engine::media::media_handle(&png_ref))
+            Some(harness::media::media_handle(&png_ref))
         );
         assert_eq!(content_ref_to_api(&result.content).media_handle, None);
     }
@@ -4921,7 +4921,7 @@ mod tests {
                 role: ContextMessageRole::User,
             },
             source,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: BlobRef::default(),
                 media_type: None,
                 provider_kind: None,

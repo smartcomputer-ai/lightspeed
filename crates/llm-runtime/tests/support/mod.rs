@@ -16,7 +16,7 @@ pub mod media;
 pub mod tool_media;
 
 use async_trait::async_trait;
-use engine::{ProviderApiKind, ProviderParams};
+use harness::{ProviderApiKind, ProviderParams};
 use llm_clients::{
     ApiResponse, LlmApiError,
     anthropic::messages::{self as am},
@@ -214,8 +214,8 @@ fn retry_delay(error: &LlmApiError, attempt: usize) -> Duration {
 
 #[allow(dead_code)]
 pub async fn content_text(
-    blobs: &dyn engine::storage::BlobStore,
-    content: &engine::ContentRef,
+    blobs: &dyn harness::storage::BlobStore,
+    content: &harness::ContentRef,
 ) -> String {
     api_projection::project_content_text(blobs, content)
         .await

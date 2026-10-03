@@ -1,5 +1,5 @@
 use super::*;
-use engine::{
+use harness::{
     AwaitSpec, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentEntry,
     CoreAgentJoins, EventSeq, PromiseScope, PromiseSource, PromiseStatus, RunId, RunRecord,
     RunStatus, RunTerminalNotifyIntent, SessionPosition, ToolBatchId, ToolCallId, TurnId,
@@ -25,7 +25,7 @@ fn pending_admissions_are_fifo() {
 #[test]
 fn admission_failure_status_does_not_poison_later_admission() {
     let mut workflow = AgentSessionWorkflow::default();
-    let rejection = engine::CommandRejection::context_revision_conflict(3, 4);
+    let rejection = harness::CommandRejection::context_revision_conflict(3, 4);
     workflow.admission_failures.push(AgentAdmissionFailure {
         preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_rejected")),
@@ -59,15 +59,15 @@ fn admission_failure_status_does_not_poison_later_admission() {
 #[test]
 fn source_resolution_emission_queues_pending_resolution_with_producer() {
     let mut workflow = AgentSessionWorkflow::default();
-    let payload_ref = engine::BlobRef::from_bytes(b"job output");
+    let payload_ref = harness::BlobRef::from_bytes(b"job output");
     workflow.queue_emission(
         test_universe(),
-        engine::EmissionEnvelope::source_resolution(
+        harness::EmissionEnvelope::source_resolution(
             test_universe(),
             "universe/envjob-job_1".to_owned(),
             "universe/session_1",
-            engine::PromiseId::new("promise_1"),
-            engine::PromiseResolution::Resolved {
+            harness::PromiseId::new("promise_1"),
+            harness::PromiseResolution::Resolved {
                 payload_ref: Some(payload_ref.clone()),
             },
         ),
@@ -80,13 +80,13 @@ fn source_resolution_emission_queues_pending_resolution_with_producer() {
     assert_eq!(pending.promise_id.as_str(), "promise_1");
     assert!(matches!(
         &pending.resolution,
-        engine::PromiseResolution::Resolved {
+        harness::PromiseResolution::Resolved {
             payload_ref: Some(actual),
         } if actual == &payload_ref
     ));
     assert!(matches!(
         &pending.producer,
-        engine::EmissionProducer::Workflow { workflow_id, .. }
+        harness::EmissionProducer::Workflow { workflow_id, .. }
             if workflow_id == "universe/envjob-job_1"
     ));
 }
@@ -96,16 +96,16 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
     let mut workflow = AgentSessionWorkflow::default();
     workflow.core_state.lifecycle.status = CoreAgentStatus::Open;
     workflow.core_state.promises.promises.insert(
-        engine::PromiseId::new("promise_1"),
+        harness::PromiseId::new("promise_1"),
         promise("promise_1", PromiseStatus::Pending),
     );
-    let payload_ref = engine::BlobRef::from_bytes(b"job output");
-    let envelope = engine::EmissionEnvelope::source_resolution(
+    let payload_ref = harness::BlobRef::from_bytes(b"job output");
+    let envelope = harness::EmissionEnvelope::source_resolution(
         test_universe(),
         "universe/envjob-job_1".to_owned(),
         "universe/session_1",
-        engine::PromiseId::new("promise_1"),
-        engine::PromiseResolution::Resolved {
+        harness::PromiseId::new("promise_1"),
+        harness::PromiseResolution::Resolved {
             payload_ref: Some(payload_ref.clone()),
         },
     );
@@ -131,7 +131,7 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
     let mut appended = 0u64;
     for (index, admission) in admissions.into_iter().enumerate() {
         let proposals =
-            engine::admit_command(&workflow.core_state, admission.command, index as u64 + 1)
+            harness::admit_command(&workflow.core_state, admission.command, index as u64 + 1)
                 .expect("admit duplicate emission");
         appended += proposals.len() as u64;
         for proposal in proposals {
@@ -140,7 +140,7 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
                 .reduced_to
                 .as_ref()
                 .map_or(1, |position| position.seq.as_u64() + 1);
-            engine::apply_event(
+            harness::apply_event(
                 &mut workflow.core_state,
                 &CoreAgentEntry {
                     position: SessionPosition {
@@ -160,7 +160,7 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
         .core_state
         .promises
         .promises
-        .get(&engine::PromiseId::new("promise_1"))
+        .get(&harness::PromiseId::new("promise_1"))
         .expect("resolved promise");
     assert_eq!(promise.status, PromiseStatus::Resolved);
     assert_eq!(promise.payload_ref.as_ref(), Some(&payload_ref));
@@ -172,12 +172,12 @@ fn cross_universe_emission_is_rejected_before_admission() {
     let producer_universe = uuid::Uuid::from_u128(2);
     workflow.queue_emission(
         test_universe(),
-        engine::EmissionEnvelope::source_resolution(
+        harness::EmissionEnvelope::source_resolution(
             producer_universe,
             "other-universe/envjob-job_1".to_owned(),
             "universe/session_1",
-            engine::PromiseId::new("promise_1"),
-            engine::PromiseResolution::Resolved { payload_ref: None },
+            harness::PromiseId::new("promise_1"),
+            harness::PromiseResolution::Resolved { payload_ref: None },
         ),
     );
 
@@ -205,7 +205,7 @@ fn close_on_terminal_requires_idle_open_session_with_completed_run() {
         status: RunStatus::Completed,
         submission_id: None,
         submission_digest: None,
-        source: engine::RunSource::Input { input: Vec::new() },
+        source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
         accepted_at_ms: 1,
@@ -222,14 +222,14 @@ fn close_on_terminal_requires_idle_open_session_with_completed_run() {
     ));
 
     state.promises.promises.insert(
-        engine::PromiseId::new("promise_14"),
+        harness::PromiseId::new("promise_14"),
         promise("promise_14", PromiseStatus::Pending),
     );
     assert!(!drive::should_close_on_terminal(&args, &state));
     state
         .promises
         .promises
-        .get_mut(&engine::PromiseId::new("promise_14"))
+        .get_mut(&harness::PromiseId::new("promise_14"))
         .expect("promise")
         .status = PromiseStatus::Resolved;
     assert!(drive::should_close_on_terminal(&args, &state));
@@ -279,8 +279,8 @@ fn active_drive_rollover_outcome_is_typed_and_waits_for_transport_drain() {
 #[test]
 fn rehydrated_active_run_wakes_core_drive_without_a_new_signal() {
     let mut workflow = workflow_with_parked_tool_batch(AwaitSpec {
-        promise_ids: vec![engine::PromiseId::new("promise_1")],
-        mode: engine::AwaitMode::All,
+        promise_ids: vec![harness::PromiseId::new("promise_1")],
+        mode: harness::AwaitMode::All,
         deadline_at_ms: Some(50_000),
     });
     assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
@@ -321,7 +321,7 @@ fn legacy_step_limit_decodes_but_is_never_serialized() {
 
 #[test]
 fn continuation_state_round_trips_admission_failure_correlation() {
-    let rejection = engine::CommandRejection::context_revision_conflict(3, 4);
+    let rejection = harness::CommandRejection::context_revision_conflict(3, 4);
     let continuation = AgentSessionContinuationState::v1(vec![AgentAdmissionFailure {
         preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_rejected")),
@@ -339,23 +339,23 @@ fn continuation_state_round_trips_admission_failure_correlation() {
 /// An input-bearing run request with a submission id: the generic admission
 /// used where a test only needs "some command carrying input".
 fn request_input_run(submission_id: &str) -> CoreAgentCommand {
-    CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+    CoreAgentCommand::RequestRun(harness::RunRequestCommand {
         requested_by: None,
         notify_on_terminal: Vec::new(),
         submission_id: Some(SubmissionId::new(submission_id)),
-        source: engine::RunRequestSource::Input {
-            input: user_input(engine::BlobRef::from_bytes(submission_id.as_bytes())),
+        source: harness::RunRequestSource::Input {
+            input: user_input(harness::BlobRef::from_bytes(submission_id.as_bytes())),
         },
         run_config: crate::default_run_config(),
     })
 }
 
-fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
+fn user_input(content_ref: harness::BlobRef) -> Vec<ContextEntryInput> {
     vec![ContextEntryInput {
         kind: ContextEntryKind::Message {
             role: ContextMessageRole::User,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -382,8 +382,8 @@ fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSe
         session_id: SessionId::new("session_test"),
         display_name: None,
         delete_after_close_ms: None,
-        session_config: crate::default_session_config(engine::ModelSelection {
-            api_kind: engine::ProviderApiKind::OpenAiResponses,
+        session_config: crate::default_session_config(harness::ModelSelection {
+            api_kind: harness::ProviderApiKind::OpenAiResponses,
             provider_id: "openai".to_owned(),
             model: "gpt-test".to_owned(),
         }),
@@ -400,9 +400,9 @@ fn test_universe() -> uuid::Uuid {
     uuid::Uuid::from_u128(1)
 }
 
-fn managed_workflow_tools(controller_workflow_id: &str) -> engine::ManagedSessionWorkflowTools {
-    engine::ManagedSessionWorkflowTools::v1(
-        Some(engine::WorkflowEndpointRef {
+fn managed_workflow_tools(controller_workflow_id: &str) -> harness::ManagedSessionWorkflowTools {
+    harness::ManagedSessionWorkflowTools::v1(
+        Some(harness::WorkflowEndpointRef {
             workflow_id: controller_workflow_id.to_owned(),
             workflow_kind: "agent_work".to_owned(),
         }),
@@ -462,7 +462,7 @@ fn bootstrap_creation_identity_records_source_universe_and_is_immutable() {
 fn pending_run_emission() -> PendingEmission {
     PendingEmission::immediate(
         "universe/parent".to_owned(),
-        engine::EmissionEnvelope::run_terminal(
+        harness::EmissionEnvelope::run_terminal(
             test_universe(),
             SessionId::new("session_child"),
             EventSeq::new(1),
@@ -478,13 +478,13 @@ fn pending_run_emission() -> PendingEmission {
 fn pending_resume(batch_id: u64) -> PendingToolBatchResume {
     PendingToolBatchResume {
         batch_id: ToolBatchId::new(batch_id),
-        command: engine::ResumeToolBatchCommand {
+        command: harness::ResumeToolBatchCommand {
             run_id: RunId::new(1),
             batch_id: ToolBatchId::new(batch_id),
-            claim: engine::WakeReason::Timeout,
+            claim: harness::WakeReason::Timeout,
             claim_observed_at_ms: 1_000,
-            output: engine::ToolBatchResumeOutput::AwaitTool {
-                result_ref: engine::BlobRef::from_bytes(b"await output"),
+            output: harness::ToolBatchResumeOutput::AwaitTool {
+                result_ref: harness::BlobRef::from_bytes(b"await output"),
                 additional_context: Vec::new(),
                 attachments: Vec::new(),
             },
@@ -500,7 +500,7 @@ fn pending_promise_cancellation(promise_id: &str) -> PendingPromiseCancellation 
     }
 }
 
-fn workflow_with_parked_tool_batch(spec: engine::AwaitSpec) -> AgentSessionWorkflow {
+fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWorkflow {
     let mut workflow = AgentSessionWorkflow {
         ready: true,
         setup_requested: false,
@@ -513,33 +513,33 @@ fn workflow_with_parked_tool_batch(spec: engine::AwaitSpec) -> AgentSessionWorkf
     let mut tool_batches = std::collections::BTreeMap::new();
     tool_batches.insert(
         batch_id,
-        engine::ActiveToolBatch {
+        harness::ActiveToolBatch {
             batch_id,
             run_id,
             turn_id,
             promise_id_base: 1,
-            calls: vec![engine::ToolCallState {
-                call: engine::ObservedToolCall {
+            calls: vec![harness::ToolCallState {
+                call: harness::ObservedToolCall {
                     call_id: call_id.clone(),
-                    tool_id: Some((engine::ToolName::new("await")).clone()),
-                    tool_name: engine::ToolName::new("await"),
+                    tool_id: Some((harness::ToolName::new("await")).clone()),
+                    tool_name: harness::ToolName::new("await"),
                     provider_kind: None,
-                    arguments_ref: engine::BlobRef::from_bytes(b"{}"),
+                    arguments_ref: harness::BlobRef::from_bytes(b"{}"),
                     native_call_ref: None,
                 },
-                status: engine::ToolCallStatus::Pending,
+                status: harness::ToolCallStatus::Pending,
                 execution_policy: None,
                 result: None,
             }],
         },
     );
-    workflow.core_state.runs.active = Some(engine::ActiveRun {
+    workflow.core_state.runs.active = Some(harness::ActiveRun {
         context_recovery: Default::default(),
         run_id,
         status: RunStatus::Parked,
         submission_id: None,
-        source: engine::RunSource::Input {
-            input: user_input(engine::BlobRef::from_bytes(b"start")),
+        source: harness::RunSource::Input {
+            input: user_input(harness::BlobRef::from_bytes(b"start")),
         },
         input_entry_ids: Vec::new(),
         input_consumed_by_turn_id: None,
@@ -554,9 +554,9 @@ fn workflow_with_parked_tool_batch(spec: engine::AwaitSpec) -> AgentSessionWorkf
         active_turn_id: None,
         active_tool_batch_id: Some(batch_id),
         approvals: Default::default(),
-        parked_tool_batch: Some(engine::ParkedToolBatch {
+        parked_tool_batch: Some(harness::ParkedToolBatch {
             batch_id,
-            suspension: engine::ToolBatchSuspension::AwaitTool { call_id, spec },
+            suspension: harness::ToolBatchSuspension::AwaitTool { call_id, spec },
         }),
         tool_batches,
         completed_tool_batches: std::collections::BTreeMap::new(),
@@ -626,15 +626,15 @@ fn run_terminal_notifications_cannot_drop_output_encoding_into_a_session_promise
     let mut workflow = AgentSessionWorkflow::default();
     workflow.queue_emission(
         test_universe(),
-        engine::EmissionEnvelope::run_terminal(
+        harness::EmissionEnvelope::run_terminal(
             test_universe(),
             SessionId::new("child_a"),
             EventSeq::new(8),
             "promise_1".to_owned(),
             RunId::new(1),
             RunStatus::Completed,
-            Some(engine::ContentRef {
-                content_ref: engine::BlobRef::from_bytes(b"native output"),
+            Some(harness::ContentRef {
+                content_ref: harness::BlobRef::from_bytes(b"native output"),
                 media_type: Some("application/json".to_owned()),
                 provider_kind: Some("provider.message".to_owned()),
             }),
@@ -654,50 +654,50 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         ..Default::default()
     };
 
-    let binding = engine::WorkflowToolBinding::admit(
+    let binding = harness::WorkflowToolBinding::admit(
         test_universe(),
-        engine::WorkflowToolDefinition {
-            tool_id: engine::WorkflowToolId::new("approve"),
+        harness::WorkflowToolDefinition {
+            tool_id: harness::WorkflowToolId::new("approve"),
             revision: 1,
             semantic_type: "lightspeed.approval.request.v1".to_owned(),
-            tool: engine::ToolSpec {
-                name: engine::ToolName::new("request_approval"),
+            tool: harness::ToolSpec {
+                name: harness::ToolName::new("request_approval"),
                 execution: Default::default(),
-                kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+                kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                     description_ref: None,
-                    input_schema_ref: engine::BlobRef::from_bytes(b"{}"),
+                    input_schema_ref: harness::BlobRef::from_bytes(b"{}"),
                     output_schema_ref: None,
                     strict: None,
                     provider_options_ref: None,
                 }),
-                parallelism: engine::ToolParallelism::ParallelSafe,
+                parallelism: harness::ToolParallelism::ParallelSafe,
             },
         },
-        engine::WorkflowToolTarget::Bound {
-            receiver: engine::WorkflowEndpointRef {
+        harness::WorkflowToolTarget::Bound {
+            receiver: harness::WorkflowEndpointRef {
                 workflow_id: "approval plugin id".to_owned(),
                 workflow_kind: "approvals".to_owned(),
             },
-            dispatch: engine::BoundWorkflowToolDispatch::Push,
+            dispatch: harness::BoundWorkflowToolDispatch::Push,
         },
-        engine::WorkflowToolCompletion::Promises {
+        harness::WorkflowToolCompletion::Promises {
             reply_schema_ref: None,
             deadline_after_ms: None,
             max_promises: 1,
-            key_source: engine::WorkflowToolCompletionKeySource::Reply,
+            key_source: harness::WorkflowToolCompletionKeySource::Reply,
         },
     )
     .expect("binding");
-    let invocation_id = engine::WorkflowToolInvocationId::for_call(
+    let invocation_id = harness::WorkflowToolInvocationId::for_call(
         test_universe(),
         &SessionId::new("child_session"),
         RunId::new(1),
-        engine::TurnId::new(1),
+        harness::TurnId::new(1),
         ToolBatchId::new(1),
-        &engine::ToolCallId::new("call-1"),
+        &harness::ToolCallId::new("call-1"),
         &binding.binding_fingerprint,
     );
-    let invocation = engine::WorkflowToolInvocation {
+    let invocation = harness::WorkflowToolInvocation {
         invocation_id: invocation_id.clone(),
         tool_id: binding.definition.tool_id.clone(),
         semantic_type: binding.definition.semantic_type.clone(),
@@ -706,14 +706,14 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         session_universe_id: test_universe(),
         session_id: SessionId::new("child_session"),
         run_id: RunId::new(1),
-        turn_id: engine::TurnId::new(1),
+        turn_id: harness::TurnId::new(1),
         tool_batch_id: ToolBatchId::new(1),
-        tool_call_id: engine::ToolCallId::new("call-1"),
-        arguments_ref: engine::BlobRef::from_bytes(b"{}"),
+        tool_call_id: harness::ToolCallId::new("call-1"),
+        arguments_ref: harness::BlobRef::from_bytes(b"{}"),
         execution_context_ref: None,
         completion_promises: Some(std::collections::BTreeMap::from([(
-            engine::REPLY_COMPLETION_KEY.to_owned(),
-            engine::PromiseId::from_number(1),
+            harness::REPLY_COMPLETION_KEY.to_owned(),
+            harness::PromiseId::from_number(1),
         )])),
     };
     workflow
@@ -722,13 +722,13 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         .bindings
         .insert(binding.definition.tool_id.clone(), binding.clone());
 
-    let entry = engine::CoreAgentEntry {
+    let entry = harness::CoreAgentEntry {
         position: SessionPosition {
             seq: EventSeq::new(9),
         },
         observed_at_ms: 100,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent::WorkflowTool(engine::WorkflowToolEvent::Emitted {
+        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
             invocation: invocation.clone(),
         }),
     };
@@ -747,7 +747,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
     );
     assert!(matches!(
         &pending.envelope.body,
-        engine::EmissionBody::ToolInvocation {
+        harness::EmissionBody::ToolInvocation {
             invocation: delivered,
             ..
         }
@@ -755,29 +755,29 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
     ));
 
     // Accepted completion uses the same push path when dispatch says Push.
-    let accepted_binding = engine::WorkflowToolBinding::admit(
+    let accepted_binding = harness::WorkflowToolBinding::admit(
         test_universe(),
         binding.definition.clone(),
-        engine::WorkflowToolTarget::Bound {
-            receiver: engine::WorkflowEndpointRef {
+        harness::WorkflowToolTarget::Bound {
+            receiver: harness::WorkflowEndpointRef {
                 workflow_id: "approval plugin id".to_owned(),
                 workflow_kind: "approvals".to_owned(),
             },
-            dispatch: engine::BoundWorkflowToolDispatch::Push,
+            dispatch: harness::BoundWorkflowToolDispatch::Push,
         },
-        engine::WorkflowToolCompletion::Accepted,
+        harness::WorkflowToolCompletion::Accepted,
     )
     .expect("pushed Accepted binding");
-    let accepted_invocation_id = engine::WorkflowToolInvocationId::for_call(
+    let accepted_invocation_id = harness::WorkflowToolInvocationId::for_call(
         test_universe(),
         &SessionId::new("child_session"),
         RunId::new(1),
-        engine::TurnId::new(1),
+        harness::TurnId::new(1),
         ToolBatchId::new(1),
-        &engine::ToolCallId::new("call-2"),
+        &harness::ToolCallId::new("call-2"),
         &accepted_binding.binding_fingerprint,
     );
-    let accepted_invocation = engine::WorkflowToolInvocation {
+    let accepted_invocation = harness::WorkflowToolInvocation {
         invocation_id: accepted_invocation_id.clone(),
         tool_id: accepted_binding.definition.tool_id.clone(),
         semantic_type: accepted_binding.definition.semantic_type.clone(),
@@ -786,10 +786,10 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         session_universe_id: test_universe(),
         session_id: SessionId::new("child_session"),
         run_id: RunId::new(1),
-        turn_id: engine::TurnId::new(1),
+        turn_id: harness::TurnId::new(1),
         tool_batch_id: ToolBatchId::new(1),
-        tool_call_id: engine::ToolCallId::new("call-2"),
-        arguments_ref: engine::BlobRef::from_bytes(b"{}"),
+        tool_call_id: harness::ToolCallId::new("call-2"),
+        arguments_ref: harness::BlobRef::from_bytes(b"{}"),
         execution_context_ref: None,
         completion_promises: None,
     };
@@ -797,13 +797,13 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         accepted_binding.definition.tool_id.clone(),
         accepted_binding.clone(),
     );
-    let accepted_entry = engine::CoreAgentEntry {
+    let accepted_entry = harness::CoreAgentEntry {
         position: SessionPosition {
             seq: EventSeq::new(10),
         },
         observed_at_ms: 101,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent::WorkflowTool(engine::WorkflowToolEvent::Emitted {
+        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
             invocation: accepted_invocation.clone(),
         }),
     };
@@ -823,7 +823,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         status: RunStatus::Completed,
         submission_id: None,
         submission_digest: None,
-        source: engine::RunSource::Input { input: Vec::new() },
+        source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
         accepted_at_ms: 1,
@@ -834,7 +834,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         failure: None,
         notify_on_terminal: Vec::new(),
     });
-    let terminal_entry = engine::CoreAgentEntry {
+    let terminal_entry = harness::CoreAgentEntry {
         position: SessionPosition {
             seq: EventSeq::new(11),
         },
@@ -852,29 +852,29 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
 
     // Pull dispatch remains out of the push queue even with the same
     // Accepted completion contract.
-    let pull_binding = engine::WorkflowToolBinding::admit(
+    let pull_binding = harness::WorkflowToolBinding::admit(
         test_universe(),
         binding.definition,
-        engine::WorkflowToolTarget::Bound {
-            receiver: engine::WorkflowEndpointRef {
+        harness::WorkflowToolTarget::Bound {
+            receiver: harness::WorkflowEndpointRef {
                 workflow_id: "approval plugin id".to_owned(),
                 workflow_kind: "approvals".to_owned(),
             },
-            dispatch: engine::BoundWorkflowToolDispatch::Pull,
+            dispatch: harness::BoundWorkflowToolDispatch::Pull,
         },
-        engine::WorkflowToolCompletion::Accepted,
+        harness::WorkflowToolCompletion::Accepted,
     )
     .expect("pull Accepted binding");
-    let pull_invocation_id = engine::WorkflowToolInvocationId::for_call(
+    let pull_invocation_id = harness::WorkflowToolInvocationId::for_call(
         test_universe(),
         &SessionId::new("child_session"),
         RunId::new(1),
-        engine::TurnId::new(1),
+        harness::TurnId::new(1),
         ToolBatchId::new(1),
-        &engine::ToolCallId::new("call-3"),
+        &harness::ToolCallId::new("call-3"),
         &pull_binding.binding_fingerprint,
     );
-    let pull_invocation = engine::WorkflowToolInvocation {
+    let pull_invocation = harness::WorkflowToolInvocation {
         invocation_id: pull_invocation_id,
         tool_id: pull_binding.definition.tool_id.clone(),
         semantic_type: pull_binding.definition.semantic_type.clone(),
@@ -883,10 +883,10 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         session_universe_id: test_universe(),
         session_id: SessionId::new("child_session"),
         run_id: RunId::new(1),
-        turn_id: engine::TurnId::new(1),
+        turn_id: harness::TurnId::new(1),
         tool_batch_id: ToolBatchId::new(1),
-        tool_call_id: engine::ToolCallId::new("call-3"),
-        arguments_ref: engine::BlobRef::from_bytes(b"{}"),
+        tool_call_id: harness::ToolCallId::new("call-3"),
+        arguments_ref: harness::BlobRef::from_bytes(b"{}"),
         execution_context_ref: None,
         completion_promises: None,
     };
@@ -895,13 +895,13 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         .workflow_tools
         .bindings
         .insert(pull_binding.definition.tool_id.clone(), pull_binding);
-    let pull_entry = engine::CoreAgentEntry {
+    let pull_entry = harness::CoreAgentEntry {
         position: SessionPosition {
             seq: EventSeq::new(12),
         },
         observed_at_ms: 103,
         joins: CoreAgentJoins::default(),
-        event: CoreAgentEvent::WorkflowTool(engine::WorkflowToolEvent::Emitted {
+        event: CoreAgentEvent::WorkflowTool(harness::WorkflowToolEvent::Emitted {
             invocation: pull_invocation,
         }),
     };
@@ -919,55 +919,55 @@ fn start_intents_recompute_pending_start_work_from_durable_state() {
         ..Default::default()
     };
 
-    let start = engine::WorkflowStartRef {
+    let start = harness::WorkflowStartRef {
         recipe_format: 1,
         revision: 1,
-        recipe_ref: engine::BlobRef::from_bytes(b"recipe"),
+        recipe_ref: harness::BlobRef::from_bytes(b"recipe"),
         recipe_fingerprint: "wtr:sha256:recipe".to_owned(),
     };
-    let binding = engine::WorkflowToolBinding::admit(
+    let binding = harness::WorkflowToolBinding::admit(
         test_universe(),
-        engine::WorkflowToolDefinition {
-            tool_id: engine::WorkflowToolId::new("launch"),
+        harness::WorkflowToolDefinition {
+            tool_id: harness::WorkflowToolId::new("launch"),
             revision: 1,
             semantic_type: "lightspeed.job.launch.v1".to_owned(),
-            tool: engine::ToolSpec {
-                name: engine::ToolName::new("launch_job"),
+            tool: harness::ToolSpec {
+                name: harness::ToolName::new("launch_job"),
                 execution: Default::default(),
-                kind: engine::ToolKind::Function(engine::FunctionToolSpec {
+                kind: harness::ToolKind::Function(harness::FunctionToolSpec {
                     description_ref: None,
-                    input_schema_ref: engine::BlobRef::from_bytes(b"{}"),
+                    input_schema_ref: harness::BlobRef::from_bytes(b"{}"),
                     output_schema_ref: None,
                     strict: None,
                     provider_options_ref: None,
                 }),
-                parallelism: engine::ToolParallelism::ParallelSafe,
+                parallelism: harness::ToolParallelism::ParallelSafe,
             },
         },
-        engine::WorkflowToolTarget::Start {
+        harness::WorkflowToolTarget::Start {
             start: start.clone(),
         },
-        engine::WorkflowToolCompletion::Promises {
+        harness::WorkflowToolCompletion::Promises {
             reply_schema_ref: None,
             deadline_after_ms: None,
             max_promises: 1,
-            key_source: engine::WorkflowToolCompletionKeySource::Reply,
+            key_source: harness::WorkflowToolCompletionKeySource::Reply,
         },
     )
     .expect("start binding");
-    let invocation_id = engine::WorkflowToolInvocationId::for_call(
+    let invocation_id = harness::WorkflowToolInvocationId::for_call(
         test_universe(),
         &SessionId::new("child_session"),
         RunId::new(1),
-        engine::TurnId::new(1),
+        harness::TurnId::new(1),
         ToolBatchId::new(1),
-        &engine::ToolCallId::new("call-1"),
+        &harness::ToolCallId::new("call-1"),
         &binding.binding_fingerprint,
     );
-    let promise_id = engine::PromiseId::from_number(1);
+    let promise_id = harness::PromiseId::from_number(1);
     let execution_id =
-        engine::workflow_tool_execution_id(&invocation_id, &start.recipe_fingerprint);
-    let invocation = engine::WorkflowToolInvocation {
+        harness::workflow_tool_execution_id(&invocation_id, &start.recipe_fingerprint);
+    let invocation = harness::WorkflowToolInvocation {
         invocation_id: invocation_id.clone(),
         tool_id: binding.definition.tool_id.clone(),
         semantic_type: binding.definition.semantic_type.clone(),
@@ -976,13 +976,13 @@ fn start_intents_recompute_pending_start_work_from_durable_state() {
         session_universe_id: test_universe(),
         session_id: SessionId::new("child_session"),
         run_id: RunId::new(1),
-        turn_id: engine::TurnId::new(1),
+        turn_id: harness::TurnId::new(1),
         tool_batch_id: ToolBatchId::new(1),
-        tool_call_id: engine::ToolCallId::new("call-1"),
-        arguments_ref: engine::BlobRef::from_bytes(b"{}"),
+        tool_call_id: harness::ToolCallId::new("call-1"),
+        arguments_ref: harness::BlobRef::from_bytes(b"{}"),
         execution_context_ref: None,
         completion_promises: Some(std::collections::BTreeMap::from([(
-            engine::REPLY_COMPLETION_KEY.to_owned(),
+            harness::REPLY_COMPLETION_KEY.to_owned(),
             promise_id.clone(),
         )])),
     };
@@ -998,16 +998,16 @@ fn start_intents_recompute_pending_start_work_from_durable_state() {
         .insert(invocation_id.clone(), invocation);
     workflow.core_state.promises.promises.insert(
         promise_id.clone(),
-        engine::Promise {
+        harness::Promise {
             promise_id: promise_id.clone(),
-            source: engine::PromiseSource::Workflow {
+            source: harness::PromiseSource::Workflow {
                 producer_workflow_id: execution_id.clone(),
-                producer_workflow_kind: engine::WORKFLOW_TOOL_EXECUTION_KIND.to_owned(),
+                producer_workflow_kind: harness::WORKFLOW_TOOL_EXECUTION_KIND.to_owned(),
                 invocation_id: invocation_id.as_str().to_owned(),
-                completion_key: engine::REPLY_COMPLETION_KEY.to_owned(),
+                completion_key: harness::REPLY_COMPLETION_KEY.to_owned(),
             },
-            scope: engine::PromiseScope::Session,
-            ownership: engine::PromiseOwnership::Model,
+            scope: harness::PromiseScope::Session,
+            ownership: harness::PromiseOwnership::Model,
             status: PromiseStatus::Pending,
             payload_ref: None,
             error_ref: None,
@@ -1032,7 +1032,7 @@ fn start_intents_recompute_pending_start_work_from_durable_state() {
         .core_state
         .workflow_tools
         .start_failures
-        .insert(invocation_id.clone(), engine::BlobRef::from_bytes(b"err"));
+        .insert(invocation_id.clone(), harness::BlobRef::from_bytes(b"err"));
     assert!(!workflow_starts::has_immediate_work(&workflow));
     workflow.core_state.workflow_tools.start_failures.clear();
 
@@ -1073,13 +1073,13 @@ fn terminal_run_with_notify_intent_queues_emission() {
         session_id: Some(SessionId::new("child_session")),
         ..Default::default()
     };
-    let output_ref = engine::ContentRef::text(engine::BlobRef::from_bytes(b"done"));
+    let output_ref = harness::ContentRef::text(harness::BlobRef::from_bytes(b"done"));
     workflow.core_state.runs.completed.push(RunRecord {
         run_id: RunId::new(3),
         status: RunStatus::Completed,
         submission_id: None,
         submission_digest: None,
-        source: engine::RunSource::Input { input: Vec::new() },
+        source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
         accepted_at_ms: 1,
@@ -1093,7 +1093,7 @@ fn terminal_run_with_notify_intent_queues_emission() {
             token: "promise_parent".to_owned(),
         }],
     });
-    let entry = engine::CoreAgentEntry {
+    let entry = harness::CoreAgentEntry {
         position: SessionPosition {
             seq: EventSeq::new(1),
         },
@@ -1114,7 +1114,7 @@ fn terminal_run_with_notify_intent_queues_emission() {
     assert_eq!(pending.receiver_workflow_id, "universe/parent_session");
     assert!(matches!(
         &pending.envelope.producer,
-        engine::EmissionProducer::Session {
+        harness::EmissionProducer::Session {
             universe_id,
             session_id,
             log_seq,
@@ -1124,7 +1124,7 @@ fn terminal_run_with_notify_intent_queues_emission() {
     ));
     assert!(matches!(
         &pending.envelope.body,
-        engine::EmissionBody::RunTerminal {
+        harness::EmissionBody::RunTerminal {
             token,
             run_id,
             status: RunStatus::Completed,
@@ -1145,7 +1145,7 @@ fn terminal_run_with_notify_intent_queues_emission() {
     assert!(workflow.pending_emissions.is_empty());
 }
 
-fn promise(id: &str, status: PromiseStatus) -> engine::Promise {
+fn promise(id: &str, status: PromiseStatus) -> harness::Promise {
     promise_with_source(
         id,
         status,
@@ -1161,7 +1161,7 @@ fn bound_workflow_source(peer: &str) -> PromiseSource {
         producer_workflow_id: format!("universe/{peer}"),
         producer_workflow_kind: "bound_receiver".to_owned(),
         invocation_id: format!("wti_{peer}"),
-        completion_key: engine::REPLY_COMPLETION_KEY.to_owned(),
+        completion_key: harness::REPLY_COMPLETION_KEY.to_owned(),
     }
 }
 
@@ -1170,12 +1170,12 @@ fn promise_with_source(
     status: PromiseStatus,
     source: PromiseSource,
     scope: PromiseScope,
-) -> engine::Promise {
-    engine::Promise {
-        promise_id: engine::PromiseId::new(id),
+) -> harness::Promise {
+    harness::Promise {
+        promise_id: harness::PromiseId::new(id),
         source,
         scope,
-        ownership: engine::PromiseOwnership::Model,
+        ownership: harness::PromiseOwnership::Model,
         status,
         payload_ref: None,
         error_ref: None,
@@ -1183,7 +1183,7 @@ fn promise_with_source(
     }
 }
 
-fn add_promises(workflow: &mut AgentSessionWorkflow, promises: Vec<engine::Promise>) {
+fn add_promises(workflow: &mut AgentSessionWorkflow, promises: Vec<harness::Promise>) {
     for promise in promises {
         workflow
             .core_state
@@ -1195,11 +1195,11 @@ fn add_promises(workflow: &mut AgentSessionWorkflow, promises: Vec<engine::Promi
 
 fn await_spec(
     ids: &[&str],
-    mode: engine::AwaitMode,
+    mode: harness::AwaitMode,
     deadline_at_ms: Option<u64>,
-) -> engine::AwaitSpec {
-    engine::AwaitSpec {
-        promise_ids: ids.iter().map(|id| engine::PromiseId::new(*id)).collect(),
+) -> harness::AwaitSpec {
+    harness::AwaitSpec {
+        promise_ids: ids.iter().map(|id| harness::PromiseId::new(*id)).collect(),
         mode,
         deadline_at_ms,
     }
@@ -1209,7 +1209,7 @@ fn await_spec(
 fn workflow_await_waits_for_every_promise_in_all_mode() {
     let mut workflow = workflow_with_parked_tool_batch(await_spec(
         &["promise_1", "promise_2"],
-        engine::AwaitMode::All,
+        harness::AwaitMode::All,
         None,
     ));
     add_promises(
@@ -1233,13 +1233,13 @@ fn workflow_await_waits_for_every_promise_in_all_mode() {
 
 #[test]
 fn parked_join_reconstructs_wake_from_runtime_owned_terminal_promises() {
-    let promise_id = engine::PromiseId::new("promise_15");
-    let mut workflow = workflow_with_parked_tool_batch(engine::AwaitSpec {
+    let promise_id = harness::PromiseId::new("promise_15");
+    let mut workflow = workflow_with_parked_tool_batch(harness::AwaitSpec {
         promise_ids: vec![promise_id.clone()],
-        mode: engine::AwaitMode::All,
+        mode: harness::AwaitMode::All,
         deadline_at_ms: None,
     });
-    let invocation_id = engine::WorkflowToolInvocationId::for_call(
+    let invocation_id = harness::WorkflowToolInvocationId::for_call(
         test_universe(),
         &SessionId::new("child_session"),
         RunId::new(1),
@@ -1257,34 +1257,34 @@ fn parked_join_reconstructs_wake_from_runtime_owned_terminal_promises() {
         .parked_tool_batch
         .as_mut()
         .expect("parked batch")
-        .suspension = engine::ToolBatchSuspension::JoinedWorkflowCalls {
-        calls: vec![engine::JoinedWorkflowCall {
+        .suspension = harness::ToolBatchSuspension::JoinedWorkflowCalls {
+        calls: vec![harness::JoinedWorkflowCall {
             call_id: ToolCallId::new("call_await"),
             invocation_id,
             promise_id: promise_id.clone(),
         }],
-        spec: engine::AwaitSpec {
+        spec: harness::AwaitSpec {
             promise_ids: vec![promise_id.clone()],
-            mode: engine::AwaitMode::All,
+            mode: harness::AwaitMode::All,
             deadline_at_ms: None,
         },
     };
     workflow.core_state.promises.promises.insert(
         promise_id.clone(),
-        engine::Promise {
+        harness::Promise {
             promise_id,
             source: PromiseSource::Workflow {
                 producer_workflow_id: "channels".to_owned(),
                 producer_workflow_kind: "channels.session".to_owned(),
                 invocation_id: "joined".to_owned(),
-                completion_key: engine::REPLY_COMPLETION_KEY.to_owned(),
+                completion_key: harness::REPLY_COMPLETION_KEY.to_owned(),
             },
             scope: PromiseScope::Run {
                 run_id: RunId::new(1),
             },
-            ownership: engine::PromiseOwnership::Runtime,
+            ownership: harness::PromiseOwnership::Runtime,
             status: PromiseStatus::Resolved,
-            payload_ref: Some(engine::BlobRef::from_bytes(b"receipt")),
+            payload_ref: Some(harness::BlobRef::from_bytes(b"receipt")),
             error_ref: None,
             deadline_ms: Some(50_000),
         },
@@ -1299,7 +1299,7 @@ fn parked_join_reconstructs_wake_from_runtime_owned_terminal_promises() {
 fn workflow_await_resolves_any_mode_on_first_terminal_promise() {
     let mut workflow = workflow_with_parked_tool_batch(await_spec(
         &["promise_1", "promise_2"],
-        engine::AwaitMode::Any,
+        harness::AwaitMode::Any,
         None,
     ));
     add_promises(
@@ -1316,7 +1316,7 @@ fn workflow_await_resolves_any_mode_on_first_terminal_promise() {
 fn workflow_await_deadline_uses_timer_not_state_condition() {
     let mut workflow = workflow_with_parked_tool_batch(await_spec(
         &["promise_1"],
-        engine::AwaitMode::All,
+        harness::AwaitMode::All,
         Some(1_000),
     ));
     add_promises(
@@ -1329,7 +1329,7 @@ fn workflow_await_deadline_uses_timer_not_state_condition() {
 
 #[test]
 fn promise_snapshot_reports_pending_promise() {
-    let spec = await_spec(&["promise_1"], engine::AwaitMode::All, Some(1_000));
+    let spec = await_spec(&["promise_1"], harness::AwaitMode::All, Some(1_000));
     let mut workflow = workflow_with_parked_tool_batch(spec.clone());
     add_promises(
         &mut workflow,
@@ -1341,14 +1341,14 @@ fn promise_snapshot_reports_pending_promise() {
 
 #[test]
 fn continue_as_new_allows_pending_sources_and_parked_tool_batches() {
-    let mut workflow = workflow_with_parked_tool_batch(engine::AwaitSpec {
+    let mut workflow = workflow_with_parked_tool_batch(harness::AwaitSpec {
         promise_ids: vec![
-            engine::PromiseId::new("promise_11"),
-            engine::PromiseId::new("promise_12"),
-            engine::PromiseId::new("promise_13"),
-            engine::PromiseId::new("promise_14"),
+            harness::PromiseId::new("promise_11"),
+            harness::PromiseId::new("promise_12"),
+            harness::PromiseId::new("promise_13"),
+            harness::PromiseId::new("promise_14"),
         ],
-        mode: engine::AwaitMode::All,
+        mode: harness::AwaitMode::All,
         deadline_at_ms: Some(50_000),
     });
     let promises = [
@@ -1495,7 +1495,7 @@ fn continue_as_new_is_blocked_by_non_reconstructible_workflow_state() {
 
     // Log-derived state (pending promises) never blocks continue-as-new.
     workflow.core_state.promises.promises.insert(
-        engine::PromiseId::new("promise_1"),
+        harness::PromiseId::new("promise_1"),
         promise("promise_1", PromiseStatus::Pending),
     );
     assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
@@ -1542,7 +1542,7 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
         log: &mut Vec<CoreAgentEntry>,
         command: CoreAgentCommand,
     ) {
-        for proposal in engine::admit_command(state, command, 1).unwrap() {
+        for proposal in harness::admit_command(state, command, 1).unwrap() {
             let entry = CoreAgentEntry {
                 position: SessionPosition {
                     seq: EventSeq::new(log.len() as u64 + 1),
@@ -1551,7 +1551,7 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
                 joins: proposal.joins,
                 event: proposal.event,
             };
-            engine::apply_event(state, &entry).unwrap();
+            harness::apply_event(state, &entry).unwrap();
             log.push(entry);
         }
     }
@@ -1564,7 +1564,7 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
                 kind: ContextEntryKind::Catalog {
                     title: "Catalog".into(),
                 },
-                content: engine::ContentRef::text(BlobRef::from_bytes(b"catalog")),
+                content: harness::ContentRef::text(BlobRef::from_bytes(b"catalog")),
                 preview: None,
                 provenance_ref: None,
                 token_estimate: None,
@@ -1574,13 +1574,13 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
     let mut state = CoreAgentState::new();
     let mut log = Vec::new();
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
-    config.features.environments = Some(engine::EnvironmentsFeature {
+    config.features.environments = Some(harness::EnvironmentsFeature {
         environments: ["first", "second"]
             .into_iter()
-            .map(|id| engine::EnvironmentAttachment {
+            .map(|id| harness::EnvironmentAttachment {
                 environment_id: id.into(),
                 default: false,
-                access: engine::EnvironmentAccess::Read,
+                access: harness::EnvironmentAccess::Read,
                 working_directory: None,
             })
             .collect(),
@@ -1596,7 +1596,7 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
         &mut log,
         publication("runtime.catalog.vfs", None),
     );
-    let vfs = engine::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs"))
+    let vfs = harness::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs"))
         .unwrap()
         .clone();
     let tools = state.tooling.clone();
@@ -1605,19 +1605,21 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
         let observed = publication(key.as_str(), Some("runtime.environments".into()));
         assert!(!drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
         append(&mut state, &mut log, observed.clone());
-        let before = engine::current_context_entry(&state, &key).unwrap().clone();
+        let before = harness::current_context_entry(&state, &key)
+            .unwrap()
+            .clone();
         let command = match next {
             Some(id) => CoreAgentCommand::SetActiveEnvironment {
-                environment_id: engine::EnvironmentId::new(id),
+                environment_id: harness::EnvironmentId::new(id),
             },
             None => CoreAgentCommand::ClearActiveEnvironment,
         };
         append(&mut state, &mut log, command);
         assert!(!drive::environment_attachment_catalog_publication_is_obsolete(&state, &observed));
         assert!(drive::invalid_environment_attachment_catalog_command(&state).is_none());
-        assert_eq!(engine::current_context_entry(&state, &key), Some(&before));
+        assert_eq!(harness::current_context_entry(&state, &key), Some(&before));
         assert_eq!(
-            engine::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs")),
+            harness::current_context_entry(&state, &ContextEntryKey::new("runtime.catalog.vfs")),
             Some(&vfs)
         );
         assert_eq!(state.tooling, tools);
@@ -1638,7 +1640,7 @@ fn attachment_catalog_survives_selection_changes_and_replays() {
     append(&mut state, &mut log, removal);
     let mut replayed = CoreAgentState::new();
     for entry in &log {
-        engine::apply_event(&mut replayed, entry).unwrap();
+        harness::apply_event(&mut replayed, entry).unwrap();
     }
     assert_eq!(state, replayed);
 }
@@ -1650,7 +1652,7 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
         log: &mut Vec<CoreAgentEntry>,
         command: CoreAgentCommand,
     ) {
-        for proposal in engine::admit_command(state, command, 1).unwrap() {
+        for proposal in harness::admit_command(state, command, 1).unwrap() {
             let entry = CoreAgentEntry {
                 position: SessionPosition {
                     seq: EventSeq::new(log.len() as u64 + 1),
@@ -1659,21 +1661,21 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
                 joins: proposal.joins,
                 event: proposal.event,
             };
-            engine::apply_event(state, &entry).unwrap();
+            harness::apply_event(state, &entry).unwrap();
             log.push(entry);
         }
     }
     let mut state = CoreAgentState::new();
     let mut log = Vec::new();
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
-    config.features.environments = Some(engine::EnvironmentsFeature {
+    config.features.environments = Some(harness::EnvironmentsFeature {
         skills: Some(Default::default()),
         environments: ["first", "second"]
             .into_iter()
-            .map(|id| engine::EnvironmentAttachment {
+            .map(|id| harness::EnvironmentAttachment {
                 environment_id: id.to_owned(),
                 default: false,
-                access: engine::EnvironmentAccess::Read,
+                access: harness::EnvironmentAccess::Read,
                 working_directory: None,
             })
             .collect(),
@@ -1688,7 +1690,7 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
         &mut state,
         &mut log,
         CoreAgentCommand::SetActiveEnvironment {
-            environment_id: engine::EnvironmentId::new("first"),
+            environment_id: harness::EnvironmentId::new("first"),
         },
     );
     // The gateway can submit the first run before any skill catalog exists.
@@ -1719,7 +1721,7 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
                     kind: ContextEntryKind::Catalog {
                         title: "Skills".into(),
                     },
-                    content: engine::ContentRef::text(BlobRef::from_bytes(b"menu")),
+                    content: harness::ContentRef::text(BlobRef::from_bytes(b"menu")),
                     preview: None,
                     provenance_ref: None,
                     token_estimate: None,
@@ -1727,13 +1729,13 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
             },
         );
     }
-    let vfs = engine::current_context_entry(&state, &vfs_key)
+    let vfs = harness::current_context_entry(&state, &vfs_key)
         .unwrap()
         .clone();
     let environment_publication = CoreAgentCommand::UpsertContext {
         expected_revision: None,
         key: env_key.clone(),
-        entry: engine::current_catalog_inputs(&state)[&env_key].clone(),
+        entry: harness::current_catalog_inputs(&state)[&env_key].clone(),
     };
     assert!(!drive::environment_catalog_publication_is_obsolete(
         &state,
@@ -1752,7 +1754,7 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
         .skills = None;
     assert!(drive::invalid_environment_catalog_command(&disabled).is_some());
     assert_eq!(
-        engine::current_context_entry(&disabled, &vfs_key),
+        harness::current_context_entry(&disabled, &vfs_key),
         Some(&vfs)
     );
     disabled
@@ -1793,18 +1795,18 @@ fn environment_catalog_switch_removal_replays_without_mutating_vfs() {
         &mut state,
         &mut log,
         CoreAgentCommand::SetActiveEnvironment {
-            environment_id: engine::EnvironmentId::new("second"),
+            environment_id: harness::EnvironmentId::new("second"),
         },
     );
     let removal = drive::invalid_environment_catalog_command(&state).unwrap();
     assert!(matches!(&removal, CoreAgentCommand::RemoveContext { key, .. } if key == &env_key));
     assert!(!admissions::should_refresh_runtime_projection_before_admitting(&state, &removal));
     append(&mut state, &mut log, removal);
-    assert!(engine::current_context_entry(&state, &env_key).is_none());
-    assert_eq!(engine::current_context_entry(&state, &vfs_key), Some(&vfs));
+    assert!(harness::current_context_entry(&state, &env_key).is_none());
+    assert_eq!(harness::current_context_entry(&state, &vfs_key), Some(&vfs));
     let mut replayed = CoreAgentState::new();
     for entry in &log {
-        engine::apply_event(&mut replayed, entry).unwrap();
+        harness::apply_event(&mut replayed, entry).unwrap();
     }
     assert_eq!(state, replayed);
 }
@@ -1816,7 +1818,7 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
         log: &mut Vec<CoreAgentEntry>,
         command: CoreAgentCommand,
     ) {
-        for proposal in engine::admit_command(state, command, 1).unwrap() {
+        for proposal in harness::admit_command(state, command, 1).unwrap() {
             let entry = CoreAgentEntry {
                 position: SessionPosition {
                     seq: EventSeq::new(log.len() as u64 + 1),
@@ -1825,21 +1827,21 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
                 joins: proposal.joins,
                 event: proposal.event,
             };
-            engine::apply_event(state, &entry).unwrap();
+            harness::apply_event(state, &entry).unwrap();
             log.push(entry);
         }
     }
     let mut state = CoreAgentState::new();
     let mut log = Vec::new();
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
-    config.features.environments = Some(engine::EnvironmentsFeature {
+    config.features.environments = Some(harness::EnvironmentsFeature {
         prompts: Some(Default::default()),
         environments: ["first", "second"]
             .into_iter()
-            .map(|id| engine::EnvironmentAttachment {
+            .map(|id| harness::EnvironmentAttachment {
                 environment_id: id.to_owned(),
                 default: false,
-                access: engine::EnvironmentAccess::Read,
+                access: harness::EnvironmentAccess::Read,
                 working_directory: None,
             })
             .collect(),
@@ -1854,7 +1856,7 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
         &mut state,
         &mut log,
         CoreAgentCommand::SetActiveEnvironment {
-            environment_id: engine::EnvironmentId::new("first"),
+            environment_id: harness::EnvironmentId::new("first"),
         },
     );
     // Prompt discovery also runs when the gateway has not published instructions.
@@ -1883,7 +1885,7 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
                 entry: ContextEntryInput {
                     origin,
                     kind: ContextEntryKind::Instructions,
-                    content: engine::ContentRef::text(BlobRef::from_bytes(b"menu")),
+                    content: harness::ContentRef::text(BlobRef::from_bytes(b"menu")),
                     preview: None,
                     provenance_ref: None,
                     token_estimate: None,
@@ -1891,7 +1893,7 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
             },
         );
     }
-    let vfs = engine::current_context_entry(&state, &vfs_key)
+    let vfs = harness::current_context_entry(&state, &vfs_key)
         .unwrap()
         .clone();
     let mut disabled = state.clone();
@@ -1907,7 +1909,7 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
         .prompts = None;
     assert!(drive::invalid_environment_prompt_command(&disabled).is_some());
     assert_eq!(
-        engine::current_context_entry(&disabled, &vfs_key),
+        harness::current_context_entry(&disabled, &vfs_key),
         Some(&vfs)
     );
     disabled
@@ -1942,18 +1944,18 @@ fn environment_prompt_switch_removal_replays_without_mutating_vfs() {
         &mut state,
         &mut log,
         CoreAgentCommand::SetActiveEnvironment {
-            environment_id: engine::EnvironmentId::new("second"),
+            environment_id: harness::EnvironmentId::new("second"),
         },
     );
     let removal = drive::invalid_environment_prompt_command(&state).unwrap();
     assert!(matches!(&removal, CoreAgentCommand::RemoveContext { key, .. } if key == &env_key));
     assert!(!admissions::should_refresh_runtime_projection_before_admitting(&state, &removal));
     append(&mut state, &mut log, removal);
-    assert!(engine::current_context_entry(&state, &env_key).is_none());
-    assert_eq!(engine::current_context_entry(&state, &vfs_key), Some(&vfs));
+    assert!(harness::current_context_entry(&state, &env_key).is_none());
+    assert_eq!(harness::current_context_entry(&state, &vfs_key), Some(&vfs));
     let mut replayed = CoreAgentState::new();
     for entry in &log {
-        engine::apply_event(&mut replayed, entry).unwrap();
+        harness::apply_event(&mut replayed, entry).unwrap();
     }
     assert_eq!(state, replayed);
 }
@@ -1965,7 +1967,7 @@ fn catalog_discovery_is_never_scheduled_for_continuation_or_tool_controls() {
     for command in [
         CoreAgentCommand::ClearActiveEnvironment,
         CoreAgentCommand::SetActiveEnvironment {
-            environment_id: engine::EnvironmentId::new("machine"),
+            environment_id: harness::EnvironmentId::new("machine"),
         },
         CoreAgentCommand::RemoveContext {
             expected_revision: None,
@@ -1983,7 +1985,7 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
         log: &mut Vec<CoreAgentEntry>,
         command: CoreAgentCommand,
     ) {
-        let proposals = engine::admit_command(state, command, 1).unwrap();
+        let proposals = harness::admit_command(state, command, 1).unwrap();
         for proposal in proposals {
             let entry = CoreAgentEntry {
                 position: SessionPosition {
@@ -1993,25 +1995,25 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
                 joins: proposal.joins,
                 event: proposal.event,
             };
-            engine::apply_event(state, &entry).unwrap();
+            harness::apply_event(state, &entry).unwrap();
             log.push(entry);
         }
     }
     let mut state = CoreAgentState::new();
     let mut log = Vec::new();
     let mut config = agent_session_args_with_close_on_terminal(false).session_config;
-    config.features.vfs = Some(engine::VfsFeature {
-        workspaces: vec![engine::WorkspaceAttachment {
+    config.features.vfs = Some(harness::VfsFeature {
+        workspaces: vec![harness::WorkspaceAttachment {
             path: "/skills".into(),
-            target: engine::WorkspaceAttachmentTarget::Workspace {
+            target: harness::WorkspaceAttachmentTarget::Workspace {
                 workspace_id: "skills".into(),
             },
-            access: engine::WorkspaceAccess::Read,
+            access: harness::WorkspaceAccess::Read,
         }],
-        skills: Some(engine::VfsSkillsConfig::default()),
+        skills: Some(harness::VfsSkillsConfig::default()),
         ..Default::default()
     });
-    config.features.environments = Some(engine::EnvironmentsFeature {
+    config.features.environments = Some(harness::EnvironmentsFeature {
         skills: Some(Default::default()),
         ..Default::default()
     });
@@ -2027,7 +2029,7 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
         kind: ContextEntryKind::Catalog {
             title: "VFS skills".into(),
         },
-        content: engine::ContentRef::text(BlobRef::from_bytes(b"menu")),
+        content: harness::ContentRef::text(BlobRef::from_bytes(b"menu")),
         preview: None,
         provenance_ref: None,
         token_estimate: None,
@@ -2053,7 +2055,7 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
             entry: environment_entry,
         },
     );
-    let environment = engine::current_context_entry(&state, &env_key)
+    let environment = harness::current_context_entry(&state, &env_key)
         .unwrap()
         .clone();
     assert!(drive::invalid_vfs_skill_catalog_command(&state).is_none());
@@ -2081,9 +2083,9 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
     ));
     let removal = drive::invalid_vfs_skill_catalog_command(&state).unwrap();
     append(&mut state, &mut log, removal);
-    assert!(engine::current_context_entry(&state, &key).is_none());
+    assert!(harness::current_context_entry(&state, &key).is_none());
     assert_eq!(
-        engine::current_context_entry(&state, &env_key),
+        harness::current_context_entry(&state, &env_key),
         Some(&environment)
     );
     assert!(
@@ -2101,7 +2103,7 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
     );
     let mut replayed = CoreAgentState::new();
     for entry in &log {
-        engine::apply_event(&mut replayed, entry).unwrap();
+        harness::apply_event(&mut replayed, entry).unwrap();
     }
     assert_eq!(state, replayed);
     let mut external = match publication {
@@ -2124,7 +2126,7 @@ fn vfs_skill_revocation_is_source_scoped_and_replays() {
 #[test]
 fn accepted_submission_skips_new_policy_observations_even_after_config_is_removed() {
     let mut workflow =
-        workflow_with_parked_tool_batch(await_spec(&["promise_1"], engine::AwaitMode::All, None));
+        workflow_with_parked_tool_batch(await_spec(&["promise_1"], harness::AwaitMode::All, None));
     workflow
         .core_state
         .runs

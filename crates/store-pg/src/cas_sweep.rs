@@ -5,7 +5,7 @@
 //! them on a later pass. Pages bound rows examined, including live rows.
 //! Objects have incarnation-specific keys and are removed after catalog commit.
 
-use engine::{BlobRef, storage::BlobStoreError};
+use harness::{BlobRef, storage::BlobStoreError};
 use object_store::{ObjectStoreExt, path::Path as ObjectPath};
 use sqlx::{PgPool, Postgres, Row, Transaction, pool::PoolConnection};
 use thiserror::Error;

@@ -358,7 +358,7 @@ durable semantics are normative:
   definition fields;
 - every field is immutable for the managed session's lifetime.
 
-`WorkflowStartRef` is substrate-neutral in `engine`. A Temporal adapter
+`WorkflowStartRef` is substrate-neutral in `harness`. A Temporal adapter
 validates and resolves a versioned recipe containing the workflow type and
 task queue. `recipe_format` identifies the generic recipe codec, never a
 feature, service, or workflow plugin. P100b v1 has one Temporal recipe
@@ -930,7 +930,7 @@ P100b does not add:
 Expected changes:
 
 ```text
-crates/engine/
+crates/harness/
   keyed completion and start ids, binding contracts, deterministic
     per-key promise-id derivation
   unified PromiseSource::Workflow
@@ -947,7 +947,7 @@ crates/temporal-workflow/
   per-key cancellation and reply emission helpers
   unified workflow Promise source handling
 
-crates/temporal-server/
+crates/temporal-runtime/
   trusted start-recipe admission and resolution
   bounded reply-schema validation activities
   generic start failure/retry integration
@@ -1008,7 +1008,7 @@ types, task queues, signals, activities, and clients stay outside it.
 ### B4. Start-on-call workflow tools
 
 - [x] Admit versioned substrate-neutral start references and resolve Temporal
-      recipes outside `engine`.
+      recipes outside `harness`.
 - [x] Derive one deterministic execution id per invocation and binding.
 - [x] Atomically append `StartRequested + Promise::Created × N` with ordinary
       tool completion.
@@ -1026,7 +1026,7 @@ types, task queues, signals, activities, and clients stay outside it.
 ### B5. Generic plugin proofs
 
 Implemented 2026-07-26 as the live suite
-`crates/temporal-server/tests/workflow_tool_plugins_live.rs`: minimal
+`crates/temporal-runtime/tests/workflow_tool_plugins_live.rs`: minimal
 generic plugin workflows (`TestBoundPluginWorkflow`,
 `TestStartPluginWorkflow`, `TestSilentStartPluginWorkflow`) registered on a
 **second worker with its own task queue**; the session worker uses the
@@ -1097,9 +1097,9 @@ Live Temporal tests must source `scripts/dev/env.sh` and run serially:
 
 ```bash
 source scripts/dev/env.sh
-cargo test -p temporal-server --test workflow_tool_plugins_live -- --ignored --test-threads=1
-cargo test -p temporal-server --test sessions_live --test runs_live --test subagents_live --test profiles_live --test tenancy_live --test mcp_live -- --ignored --test-threads=1
-cargo test -p temporal-server --test environment_provider_live -- --ignored --test-threads=1
+cargo test -p temporal-runtime --test workflow_tool_plugins_live -- --ignored --test-threads=1
+cargo test -p temporal-runtime --test sessions_live --test runs_live --test subagents_live --test profiles_live --test tenancy_live --test mcp_live -- --ignored --test-threads=1
+cargo test -p temporal-runtime --test environment_provider_live -- --ignored --test-threads=1
 ```
 
 ### B7. Lifecycle-controller self-receiver

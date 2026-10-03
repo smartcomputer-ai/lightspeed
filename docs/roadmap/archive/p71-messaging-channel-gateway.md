@@ -349,14 +349,14 @@ Acceptance criteria:
 - [x] duplicate append with the same idempotency key is a no-op.
 
 Implemented 2026-06-12: the entry key is the idempotency handle (no separate
-submission id). `crates/engine` now admits `Message { role: User }` entries
+submission id). `crates/harness` now admits `Message { role: User }` entries
 through external context edits on non-reserved keys and skips identical
 upserts as no-ops (`admit.rs`, `context.rs`); assistant-role edits remain
 rejected. The gateway adds `context/append` (`crates/api` method +
-`temporal-server` handler with CAS materialization, unchanged-key pre-check,
+`temporal-runtime` handler with CAS materialization, unchanged-key pre-check,
 and `wait_for_context_entries_applied`). Contract artifacts and the TS
 client are regenerated. End-to-end coverage in
-`crates/temporal-server/tests/sessions_live.rs`
+`crates/temporal-runtime/tests/sessions_live.rs`
 (`temporal_live_context_append_is_idempotent_and_projected`); the bridge
 batches room events per chat (flush every 30s / 20 events, budget 50 with
 drop reporting) and drains the buffer before an activating turn.

@@ -1,9 +1,9 @@
 //! Active-run control: client admissions — cancel, steer, queue —
-//! must reach the engine while the drive loop is executing an activity, not
+//! must reach the harness while the drive loop is executing an activity, not
 //! after the run ends. This module holds the one primitive the drive loop and
 //! the tool-batch executor use to race an in-flight activity against pending
 //! admissions, admit them against the live drive, and abandon the activity
-//! when the engine no longer wants its result.
+//! when the harness no longer wants its result.
 
 use temporalio_sdk::CancellableFuture;
 
@@ -11,17 +11,17 @@ use super::*;
 
 /// Outcome of racing one activity against client admissions.
 pub(super) enum Raced<T> {
-    /// The activity finished; its result is still wanted by the engine.
+    /// The activity finished; its result is still wanted by the harness.
     Completed(T),
     /// Admissions drained mid-flight made the work obsolete (the run is
-    /// cancelling, or the turn/batch is no longer the engine's active one).
+    /// cancelling, or the turn/batch is no longer the harness's active one).
     /// The activity was cancelled and its eventual result discarded; the
     /// caller re-plans from the drive.
     Preempted,
 }
 
 /// Await `activity` while draining client admissions as they arrive. After
-/// each drain, `still_wanted` decides against the live engine state whether
+/// each drain, `still_wanted` decides against the live harness state whether
 /// the activity's result still matters; if not, the activity is cancelled
 /// (`TryCancel`: the future resolves at once, the worker learns through its
 /// heartbeat) and `Preempted` is returned.
@@ -65,11 +65,11 @@ where
     }
 }
 
-/// The generation for `turn_id` of `run_id` is still what the engine wants.
+/// The generation for `turn_id` of `run_id` is still what the harness wants.
 pub(super) fn generation_still_wanted(
     state: &CoreAgentState,
-    run_id: engine::RunId,
-    turn_id: engine::TurnId,
+    run_id: harness::RunId,
+    turn_id: harness::TurnId,
 ) -> bool {
     state.runs.active.as_ref().is_some_and(|run| {
         run.run_id == run_id
@@ -78,11 +78,11 @@ pub(super) fn generation_still_wanted(
     })
 }
 
-/// The tool batch `batch_id` of `run_id` is still executing for the engine.
+/// The tool batch `batch_id` of `run_id` is still executing for the harness.
 pub(super) fn tool_batch_still_wanted(
     state: &CoreAgentState,
-    run_id: engine::RunId,
-    batch_id: engine::ToolBatchId,
+    run_id: harness::RunId,
+    batch_id: harness::ToolBatchId,
 ) -> bool {
     state.runs.active.as_ref().is_some_and(|run| {
         run.run_id == run_id

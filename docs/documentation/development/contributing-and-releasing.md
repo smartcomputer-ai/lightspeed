@@ -19,7 +19,7 @@ edits out of the contribution so a reviewer can follow the behavior and its
 evidence together.
 
 Before implementation, identify the owning layer. The
-[architecture guide](../how-it-works/architecture.md) explains why the engine
+[architecture guide](../how-it-works/architecture.md) explains why the harness
 decides deterministically, adapters perform I/O, clients depend on the public
 API, and compute remains separate from VFS. The short repository rules in
 [`AGENTS.md`](../../../AGENTS.md) preserve those boundaries. A new provider

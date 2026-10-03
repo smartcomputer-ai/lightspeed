@@ -71,11 +71,11 @@ mod tests {
         assert!(!text.contains("workspace_1"));
         let mut first = catalog.clone();
         first.routes[0].source = FsRouteSource::VfsSnapshot {
-            snapshot_ref: engine::BlobRef::from_bytes(b"first snapshot"),
+            snapshot_ref: harness::BlobRef::from_bytes(b"first snapshot"),
         };
         let mut second = first.clone();
         second.routes[0].source = FsRouteSource::VfsSnapshot {
-            snapshot_ref: engine::BlobRef::from_bytes(b"second snapshot"),
+            snapshot_ref: harness::BlobRef::from_bytes(b"second snapshot"),
         };
         assert_eq!(vfs_catalog_text(&first), vfs_catalog_text(&second));
     }

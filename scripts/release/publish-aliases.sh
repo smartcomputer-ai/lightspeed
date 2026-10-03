@@ -99,7 +99,7 @@ while IFS=$'\t' read -r manifest_key target_name; do
   [[ "$source_ref" != "$source_url" ]]
   copy_oras_alias "$source_ref" "$root/${target_name}-bundle:$alias_name"
 done <<'EOF'
-server	server
+runtime	runtime
 providerIncus	provider-incus
 envd	envd
 cli	cli

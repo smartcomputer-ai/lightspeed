@@ -42,8 +42,8 @@ pub use model_defaults::ModelDefaultsStoreError;
 /// A session page with the access summary each view carries.
 #[derive(Clone, Debug)]
 pub struct SessionListPageWithAccess {
-    pub sessions: Vec<(engine::storage::SessionRecord, api::ResourceAccessSummary)>,
-    pub next_cursor: Option<engine::storage::SessionListCursor>,
+    pub sessions: Vec<(harness::storage::SessionRecord, api::ResourceAccessSummary)>,
+    pub next_cursor: Option<harness::storage::SessionListCursor>,
 }
 
 pub const CORE_SCHEMA_SQL: &str = include_str!("../migrations/001_core.sql");
@@ -223,7 +223,7 @@ pub enum PgStoreError {
     Store { message: String },
 
     #[error(
-        "database schema revision {current_revision} is stale; revision {required_revision} is required (run `lightspeed-server migrate`)"
+        "database schema revision {current_revision} is stale; revision {required_revision} is required (run `lightspeed-runtime migrate`)"
     )]
     MigrationRequired {
         current_revision: i64,
@@ -231,7 +231,7 @@ pub enum PgStoreError {
     },
 
     #[error(
-        "found unledgered Lightspeed tables {relations:?}; refusing to baseline an existing schema (reset the full Lightspeed schema or database before running `lightspeed-server migrate`)"
+        "found unledgered Lightspeed tables {relations:?}; refusing to baseline an existing schema (reset the full Lightspeed schema or database before running `lightspeed-runtime migrate`)"
     )]
     UnledgeredSchema { relations: Vec<String> },
 

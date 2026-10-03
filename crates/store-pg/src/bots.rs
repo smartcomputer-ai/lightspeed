@@ -997,7 +997,7 @@ impl BotEventStore for PgStore {
             let digests = refs
                 .iter()
                 .map(|value| {
-                    engine::BlobRef::parse(value)
+                    harness::BlobRef::parse(value)
                         .map(|blob| blob.as_str()[7..].to_owned())
                         .map_err(|error| {
                             BotError::invalid(format!("invalid bot event blob ref: {error}"))

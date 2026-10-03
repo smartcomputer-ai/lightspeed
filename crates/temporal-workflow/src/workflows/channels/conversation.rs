@@ -41,12 +41,12 @@ use channels::state::{
     InvocationStatus, MessageStatus, PolicyResponse, PolicyResponseKind, PolicyResponseStatus,
     ReceiptEffect, ReceivedMessage,
 };
-use engine::{
+use futures::future::{join_all, poll_fn};
+use futures::{pin_mut, select};
+use harness::{
     BlobRef, EmissionBody, EmissionEnvelope, EmissionProducer, PromiseId, PromiseResolution,
     REPLY_COMPLETION_KEY, WorkflowEndpointRef, WorkflowToolInvocation,
 };
-use futures::future::{join_all, poll_fn};
-use futures::{pin_mut, select};
 use serde::{Deserialize, Serialize};
 use temporalio_common::ActivityDefinition;
 use temporalio_macros::{workflow, workflow_methods};
@@ -1445,7 +1445,7 @@ fn refusal_reason_name(reason: ChatRefusalReason) -> &'static str {
     }
 }
 
-/// Project the engine envelope onto the facts the conversation state
+/// Project the harness envelope onto the facts the conversation state
 /// records, keeping the full invocation (and its holder) for the lane.
 fn project_emission(
     envelope: EmissionEnvelope,
@@ -1655,7 +1655,7 @@ mod tests {
     use channels::inbound::{ChannelAuthorization, NormalizedInbound};
     use channels::state::MAX_CHANNEL_INBOUND_INBOX;
     use channels::tools::{CHANNEL_EDIT_TOOL_ID, CHANNEL_SEND_TOOL_ID};
-    use engine::{
+    use harness::{
         EventSeq, RunId, SessionId, ToolBatchId, ToolCallId, TurnId, WorkflowToolId,
         WorkflowToolInvocationId,
     };
@@ -2014,7 +2014,7 @@ mod tests {
     }
 
     #[test]
-    fn projects_engine_envelopes_onto_conversation_emissions() {
+    fn projects_harness_envelopes_onto_conversation_emissions() {
         let pushed = EmissionEnvelope::tool_invocation(
             UNIVERSE,
             SessionId::new(SESSION_ID),

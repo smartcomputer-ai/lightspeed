@@ -437,7 +437,7 @@ there is no stored inventory.
 
 ## Session Contract Refactor
 
-Make the greenfield breaking change in both `api` and `engine`:
+Make the greenfield breaking change in both `api` and `harness`:
 
 ```rust
 pub struct McpServerLink {
@@ -471,9 +471,9 @@ I/O under P110.
 ## Runtime Placement
 
 Keep protocol types and validation in `crates/mcp`. Put network I/O in a new
-non-deterministic control-plane adapter owned by `temporal-server`, alongside
+non-deterministic control-plane adapter owned by `temporal-runtime`, alongside
 the gateway's OAuth metadata client and broker-backed secret resolver. Do not
-add network dependencies to `engine` or run discovery in workflow code.
+add network dependencies to `harness` or run discovery in workflow code.
 
 The adapter should expose a deliberately narrow trait:
 
@@ -563,7 +563,7 @@ returns only one byte-bounded result page at a time.
 
 - Add sanitized advertised-tool DTOs, error taxonomy, and bounds to `mcp`.
 - Implement Streamable HTTP initialization and paginated `tools/list` through
-  `rmcp` in a narrow `temporal-server` adapter; support no legacy transport.
+  `rmcp` in a narrow `temporal-runtime` adapter; support no legacy transport.
 - Resolve optional/required credentials through the P69 broker immediately
   before I/O.
 - Add the live-only `mcp/servers/tools/discover` command; add no revision

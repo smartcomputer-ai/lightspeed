@@ -11,7 +11,7 @@ clap = { version = "4", features = ["derive", "env"] }
 crossterm = { version = "0.28", features = ["bracketed-paste", "event-stream"] }
 dotenvy = "0.15"
 api = { path = "../api" }
-engine = { path = "../engine" }
+harness = { path = "../harness" }
 futures-util = "0.3"
 pulldown-cmark = "0.10"
 serde = { version = "1", features = ["derive"] }

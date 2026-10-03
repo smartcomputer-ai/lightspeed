@@ -401,7 +401,7 @@ P111 does not:
 - recursively materialize manifest child blobs;
 - inject returned media into model context automatically;
 - change raw host/control-plane job DTOs; or
-- introduce job-specific logic into `engine` or the generic `await`
+- introduce job-specific logic into `harness` or the generic `await`
   materializer.
 
 ## Implementation Plan

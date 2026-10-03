@@ -15,7 +15,7 @@ before choosing an exporter or changing a version.
 | Boundary | Authored source | Outputs to keep aligned |
 | --- | --- | --- |
 | Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript client, Configurator tools, Platform method-role map, and profile-editor reference. |
-| Workflow integration | Engine emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
+| Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
 | Environment control and data | `crates/environment-protocol` | Rust serde fixtures, daemon and provider implementations, and explicit protocol versions. There is no schema exporter for this boundary today. |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
 | Platform database | Schema modules and Drizzle configuration in `platform/db` | SQL migrations, snapshots, journal, and the separate Platform release revision and upgrade baseline. |
@@ -268,8 +268,8 @@ Normal Rust startup verifies the ledger. Apply migrations explicitly before
 starting the upgraded runtime:
 
 ```bash
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server -- schema-version
+cargo run -p temporal-runtime -- migrate
+cargo run -p temporal-runtime -- schema-version
 ```
 
 `schema-version` is diagnostic; it does not apply changes. The local launcher

@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = "0.1"
 base64 = "0.22"
-engine = { path = "../engine" }
+harness = { path = "../harness" }
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 llm-clients = { path = "../llm-clients" }
 serde = { version = "1", features = ["derive"] }

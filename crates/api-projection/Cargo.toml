@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 api = { path = "../api" }
-engine = { path = "../engine" }
+harness = { path = "../harness" }
 llm-clients = { path = "../llm-clients" }
 futures-util = "0.3"
 serde_json = "1"

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use engine::{RemoteMcpToolSpec, ToolName};
+use harness::{RemoteMcpToolSpec, ToolName};
 use serde_json::Value;
 
 use crate::{LlmAdapterError, LlmAdapterResult};
@@ -100,7 +100,7 @@ impl McpInventoryResolver for UnconfiguredMcpInventoryResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{RemoteMcpApprovalPolicy, RemoteMcpExecution, RemoteMcpExposure};
+    use harness::{RemoteMcpApprovalPolicy, RemoteMcpExecution, RemoteMcpExposure};
     use serde_json::json;
 
     struct Inventory(Result<Vec<NativeMcpTool>, McpInventoryError>);

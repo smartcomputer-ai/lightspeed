@@ -41,7 +41,7 @@ Give a supervisor agent two missing capabilities:
 
 Both must slot cleanly into the Temporal runtime, support **hours-to-days** waits
 cheaply, and keep wall-clock / side-effect logic out of the deterministic
-`engine` core.
+`harness` core.
 
 ## Temporal Primitives We Rely On (Confirmed)
 
@@ -123,7 +123,7 @@ timeout_ms?  int                                      (default: none)
 - `mode = any` — `select`: resolve when the **first** named run is terminal
   (the result reports which).
 - Each run resolves on `Completed`, `Failed`, or `Cancelled`
-  (`crates/engine/src/core/components/run.rs:88`), observed from the target itself
+  (`crates/harness/src/core/components/run.rs:88`), observed from the target itself
   (see Runtime Shape) — so it works even if a child never calls `agent_send` or
   crashes mid-task and is retried.
 - `timeout_ms` is **optional** with **no default**: absent, the wait is indefinite
@@ -298,7 +298,7 @@ it is produced later, when the joined runs reach terminal. The engine gains a
 user and nothing in the engine knows about Fleet.
 
 This must fit the engine's existing batch contract precisely
-(`crates/engine/src/core/`):
+(`crates/harness/src/core/`):
 
 - A run has **one `active_tool_batch_id` at a time** (`run.rs:70`), and a batch
   completes **all-or-nothing**: `validate_tool_batch_result` (`drive.rs:579`)
@@ -472,7 +472,7 @@ is not an activity, it is the target workflow's own durable terminal handler.
 
 `agent_task` (parent -> child) and a child -> parent callback are **the same
 runtime primitive**: admit a `RequestRun` on another session via
-`signal_submit_admission` (`crates/temporal-server/src/gateway/service/workflow.rs:28`).
+`signal_submit_admission` (`crates/temporal-runtime/src/gateway/service/workflow.rs:28`).
 There is no second transport.
 
 Two direction-locked tools (`agent_task` down, `agent_notify` up) bake a **tree**
@@ -758,7 +758,7 @@ address-an-existing-agent surface. P84 standardizes the whole Fleet surface on
 
 This is a **wire-contract change**: it touches the strict JSON schemas, the
 committed contract artifacts under `crates/api/contract/`, the hosted Fleet executor
-in `crates/temporal-server/src/fleet.rs`, and the deterministic Fleet tests that
+in `crates/temporal-runtime/src/fleet.rs`, and the deterministic Fleet tests that
 assert field names. Regenerate artifacts via `cargo run -p api --bin
 export-schema` and update P83's tool-contract prose. Bundled into P84's S1 so the
 rename and the new tools land in one contract revision.
@@ -770,7 +770,7 @@ rename and the new tools land in one contract revision.
   (`waits: [{target_session_id, run_id}]`, `mode: all|any`, optional `timeout_ms`);
   add the optional `report_back` directive to `agent_spawn`. Strict schemas; tool
   names; `ToolSpecBundle` entries. No Postgres/Temporal deps here.
-- `crates/engine/src/core/`:
+- `crates/harness/src/core/`:
   - Add the **generic deferred-tool-batch** primitive that fits the existing batch
     contract: a single-call batch may return
     `ToolBatchOutcome::Deferred { batch_id, resume_directive }` (opaque runtime blob
@@ -802,7 +802,7 @@ rename and the new tools land in one contract revision.
     unsubscribe open handles best-effort.
   - **Continue-as-new guard**: extend `can_continue_as_new_at_idle` (`:724`) to be
     false while any `RunSubscription` or active wait exists.
-- `crates/temporal-server/src/`:
+- `crates/temporal-runtime/src/`:
   - `fleet.rs`: `agent_send` resolution (`parent` via link / `session` by id),
     `session_link` edge check (else `not_reachable`), envelope-encode
     `payload`, admit recipient run with derived `submission_id`;

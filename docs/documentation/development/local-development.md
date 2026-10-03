@@ -186,9 +186,9 @@ those pieces have different responsibilities.
 
 | If you are changing… | Start here |
 | --- | --- |
-| Agent decisions, scheduling, or replayed session state | `crates/engine`; keep decisions deterministic and represent effects as intents. |
+| Agent decisions, scheduling, or replayed session state | `crates/harness`; keep decisions deterministic and represent effects as intents. |
 | Public operation names, request fields, or response shapes | `crates/api`; follow [Changing contracts](changing-contracts.md) through generated consumers. |
-| Durable execution, activities, or gateway behavior | `crates/temporal-workflow` and `crates/temporal-server`; distinguish workflow decisions from activity I/O. |
+| Durable execution, activities, or gateway behavior | `crates/temporal-workflow` and `crates/temporal-runtime`; distinguish workflow decisions from activity I/O. |
 | Provider transport, tool execution, or persistence | The relevant adapter under `crates/`, such as `llm-runtime`, `tools`, or `store-pg`. |
 | Product accounts, management routes, or the web experience | `platform/server`, `platform/db`, and `platform/web`; shared product types live in `platform/shared`. |
 | Machine execution or provisioning | The environment protocol, daemon, client, or provider; see [Environment providers](../integrating-and-extending/environment-providers.md). |
@@ -217,12 +217,12 @@ For a Rust change, run the focused test first, then stop and restart the
 profile to exercise the new executable:
 
 ```bash
-cargo test -p engine
+cargo test -p harness
 ./dev.sh stop
 ./dev.sh
 ```
 
-Replace `engine` with the crate you changed. Restarting recompiles changed
+Replace `harness` with the crate you changed. Restarting recompiles changed
 Rust code and repeats startup migrations while retaining the infrastructure
 and its data. After changing startup environment variables, restart the
 relevant processes too.
@@ -246,8 +246,8 @@ startup needs an explicit migration first:
 
 ```bash
 source scripts/dev/env.sh
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server
+cargo run -p temporal-runtime -- migrate
+cargo run -p temporal-runtime
 ```
 
 Do this with the supervised runtime stopped so both processes don't claim

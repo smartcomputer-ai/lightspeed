@@ -1,6 +1,6 @@
 //! Filesystem-backed storage adapters.
 //!
-//! This crate keeps durable filesystem I/O outside `engine` while
+//! This crate keeps durable filesystem I/O outside `harness` while
 //! implementing the core storage contracts.
 //!
 //! Project-backed stores use `.lightspeed` by convention:

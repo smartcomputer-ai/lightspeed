@@ -1,6 +1,6 @@
-// Regenerates web/src/lib/profile-config-reference.ts from the engine's
+// Regenerates web/src/lib/profile-config-reference.ts from the harness's
 // canonical API contract schema (SessionConfig subtree). Run after
-// the engine's config schema changes:
+// the harness's config schema changes:
 //
 //   node scripts/generate-config-reference.mjs [path-to-api.schema.json]
 //
@@ -146,7 +146,7 @@ const banner = [
   "/// Source: crates/api/contract/api.schema.json (SessionConfig).",
   "/// Regenerate with: node platform/scripts/generate-config-reference.mjs",
   "",
-  "export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit anything to keep engine defaults.",
+  "export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit anything to keep harness defaults.",
   "// Union values are written a | b — pick one.",
 ].join("\n");
 

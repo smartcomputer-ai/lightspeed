@@ -3,8 +3,8 @@
 //! Built from the admitted grant and registry records, never from a live
 //! machine, and published like the sub-agent catalog.
 
-use engine::storage::{BlobStore, BlobStoreError};
-use engine::{
+use harness::storage::{BlobStore, BlobStoreError};
+use harness::{
     BlobRef, ContextEntryInput, CoreAgentCommand, EnvironmentAccess, EnvironmentsFeature,
 };
 use serde::{Deserialize, Serialize};
@@ -160,7 +160,7 @@ pub async fn prepare_environment_catalog_publication(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::EnvironmentAttachment;
+    use harness::EnvironmentAttachment;
 
     fn feature() -> EnvironmentsFeature {
         EnvironmentsFeature {
@@ -218,7 +218,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn publication_is_a_no_op_when_unchanged() {
-        let blobs = engine::storage::InMemoryBlobStore::new();
+        let blobs = harness::storage::InMemoryBlobStore::new();
         let snapshot =
             EnvironmentCatalogSnapshot::new(&feature(), |_| EnvironmentCatalogRecord::default());
         let first = prepare_environment_catalog_publication(&blobs, None, &snapshot)

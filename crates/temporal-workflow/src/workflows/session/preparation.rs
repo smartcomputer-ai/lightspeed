@@ -164,7 +164,7 @@ pub(super) fn preparation_matches(
     // system bindings. This does not invalidate the desired tool observation.
     let mut source = prepared.source.clone();
     for declaration in &prepared.declarations {
-        let Ok(binding) = engine::WorkflowToolBinding::admit(
+        let Ok(binding) = harness::WorkflowToolBinding::admit(
             universe_id,
             declaration.definition.clone(),
             declaration.target.clone(),
@@ -228,7 +228,7 @@ pub(super) async fn publish_tools(
 
 pub(super) struct PendingToolset {
     pub prepared: SessionToolsetPreparation,
-    pub run_id: engine::RunId,
+    pub run_id: harness::RunId,
     pub admission: AgentAdmission,
 }
 
@@ -292,7 +292,7 @@ fn admission_error(failure: AgentAdmissionFailure) -> AgentApiError {
     if failure
         .rejection
         .as_ref()
-        .is_some_and(|rejection| rejection.kind == engine::CommandRejectionKind::RevisionConflict)
+        .is_some_and(|rejection| rejection.kind == harness::CommandRejectionKind::RevisionConflict)
     {
         AgentApiError::conflict(failure.message)
     } else {
@@ -420,11 +420,11 @@ async fn configure(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     candidate: &mut PreparationCandidate,
-    config: engine::SessionConfig,
+    config: harness::SessionConfig,
     expected_revision: Option<u64>,
 ) -> Result<(), AgentApiError> {
     // Validate materialization before committing configuration. Registry reads
-    // belong to this activity; the engine remains the final state validator.
+    // belong to this activity; the harness remains the final state validator.
     let original = SessionToolsetSource::from_state(drive.state()).unwrap();
     let mut source = original.clone();
     source.config = config.clone();
@@ -552,7 +552,7 @@ async fn apply_profile(
             ContextEntryKey::new("instructions.000.default"),
             ContextEntryInput {
                 kind: ContextEntryKind::Instructions,
-                content: engine::ContentRef::text(reference),
+                content: harness::ContentRef::text(reference),
                 preview: None,
                 origin: None,
                 provenance_ref: None,
@@ -689,8 +689,8 @@ mod tests {
     use super::*;
 
     fn pending() -> PendingRunPreparation {
-        let config = crate::default_session_config(engine::ModelSelection {
-            api_kind: engine::ProviderApiKind::OpenAiResponses,
+        let config = crate::default_session_config(harness::ModelSelection {
+            api_kind: harness::ProviderApiKind::OpenAiResponses,
             provider_id: "openai".into(),
             model: "gpt-test".into(),
         });
@@ -698,10 +698,10 @@ mod tests {
         state.lifecycle.config = Some(config);
         PendingRunPreparation {
             admission: AgentAdmission {
-                command: CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                     requested_by: None,
                     submission_id: Some(SubmissionId::new("prepared")),
-                    source: engine::RunRequestSource::Input { input: Vec::new() },
+                    source: harness::RunRequestSource::Input { input: Vec::new() },
                     run_config: crate::default_run_config(),
                     notify_on_terminal: Vec::new(),
                 }),
@@ -723,8 +723,8 @@ mod tests {
         state.run_preparation = Some(pending);
         state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::ReplaceSessionConfig {
-                config: crate::default_session_config(engine::ModelSelection {
-                    api_kind: engine::ProviderApiKind::OpenAiResponses,
+                config: crate::default_session_config(harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiResponses,
                     provider_id: "openai".into(),
                     model: "gpt-test".into(),
                 }),
@@ -739,7 +739,7 @@ mod tests {
         state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::CancelRun {
                 requested_by: None,
-                run_id: engine::RunId::new(1),
+                run_id: harness::RunId::new(1),
             },
             correlation_token: None,
         });
@@ -772,10 +772,10 @@ mod tests {
             ..Default::default()
         };
         state.core_state.context.compaction.phase =
-            engine::ContextCompactionPhase::Pending(engine::ContextCompactionPlan {
+            harness::ContextCompactionPhase::Pending(harness::ContextCompactionPlan {
                 run_id: None,
-                covered_entry_ids: vec![engine::ContextItemId::new(1)],
-                trigger: engine::ContextCompactionTrigger::Manual,
+                covered_entry_ids: vec![harness::ContextItemId::new(1)],
+                trigger: harness::ContextCompactionTrigger::Manual,
             });
         assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
             &state
@@ -797,7 +797,7 @@ mod tests {
         state
             .workflow_tools
             .system_binding_ids
-            .insert(engine::WorkflowToolId::new("foreign"));
+            .insert(harness::WorkflowToolId::new("foreign"));
         assert!(!pending.source.matches(&state));
     }
 }

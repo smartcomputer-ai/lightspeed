@@ -60,15 +60,15 @@ restructuring.
 
 Validation on 2026-09-13:
 
-- `cargo test -p engine --features contract`: 225 tests passed, including ID
+- `cargo test -p harness --features contract`: 225 tests passed, including ID
   validation/serialization and replay coverage with schema derives enabled.
-- `cargo test -p temporal-server --lib worker::`: 97 tests passed; one existing
+- `cargo test -p temporal-runtime --lib worker::`: 97 tests passed; one existing
   test remained ignored. No live or credentialed suites ran.
 - `cargo test -p api --test schema_artifacts -p temporal-workflow --test workflow_contract`:
   all ten tests passed, including the committed-artifact staleness gates.
 - Formatting checks for changed Rust files and `git diff --check` passed.
-- Strict Clippy (`--lib --tests --features engine/contract --no-deps -- -D warnings`
-  for `engine` and `temporal-server`) found five pre-existing diagnostics in
+- Strict Clippy (`--lib --tests --features harness/contract --no-deps -- -D warnings`
+  for `harness` and `temporal-runtime`) found five pre-existing diagnostics in
   untouched code: a blank line after a doc comment, two collapsible conditionals,
   and two test-module ordering warnings. These are outside this refactor. The
   same command without `-D warnings` completed with only those diagnostics.
@@ -91,9 +91,9 @@ Validation on 2026-09-13:
 
 - `cargo test -p llm-clients --lib --test openai_endpoint_override`: 42 unit
   tests and six local HTTP/endpoint tests passed.
-- `cargo test -p temporal-server --lib worker::mcp::`: all 15 MCP tests passed.
+- `cargo test -p temporal-runtime --lib worker::mcp::`: all 15 MCP tests passed.
 - `cargo clippy -p llm-clients --all-targets --no-deps -- -D warnings` passed.
-- `cargo clippy -p temporal-server --lib --tests --no-deps` completed with only
+- `cargo clippy -p temporal-runtime --lib --tests --no-deps` completed with only
   the same five pre-existing diagnostics recorded above.
 - Formatting checks for changed Rust files and `git diff --check` passed.
   No live or credentialed suites ran.
@@ -110,9 +110,9 @@ Completed 2026-09-13:
   promise handling, and each command's leading event and retry checks.
 - Add a regression for mixed pending, missing, and terminal promises with
   completion-key order different from promise-ID order.
-- `cargo test -p engine --features contract`: 226 tests passed, including
+- `cargo test -p harness --features contract`: 226 tests passed, including
   existing replay and workflow-tool failure/idempotency coverage.
-- `cargo clippy -p engine --all-targets --features contract --no-deps -- -D warnings`
+- `cargo clippy -p harness --all-targets --features contract --no-deps -- -D warnings`
   passed, as did changed-file formatting and `git diff --check`.
 
 ## Gateway session lifecycle cleanup
@@ -123,3 +123,28 @@ state loads, shared retry completion, retained declaration admission, and shared
 workspace validation. Seven new offline tests exercise recovery and readiness;
 the complete server library suite passed with 344 tests and one existing
 ignored test. Live suites were not run.
+
+## Harness and runtime naming
+
+Implemented 2026-10-03:
+
+- [x] Rename the deterministic agent crate to `harness` and the hosted
+  composition crate to `temporal-runtime`, preserving their existing boundaries.
+- [x] Rename the executable to `lightspeed-runtime` and align local launchers,
+  CI, container entrypoints, release archives, and manifest artifact names.
+- [x] Update source references and documentation, regenerating contract and
+  consumer documentation from the authored sources.
+
+Validation:
+
+- `cargo test --workspace --locked`: 2116 tests passed; 237 ignored.
+  No live or credentialed tests ran.
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+- `npm run check:dev`, `npm run test:build`, `npm run typecheck`,
+  `npm run check:docs`, and `npm run build:docs` passed.
+- `cargo build -p temporal-runtime --bin lightspeed-runtime --locked` passed.
+- Release metadata and shell syntax checks, Rust formatting, and
+  `git diff --check` passed. The renamed executable reports
+  `lightspeed-runtime` in its version and help output.
+- Regenerated API and workflow schemas retain the same structure outside
+  descriptions; the Cargo lockfile changes only package and dependency names.

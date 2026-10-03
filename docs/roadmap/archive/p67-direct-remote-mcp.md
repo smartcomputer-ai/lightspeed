@@ -65,7 +65,7 @@ blocks are **context observations**. Do not model provider-discovered MCP tools
 as Lightspeed `ToolSpec`s in the first cut.
 
 Use a `ToolKind::RemoteMcp` variant in the active session tool map, not a
-standalone MCP subsystem in `engine`:
+standalone MCP subsystem in `harness`:
 
 ```rust
 pub enum ToolKind {
@@ -94,14 +94,14 @@ P69.
 - Do not put bearer tokens, OAuth access tokens, cookies, or API keys in
   engine events, CAS blobs, planned request records, or stored provider request
   blobs.
-- Do not make `engine` perform MCP list-tools calls, MCP tool calls, HTTP
+- Do not make `harness` perform MCP list-tools calls, MCP tool calls, HTTP
   transport, OAuth refresh, DNS resolution, or connectivity checks.
 - Do not parse MCP tool results in reducers for branching decisions unless a
   later milestone introduces a concrete deterministic fact.
 
 ## Core Model
 
-`engine` has a declarative, non-secret MCP server spec:
+`harness` has a declarative, non-secret MCP server spec:
 
 ```rust
 pub struct RemoteMcpToolSpec {
@@ -160,7 +160,7 @@ emit `ToolEvent::CallStarted` for direct MCP.
 The turn planner reads `RemoteMcp` specs from the same active tool map as
 function and provider-native tools.
 
-`engine` should preserve provider compatibility without knowing provider wire
+`harness` should preserve provider compatibility without knowing provider wire
 details. A `RemoteMcp` spec is compatible with provider API kinds that have a
 runtime lowering implementation:
 
@@ -249,7 +249,7 @@ for example:
 ```
 
 Anthropic MCP may require a provider beta header. That belongs in provider
-client/runtime configuration, not in `engine`.
+client/runtime configuration, not in `harness`.
 
 ## Secret Injection And Redaction
 
@@ -275,7 +275,7 @@ required for that spec and resolution either succeeds or fails the generation
 with a typed error before provider I/O. Optional auth is expressed by
 `auth_ref: None`, decided at link/config time. `ResolvedSecretValue` is a
 wrapper whose `Debug` output is redacted. `llm-runtime` owns this trait and
-stays free of auth-store dependencies; `temporal-server` adapts the P69 broker
+stays free of auth-store dependencies; `temporal-runtime` adapts the P69 broker
 to it and dispatches on `SecretRef.namespace` (`auth_grant` -> broker, `env` ->
 environment lookup for development).
 
@@ -387,7 +387,7 @@ It is an observation of what the server returned for a given call.
 Suggested first-cut changes:
 
 ```text
-crates/engine/src/core/components/tooling.rs
+crates/harness/src/core/components/tooling.rs
   RemoteMcpToolSpec
   RemoteMcpApprovalPolicy
   SecretRef

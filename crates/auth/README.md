@@ -5,7 +5,7 @@ Generic auth grant, secret, and token-broker substrate for Lightspeed.
 The crate defines the provider-independent records and traits; persistence and
 encryption live in store adapters (`store-pg` stores secrets AES-256-GCM
 encrypted at rest), and resolution happens only inside runtime activity
-execution — never in the engine or the session log.
+execution — never in the harness or the session log.
 
 ## What it provides
 
@@ -60,13 +60,13 @@ execution — never in the engine or the session log.
 
 ## How it works
 
-For MCP, sessions and the engine record only `SecretRef { namespace:
+For MCP, sessions and the harness record only `SecretRef { namespace:
 "mcp_server", id: server_id }`; the universe server record owns the current
 grant binding. At LLM-call time the runtime reads that binding and asks the
 broker for a token for the admitted resource URL. The token is injected into
 the outgoing provider request at the last moment, while the persisted request
 blob keeps `"authorization": "<redacted>"`. Plaintext tokens never enter
-engine events, CAS blobs, Temporal history, API responses, or logs. The
+harness events, CAS blobs, Temporal history, API responses, or logs. The
 three deliberate inbound-plaintext paths are `auth/grants/import` (bearer
 token), `auth/clients/create` (client secret), and `auth/providers/create`
 (GitHub App private key); all encrypt on receipt and redact `Debug` output.
@@ -96,7 +96,7 @@ for testing.
 ```bash
 # 0. once: infra + env, gateway in its own terminal
 ./dev.sh infra && source scripts/dev/env.sh
-cargo run -p temporal-server        
+cargo run -p temporal-runtime
 
 # separate terminal, env.sh sourced
 # 1. register the authenticated MCP server
@@ -209,8 +209,8 @@ broker's automatic refresh path.
 ```bash
 # 0. infra + schema, env in every terminal; gateway in its own terminal
 ./dev.sh infra && source scripts/dev/env.sh
-cargo run -p temporal-server -- migrate
-cargo run -p temporal-server        # separate terminal, env.sh sourced
+cargo run -p temporal-runtime -- migrate
+cargo run -p temporal-runtime        # separate terminal, env.sh sourced
 
 # 1. register the MCP server under id gh
 cargo run -q -p cli -- mcp server put https://api.githubcopilot.com/mcp/ \

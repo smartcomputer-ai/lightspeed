@@ -1,4 +1,4 @@
-use engine::{BlobRef, ContextEntryId, ProviderApiKind};
+use harness::{BlobRef, ContextEntryId, ProviderApiKind};
 use thiserror::Error;
 
 pub type LlmAdapterResult<T> = Result<T, LlmAdapterError>;
@@ -54,8 +54,8 @@ pub enum LlmAdapterError {
     },
 }
 
-impl From<engine::storage::BlobStoreError> for LlmAdapterError {
-    fn from(error: engine::storage::BlobStoreError) -> Self {
+impl From<harness::storage::BlobStoreError> for LlmAdapterError {
+    fn from(error: harness::storage::BlobStoreError) -> Self {
         Self::BlobStore {
             message: error.to_string(),
         }

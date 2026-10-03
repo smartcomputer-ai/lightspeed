@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     ContextCompactionRequest, ContextCompactionResult, CoreAgentIoError, CoreAgentLlm,
     LlmGenerationRequest, LlmGenerationResult, ProviderApiKind,
 };
@@ -21,7 +21,7 @@ pub trait LlmGenerationAdapter: Send + Sync {
 
 #[async_trait]
 pub trait LlmCompactionAdapter: Send + Sync {
-    fn blobs(&self) -> Option<&dyn engine::storage::BlobStore> {
+    fn blobs(&self) -> Option<&dyn harness::storage::BlobStore> {
         None
     }
     async fn compact_context(
@@ -207,7 +207,7 @@ impl CoreAgentLlm for LlmRuntime {
 mod tests {
     use super::*;
     use crate::error::LlmAdapterError;
-    use engine::{ContextSnapshot, LlmRequest, ModelSelection, RunId, SessionId, TurnId};
+    use harness::{ContextSnapshot, LlmRequest, ModelSelection, RunId, SessionId, TurnId};
 
     struct FailingAdapter {
         error: llm_clients::LlmApiError,

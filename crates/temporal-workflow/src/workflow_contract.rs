@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use engine::{
+use harness::{
     BlobRef, EMISSION_HASH_DOMAIN, EMISSION_ID_PREFIX, EmissionEnvelope, EmissionId, EventSeq,
     PromiseId, PromiseResolution, REPLY_COMPLETION_KEY, RunId, RunStatus, SessionId, ToolBatchId,
     ToolCallId, TurnId, WORKFLOW_TOOL_EXECUTION_KIND, WorkflowToolId, WorkflowToolInvocation,
@@ -220,7 +220,7 @@ fn vectors() -> Value {
             VECTOR_TOKEN.to_owned(),
             run_id,
             RunStatus::Completed,
-            Some(engine::ContentRef::text(BlobRef::from_bytes(b"output"))),
+            Some(harness::ContentRef::text(BlobRef::from_bytes(b"output"))),
             None,
         ),
         EmissionEnvelope::source_resolution(
@@ -310,7 +310,7 @@ fn reference(definitions: &BTreeMap<String, Value>) -> String {
     format!(
         r#"# Lightspeed Workflow Contract
 
-Generated from the Rust contract types in `engine` and `temporal-workflow`.
+Generated from the Rust contract types in `harness` and `temporal-workflow`.
 Type shapes live in `workflow.schema.json`; constants and known-answer vectors
 live in `workflow.json`. Regenerate both artifacts and this reference with:
 

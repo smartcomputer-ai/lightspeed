@@ -195,7 +195,7 @@ pub fn validate_profile_document(document: &ProfileDocument) -> Result<(), Profi
 
 /// The profile-level attachment rules: each attachment names exactly one
 /// machine (an id or `inherit`) and at most one attachment inherits. The
-/// engine validates the concrete list (unique ids, one default, absolute
+/// harness validates the concrete list (unique ids, one default, absolute
 /// working directories) once the document is applied to a session.
 pub fn validate_environment_attachments(
     attachments: &[EnvironmentAttachment],

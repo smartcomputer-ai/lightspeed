@@ -1,5 +1,5 @@
 //! Selection of explicitly linked attachments for session results.
-pub use engine::{Attachment, AttachmentSource, FileAttachment};
+pub use harness::{Attachment, AttachmentSource, FileAttachment};
 use std::collections::BTreeMap;
 /// File links have a budget independent of native media admission.
 pub const MAX_FILE_ATTACHMENTS: usize = 128;
@@ -55,7 +55,7 @@ pub fn linked_attachments(
         .into_iter()
         .filter_map(|(_, attachment)| {
             let (count, limit) = match &attachment {
-                Attachment::Media(_) => (&mut media_count, engine::media::MAX_TOOL_MEDIA_ITEMS),
+                Attachment::Media(_) => (&mut media_count, harness::media::MAX_TOOL_MEDIA_ITEMS),
                 Attachment::File(_) => (&mut file_count, MAX_FILE_ATTACHMENTS),
             };
             *count += 1;
@@ -69,7 +69,7 @@ pub fn linked_attachments(
 struct ReferenceArgs {
     path: crate::fs::FsPath,
     #[serde(default)]
-    snapshot_ref: Option<engine::BlobRef>,
+    snapshot_ref: Option<harness::BlobRef>,
 }
 
 /// Origin is navigation metadata, independent of the immutable content identity.
@@ -165,7 +165,7 @@ pub(crate) async fn invoke_reference(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{
+    use harness::{
         BlobRef,
         storage::{BlobStore, InMemoryBlobStore},
     };
@@ -214,13 +214,13 @@ mod tests {
         async fn put_bytes(
             &self,
             bytes: Vec<u8>,
-        ) -> Result<BlobRef, engine::storage::BlobStoreError> {
+        ) -> Result<BlobRef, harness::storage::BlobStoreError> {
             self.inner.put_bytes(bytes).await
         }
         async fn read_bytes(
             &self,
             reference: &BlobRef,
-        ) -> Result<Vec<u8>, engine::storage::BlobStoreError> {
+        ) -> Result<Vec<u8>, harness::storage::BlobStoreError> {
             assert_ne!(
                 reference, &self.file,
                 "reference creation must not read file contents"
@@ -230,13 +230,13 @@ mod tests {
         async fn has_blob(
             &self,
             reference: &BlobRef,
-        ) -> Result<bool, engine::storage::BlobStoreError> {
+        ) -> Result<bool, harness::storage::BlobStoreError> {
             self.inner.has_blob(reference).await
         }
         async fn stat_blob(
             &self,
             reference: &BlobRef,
-        ) -> Result<engine::storage::BlobInfo, engine::storage::BlobStoreError> {
+        ) -> Result<harness::storage::BlobInfo, harness::storage::BlobStoreError> {
             self.inner.stat_blob(reference).await
         }
     }

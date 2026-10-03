@@ -145,7 +145,7 @@ What is single-tenant is everything above the rows:
 
 - `PgStore` binds one `universe_id` at construction
   (`crates/store-pg/src/lib.rs`), read once from `LIGHTSPEED_PG_UNIVERSE_ID`
-  (`crates/temporal-server/src/config.rs`). Every runtime singleton built from
+  (`crates/temporal-runtime/src/config.rs`). Every runtime singleton built from
   it — `GatewayAgentApi`, `ActivityState` (LLM runtime, tool registry, token
   broker) — serves exactly one universe per process.
 - The Temporal task queue is derived from that one universe

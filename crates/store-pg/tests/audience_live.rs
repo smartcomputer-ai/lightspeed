@@ -2,13 +2,13 @@
 use std::{panic::AssertUnwindSafe, str::FromStr};
 
 use api::{Attribution, ResourceRef, Visibility};
-use engine::StoredEvent;
-use engine::storage::{
+use futures_util::FutureExt as _;
+use harness::StoredEvent;
+use harness::storage::{
     AppendSessionEvents, CreateSession, ListSessions, SessionActivity, SessionOrigin,
     SessionOriginKind, SessionStore as _, UncommittedStoredEvent,
 };
-use engine::{SessionId, SubagentLimits};
-use futures_util::FutureExt as _;
+use harness::{SessionId, SubagentLimits};
 use sqlx::{
     Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions},

@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use auth::AuthGrantId;
-use engine::{StringIdError, validate_general_string_id};
+use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
 

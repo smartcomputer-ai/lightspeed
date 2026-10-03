@@ -8,13 +8,13 @@ use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
-pub use engine::EnvironmentId;
-use engine::{StringIdError, validate_general_string_id};
 pub use environment_protocol::control::targets::PowerState;
 use environment_protocol::{
     control::targets::EnvironmentTemplate,
     shared::{EnvironmentTransport, ProviderTargetId},
 };
+pub use harness::EnvironmentId;
+use harness::{StringIdError, validate_general_string_id};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use thiserror::Error;
 use uuid::Uuid;

@@ -1,4 +1,4 @@
-use engine::{
+use harness::{
     ContextSnapshot, LlmRequest, ModelSelection, ProviderApiKind, ToolChoice, ToolSpec,
     storage::InMemoryBlobStore,
 };
@@ -49,7 +49,7 @@ fn registered(case: &str, api: &ProviderApiKind) -> Vec<ToolSpec> {
             let tool = tools::definitions::register(
                 id,
                 Default::default(),
-                engine::ToolParallelism::ParallelSafe,
+                harness::ToolParallelism::ParallelSafe,
                 Default::default(),
             );
             registered.tools.insert(tool.name.clone(), tool);

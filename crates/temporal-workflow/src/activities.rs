@@ -1,4 +1,4 @@
-use engine::{
+use harness::{
     BlobRef, ContextCompactionResult, LlmGenerationResult, PromiseSourceCheckResult,
     ToolBatchOutcome,
 };
@@ -107,7 +107,7 @@ impl WorkflowActivities {
     pub async fn prepare_joined_context(
         _ctx: ActivityContext,
         _request: JoinedContextPreparationRequest,
-    ) -> Result<Vec<engine::PromiseContextEntries>, ActivityError> {
+    ) -> Result<Vec<harness::PromiseContextEntries>, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 
@@ -115,7 +115,7 @@ impl WorkflowActivities {
     pub async fn append_events(
         _ctx: ActivityContext,
         _request: AppendEventsRequest,
-    ) -> Result<engine::storage::AppendSessionEventsResult, ActivityError> {
+    ) -> Result<harness::storage::AppendSessionEventsResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 
@@ -169,7 +169,7 @@ impl WorkflowActivities {
     pub async fn tool_prepare_promise_controls(
         _ctx: ActivityContext,
         _request: ToolPreparePromiseControlsActivityRequest,
-    ) -> Result<engine::PromiseControlArgumentFacts, ActivityError> {
+    ) -> Result<harness::PromiseControlArgumentFacts, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 
@@ -231,7 +231,7 @@ impl WorkflowActivities {
 
     /// Bounded CAS load + JSON Schema check of one keyed reply payload
     /// against the binding's immutable reply schema. The deterministic
-    /// engine never performs CAS I/O; a receiver cannot bypass reply
+    /// harness never performs CAS I/O; a receiver cannot bypass reply
     /// validation by returning an arbitrary blob reference.
     #[activity(name = ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY)]
     pub async fn validate_workflow_tool_reply(
@@ -289,7 +289,7 @@ impl WorkflowActivities {
     pub async fn subagent_resolve(
         _ctx: ActivityContext,
         _request: SubagentResolveActivityRequest,
-    ) -> Result<engine::PromiseResolution, ActivityError> {
+    ) -> Result<harness::PromiseResolution, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

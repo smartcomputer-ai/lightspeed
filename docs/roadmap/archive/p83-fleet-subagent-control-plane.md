@@ -106,9 +106,9 @@ parent model tool call
 ```
 
 Starting another top-level workflow is a side effect. It belongs in an activity
-or runtime service, not in `engine` and not in pure workflow reducer code.
+or runtime service, not in `harness` and not in pure workflow reducer code.
 
-The first hosted implementation should live in `temporal-server`. No new registry
+The first hosted implementation should live in `temporal-runtime`. No new registry
 crate is introduced for v1; revisit one only if `agent_id` ever diverges from
 `session_id`.
 
@@ -424,12 +424,12 @@ workflows by default.
 - Toolset exposure is wired through `crates/tools/src/toolset.rs` with a
   `FleetToolsetConfig`. The gateway's session-toolset assembly enables it from
   the per-session config gate.
-- Hosted execution lives in `temporal-server`, for example
-  `crates/temporal-server/src/fleet.rs` plus worker wiring. `FleetService` owns
+- Hosted execution lives in `temporal-runtime`, for example
+  `crates/temporal-runtime/src/fleet.rs` plus worker wiring. `FleetService` owns
   the runtime behavior: source resolution, deterministic child id derivation,
   P82 clone/fork calls, VFS policy application, link upsert, workflow start, and
   child run admission.
-- `SessionTools` in `crates/temporal-server/src/worker/session_tools.rs` routes
+- `SessionTools` in `crates/temporal-runtime/src/worker/session_tools.rs` routes
   `agent_*` calls to the Fleet executor directly, similar to the existing
   messaging fast path. The generic `InlineToolRuntime` currently executes only
   builtins/web-fetch style bindings, so exposing Fleet specs in the toolset is
@@ -523,7 +523,7 @@ setup pass and reuse the deterministic child run submission id.
   `call_id`.
 - Ensure Fleet tool execution uses the same blob/result shape as other tools and
   returns compact model-visible handles/status.
-- Keep all Fleet side effects out of `engine` and deterministic workflow reducer
+- Keep all Fleet side effects out of `harness` and deterministic workflow reducer
   code.
 
 Implementation note: hosted workers inject a Fleet executor into `SessionTools`
@@ -629,4 +629,4 @@ workflow plus initial and follow-up child runs complete.
 - The parent can cancel a child's active run or close the child session.
 - The model-visible tool surface stays small (4 tools) and does not expose the
   full session API.
-- No Fleet side effects are performed inside `engine`.
+- No Fleet side effects are performed inside `harness`.

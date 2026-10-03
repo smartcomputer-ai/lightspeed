@@ -130,7 +130,7 @@ one place to map, and keeps the enum the single point of extension.
 `EnvironmentStatus` gains `Paused` and `Suspended`; `Offline` keeps meaning
 "observed stopped".
 
-The lifecycle reconciler in `temporal-server` already scans pending and
+The lifecycle reconciler in `temporal-runtime` already scans pending and
 closing rows and converges them through the controller. It gains one more
 rule: for a provisioned environment whose observed status is not `Closing` /
 `Closed` / `Failed` and whose observed power state differs from
@@ -195,7 +195,7 @@ idle threshold is far above any single call.
    `environments/power/put`. Templates may carry a default policy in metadata
    that `environments/create` copies when the caller passes none.
 
-   A power reaper loop in `temporal-server` (sibling of the P92
+   A power reaper loop in `temporal-runtime` (sibling of the P92
    `PromiseReaper`, single active instance like the reconciler; every 60 s)
    selects `Ready` provisioned environments with a policy, asks each daemon
    for its idle report, and sets `desired_power` (or requests close) when a
@@ -306,7 +306,7 @@ freeze/resume/stop, `set_target_power` capability. Stateful stop
 (`suspended`) is not advertised. P122 pool accounting for paused RAM is not
 changed (paused VMs still count as running instances there).
 
-`crates/temporal-server`:
+`crates/temporal-runtime`:
 
 - Reconciler: `reconcile_environment_power` (decision 2) with one
   `record_target_observation` path shared with create/adopt; observed status

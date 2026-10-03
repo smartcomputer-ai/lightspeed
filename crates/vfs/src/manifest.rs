@@ -1,4 +1,4 @@
-use engine::{BlobRef, storage::BlobStoreError};
+use harness::{BlobRef, storage::BlobStoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;

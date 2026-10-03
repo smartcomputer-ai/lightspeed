@@ -6,7 +6,7 @@ closing an environment into the infrastructure it controls, then makes that
 environment's filesystem and process service reachable.
 
 The provider implements the environment protocol. It does not need Lightspeed's
-database, API implementation, engine, or Temporal runtime. The included Incus
+database, API implementation, harness, or Temporal runtime. The included Incus
 provider demonstrates that separation. If you only need to connect an existing
 machine, [outbound daemon registration](../environments/bring-your-own-compute.md)
 already provides that path without implementing a provisioning controller.

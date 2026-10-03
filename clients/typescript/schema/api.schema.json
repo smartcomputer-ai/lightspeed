@@ -7560,7 +7560,7 @@
               "type": "null"
             }
           ],
-          "description": "Omitted policies resolve to engine-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
+          "description": "Omitted policies resolve to harness-managed standalone compaction. Disabled permits explicit API compaction but never automatic compaction or context-limit recovery."
         },
         "inputLimitTokens": {
           "description": "Optional input capacity override for this model route. Omission uses reported capacity where available; unknown limits recover from context-length errors.",
@@ -7915,7 +7915,7 @@
       ]
     },
     "ContextEntryView": {
-      "description": "A session context entry, faithful to the stored engine entry: keyed,\nkind-tagged, ref-backed. Keys are a stable extension point — clients\nreconstruct derived surfaces (e.g. the prompted instruction set via the\n`prompt_instructions/` key prefix) by filtering on `key` and fetching\noriginal bytes through `blobs/read`. `text` contains complete message and\nvisible reasoning text; tool and catalog bodies use bounded text previews.",
+      "description": "A session context entry, faithful to the stored harness entry: keyed,\nkind-tagged, ref-backed. Keys are a stable extension point — clients\nreconstruct derived surfaces (e.g. the prompted instruction set via the\n`prompt_instructions/` key prefix) by filtering on `key` and fetching\noriginal bytes through `blobs/read`. `text` contains complete message and\nvisible reasoning text; tool and catalog bodies use bounded text previews.",
       "properties": {
         "citations": {
           "description": "Sources this assistant message cites, derived from its own native\npayload. Empty for every other entry kind.",
@@ -11048,7 +11048,7 @@
     },
     "LimitsConfig": {
       "additionalProperties": false,
-      "description": "Run budget defaults enforced by the engine drive loop.",
+      "description": "Run budget defaults enforced by the harness drive loop.",
       "properties": {
         "maxToolRounds": {
           "format": "uint32",
@@ -13197,7 +13197,7 @@
       "type": "object"
     },
     "RunFailureKindView": {
-      "description": "Why a run failed, as the engine classified it.",
+      "description": "Why a run failed, as the harness classified it.",
       "oneOf": [
         {
           "enum": [
@@ -14502,7 +14502,7 @@
           "type": "object"
         },
         {
-          "description": "The run ended in failure. `kind` is the engine's classification;\n`message` is free text for display, and the provider's own message for\n`request_rejected`.",
+          "description": "The run ended in failure. `kind` is the harness's classification;\n`message` is free text for display, and the provider's own message for\n`request_rejected`.",
           "properties": {
             "kind": {
               "$ref": "#/definitions/RunFailureKindView"

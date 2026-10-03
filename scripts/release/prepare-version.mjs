@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const releasePackages = [
-  'release-info', 'temporal-server', 'environment-provider-incus',
+  'release-info', 'temporal-runtime', 'environment-provider-incus',
   'environment-daemon', 'cli',
 ];
 

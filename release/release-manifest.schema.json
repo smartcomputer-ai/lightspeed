@@ -56,9 +56,9 @@
     "binaries": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["server", "providerIncus", "envd", "cli"],
+      "required": ["runtime", "providerIncus", "envd", "cli"],
       "properties": {
-        "server": { "$ref": "#/$defs/binaryArtifact" },
+        "runtime": { "$ref": "#/$defs/binaryArtifact" },
         "providerIncus": { "$ref": "#/$defs/binaryArtifact" },
         "envd": { "$ref": "#/$defs/binaryArtifact" },
         "cli": { "$ref": "#/$defs/binaryArtifact" }

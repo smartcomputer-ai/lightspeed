@@ -48,7 +48,7 @@ activeEnvironmentId?   EnvironmentId    # must already exist and be reachable
 ```
 
 `crates/api/src/profiles.rs`, `crates/profiles/src/lib.rs`, and the applier in
-`crates/temporal-server/src/gateway/service/profiles.rs` implement exactly
+`crates/temporal-runtime/src/gateway/service/profiles.rs` implement exactly
 that: at `session/start` (after the workflow is started) or `profiles/apply`,
 the applier calls the same path as `session/environments/activate`, which
 requires `features.environments`, an allowed provider, and a live end-to-end
@@ -277,7 +277,7 @@ lifecycle reconciler with session commands, and races with the first run).
 Environment filesystem tools (`read_file`, `write_file`, `edit_file`,
 `apply_patch`, search, glob, …) currently fail against every environment
 while `exec_command` and `environment_read` work. Cause:
-`RuntimeEnvironment::from_resource` in `crates/temporal-server/src/environment.rs`
+`RuntimeEnvironment::from_resource` in `crates/temporal-runtime/src/environment.rs`
 still contains the pre-P119 safety gate
 
 ```rust
@@ -333,7 +333,7 @@ deployment, no provider or VM change):
 `crates/profiles`: validate the new document shape (non-empty ids, metadata
 rules shared with `environments/create`).
 
-## Runtime changes (`crates/temporal-server`)
+## Runtime changes (`crates/temporal-runtime`)
 
 - Profile applier: `apply_profile_environment` handles `existing` (as today)
   and `provision` (resolve the enabled binding for `providerId` → derive
@@ -398,7 +398,7 @@ rules shared with `environments/create`).
       `RuntimeEnvironment::from_resource` (and its `fs_context` parameter);
       `into_contexts` attaches a filesystem only when `filesystem_read` was
       negotiated; capability-negotiation tests in `tools` and
-      `temporal-server`. The remote read/write path is covered by
+      `temporal-runtime`. The remote read/write path is covered by
       `existing_file_tools_work_through_remote_context`; a session-level live
       assertion needs a real envd data plane (the fake provider has none) and
       belongs to the Incus smoke test. Runtime build and deployment pending.
@@ -412,7 +412,7 @@ rules shared with `environments/create`).
       the deployment reconciler scan now also selects universes holding such
       environments whose session is closed.
 - [x] `profiles`: document validation for both variants.
-- [x] `temporal-server`: applier `provision` path with derived request id and
+- [x] `temporal-runtime`: applier `provision` path with derived request id and
       origin provenance, pre-start binding/grant checks, status-aware
       `selectable`/`activatable`, `NotReady` per-call outcome, hosted
       `await_environment_ready`, reconciler sweep, eager close on

@@ -13,7 +13,7 @@ use api_projection::{
 use async_trait::async_trait;
 use casefile::{EvalCase, FileExpectation, SetupFile, load_cases};
 use clap::{Parser, Subcommand};
-use engine::{
+use harness::{
     ContextConfig, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextMessageRole,
     CoreAgentCommand, GenerationConfig, LimitsConfig, ModelSelection, ProviderApiKind, RunConfig,
     SessionConfig, SessionId, ToolName, ToolSpec,
@@ -567,20 +567,20 @@ struct EvalRuntime {
     sessions: Arc<InMemorySessionStore>,
     blobs: Arc<InMemoryBlobStore>,
     config: SessionConfig,
-    instructions_ref: engine::BlobRef,
+    instructions_ref: harness::BlobRef,
     tool_set: BTreeMap<ToolName, ToolSpec>,
     tool_id_by_name: BTreeMap<String, String>,
     diagnostics: Arc<LlmDiagnostics>,
 }
 
 struct EvalRunProjection<'a> {
-    output: Option<&'a engine::ContentRef>,
-    run_id: engine::RunId,
-    status: engine::RunStatus,
-    source: &'a engine::RunSource,
+    output: Option<&'a harness::ContentRef>,
+    run_id: harness::RunId,
+    status: harness::RunStatus,
+    source: &'a harness::RunSource,
     started_at_ms: Option<u64>,
     completed_at_ms: Option<u64>,
-    usage: Option<&'a engine::LlmUsage>,
+    usage: Option<&'a harness::LlmUsage>,
 }
 
 impl EvalRuntime {
@@ -635,11 +635,11 @@ impl EvalRuntime {
         let outcome = self
             .drive(
                 session_id.clone(),
-                CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+                CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                     requested_by: None,
                     notify_on_terminal: Vec::new(),
                     submission_id: None,
-                    source: engine::RunRequestSource::Input {
+                    source: harness::RunRequestSource::Input {
                         input: user_input(input_ref),
                     },
                     run_config: RunConfig {
@@ -939,12 +939,12 @@ fn session_config(case: &EvalCase, model: ModelSelection) -> SessionConfig {
     }
 }
 
-fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
+fn user_input(content_ref: harness::BlobRef) -> Vec<ContextEntryInput> {
     vec![ContextEntryInput {
         kind: ContextEntryKind::Message {
             role: ContextMessageRole::User,
         },
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: None,
             provider_kind: None,
@@ -956,10 +956,10 @@ fn user_input(content_ref: engine::BlobRef) -> Vec<ContextEntryInput> {
     }]
 }
 
-fn instruction_context_input(content_ref: engine::BlobRef) -> ContextEntryInput {
+fn instruction_context_input(content_ref: harness::BlobRef) -> ContextEntryInput {
     ContextEntryInput {
         kind: ContextEntryKind::Instructions,
-        content: engine::ContentRef::text(content_ref),
+        content: harness::ContentRef::text(content_ref),
         preview: None,
         origin: None,
         provenance_ref: None,

@@ -1,6 +1,6 @@
-//! Exercise response replay through actual engine-assigned context provenance.
+//! Exercise response replay through actual harness-assigned context provenance.
 
-use engine::{
+use harness::{
     BlobRef, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ModelSelection, ProviderApiKind, RunId, SessionId, ToolCallId, TurnId,
     storage::InMemoryBlobStore,
@@ -20,7 +20,7 @@ fn entry(
         key: None,
         kind,
         source,
-        content: engine::ContentRef {
+        content: harness::ContentRef {
             content_ref,
             media_type: Some("text/plain".to_owned()),
             provider_kind: None,
@@ -34,9 +34,9 @@ fn entry(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn engine_completion_history_reconstructs_one_message_and_preserves_request_prefixes() {
-    fn commit(drive: &mut engine::CoreAgentDrive, action: engine::CoreAgentAction) {
-        let engine::CoreAgentAction::AppendEvents {
+async fn harness_completion_history_reconstructs_one_message_and_preserves_request_prefixes() {
+    fn commit(drive: &mut harness::CoreAgentDrive, action: harness::CoreAgentAction) {
+        let harness::CoreAgentAction::AppendEvents {
             expected_head,
             events,
         } = action
@@ -49,9 +49,9 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
                 events
                     .into_iter()
                     .enumerate()
-                    .map(|(index, event)| engine::session::StoredSessionEntry {
-                        position: engine::session::SessionPosition {
-                            seq: engine::session::EventSeq::new(first + index as u64),
+                    .map(|(index, event)| harness::session::StoredSessionEntry {
+                        position: harness::session::SessionPosition {
+                            seq: harness::session::EventSeq::new(first + index as u64),
                         },
                         observed_at_ms: event.observed_at_ms,
                         joins: event.joins,
@@ -63,15 +63,15 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
     }
 
     let blobs = InMemoryBlobStore::new();
-    let mut drive = engine::CoreAgentDrive::from_replayed(
+    let mut drive = harness::CoreAgentDrive::from_replayed(
         SessionId::new("completion-replay"),
-        engine::CoreAgentState::new(),
+        harness::CoreAgentState::new(),
         None,
     );
     let action = drive
         .admit_command(
-            engine::CoreAgentCommand::OpenSession {
-                config: engine::SessionConfig {
+            harness::CoreAgentCommand::OpenSession {
+                config: harness::SessionConfig {
                     model: ModelSelection {
                         api_kind: ProviderApiKind::OpenAiCompletions,
                         provider_id: "openai".to_owned(),
@@ -79,7 +79,7 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
                     },
                     generation: Default::default(),
                     limits: Default::default(),
-                    context: engine::ContextConfig {
+                    context: harness::ContextConfig {
                         reported_input_limit_tokens: None,
                         input_limit_tokens: None,
                         compaction: None,
@@ -93,17 +93,17 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
     commit(&mut drive, action);
     let action = drive
         .admit_command(
-            engine::CoreAgentCommand::RequestRun(engine::RunRequestCommand {
+            harness::CoreAgentCommand::RequestRun(harness::RunRequestCommand {
                 requested_by: None,
                 submission_id: None,
                 notify_on_terminal: Vec::new(),
                 run_config: Default::default(),
-                source: engine::RunRequestSource::Input {
+                source: harness::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
                         kind: ContextEntryKind::Message {
                             role: ContextMessageRole::User,
                         },
-                        content: engine::ContentRef::text(
+                        content: harness::ContentRef::text(
                             blobs.insert_text("Inspect the workspace").await,
                         ),
                         preview: None,
@@ -120,7 +120,7 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
     let mut generation = None;
     for tick in 3..30 {
         match drive.next_action(tick, 64).expect("drive") {
-            engine::CoreAgentAction::GenerateLlm { request } => {
+            harness::CoreAgentAction::GenerateLlm { request } => {
                 generation = Some(request);
                 break;
             }
@@ -137,7 +137,7 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
 
     // The request policy deliberately lowers visible content to text and
     // excludes response metadata. Reasoning/signatures and calls must still
-    // rejoin that message exactly, using provenance assigned by the engine.
+    // rejoin that message exactly, using provenance assigned by the harness.
     for (content, refusal, expected_content, with_tools) in [
         (json!("Checking"), Value::Null, json!("Checking"), true),
         (
@@ -181,11 +181,11 @@ async fn engine_completion_history_reconstructs_one_message_and_preserves_reques
             .await
             .expect("convert");
         let proposals =
-            engine::generation_result_proposals(drive.state(), result).expect("engine provenance");
+            harness::generation_result_proposals(drive.state(), result).expect("engine provenance");
         let retained = proposals
             .into_iter()
             .find_map(|proposal| match proposal.event {
-                engine::CoreAgentEvent::Context(engine::ContextEvent::EntriesApplied {
+                harness::CoreAgentEvent::Context(harness::ContextEvent::EntriesApplied {
                     entries,
                     ..
                 }) => Some(entries),

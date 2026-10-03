@@ -119,7 +119,7 @@ pub(super) fn validate_session_creation_identity(
     universe_id: uuid::Uuid,
     state: &CoreAgentState,
     is_fresh_session: bool,
-    workflow_tools: Option<&engine::ManagedSessionWorkflowTools>,
+    workflow_tools: Option<&harness::ManagedSessionWorkflowTools>,
 ) -> anyhow::Result<()> {
     let admitted = workflow_tools
         .map(|tools| tools.admit(universe_id))
@@ -154,7 +154,7 @@ pub(super) fn validate_session_creation_identity(
 fn instruction_context_input(content_ref: BlobRef) -> ContextEntryInput {
     ContextEntryInput {
         kind: ContextEntryKind::Instructions,
-        content: engine::ContentRef::text(content_ref),
+        content: harness::ContentRef::text(content_ref),
         preview: None,
         origin: None,
         provenance_ref: None,

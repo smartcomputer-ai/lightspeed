@@ -1357,7 +1357,7 @@ mod tests {
                 content: InventoryContent::File {
                     size_bytes: bytes.len() as u64,
                     executable: false,
-                    digest: engine::BlobRef::from_bytes(bytes).to_string(),
+                    digest: harness::BlobRef::from_bytes(bytes).to_string(),
                 },
             });
         }

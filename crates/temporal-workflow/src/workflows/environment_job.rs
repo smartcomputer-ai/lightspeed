@@ -241,7 +241,7 @@ impl EnvironmentJobWorkflow {
     pub fn deliver_emission(
         &mut self,
         _ctx: &mut SyncWorkflowContext<Self>,
-        envelope: engine::EmissionEnvelope,
+        envelope: harness::EmissionEnvelope,
     ) {
         queue_workflow_tool_cancellation(self, envelope);
     }
@@ -312,20 +312,20 @@ fn environment_job_activity_options() -> LocalActivityOptions {
 
 fn queue_workflow_tool_cancellation(
     state: &mut EnvironmentJobWorkflow,
-    envelope: engine::EmissionEnvelope,
+    envelope: harness::EmissionEnvelope,
 ) {
     let Some(workflow_tool) = &state.workflow_tool else {
         return;
     };
     let producer_workflow_id = match &envelope.producer {
-        engine::EmissionProducer::Session {
+        harness::EmissionProducer::Session {
             universe_id,
             session_id,
             ..
         } => crate::compose_workflow_id(*universe_id, session_id),
-        engine::EmissionProducer::Workflow { .. } => return,
+        harness::EmissionProducer::Workflow { .. } => return,
     };
-    let engine::EmissionBody::InvocationCancellation {
+    let harness::EmissionBody::InvocationCancellation {
         invocation_id,
         completion_key,
         promise_id,
@@ -376,7 +376,7 @@ fn collect_terminal_emissions(
     state: &mut EnvironmentJobWorkflow,
     universe_id: uuid::Uuid,
     workflow_id: &str,
-) -> Vec<(String, engine::EmissionEnvelope)> {
+) -> Vec<(String, harness::EmissionEnvelope)> {
     let mut emissions = Vec::new();
     for subscription in &mut state.subscriptions {
         if subscription.notified {
@@ -391,22 +391,22 @@ fn collect_terminal_emissions(
             continue;
         };
         let resolution = match result {
-            engine::PromiseSourceCheckResult::Pending => continue,
-            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                engine::PromiseResolution::Resolved { payload_ref }
+            harness::PromiseSourceCheckResult::Pending => continue,
+            harness::PromiseSourceCheckResult::Resolved { payload_ref } => {
+                harness::PromiseResolution::Resolved { payload_ref }
             }
-            engine::PromiseSourceCheckResult::Failed { error_ref } => {
-                engine::PromiseResolution::Failed { error_ref }
+            harness::PromiseSourceCheckResult::Failed { error_ref } => {
+                harness::PromiseResolution::Failed { error_ref }
             }
         };
-        let Ok(promise_id) = engine::PromiseId::try_new(subscription.promise_id.clone()) else {
+        let Ok(promise_id) = harness::PromiseId::try_new(subscription.promise_id.clone()) else {
             continue;
         };
         subscription.notified = true;
         let holder_workflow_id = subscription.holder_workflow_id.clone();
         emissions.push((
             holder_workflow_id.clone(),
-            engine::EmissionEnvelope::source_resolution(
+            harness::EmissionEnvelope::source_resolution(
                 universe_id,
                 workflow_id.to_owned(),
                 &holder_workflow_id,
@@ -425,14 +425,14 @@ fn workflow_tool_recovery(state: &EnvironmentJobWorkflow) -> WorkflowToolRecover
             continue;
         };
         let resolution = match result {
-            engine::PromiseSourceCheckResult::Pending => continue,
-            engine::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                engine::PromiseResolution::Resolved {
+            harness::PromiseSourceCheckResult::Pending => continue,
+            harness::PromiseSourceCheckResult::Resolved { payload_ref } => {
+                harness::PromiseResolution::Resolved {
                     payload_ref: payload_ref.clone(),
                 }
             }
-            engine::PromiseSourceCheckResult::Failed { error_ref } => {
-                engine::PromiseResolution::Failed {
+            harness::PromiseSourceCheckResult::Failed { error_ref } => {
+                harness::PromiseResolution::Failed {
                     error_ref: error_ref.clone(),
                 }
             }
@@ -444,8 +444,8 @@ fn workflow_tool_recovery(state: &EnvironmentJobWorkflow) -> WorkflowToolRecover
 
 #[cfg(test)]
 mod tests {
-    use engine::{BlobRef, PromiseSourceCheckResult};
     use environment_protocol::shared::JobId;
+    use harness::{BlobRef, PromiseSourceCheckResult};
 
     use super::*;
 
@@ -472,7 +472,7 @@ mod tests {
         );
         assert!(matches!(
             workflow_tool_recovery(&workflow).resolutions.get("job_1"),
-            Some(engine::PromiseResolution::Resolved {
+            Some(harness::PromiseResolution::Resolved {
                 payload_ref: Some(actual),
             }) if actual == &payload_ref
         ));
@@ -486,16 +486,16 @@ mod tests {
         assert_eq!(first[0].0, "universe/session_1");
         assert!(matches!(
             &first[0].1.body,
-            engine::EmissionBody::SourceResolution {
+            harness::EmissionBody::SourceResolution {
                 promise_id,
-                resolution: engine::PromiseResolution::Resolved {
+                resolution: harness::PromiseResolution::Resolved {
                     payload_ref: Some(actual),
                 },
             } if promise_id.as_str() == "promise_1" && actual == &payload_ref
         ));
         assert!(matches!(
             first[0].1.producer,
-            engine::EmissionProducer::Workflow {
+            harness::EmissionProducer::Workflow {
                 universe_id: actual,
                 ref workflow_id,
             } if actual == universe_id && workflow_id == "universe/envjob-job_1"
@@ -506,9 +506,9 @@ mod tests {
     #[test]
     fn workflow_tool_cancellation_targets_only_the_matching_job() {
         let invocation_id =
-            engine::WorkflowToolInvocationId::new(format!("wti:sha256:{}", "a".repeat(64)));
+            harness::WorkflowToolInvocationId::new(format!("wti:sha256:{}", "a".repeat(64)));
         let universe_id = uuid::Uuid::from_u128(1);
-        let session_id = engine::SessionId::new("session_1");
+        let session_id = harness::SessionId::new("session_1");
         let mut workflow = EnvironmentJobWorkflow {
             workflow_tool: Some(EnvironmentJobWorkflowToolContext {
                 execution_id: "execution_1".to_owned(),
@@ -522,13 +522,13 @@ mod tests {
 
         queue_workflow_tool_cancellation(
             &mut workflow,
-            engine::EmissionEnvelope::invocation_cancellation(
+            harness::EmissionEnvelope::invocation_cancellation(
                 universe_id,
                 session_id.clone(),
-                engine::EventSeq::new(7),
+                harness::EventSeq::new(7),
                 invocation_id.clone(),
                 "job_1".to_owned(),
-                engine::PromiseId::new("promise_1"),
+                harness::PromiseId::new("promise_1"),
             ),
         );
 
@@ -538,13 +538,13 @@ mod tests {
 
         queue_workflow_tool_cancellation(
             &mut workflow,
-            engine::EmissionEnvelope::invocation_cancellation(
+            harness::EmissionEnvelope::invocation_cancellation(
                 universe_id,
                 session_id,
-                engine::EventSeq::new(8),
+                harness::EventSeq::new(8),
                 invocation_id,
                 "job_1".to_owned(),
-                engine::PromiseId::new("promise_1"),
+                harness::PromiseId::new("promise_1"),
             ),
         );
         assert_eq!(workflow.pending_cancels.len(), 1);

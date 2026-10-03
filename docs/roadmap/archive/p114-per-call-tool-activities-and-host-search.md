@@ -11,7 +11,7 @@
   workflow-boundary conversion of activity failures into terminal failed call
   results; and the deployment-owned `run_process` timeout ceiling
   (`ToolLimits::max_process_timeout_ms`, asserted equal to
-  `PROCESS_TIMEOUT_CEILING` by a temporal-server test). Await batches and
+  `PROCESS_TIMEOUT_CEILING` by a temporal-runtime test). Await batches and
   workflow-tool batches still execute as one bounded batch-unit activity, as
   designed. One deliberate reshape: the environment-selection batch rule now
   fails only the participating calls, not unrelated siblings.

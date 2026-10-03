@@ -28,7 +28,7 @@
   files, `decode_dynamic_entry` → `decode_stored_entry`, and related test
   names and comments renamed. Stored bytes unchanged.
 - Engine-focused refactor with downstream fixups in `temporal-workflow`,
-  `temporal-server`, `api-projection`, `test-support`, `store-fs`, `store-pg`,
+  `temporal-runtime`, `api-projection`, `test-support`, `store-fs`, `store-pg`,
   and `eval`.
 - Supersedes the SDK-era "open kernel" posture from P54 (composable agent
   kernel). Lightspeed is a product; CoreAgent is the only agent domain, now and
@@ -51,7 +51,7 @@ Commit the engine to a fixed event vocabulary and a closed core FSM:
 
 ## Inventory
 
-Every open abstraction in `engine` was traced to its consumers across the
+Every open abstraction in `harness` was traced to its consumers across the
 workspace (2026-07-03, branch `multi-tenant`):
 
 | # | Structure | Location | Consumers found | Action |
@@ -134,7 +134,7 @@ slices 2 and 3 each change exactly one persisted shape.
 9. `CoreAgentDrive`: drop the `codec` / `admit` / `apply` / `planner` fields
    (all stateless); call the functions.
 10. Fix downstream imports and call sites: `temporal-workflow` (`rehydrate`,
-    `workflow/{mod,drive,admissions}`, `types`, tests), `temporal-server`
+    `workflow/{mod,drive,admissions}`, `types`, tests), `temporal-runtime`
     (gateway service, fleet, activity tests, `fake_loop`), `api-projection`,
     `test-support`. Prune `lib.rs` / `session/mod.rs` / `core/mod.rs`
     re-exports; update the P54-era module docs.
@@ -147,7 +147,7 @@ slices 2 and 3 each change exactly one persisted shape.
    `.event`.
 3. Stored envelope payloads lose one nesting level:
    `{"kind":{"lifecycle":"closed"}}` → `{"lifecycle":"closed"}`. Regenerate the
-   engine fixtures under `crates/engine/fixtures/`.
+   engine fixtures under `crates/harness/fixtures/`.
 
 ### Slice 3 — Drop `AgentHandle` (schema change)
 
@@ -160,7 +160,7 @@ slices 2 and 3 each change exactly one persisted shape.
    local stacks via `scripts/dev/` helpers.
 3. `store-fs`: drop the field from the session record JSON.
 4. Delete the `AgentHandle` string id from `session/ids.rs`.
-5. Fix constructors across `temporal-server` (activities, fleet),
+5. Fix constructors across `temporal-runtime` (activities, fleet),
    `test-support`, `eval`, `store-*` tests, and `llm-runtime` live tests.
 
 ### Slice 4 — Rename the envelope types (mechanical)
@@ -178,5 +178,5 @@ slices 2 and 3 each change exactly one persisted shape.
 - `cargo build` + full `cargo test` workspace-wide after every slice.
 - `api` wire types are untouched (the cleanup is engine/storage-internal), so
   no `crates/api/contract` regeneration is expected; `cargo test -p api` confirms.
-- Slice 2: fixture round-trip tests in `engine` prove the new payload shape.
+- Slice 2: fixture round-trip tests in `harness` prove the new payload shape.
 - Slice 3: `store-pg` live tests against a reset local stack.

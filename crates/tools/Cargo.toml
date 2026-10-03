@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 api = { path = "../api" }
 async-trait = "0.1"
-engine = { path = "../engine" }
+harness = { path = "../harness" }
 futures-util = "0.3"
 glob = "0.3"
 environment-client = { path = "../environment-client" }

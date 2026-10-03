@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use engine::BlobRef;
+use harness::BlobRef;
 use sqlx::Row;
 
 use crate::{PgStore, shared::sha256_hex};

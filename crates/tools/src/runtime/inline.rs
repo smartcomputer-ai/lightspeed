@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use engine::{
+use harness::{
     CoreAgentIoError, CoreAgentTools, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, ToolName,
     storage::BlobStore,
@@ -117,7 +117,7 @@ impl InlineToolRuntime {
                 );
                 Some(format!(
                     "tool-{}",
-                    engine::BlobRef::from_bytes(identity.as_bytes())
+                    harness::BlobRef::from_bytes(identity.as_bytes())
                         .as_str()
                         .trim_start_matches("sha256:")
                 ))
@@ -387,14 +387,14 @@ impl InlineToolRuntime {
         &self,
         ctx: BuiltinToolContext<'_>,
         bytes: Vec<u8>,
-    ) -> Result<engine::BlobRef, CoreAgentIoError> {
+    ) -> Result<harness::BlobRef, CoreAgentIoError> {
         ctx.blobs()
             .put_bytes(bytes)
             .await
             .map_err(|error| io_error(format!("failed to write tool blob: {error}")))
     }
 
-    async fn put_blob_bytes(&self, bytes: Vec<u8>) -> Result<engine::BlobRef, CoreAgentIoError> {
+    async fn put_blob_bytes(&self, bytes: Vec<u8>) -> Result<harness::BlobRef, CoreAgentIoError> {
         self.blobs
             .put_bytes(bytes)
             .await
@@ -485,10 +485,10 @@ struct ProjectedText {
 /// The tool result entry followed by one media entry per admitted asset, in
 /// the order the visible text announces them.
 fn model_visible_entries(
-    call_id: &engine::ToolCallId,
-    model_visible_ref: engine::BlobRef,
+    call_id: &harness::ToolCallId,
+    model_visible_ref: harness::BlobRef,
     attachments: &[crate::attachments::Attachment],
-) -> Vec<engine::ContextEntryInput> {
+) -> Vec<harness::ContextEntryInput> {
     let mut entries = Vec::with_capacity(1 + attachments.len());
     entries.push(ToolInvocationResult::tool_result_context_entry(
         call_id,
@@ -537,7 +537,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use engine::{
+    use harness::{
         BlobRef, ContextEntryKind, RunId, SessionId, ToolBatchId, ToolCallId,
         ToolInvocationRequest, ToolInvocationResult, ToolName, TurnId,
         storage::{BlobStore, InMemoryBlobStore},
@@ -621,12 +621,12 @@ mod tests {
 
     fn call(arguments_ref: BlobRef, tool_name: &str) -> ToolInvocationRequest {
         ToolInvocationRequest {
-            builtin: Some(engine::BuiltinToolCallRuntime {
-                spec: engine::BuiltinToolSpec {
+            builtin: Some(harness::BuiltinToolCallRuntime {
+                spec: harness::BuiltinToolSpec {
                     settings: json!({"presentation": "canonical"}),
                 },
-                model: engine::ModelSelection {
-                    api_kind: engine::ProviderApiKind::OpenAiResponses,
+                model: harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiResponses,
                     provider_id: "openai".to_owned(),
                     model: "test-model".to_owned(),
                 },
@@ -662,7 +662,7 @@ mod tests {
         }
     }
 
-    fn workspace_catalog(api_kind: engine::ProviderApiKind) -> ToolCatalog {
+    fn workspace_catalog(api_kind: harness::ProviderApiKind) -> ToolCatalog {
         let target = ToolTarget::api_kind(api_kind);
         ToolCatalog::from_registrations(
             &register_toolset(&ToolsetConfig::workspace())
@@ -674,7 +674,7 @@ mod tests {
     }
 
     fn catalog_for_operations_with_presentation(
-        api_kind: engine::ProviderApiKind,
+        api_kind: harness::ProviderApiKind,
         presentation: BuiltinToolPresentation,
         operations: impl IntoIterator<Item = BuiltinToolOperation>,
     ) -> ToolCatalog {
@@ -699,7 +699,7 @@ mod tests {
     }
 
     fn web_fetch_catalog() -> ToolCatalog {
-        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses);
+        let target = ToolTarget::api_kind(harness::ProviderApiKind::OpenAiResponses);
         let mut config = ToolsetConfig::empty();
         config.web.fetch = true;
         ToolCatalog::from_registrations(&register_toolset(&config).expect("toolset").tools, &target)
@@ -724,7 +724,7 @@ mod tests {
         fs.write_file(&FsPath::new("/file.txt").expect("path"), b"hello".to_vec())
             .await
             .expect("write file");
-        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(harness::ProviderApiKind::OpenAiResponses);
         let runtime = runtime_with_vfs(fs, blobs.clone(), catalog);
 
         let output = runtime
@@ -746,7 +746,7 @@ mod tests {
         fs.write_file(&FsPath::new("/file.txt").expect("path"), b"hello".to_vec())
             .await
             .expect("write file");
-        let target = ToolTarget::api_kind(engine::ProviderApiKind::AnthropicMessages);
+        let target = ToolTarget::api_kind(harness::ProviderApiKind::AnthropicMessages);
         let mut config = ToolsetConfig::empty();
         config.builtin = BuiltinToolsetConfig {
             presentation: BuiltinToolPresentation::ClaudeCodeLike,
@@ -789,7 +789,7 @@ mod tests {
             .await
             .expect("environment write");
 
-        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiResponses);
+        let target = ToolTarget::api_kind(harness::ProviderApiKind::OpenAiResponses);
         let mut config = ToolsetConfig::workspace();
         config.builtin.environment = crate::toolset::EnvironmentToolsetConfig::basic();
         let catalog = ToolCatalog::from_registrations(
@@ -831,7 +831,7 @@ mod tests {
     async fn environment_filesystem_failures_distinguish_missing_and_read_only() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let catalog = catalog_for_operations_with_presentation(
-            engine::ProviderApiKind::OpenAiResponses,
+            harness::ProviderApiKind::OpenAiResponses,
             BuiltinToolPresentation::Canonical,
             [BuiltinToolOperation::WriteFile],
         );
@@ -874,7 +874,7 @@ mod tests {
         fs.write_file(&FsPath::new("/file.txt").expect("path"), b"hello".to_vec())
             .await
             .expect("write file");
-        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(harness::ProviderApiKind::OpenAiResponses);
         let runtime = runtime_with_vfs(fs, blobs.clone(), catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
@@ -905,7 +905,7 @@ mod tests {
         fs.write_file(&FsPath::new("/render.png").expect("path"), png.clone())
             .await
             .expect("write file");
-        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(harness::ProviderApiKind::OpenAiResponses);
         let runtime = runtime_with_vfs(fs, blobs.clone(), catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/render.png","offset":null,"limit":null}"#.to_vec())
@@ -928,14 +928,14 @@ mod tests {
             .read_text(&entries[0].content.content_ref)
             .await
             .expect("visible text");
-        let handle = engine::media::media_handle(&BlobRef::from_bytes(&png));
+        let handle = harness::media::media_handle(&BlobRef::from_bytes(&png));
         assert!(visible.contains(&handle), "{visible}");
         assert!(visible.contains("render.png"), "{visible}");
         let media = &entries[1];
         assert!(matches!(
             media.kind,
             ContextEntryKind::Message {
-                role: engine::ContextMessageRole::User
+                role: harness::ContextMessageRole::User
             }
         ));
         assert_eq!(media.content.media_type.as_deref(), Some("image/png"));
@@ -956,7 +956,7 @@ mod tests {
         fs.write_file(&FsPath::new("/file.txt").expect("path"), b"hello".to_vec())
             .await
             .expect("write file");
-        let catalog = workspace_catalog(engine::ProviderApiKind::OpenAiResponses);
+        let catalog = workspace_catalog(harness::ProviderApiKind::OpenAiResponses);
         let runtime = runtime_with_vfs(fs, blobs.clone(), catalog);
         let args_ref = blobs
             .put_bytes(br#"{"path":"/file.txt","offset":null,"limit":null}"#.to_vec())
@@ -1028,7 +1028,7 @@ mod tests {
         let process_ctx: Arc<dyn ProcessExecutor> = process.clone();
         let env_ctx = EnvironmentToolContext::new(Some(process_ctx), blobs.clone());
         let catalog = catalog_for_operations_with_presentation(
-            engine::ProviderApiKind::OpenAiResponses,
+            harness::ProviderApiKind::OpenAiResponses,
             BuiltinToolPresentation::Canonical,
             [BuiltinToolOperation::RunProcess],
         );
@@ -1064,7 +1064,7 @@ mod tests {
         let process_ctx: Arc<dyn ProcessExecutor> = process.clone();
         let env_ctx = EnvironmentToolContext::new(Some(process_ctx), blobs.clone());
         let catalog = catalog_for_operations_with_presentation(
-            engine::ProviderApiKind::AnthropicMessages,
+            harness::ProviderApiKind::AnthropicMessages,
             BuiltinToolPresentation::ProviderDefault,
             [
                 BuiltinToolOperation::RunProcess,
@@ -1112,8 +1112,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn shell_execution_and_polling_are_the_responses_and_completions_defaults() {
         for api_kind in [
-            engine::ProviderApiKind::OpenAiResponses,
-            engine::ProviderApiKind::OpenAiCompletions,
+            harness::ProviderApiKind::OpenAiResponses,
+            harness::ProviderApiKind::OpenAiCompletions,
         ] {
             let blobs = Arc::new(InMemoryBlobStore::new());
             let process = Arc::new(RecordingProcessExecutor::default());
@@ -1203,7 +1203,7 @@ mod tests {
             request.tool_name = ToolName::new(name);
             request.tool_id = Some(ToolName::new(id));
             let builtin = request.builtin.as_mut().unwrap();
-            builtin.model.api_kind = engine::ProviderApiKind::OpenAiCompletions;
+            builtin.model.api_kind = harness::ProviderApiKind::OpenAiCompletions;
             builtin.spec.settings = settings;
             let restored = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
             let result = runtime.invoke_call(&restored).await.unwrap();
@@ -1243,7 +1243,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let target = ToolTarget::api_kind(engine::ProviderApiKind::OpenAiCompletions);
+        let target = ToolTarget::api_kind(harness::ProviderApiKind::OpenAiCompletions);
         let description = BuiltinTool::environment_canonical(BuiltinToolOperation::ApplyPatch)
             .definition(&target, false)
             .unwrap()
@@ -1279,7 +1279,7 @@ mod tests {
             request.tool_id = Some(ToolName::new(id));
             request.tool_name = ToolName::new(name);
             let builtin = request.builtin.as_mut().unwrap();
-            builtin.model.api_kind = engine::ProviderApiKind::OpenAiCompletions;
+            builtin.model.api_kind = harness::ProviderApiKind::OpenAiCompletions;
             builtin.spec.settings = json!({});
             let restored = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
             let result = runtime.invoke_call(&restored).await.unwrap();
@@ -1301,7 +1301,7 @@ mod tests {
     async fn core_tools_fail_process_tools_without_active_environment() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = catalog_for_operations_with_presentation(
-            engine::ProviderApiKind::OpenAiResponses,
+            harness::ProviderApiKind::OpenAiResponses,
             BuiltinToolPresentation::Canonical,
             [BuiltinToolOperation::RunProcess],
         );
@@ -1394,7 +1394,7 @@ mod tests {
             request.tool_id = Some(ToolName::new("env.continue_process"));
             request.tool_name = ToolName::new(name);
             request.builtin.as_mut().unwrap().model.api_kind =
-                engine::ProviderApiKind::AnthropicMessages;
+                harness::ProviderApiKind::AnthropicMessages;
             request.builtin.as_mut().unwrap().spec.settings = json!({});
             let restored = serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
             let result = runtime.invoke_call(&restored).await.unwrap();

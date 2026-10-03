@@ -31,7 +31,7 @@ you provide those services and an HTTPS reverse proxy.
 
 You can also [download the standalone binaries](../deployment/self-hosting.md#download-standalone-binaries)
 directly from the release assets. The server archive contains
-`lightspeed-server`; the CLI archive contains `lightspeed`. The server still
+`lightspeed-runtime`; the CLI archive contains `lightspeed`. The server still
 needs PostgreSQL and Temporal, and the web app runs in the separate Platform
 application. Downloading the server alone does not start the complete product.
 

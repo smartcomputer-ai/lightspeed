@@ -300,13 +300,13 @@ function createPlan(profile, sourceEnv) {
     preparations.push({
       name: "runtime migration",
       command: "cargo",
-      args: ["run", "-p", "temporal-server", "--", "migrate"],
+      args: ["run", "-p", "temporal-runtime", "--", "migrate"],
       env,
     });
     processes.push({
       name: "runtime",
       command: "cargo",
-      args: ["run", "-p", "temporal-server"],
+      args: ["run", "-p", "temporal-runtime"],
       cwd: repoRoot,
       env,
     });

@@ -7,7 +7,7 @@
 use crate::catalog::{
     SUBAGENT_CATALOG_CONTEXT_KEY, catalog_context_input, catalog_publication_command,
 };
-use engine::{
+use harness::{
     BlobRef, ContextEntryInput, CoreAgentCommand, SubagentLimits,
     storage::{BlobStore, BlobStoreError},
 };

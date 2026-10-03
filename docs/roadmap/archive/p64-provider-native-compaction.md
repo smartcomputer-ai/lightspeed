@@ -96,7 +96,7 @@ fallback only when there is a concrete use case.
 
 - Do not implement compaction by default as a text-summary turn.
 - Do not ask the model to reinterpret provider-native opaque compaction items.
-- Do not make `engine` call OpenAI, Anthropic, tokenizers, or any other
+- Do not make `harness` call OpenAI, Anthropic, tokenizers, or any other
   provider service.
 - Do not put provider-specific JSON parsing into reducer logic beyond compact
   metadata required for deterministic branching.
@@ -111,7 +111,7 @@ fallback only when there is a concrete use case.
 
 Compaction is a context-window operation, not a generic agent subroutine.
 
-`engine` should own deterministic facts:
+`harness` should own deterministic facts:
 
 - the active compaction policy,
 - whether a provider request is allowed or expected to trigger native

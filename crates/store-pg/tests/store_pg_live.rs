@@ -7,18 +7,6 @@ use auth::{
     OAuthClientStore, PutSecretRecord, SECRET_KIND_STATIC_BEARER, SecretId, SecretStore,
     SecretValue, TokenEndpointAuthMethod, state_hash,
 };
-use engine::{
-    BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
-    session::{
-        EventSeq, SessionId, SessionPosition, StoredEvent, StoredJoins, UncommittedStoredEvent,
-    },
-    storage::{
-        AdvanceSessionCheckpoint, AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore,
-        CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
-        ListSessions, ReadSessionEventRange, ReadSessionEvents, SessionCheckpoint, SessionOrigin,
-        SessionOriginKind, SessionStore, SessionStoreError, engine_blob_refs, ensure_engine_blobs,
-    },
-};
 use environment_protocol::shared::{EnvironmentTransport, ProviderTargetId};
 use environments::{
     BeginCloseEnvironment, CreateEnvironment, EnvironmentConnectionSpec, EnvironmentId,
@@ -27,6 +15,19 @@ use environments::{
     EnvironmentProvisionRequestId, EnvironmentStatus, EnvironmentStore, EnvironmentTemplateId,
     ListEnvironmentProviders, ListEnvironments, ObserveProvisionedEnvironment,
     PutEnvironmentProvider, PutEnvironmentProviderBinding,
+};
+use harness::{
+    BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
+    session::{
+        EventSeq, SessionId, SessionPosition, StoredEvent, StoredJoins, UncommittedStoredEvent,
+    },
+    storage::{
+        AdvanceSessionCheckpoint, AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore,
+        CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
+        ListSessions, ReadSessionEventRange, ReadSessionEvents, SessionCheckpoint, SessionOrigin,
+        SessionOriginKind, SessionStore, SessionStoreError, ensure_harness_blobs,
+        harness_blob_refs,
+    },
 };
 use mcp::{
     ListMcpServers, McpApprovalPolicy, McpRegistryError, McpRegistryStore, McpServerAuthPolicy,
@@ -228,7 +229,7 @@ async fn pg_live_session_ranges_are_fenced_and_checkpoint_pointers_only_advance(
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
-    use engine::storage::{ListSessions, SessionListCursor};
+    use harness::storage::{ListSessions, SessionListCursor};
 
     let store = live_store("session-list", 64).await;
     let other = live_store("session-list-other", 64).await;
@@ -325,7 +326,7 @@ async fn pg_live_session_list_pages_newest_first_and_rename_persists() {
         store
             .set_session_display_name(&SessionId::new("missing"), None)
             .await,
-        Err(engine::storage::SessionStoreError::SessionNotFound { .. })
+        Err(harness::storage::SessionStoreError::SessionNotFound { .. })
     ));
 }
 
@@ -407,7 +408,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
             .expect("count workspaces");
     assert_eq!(workspace_count, 1);
     // Sub-agent lineage: the child row is the root-scoped reservation.
-    let limits = engine::SubagentLimits {
+    let limits = harness::SubagentLimits {
         max_depth: 1,
         max_descendants: 2,
         max_concurrent: 1,
@@ -476,7 +477,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
     assert!(matches!(
         refused,
         SessionStoreError::OriginLimitExceeded {
-            limit: engine::storage::SessionOriginLimit::MaxConcurrent,
+            limit: harness::storage::SessionOriginLimit::MaxConcurrent,
             ..
         }
     ));
@@ -495,7 +496,7 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
     assert!(matches!(
         too_deep,
         SessionStoreError::OriginLimitExceeded {
-            limit: engine::storage::SessionOriginLimit::MaxDepth,
+            limit: harness::storage::SessionOriginLimit::MaxDepth,
             ..
         }
     ));
@@ -801,7 +802,7 @@ async fn pg_live_blobs_use_inline_and_object_storage() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_streamed_blobs_verify_ranges_reuse_and_reject_corruption() {
-    use engine::storage::{BlobSource, BlobStoreError};
+    use harness::storage::{BlobSource, BlobStoreError};
 
     struct Source {
         bytes: Vec<u8>,
@@ -1124,8 +1125,8 @@ async fn pg_live_put_of_existing_content_touches_without_rewriting() {
 async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
     let store = live_store("sweep", 8).await;
     let universe_id = store.config().universe_id;
-    let pinned = engine_blob_refs();
-    ensure_engine_blobs(&store).await.expect("engine blobs");
+    let pinned = harness_blob_refs();
+    ensure_harness_blobs(&store).await.expect("engine blobs");
 
     // Holders of every kind. Payloads exceed the 8-byte inline threshold so
     // the object phase is exercised too.
@@ -1428,7 +1429,7 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
     let store = live_store("sweep-lineage", 8).await;
-    let pinned = engine_blob_refs();
+    let pinned = harness_blob_refs();
     let config_blob = store
         .put_bytes(b"session config blob shared by lineage".to_vec())
         .await
@@ -2936,7 +2937,7 @@ async fn pg_live_environment_credentials_round_trip() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_session_metadata_filters_by_containment_and_put_replaces() {
-    use engine::storage::{ListSessions, SessionListPage};
+    use harness::storage::{ListSessions, SessionListPage};
     use std::collections::BTreeMap;
 
     let store = live_store("session-metadata", 64).await;
@@ -3344,7 +3345,7 @@ async fn pg_live_admission_touch_refreshes_grace_and_rejects_missing_refs() {
     let missing = BlobRef::from_bytes(b"missing input");
     assert!(
         matches!(store.touch_blob_refs(std::slice::from_ref(&missing)).await,
-        Err(engine::storage::BlobStoreError::NotFound { blob_ref }) if blob_ref == missing)
+        Err(harness::storage::BlobStoreError::NotFound { blob_ref }) if blob_ref == missing)
     );
 }
 

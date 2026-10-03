@@ -1,5 +1,5 @@
 //! Activity definitions of the conversation workflow: the core-side set
-//! (implemented in `temporal-server::worker::channels`) and the
+//! (implemented in `temporal-runtime::worker::channels`) and the
 //! connector-side set (implemented by the TypeScript connector host under
 //! these exact names on the account's task queue).
 

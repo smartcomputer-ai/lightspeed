@@ -9,7 +9,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use engine::storage::BlobStore;
 use environment_client::{EnvironmentClientError, EnvironmentDataClient, JsonRpcTransport};
 use environment_protocol::{
     data::{
@@ -22,6 +21,7 @@ use environment_protocol::{
     error::EnvironmentProtocolErrorCode,
     shared::{ByteChunk, EnvironmentCapabilities, EnvironmentPath, ProcessId},
 };
+use harness::storage::BlobStore;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
@@ -794,8 +794,8 @@ mod tests {
         sync::{Arc, Mutex},
     };
 
-    use engine::storage::InMemoryBlobStore;
     use environment_client::EnvironmentClientResult;
+    use harness::storage::InMemoryBlobStore;
     use serde_json::{Value, json};
 
     use super::*;

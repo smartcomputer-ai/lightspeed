@@ -1,12 +1,12 @@
 //! Shared rendering for catalog context entries.
 //!
-//! A catalog that changes is not rewritten in place: the engine keeps the
+//! A catalog that changes is not rewritten in place: the harness keeps the
 //! earlier version active and appends the new one with `supersedes` set, so
 //! the rendered prefix never moves and the provider prompt cache holds. The
 //! earlier version must therefore render byte-for-byte as it always did —
 //! only the successor announces the update.
 
-use engine::{BlobRef, ContextEntry, ContextEntryKind, storage::BlobStore};
+use harness::{BlobRef, ContextEntry, ContextEntryKind, storage::BlobStore};
 
 use crate::error::LlmAdapterResult;
 
@@ -43,7 +43,7 @@ pub(crate) async fn stored_catalog_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::{ContextEntryId, ContextEntrySource};
+    use harness::{ContextEntryId, ContextEntrySource};
 
     fn entry(supersedes: Option<u64>) -> ContextEntry {
         ContextEntry {
@@ -53,7 +53,7 @@ mod tests {
                 title: "Bot directory".to_owned(),
             },
             source: ContextEntrySource::ContextEdit,
-            content: engine::ContentRef {
+            content: harness::ContentRef {
                 content_ref: BlobRef::from_bytes(b"body"),
                 media_type: None,
                 provider_kind: None,
@@ -80,7 +80,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn stored_body_is_verbatim_and_never_requires_source_decoding() {
-        let blobs = engine::storage::InMemoryBlobStore::new();
+        let blobs = harness::storage::InMemoryBlobStore::new();
         let body = "  publisher text\n\n";
         let body_ref = blobs.put_bytes(body.as_bytes().to_vec()).await.unwrap();
         let mut original = entry(None);

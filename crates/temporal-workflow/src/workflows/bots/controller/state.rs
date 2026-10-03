@@ -16,7 +16,7 @@ use bots::tools::{BOT_EVENT_RESOLVE_TOOL_ID, BOT_TOOLS_REVISION, is_pushed_tool}
 use bots::{
     BotCoalesceParams, BotControllerConfig, BotEvent, RoutedSession, RoutedSessionClosePolicy, ids,
 };
-use engine::{
+use harness::{
     BlobRef, EmissionBody, EmissionEnvelope, EmissionProducer, RunStatus, WorkflowToolInvocation,
 };
 use serde::{Deserialize, Serialize};
@@ -1397,7 +1397,7 @@ pub fn ms_until_next_utc_day(now_ms: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use api::{BotId, ProfileId};
-    use engine::{EventSeq, PromiseId, PromiseResolution, RunId, SessionId};
+    use harness::{EventSeq, PromiseId, PromiseResolution, RunId, SessionId};
     use uuid::Uuid;
 
     use super::*;
@@ -1509,24 +1509,24 @@ mod tests {
     fn invocation(session: &str, tool_id: &str, suffix: char) -> WorkflowToolInvocation {
         let mut promises = BTreeMap::new();
         promises.insert(
-            engine::REPLY_COMPLETION_KEY.to_owned(),
+            harness::REPLY_COMPLETION_KEY.to_owned(),
             PromiseId::new("promise_3"),
         );
         WorkflowToolInvocation {
-            invocation_id: engine::WorkflowToolInvocationId::new(format!(
+            invocation_id: harness::WorkflowToolInvocationId::new(format!(
                 "wti:sha256:{}",
                 suffix.to_string().repeat(64)
             )),
-            tool_id: engine::WorkflowToolId::new(tool_id),
+            tool_id: harness::WorkflowToolId::new(tool_id),
             semantic_type: "lightspeed.bots.tool".to_owned(),
             schema_revision: 1,
             binding_fingerprint: "fp".to_owned(),
             session_universe_id: UNIVERSE,
             session_id: SessionId::new(session),
             run_id: RunId::new(7),
-            turn_id: engine::TurnId::new(1),
-            tool_batch_id: engine::ToolBatchId::new(1),
-            tool_call_id: engine::ToolCallId::new("call_1"),
+            turn_id: harness::TurnId::new(1),
+            tool_batch_id: harness::ToolBatchId::new(1),
+            tool_call_id: harness::ToolCallId::new("call_1"),
             arguments_ref: BlobRef::from_bytes(b"{}"),
             execution_context_ref: None,
             completion_promises: Some(promises),
@@ -2029,7 +2029,7 @@ mod tests {
         // A second push of the same invocation under a fresh emission id
         // is still the same invocation.
         let mut again = pushed.clone();
-        again.emission_id = engine::EmissionId::for_source_resolution(
+        again.emission_id = harness::EmissionId::for_source_resolution(
             UNIVERSE,
             "x",
             "y",

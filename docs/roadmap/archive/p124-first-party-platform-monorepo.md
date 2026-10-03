@@ -209,7 +209,7 @@ were removed. Leave Foundry's internal shape untouched until the feature is
 retained or removed; do not introduce another platform-local copy of Rust wire
 vocabulary.
 
-The imported code remains outside the deterministic `engine` crate. Platform
+The imported code remains outside the deterministic `harness` crate. Platform
 HTTP, authentication, database access, connectors, and Temporal workers are
 side-effecting product-plane components and must continue to communicate
 through the public `api` and generic workflow-tool protocols.
@@ -294,7 +294,7 @@ artifact built from the same source revision and generated contract. The public
 repository owns builds and publishes immutable artifacts. At minimum, the
 release manifest identifies as applicable:
 
-- Rust runtime image plus provider, envd, server-bundle, and CLI artifacts;
+- Rust runtime image plus provider, envd, runtime-bundle, and CLI artifacts;
 - Configurator MCP image;
 - `@lightspeed-ai/agent-client` package and contract revision;
 - platform server/web image; and

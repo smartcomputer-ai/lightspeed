@@ -1,5 +1,5 @@
 use super::SkillId;
-use engine::BlobRef;
+use harness::BlobRef;
 use serde::{Deserialize, Serialize};
 use vfs::{VfsPath, VfsWorkspaceId};
 

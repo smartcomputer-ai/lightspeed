@@ -7,7 +7,7 @@ edition = "2024"
 api = { path = "../api" }
 bots = { path = "../bots" }
 channels = { path = "../channels" }
-engine = { path = "../engine", features = ["contract"] }
+harness = { path = "../harness", features = ["contract"] }
 schemars = { version = "1", features = ["uuid1"] }
 sha2 = "0.10"
 hex = "0.4"

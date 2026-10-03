@@ -126,7 +126,7 @@ Placement rules:
   (`engine::LlmGenerationRequest` with `SecretRef`s); the activity body
   resolves refs immediately before the provider call;
 - `llm-runtime` owns a narrow `SecretResolver` trait and stays free of auth
-  and store dependencies. `temporal-server` adapts the broker to that trait
+  and store dependencies. `temporal-runtime` adapts the broker to that trait
   and dispatches on `SecretRef.namespace` (`auth_grant` -> broker, `env` ->
   env resolver for development).
 
@@ -196,7 +196,7 @@ SecretRef {
 }
 ```
 
-`engine` never resolves that reference. Runtime adapters and gateways ask P69's
+`harness` never resolves that reference. Runtime adapters and gateways ask P69's
 token broker for a current token.
 
 ## Provider Kinds
@@ -631,7 +631,7 @@ crates/api/src/lib.rs
   public auth grant DTOs and methods
   secret refs and statuses, never durable plaintext tokens
 
-crates/temporal-server/src/gateway + worker
+crates/temporal-runtime/src/gateway + worker
   auth/grants JSON-RPC handlers
   broker -> llm-runtime SecretResolver adapter in the worker
   later: callback handling, refresh, lease orchestration
@@ -646,7 +646,7 @@ crates/llm-runtime/src/secrets.rs
 The narrow shared crate exists from the start (`auth`, mirroring the
 `mcp` precedent) rather than waiting for shared code to grow.
 Dependency direction is deliberate: `llm-runtime` defines its own resolver
-boundary and never depends on `auth` or `store-pg`; `temporal-server`
+boundary and never depends on `auth` or `store-pg`; `temporal-runtime`
 adapts the broker to that boundary. Keep provider drivers behind traits so
 `oauth2`, GitHub client helpers, or MCP SDK helpers can be swapped without
 schema churn.
@@ -908,7 +908,7 @@ typed failure before provider I/O. Adapter registration no longer requires
 env keys at startup; a deployment can run on stored keys alone.
 
 Boundary shape mirrors `SecretResolver`: `llm-runtime` owns a narrow
-`ProviderKeyResolver` trait (no auth/store dependencies); `temporal-server`
+`ProviderKeyResolver` trait (no auth/store dependencies); `temporal-runtime`
 adapts the universe-bound provider/secret stores to it. Resolution does not
 go through `AuthTokenBroker` — that boundary is grant-keyed and there is no
 grant; it is a provider-row read plus secret decrypt behind the trait.

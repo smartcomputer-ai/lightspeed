@@ -84,7 +84,7 @@ lightspeed mcp link --session session_1 crm --auth-grant authgrant_123
 The engine remains deterministic. It records only the sanitized MCP server spec
 and an optional auth reference in the event-sourced tool registry. Server
 catalog edits, metadata discovery, OAuth, token refresh, secret storage, and
-connectivity checks are outside `engine`.
+connectivity checks are outside `harness`.
 
 ## Relationship To P67 And P69
 
@@ -145,7 +145,7 @@ link either omits auth for public servers or names the auth handle to use.
 - Do not implement OAuth flows in P68.
 - Do not implement encrypted secret storage in P68.
 - Do not implement token refresh or a runtime token broker in P68.
-- Do not make `engine` perform MCP HTTP discovery, tool listing, OAuth, token
+- Do not make `harness` perform MCP HTTP discovery, tool listing, OAuth, token
   lookup, or secret resolution.
 - Do not implement a Lightspeed-hosted MCP bridge/client runtime.
 - Do not implement private/on-prem tunnels.
@@ -348,7 +348,7 @@ crates/api/src/mcp.rs
   public request/response DTOs for server registry and session linking
   auth policy and auth handle refs, never plaintext tokens
 
-crates/temporal-server/src/mcp/
+crates/temporal-runtime/src/mcp/
   JSON-RPC handlers for catalog and linking operations
   optional non-secret metadata discovery
 
@@ -431,11 +431,11 @@ Acceptance criteria:
 - discovered non-secret auth hints populate `McpServerAuthPolicy`;
 - failures produce explicit server status without blocking manual no-auth
   registration;
-- metadata discovery runs outside `engine`.
+- metadata discovery runs outside `harness`.
 
 ## Future Work
 
-- MCP server health checks and preflight tool listing outside `engine`.
+- MCP server health checks and preflight tool listing outside `harness`.
 - Hosted UI for managing MCP servers and session links.
 - MCP-specific convenience wrappers over P69 auth login/status/revoke commands.
 - Approval UI for provider-hosted MCP calls where provider APIs surface

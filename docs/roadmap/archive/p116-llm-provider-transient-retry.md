@@ -374,5 +374,5 @@ overloading a semantic turn event.
 - Automatic provider/model failover.
 - Unlimited retry or waiting indefinitely for a provider recovery.
 - A generic failure-category taxonomy or separate `RetryDisposition` in
-  `engine`.
+  `harness`.
 - Durable per-attempt session events or exact client-visible retry progress.

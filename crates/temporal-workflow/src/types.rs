@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine::{
+use harness::{
     BlobRef, CommandRejection, ContextEntryInput, CoreAgentCommand, CoreAgentState,
     EmissionEnvelope, ManagedSessionWorkflowTools, RunStatus, SessionConfig, SessionId,
     SessionPosition, SubmissionId, ToolBatchId,
@@ -164,7 +164,7 @@ pub struct AgentActiveRunSummary {
     pub run_id: u64,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub output: Option<engine::ContentRef>,
+    pub output: Option<harness::ContentRef>,
     pub active_turn_id: Option<u64>,
     pub active_tool_batch_id: Option<u64>,
 }
@@ -181,7 +181,7 @@ pub struct AgentCompletedRunSummary {
     pub run_id: u64,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub output: Option<engine::ContentRef>,
+    pub output: Option<harness::ContentRef>,
     pub failure_message_ref: Option<BlobRef>,
 }
 
@@ -217,7 +217,7 @@ impl PendingEmission {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingPromiseCancellation {
     pub promise_id: String,
-    pub source: engine::PromiseSource,
+    pub source: harness::PromiseSource,
     /// Log sequence of the cancellation event, used as the emission
     /// producer sequence for per-key workflow-tool cancellation facts.
     #[serde(default)]
@@ -229,9 +229,9 @@ pub struct PendingPromiseCancellation {
 /// admission.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingSourceResolution {
-    pub promise_id: engine::PromiseId,
-    pub resolution: engine::PromiseResolution,
-    pub producer: engine::EmissionProducer,
+    pub promise_id: harness::PromiseId,
+    pub resolution: harness::PromiseResolution,
+    pub producer: harness::EmissionProducer,
 }
 
 /// Fixed, versioned recovery query every start-on-call plugin workflow must
@@ -245,7 +245,7 @@ pub const WORKFLOW_TOOL_RECOVERY_QUERY: &str = "workflow_tool_recovery";
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkflowToolRecoveryResult {
     #[serde(default)]
-    pub resolutions: BTreeMap<String, engine::PromiseResolution>,
+    pub resolutions: BTreeMap<String, harness::PromiseResolution>,
 }
 
 /// Start arguments every start-on-call plugin workflow receives. The plugin
@@ -257,7 +257,7 @@ pub struct WorkflowToolStartArgs {
     pub universe_id: uuid::Uuid,
     pub holder_workflow_id: String,
     pub execution_id: String,
-    pub invocation: engine::WorkflowToolInvocation,
+    pub invocation: harness::WorkflowToolInvocation,
 }
 
 /// Prefix of every start-on-call recipe fingerprint.
@@ -292,10 +292,10 @@ pub struct WorkflowToolStartActivityRequest {
     pub execution_id: String,
     pub recipe_format: u32,
     pub recipe_revision: u32,
-    pub recipe_ref: engine::BlobRef,
+    pub recipe_ref: harness::BlobRef,
     pub recipe_fingerprint: String,
     pub holder_workflow_id: String,
-    pub invocation: engine::WorkflowToolInvocation,
+    pub invocation: harness::WorkflowToolInvocation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,21 +324,21 @@ pub struct WorkflowToolExecutionCancelRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolReplyValidationRequest {
-    pub reply_schema_ref: engine::BlobRef,
-    pub payload_ref: Option<engine::BlobRef>,
+    pub reply_schema_ref: harness::BlobRef,
+    pub payload_ref: Option<harness::BlobRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum WorkflowToolReplyValidationResult {
     Valid,
-    Invalid { error_ref: engine::BlobRef },
+    Invalid { error_ref: harness::BlobRef },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromiseSourcePoll {
     pub promise_id: String,
-    pub source: engine::PromiseSource,
+    pub source: harness::PromiseSource,
     pub next_check_at_ms: u64,
     pub poll_attempt: u32,
 }
@@ -358,9 +358,9 @@ pub struct JoinedContextPreparationRequest {
 pub struct AwaitMaterializationResult {
     pub result_ref: BlobRef,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub additional_context: Vec<engine::ContextEntryInput>,
+    pub additional_context: Vec<harness::ContextEntryInput>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<engine::Attachment>,
+    pub attachments: Vec<harness::Attachment>,
 }
 
 /// Bounded, ref-only snapshot passed to the storage-backed await materializer.
@@ -413,7 +413,7 @@ pub struct AwaitPromiseResult {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingToolBatchResume {
     pub batch_id: ToolBatchId,
-    pub command: engine::ResumeToolBatchCommand,
+    pub command: harness::ResumeToolBatchCommand,
 }
 
 /// Armed while the active run sits in `cancelling`; the workflow forces the
@@ -464,7 +464,7 @@ pub struct EnvironmentJobWorkflowArgs {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jobs: Vec<environment_protocol::data::jobs::JobSummary>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolutions: BTreeMap<String, engine::PromiseSourceCheckResult>,
+    pub resolutions: BTreeMap<String, harness::PromiseSourceCheckResult>,
     #[serde(default = "default_environment_job_poll_ms")]
     pub poll_ms: u64,
     #[serde(default)]
@@ -476,7 +476,7 @@ pub struct EnvironmentJobWorkflowArgs {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentJobWorkflowToolContext {
     pub execution_id: String,
-    pub invocation_id: engine::WorkflowToolInvocationId,
+    pub invocation_id: harness::WorkflowToolInvocationId,
 }
 
 /// Accepted inputs for the core job workflow. Bare public starts arrive as
@@ -531,8 +531,8 @@ pub struct SubagentChildRef {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum SubagentTerminal {
     Run {
-        status: engine::RunStatus,
-        output: Option<engine::ContentRef>,
+        status: harness::RunStatus,
+        output: Option<harness::ContentRef>,
         failure_message_ref: Option<BlobRef>,
     },
     Deadline,
@@ -568,7 +568,7 @@ pub struct SubagentExecutionSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child: Option<SubagentChildRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolution: Option<engine::PromiseResolution>,
+    pub resolution: Option<harness::PromiseResolution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -589,7 +589,7 @@ pub struct EnvironmentJobWorkflowSnapshot {
     #[serde(default)]
     pub jobs: Vec<environment_protocol::data::jobs::JobSummary>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolutions: BTreeMap<String, engine::PromiseSourceCheckResult>,
+    pub resolutions: BTreeMap<String, harness::PromiseSourceCheckResult>,
     pub terminal: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -607,7 +607,7 @@ pub struct EnvironmentJobPollActivityRequest {
 pub struct EnvironmentJobPollActivityResult {
     pub jobs: Vec<environment_protocol::data::jobs::JobSummary>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resolutions: BTreeMap<String, engine::PromiseSourceCheckResult>,
+    pub resolutions: BTreeMap<String, harness::PromiseSourceCheckResult>,
     pub terminal: bool,
 }
 
@@ -738,22 +738,22 @@ pub struct AppendEventsRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmGenerateActivityRequest {
-    pub request: engine::LlmGenerationRequest,
+    pub request: harness::LlmGenerationRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactActivityRequest {
-    pub request: engine::ContextCompactionRequest,
+    pub request: harness::ContextCompactionRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvokeBatchActivityRequest {
-    pub request: engine::ToolInvocationBatchRequest,
+    pub request: harness::ToolInvocationBatchRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvokeCallActivityRequest {
-    pub request: engine::ToolInvocationCallRequest,
+    pub request: harness::ToolInvocationCallRequest,
 }
 
 /// Outcome of one per-call tool activity.
@@ -762,7 +762,7 @@ pub struct ToolInvokeCallActivityRequest {
 pub enum ToolInvokeCallActivityResult {
     /// The call ran (or failed at tool level) and produced a terminal result.
     Completed {
-        result: engine::ToolInvocationResult,
+        result: harness::ToolInvocationResult,
     },
     /// The call did not execute: the session's active environment is still
     /// provisioning or booting. The workflow waits for readiness with
@@ -770,7 +770,7 @@ pub enum ToolInvokeCallActivityResult {
     EnvironmentNotReady { environment_id: String },
     /// The native MCP call must receive a single-use run-owned decision
     /// before the worker performs any MCP wire I/O.
-    NeedsApproval { subject: engine::ApprovalSubject },
+    NeedsApproval { subject: harness::ApprovalSubject },
 }
 
 /// Wait for the session's active environment to become reachable.
@@ -779,7 +779,7 @@ pub struct AwaitEnvironmentReadyActivityRequest {
     pub session_id: SessionId,
     pub environment_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment_policy: Option<engine::EnvironmentsFeature>,
+    pub environment_policy: Option<harness::EnvironmentsFeature>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -800,32 +800,32 @@ pub enum AwaitEnvironmentReadyActivityResult {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolPreparePromiseControlsActivityRequest {
-    pub request: engine::PromiseControlArgumentRequest,
+    pub request: harness::PromiseControlArgumentRequest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeProjectionRefreshActivityRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environments: Option<engine::EnvironmentsFeature>,
+    pub environments: Option<harness::EnvironmentsFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_environment_id: Option<engine::EnvironmentId>,
+    pub active_environment_id: Option<harness::EnvironmentId>,
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workspace_attachments: Vec<engine::WorkspaceAttachment>,
+    pub workspace_attachments: Vec<harness::WorkspaceAttachment>,
     pub vfs_catalog_enabled: bool,
     pub vfs_prompts_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vfs_prompt_roots: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub active_instruction_inputs: BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>,
+    pub active_instruction_inputs: BTreeMap<harness::ContextEntryKey, harness::ContextEntryInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vfs_skills: Option<engine::VfsSkillsConfig>,
+    pub vfs_skills: Option<harness::VfsSkillsConfig>,
     /// Current keyed catalogs, including source provenance, for publication comparison.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub active_catalogs: BTreeMap<engine::ContextEntryKey, engine::ContextEntryInput>,
+    pub active_catalogs: BTreeMap<harness::ContextEntryKey, harness::ContextEntryInput>,
     /// The admitted sub-agent grant; the catalog entry follows it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subagents: Option<engine::SubagentsFeature>,
+    pub subagents: Option<harness::SubagentsFeature>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
-use engine::{BlobRef, storage::BlobStoreError};
 use futures_util::TryStreamExt as _;
+use harness::{BlobRef, storage::BlobStoreError};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path as ObjectPath};
 use uuid::Uuid;
 
@@ -117,7 +117,7 @@ pub(crate) async fn put_streamed_object(
     key: &str,
     expected: &BlobRef,
     size: u64,
-    source: &mut dyn engine::storage::BlobSource,
+    source: &mut dyn harness::storage::BlobSource,
 ) -> Result<object_store::PutResult, BlobStoreError> {
     use sha2::{Digest, Sha256};
     struct Guard(Option<Box<dyn object_store::MultipartUpload>>);
@@ -223,7 +223,7 @@ mod tests {
         remaining: u64,
     }
     #[async_trait::async_trait]
-    impl engine::storage::BlobSource for Source {
+    impl harness::storage::BlobSource for Source {
         async fn read_chunk(&mut self, max_bytes: usize) -> Result<Vec<u8>, BlobStoreError> {
             assert!(max_bytes <= 256 * 1024);
             let count = self.remaining.min(max_bytes as u64) as usize;
