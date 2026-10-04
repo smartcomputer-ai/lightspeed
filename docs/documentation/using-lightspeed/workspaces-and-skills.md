@@ -20,6 +20,23 @@ Create or select a workspace under **Workspaces**. **New file** accepts a path
 relative to that workspace, and creates directories in the path as needed.
 Open a file, edit its contents, and choose **Save**.
 
+To bring existing files into the workspace, open **Workspace actions** or a
+folder's actions menu and choose **Upload files** or **Upload folder**. You
+can also drop files and folders onto the workspace or a destination folder.
+An upload supports up to 32 MiB of file content and 10,000 file/directory
+entries. This is a one-time copy; later local edits are not synchronized.
+
+Uploads with no conflicts publish directly. If files already exist, review
+the collisions and choose whether to replace them or skip them and upload the
+remaining items. A file's **Upload replacement…** action targets that file.
+Publication checks the workspace revision, so concurrent edits require
+retrying against the latest tree rather than silently overwriting them.
+
+The same menus provide **New folder** and **Rename…** for files and folders.
+Choose **Download** for one file or **Download as ZIP** for a folder or the
+whole workspace. Uploaded binary files can be previewed where supported and
+downloaded without converting them to text.
+
 In a profile's **Virtual File System: Files, Instructions, Skills** section,
 enabling VFS turns on **Prompt loading** and **Skill discovery**. Choose **Add
 workspace** under **Workspace attachments** and configure its path and access.
@@ -45,6 +62,38 @@ file operation. JSON and API configurations can instead attach an immutable
 snapshot with read-only access. For tasks
 that must produce independent artifacts, create separate workspaces or use
 different output paths deliberately.
+
+## Share an immutable file in an answer
+
+After writing a deliverable, ask the agent to obtain a reference with
+`vfs_reference` and include the returned link in its answer. For example:
+
+```text
+Save the finished notes to /workspace/release-notes.md. Use vfs_reference
+for that file, then include the returned file link in your final answer.
+```
+
+The tool records an attachment to that exact file version without reading
+its contents or changing it. Ordinary reads, writes, edits, and transfers do
+not create these file attachments automatically. A returned `file:` handle
+can be used as `[Release notes](file:HANDLE)`; use the actual handle from the
+tool. For an image, `![Preview](file:HANDLE)` displays it inline. Image syntax
+for another file type falls back to a file link.
+
+The link keeps opening the referenced bytes after the workspace file is
+renamed, overwritten, deleted, or detached. The blob viewer can also link to
+the source workspace path; that navigation opens the current path, which may
+have changed since the attachment was created. A file reference to an image
+does not itself load the image into model context.
+
+For an output on an execution environment, first use `vfs_capture`, then
+reference the captured file. The reference tool can also use a returned
+snapshot reference and a path inside it if workspace publication encountered
+a revision conflict. See [VFS transfer](../environments/vfs-transfer.md).
+
+To pass an attachment from a sub-agent to its parent, the child must cite it
+in its successful final answer. Simply creating it is not enough. See
+[Sub-agents and federation](subagents-and-federation.md#return-file-attachments).
 
 ## Add project instructions
 
@@ -257,9 +306,17 @@ catalog during that run. Switching environments removes the old machine's
 catalog; the new machine is scanned at the next eligible refresh.
 
 The machine must be online and support filesystem scanning. Discovery does
-not wake it. If a scan fails or exceeds its limits, the catalog reports that
-source as unavailable with diagnostics. Check the machine's state, root
-paths, and read permissions before trying again.
+not wake it. If a scan fails or is incomplete, Lightspeed can retain the last
+successful catalog for the same environment and discovery scope, marking it
+stale with a warning in the API. The model's menu continues to list discovered
+paths; reading a skill still accesses the machine's current file.
+
+Fallback is discarded when the environment or configured scope changes,
+including roots, working directory, or access. Removing the attachment also
+removes its advertised paths. Without a matching prior observation, the source
+is unavailable. Check the machine's state, roots, and permissions, then retry
+discovery at the next eligible refresh. A stale listing does not prove that
+a file is currently reachable.
 
 ## Update files and handle concurrent edits
 

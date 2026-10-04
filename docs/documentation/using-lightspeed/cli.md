@@ -185,9 +185,11 @@ Choose a discovered route explicitly when starting a new session:
 lightspeed chat --provider my-provider --api-kind openai:completions --model MODEL_ID
 ```
 
-Without those flags, a new session uses deployment defaults. Provider identity
-and API kind are fixed for each session; `/model` can choose another model
-within that route. The TUI footer shows the connection name and universe slug
+Without those flags, a new session uses its profile's model, if supplied, then
+the universe's agent-run default. Configure that default below or select a
+route explicitly. Provider identity and API kind are fixed for each session;
+`/model` can choose another compatible model within that route. Retained native
+state can restrict that choice. The TUI footer shows the connection name and universe slug
 for saved or explicit runtime connections; generated local-development
 connections omit this label. The footer also shows the current session ID,
 shortening UUIDs while preserving readable IDs. If the universe slug is
@@ -240,6 +242,33 @@ These shortcuts use the same revision-checked attachment operation as
 and preserve other attachments and configuration. Repeating `--upload` creates
 another workspace. Resuming with `chat -s SESSION_ID` alone retains the session's
 existing attachments. Every `--session` option also accepts `-s`.
+
+## Configure universe model defaults
+
+Model defaults belong to the selected universe, separately from provider
+credentials and the CLI's saved connection:
+
+```bash
+lightspeed model defaults read
+lightspeed model defaults set agent-run --provider my-provider --api-kind openai:completions --model MODEL_ID
+lightspeed model defaults set speech-to-text --provider openai --api-kind openai:audio-transcriptions --model TRANSCRIPTION_MODEL_ID
+lightspeed model defaults clear speech-to-text
+```
+
+Use a model supported by the configured provider. These commands require the
+`models` method group. `set` and `clear` read the current revision before
+writing; use `--expected-revision REVISION` to require a revision you already
+read. All three commands support `--json`.
+
+An explicit session model takes precedence over a profile model, followed by
+the `agent-run` default. Without any of these, creation fails with
+`model_default_unset`. Changing or clearing defaults leaves existing sessions
+and admitted transcription jobs unchanged. A resumed chat uses its stored
+model. See [Models and credentials](models-and-credentials.md#choose-universe-defaults).
+
+`LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` are retired and prevent
+runtime startup. Remove them from deployment configuration and save the
+intended routes with these commands.
 
 ## Administer keys and add Platform later
 
@@ -345,8 +374,45 @@ Resource operations accept `--json` for scripts. OAuth authorization instruction
 are written to stderr so JSON stdout remains parseable. Profile export always
 emits a reusable JSON document; profile list/read/import/check use human output
 unless `--json` is requested. Configuration `put` replaces a complete document;
-omitted fields return to their defaults. It checks the revision read immediately
+omitted fields return to their defaults, except an omitted model preserves the
+existing session model. It checks the revision read immediately
 before the write, or the explicit `--expected-revision` supplied by the caller.
+
+## Repair rejected context
+
+If a provider repeatedly rejects a particular user message or tool result,
+inspect the active context after the run has stopped:
+
+```bash
+lightspeed session context list SESSION_ID
+lightspeed session context list SESSION_ID --json
+```
+
+The list follows model order and includes entry IDs such as `item_12`, kinds,
+media handles when present, and bounded previews. Use the IDs actually
+returned for that session. Replace an entry with useful text, or redact it
+with a standard removed-by-operator placeholder:
+
+```bash
+lightspeed session context replace SESSION_ID item_12 "The command failed; its oversized diagnostic output was removed."
+lightspeed session context redact SESSION_ID item_15 item_16
+```
+
+Only active user messages and tool results can be replaced. A tool result
+keeps its call identity and position, so the provider still sees the call
+answered. Assistant messages, tool calls, and provider-native state cannot
+be edited this way. Replacement is refused while a run is active.
+
+Inspect each reported result: `replaced`, `unchanged`, `absent`, or `failed`.
+An entry that has already left active context is absent; a batch can report
+different outcomes for different entries. List the context again before
+continuing the conversation. These commands also support `--json`; API
+clients use `session/context/replace`.
+
+Redaction changes what future requests receive. Original events and blobs
+remain in retained history, so this is not a data-erasure operation. For a
+full context window rather than a specific rejected entry, use the
+[compaction controls](sessions-and-runs.md#manage-long-conversations).
 
 ## Provision environments from the CLI
 

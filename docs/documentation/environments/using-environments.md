@@ -95,11 +95,20 @@ support the operation, and its operating-system permissions still apply.
 read instructions from an attached environment independently of whether it
 permits commands.
 
-The session's context includes an **Environment catalog** listing every
-attachment with its display name, status, access, working directory, and
-which one is active, so the agent knows what it may use before calling a
-tool. After a switch, the old catalog is removed until the next idle refresh.
-Use `environment_list` or `environment_read` for current status during a run.
+The session's **Environment catalog** lists attached machines with their
+references, display names, default markers, and access grants. Selection and
+lifecycle changes do not replace this directory. Use `environment_read` for
+current selection, status, and working directory; it remains available when
+environment selection tools are disabled.
+
+Long environment IDs appear to the model as short `env:` references in
+catalogs, control results, and job handles. These resolve only against the
+session's authorized attachments. Full IDs remain accepted and are still the
+identities stored in profiles and public API records. An ambiguous short
+reference is rejected; use the full ID in that case. Short references do not
+grant additional access. Skill and prompt discovery remains tied to the
+selected machine, as described in
+[Workspaces and skills](../using-lightspeed/workspaces-and-skills.md#discover-skills-installed-on-a-machine).
 
 ## Keep files in the right domain
 

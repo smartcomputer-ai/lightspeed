@@ -120,11 +120,16 @@ it. Deployment-level `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are fallback
 credentials when the corresponding universe record is absent. A disabled or
 broken stored record blocks fallback.
 
-`LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` change the runtime's
-default provider ID and model name. Its default API kind remains
-`openai:responses`; changing a provider ID alone does not switch wire formats.
-For Anthropic or another route, select provider, API kind, and model explicitly
-in a profile. See [Models and credentials](../using-lightspeed/models-and-credentials.md).
+Choose each universe's agent and speech-to-text defaults under **Models →
+Defaults**, or through `lightspeed model defaults`. Each selection names a
+provider, API kind, and model. New sessions use an explicit session model,
+then the profile model, then the universe default; existing sessions keep
+their resolved model. There is no deployment-wide model fallback.
+
+Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` from older
+configuration: the runtime rejects them at startup. See
+[Models and credentials](../using-lightspeed/models-and-credentials.md#choose-universe-defaults)
+for setup and precedence.
 
 ## Choose the blob backend
 

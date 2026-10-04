@@ -146,13 +146,25 @@ Inbound media has explicit limits:
 | Supported audio | 25 MiB |
 
 At most eight attachments are admitted per message. Video processing is not
-supported. The selected model still needs to support the input type; channel
-admission does not add media capabilities to a model that lacks them.
+supported. The selected conversational model still needs to support admitted
+images and PDFs; channel admission does not add those capabilities to a model
+that lacks them.
 
-The connector prepares supported media into content-addressed storage for
-agent input. A bot does not need an execution environment just to converse
-or receive that input. Add a machine only when its task needs processes or
-the machine's filesystem.
+The connector prepares supported media into content-addressed storage. For
+voice messages, the conversation workflow transcribes authorized audio using
+the universe's **Speech-to-text** default before delivering the prepared
+text to the bot. Configure that route under **Models → Defaults**; the bot's
+conversational model does not need audio support. An unset or unusable speech
+route prevents voice preparation and is reported as a delivery failure.
+
+Transcription retains the original audio as provenance. Matching retries
+reuse the admitted transcription, and spoken text does not become a
+channel-management command such as `/activation`. Connector processes handle
+transport; they do not select models or obtain model credentials.
+
+A bot does not need an execution environment just to converse or receive
+prepared input. Add a machine only when its task needs processes or the
+machine's filesystem.
 
 ## Manage connection and conversation state
 

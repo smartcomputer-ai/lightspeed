@@ -124,6 +124,42 @@ The run's final message and a file it wrote are different outputs. Reuse the
 session for a follow-up conversation, or create another session ID for
 independent work.
 
+## Transcribe audio before submitting session input
+
+Run start, context append, and steering reject raw audio media. Transcribe
+audio separately, then submit ordinary `text` or `textRef` input:
+
+1. Upload the audio to the universe's content store with `blobs/put`.
+2. Call `transcriptions/start` with a stable `idempotencyKey` and an `audio`
+   object containing `blobRef`, `mime`, and `name`. Supply a complete `model`
+   route, or omit it to resolve the universe's **Speech-to-text** default.
+   The API kind must be `openai:audio-transcriptions`.
+3. Save the returned `transcriptionId` and poll `transcriptions/read` until
+   `status` is terminal. `succeeded` supplies plain UTF-8 `text` and
+   `transcriptRef`. Handle `failed`, `cancelled`, and `expired` explicitly;
+   `failure` provides details when present.
+4. Submit the prepared text through the ordinary session API. For unchanged
+   transcripts, an optional `provenanceRef` can point to the source audio blob
+   in the same universe. Admission checks that the source exists and retains
+   it with the session content.
+
+Transcription creates no session or run. A direct key needs `blobs/put` for
+upload, `transcriptions` for the job, and `session` for subsequent admission.
+Use `transcriptions/cancel` to request cancellation; abandoning an HTTP wait
+does not cancel the job.
+
+Matching retries with the same requester, idempotency key, audio, and options
+rejoin the original job even if the universe default has changed. Reusing the
+key with changed input conflicts. This identity lasts for the Temporal
+namespace's workflow-history retention period. The resolved model is fixed
+at admission. Asserted actors can read and cancel only their own drafts;
+direct universe keys retain their method-group authority.
+
+Unsubmitted audio and transcripts use ordinary CAS collection grace and can
+expire. Persist or admit the result when it is needed beyond that period.
+When users edit a transcript, send their reviewed text as an ordinary message;
+do not present the edited words as the unchanged transcription.
+
 ## Keep retry identity with the business operation
 
 Persist the session ID, submission ID, request input/configuration, and returned

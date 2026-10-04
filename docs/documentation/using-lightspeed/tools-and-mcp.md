@@ -173,6 +173,11 @@ authorize tool-call egress. See the
 
 ## See images and documents from tools
 
+For a downloadable file version, ask the agent to call `vfs_reference` and
+cite the returned `file:` link. This explicitly publishes an attachment;
+writing or reading a file alone does not. See
+[Share an immutable file in an answer](workspaces-and-skills.md#share-an-immutable-file-in-an-answer).
+
 Reading a PNG, JPEG, GIF, WebP, or PDF can return the file to the model as
 media. MCP servers can also supply image blocks and embedded PDFs. The
 transcript shows those items as thumbnails or document links, and the agent
@@ -181,12 +186,23 @@ their results.
 
 Lightspeed accepts up to eight media items per tool result, each at most
 10 MiB. Unsupported types and oversized items produce an explanatory note.
-The bytes are passed through without resizing or conversion, so the selected
-model must support the format. A text-only model receives a note instead;
-provider-specific limits or refusals can still reject a model request. Test a
-representative document before choosing a model for a document-heavy task.
-Claude Opus 5 has refused some tool-produced PDF follow-ups in Lightspeed's
-live tests; verify that combination with the documents your task will use.
+The original bytes remain stored for previews and downloads. Before model
+requests, Lightspeed normalizes oversized images to at most 2,000 pixels per
+side and a 3.75 MiB image-byte budget. It can re-encode them as JPEG; images
+already within the limits pass through unchanged. A resized image's model
+announcement includes its original and displayed dimensions. PDFs are not
+resized or converted.
+
+Across a request, media is limited to 100 items and 24 MiB of encoded payload.
+When needed, older media is replaced with omission notes that retain its
+`media:` handle. Those notes change that request, not stored content or the
+retained transcript. The model may therefore remember an attachment's handle
+without receiving its pixels or document bytes on every turn.
+
+The selected model must still support the format. A text-only model receives
+a note instead; provider-specific limits or refusals can still reject a
+request. Test representative documents with the intended model. To withdraw
+a problematic active entry, use [context repair](cli.md#repair-rejected-context).
 
 ## Require approval for tool calls
 

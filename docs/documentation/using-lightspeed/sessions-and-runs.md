@@ -37,6 +37,7 @@ use the earlier conversation and its linked files. Starting a new session
 from the same profile gives you a fresh conversation; workspace attachments may
 still point to the same shared files.
 
+
 ## Share a session with the universe
 
 New standalone sessions are private: through the Platform, only their creator
@@ -129,6 +130,57 @@ calls while leaving the retained transcript available to inspect. It does
 not mean that the agent will reproduce every earlier detail from memory; keep
 important source material in files it can read again.
 
+## Manage long conversations
+
+New sessions use automatic standalone compaction by default. It reduces older
+conversation at safe boundaries between model turns, including during a run.
+When input capacity is known, the default trigger is 80% of that capacity;
+otherwise Lightspeed can recover when the provider reports a full context
+window. Recovery resumes the same run with completed tool results retained.
+It can still fail when the protected input is too large or its bounded
+attempts cannot make enough room.
+
+In the profile or idle session's model setup, open **Customize run controls →
+Context compaction**. **Engine default** and **Engine managed standalone**
+enable standalone compaction; **Provider triggered** uses supported OpenAI
+Responses or Anthropic Messages generation compaction. **Disabled** turns off
+automatic compaction and recovery. **Input limit tokens** overrides usable
+input capacity; leave it blank to use reported capacity or error-driven recovery.
+Session settings show the effective mode, threshold, queued or pending state,
+and recovery attempts.
+
+Older sessions whose saved setup omitted compaction keep their historical
+disabled behavior until configuration is replaced. Applying setup with
+**Engine default** adopts the current default. Explicit Disabled remains
+disabled. An API caller can request one `session/context/compact` operation
+in any mode; active work queues it until a safe boundary.
+
+Compaction can summarize away details, so keep important source material in
+workspaces. It preserves retained history and original blobs. The
+[context guide](../how-it-works/context-and-storage.md#compact-the-active-conversation)
+explains provider behavior and protected input. For a specific rejected entry,
+use [context repair](cli.md#repair-rejected-context) instead.
+
+## Dictate a message
+
+With a [speech-to-text default](models-and-credentials.md#configure-speech-to-text)
+configured, choose the composer's microphone (**Dictate message**) and allow
+microphone access. Choose **Stop recording** to transcribe and insert the text
+into your draft. Review or edit it, then send normally. Recording stops
+automatically after ten minutes; dictation audio is limited to 25 MiB.
+
+You can keep editing while transcription runs. Recording or stopping alone
+does not start a run. If you choose **Send** or press **Enter** while recording
+or transcribing, the composer waits for the transcript and then submits the
+message. During an active run, that action queues the next run; choosing
+steering instead sends it to the active run when ready.
+
+**Cancel dictation** or **Esc** discards the recording or pending transcription
+and clears any send waiting for it. Failures preserve your existing draft;
+use **Retry transcription** when available. The microphone control explains
+unavailable recording or model configuration. Browsers require microphone
+permission and a secure origin, such as HTTPS or localhost.
+
 ## Find and change a session
 
 Open **Filter sessions** in the session list. Under **Include**, select
@@ -146,9 +198,10 @@ A session keeps its configured provider identity and API kind for its entire
 lifetime, including before its first run. You can switch model names within
 that route, such as between OpenAI models, and switch back later. Changing
 provider or API kind requires a new session because conversation context may
-contain provider-native opaque data. An aggregator such as OpenRouter counts
-as one configured provider; model changes within it are allowed without
-checking the underlying model vendor.
+contain provider-native opaque data. Retained reasoning or native compaction
+state can also prevent an incompatible model change within that route. An
+aggregator such as OpenRouter counts as one configured provider; the underlying
+vendor name alone does not determine compatibility.
 
 Existing ordinary sessions keep the setup they received at creation. Editing
 their source profile does not update them automatically. See
