@@ -120,7 +120,7 @@ session. A saved key needs access to the model you will select.
 
 1. Open **Sessions** and choose the plus button labeled **New session**.
 2. Enter `First conversation` as the **Name** and leave **Profile** at
-   **No profile (engine defaults)**.
+   **No profile (universe default)**.
 3. Choose **Customize setup…**. Under **Model configuration → Model**, select
    a conversational model from the provider you just connected.
 4. Choose **Create session**.
@@ -130,9 +130,11 @@ session. A saved key needs access to the model you will select.
 *Demo mode: choose **Customize setup…** to select a model before creating
 the conversation.*
 
-Select the model explicitly. Adding a credential does not change the
-deployment's default model, so leaving **Deployment default** selected can
-send the request to a different provider.
+Select the model explicitly for this walkthrough. Alternatively, an Operator
+or Admin can choose **Agent runs** under **Models → Defaults** and leave
+**Universe default** selected in session setup. Adding a credential alone
+does not select that default. If neither the session nor its profile supplies
+a model and the universe has no default, session creation fails.
 
 Send a short message:
 

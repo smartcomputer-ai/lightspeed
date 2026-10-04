@@ -31,6 +31,20 @@ rewriting entries happens through events. An entry removed from the active
 set still has the event that introduced it in session history. Replaying that
 history reconstructs both the earlier state and the later removal.
 
+`session/context/replace` lets an authorized caller repair an active user message or
+tool result by entry ID. Replacement retains its ID, kind, and position, and
+a tool result remains paired with its call. The operation is refused during
+an active run and reports an outcome for each entry. Redaction through the
+CLI uses this same operation with a placeholder; original events and blobs
+remain retained. See [Repair rejected context](../using-lightspeed/cli.md#repair-rejected-context).
+
+Provider adapters can also transform media for a particular request without
+changing active entries. Image normalization sends a bounded copy; request
+media budgeting replaces older items with handle-bearing omission notes.
+Stored references, previews, and downloads still identify the originals.
+[Tool media](../using-lightspeed/tools-and-mcp.md#see-images-and-documents-from-tools)
+describes those limits.
+
 ## Keep provider-native material at the provider boundary
 
 Provider responses contain more than visible text. They can include tool calls,
@@ -115,10 +129,26 @@ to the renderer cannot change an earlier request. Runtime catalogs are managed
 by the session workflow; clients can publish their own catalogs under separate
 keys through the [context API](../../../crates/api/contract/api-reference.md).
 
-A changed keyed catalog is appended as the current version at the context
-tail. Earlier versions remain in their original positions, with their bytes
-unchanged. The new entry identifies which catalog it supersedes. This lets a
-skill or sub-agent catalog change while preserving an earlier cached prefix.
+When a keyed catalog's title or rendered content changes, the new version is
+appended at the context tail. Earlier versions remain in their original
+positions, with their bytes unchanged. The new entry identifies which catalog
+it supersedes. A metadata-only refresh instead records an in-place replacement
+that preserves the entry ID, position, text, and supersession link. Replay
+reconstructs either path, so fresh discovery diagnostics need not append an
+identical message or disrupt a cached prefix.
+
+Catalog text describes available resources rather than constantly changing
+status. The environment directory includes references, display names, default
+markers, and access; selection, lifecycle state, and working directories come
+from `environment_read`. Skills list names, descriptions, and `SKILL.md` paths,
+sorted by visible path. VFS mounts describe workspace or snapshot storage and
+access without printing internal IDs or snapshot hashes. Revisions and
+discovery details remain structured provenance.
+
+Failed environment skill discovery can retain a matching prior catalog as
+stale, with API warnings, while leaving its rendered paths unchanged. Matching
+requires the same environment and configured discovery scope; changed roots,
+working directory, access, or a revoked attachment invalidate that fallback.
 
 Active context retains at most five superseded versions per catalog;
 compaction clears them. Instructions and other ordinary keyed entries replace
@@ -144,37 +174,71 @@ that can support later turns. It is a lossy context transformation. The original
 session events and output descriptors remain in history, so this is separate
 from deleting stored data.
 
-The core treats standalone compaction as explicit work. It records the request
-and selected context revision, waits for an adapter result, then commits the
-replacement. If the operation fails, it clears the pending state and retains
-the original entries. A stale result cannot rewrite a newer context revision.
-The core rejects new runs and context edits while standalone compaction is
-pending; the hosted workflow holds their admissions until the operation finishes.
+Automatic policy and an individual compaction operation are separate:
 
-Standalone compaction can be requested manually or through an optional
-threshold. It starts only with no active or queued run. The threshold sums
-token estimates for compactable entries. It needs a valid estimate to fire;
-provider usage totals are not a substitute for the current context size.
-
-The adapter mechanism depends on the API kind:
-
-| Route and mode | What performs the compaction |
+| Setting | Automatic behavior |
 | --- | --- |
-| OpenAI Responses, `provider_triggered` | The ordinary generation request includes `context_management`. Returned native compaction material enters context, and older eligible conversation is pruned. |
-| OpenAI Responses, `provider_standalone` | A separate call to the Responses compact endpoint produces native compaction output. |
-| Anthropic Messages, `provider_standalone` | A summarization request with Lightspeed-authored instructions produces a plain-text replacement summary. |
-| Chat Completions, `provider_standalone` | A summarization request produces a plain-text replacement summary. |
+| **Engine default** (omitted policy) | New sessions and configuration replacements resolve to harness-managed standalone compaction. |
+| `providerStandalone` | The harness schedules standalone work at safe boundaries between generations, including during an active run. |
+| `providerTriggered` | Supported OpenAI Responses and Anthropic Messages routes compact inside generation. Chat Completions rejects this mode. |
+| `disabled` | No automatic compaction or context-limit recovery. Explicit API compaction remains available. |
 
-Only OpenAI Responses supports `provider_triggered` compaction. The summary
-adapters use `targetTokens` as guidance and an output budget; the Responses
-compact endpoint does not receive that setting.
+Historical events with an omitted policy retain their original disabled
+behavior on replay. Replacing that session's configuration with the policy
+omitted adopts the new default; an explicit Disabled setting stays disabled.
 
-Instructions and current catalogs survive compaction. Skill reads and inserted
-skill text follow ordinary conversation retention. Eligible conversation and
-superseded catalogs can be removed;
-nonterminal tool work and unconsumed active input are protected. These rules
-retain the material needed to continue valid execution while reducing the
-conversation carried forward.
+For standalone policy, an explicit `compactThresholdTokens` controls the
+proactive trigger. Otherwise it uses 80% of known usable input capacity.
+`context.inputLimitTokens` can supply an explicit capacity; without one, the
+runtime uses reported capacity where available. Unknown capacity leaves
+error-driven recovery available without inventing a numeric limit. Request
+occupancy and the effective model's capacity are recorded facts for the
+deterministic harness; cumulative billed tokens are not window occupancy.
+
+When an enabled session reaches a typed provider context-length failure, the
+harness can compact and resume the same run using already-recorded tool
+results. Recovery is bounded to two attempts per consecutive overflow
+sequence. Authentication failures and unrelated request rejections do not
+trigger this path. If protected input cannot fit, or recovery cannot produce
+a usable replacement, the run fails with the source context retained.
+
+`session/context/compact` requests one standalone operation in any mode,
+including Disabled, without changing automatic policy. Active work queues it
+until the current generation and tool work reach a safe boundary. The harness
+records the covered prefix and context revision, then commits a validated
+replacement atomically. Failed or stale results cannot erase newer context.
+
+The standalone adapter depends on the route and its supported capabilities:
+
+| Route | Standalone operation |
+| --- | --- |
+| OpenAI Responses | The Responses compact endpoint; retain the complete returned native window, including its encrypted state. |
+| Anthropic Messages | Native on-demand compaction on supported models; retain the signed block unchanged. Older models use a Lightspeed-authored summary generation. |
+| Chat Completions | A Lightspeed-authored summary generation. |
+
+An explicitly unavailable native operation can fall back to summarization on
+the same provider, endpoint, and model. Ordinary invalid requests do not
+authorize that fallback. Summary adapters use `targetTokens` as guidance and
+an output budget; native operations do not guarantee that output size.
+
+A retained Anthropic on-demand signed block requires subsequent compactions
+to use standalone execution, even if the requested policy was provider
+triggered. The effective strategy reflects that transition. Retained signed,
+encrypted, or reasoning state can also restrict otherwise permitted model
+changes within a session's pinned provider route.
+
+Instructions and current catalogs survive compaction. The harness protects
+unconsumed input and unanswered tool exchanges, and normally keeps the two
+newest settled exchanges with their preceding user input while compacting an
+older prefix. Manual compaction without an older prefix and repeated overflow
+recovery can cover more settled history. Skill reads and superseded catalogs
+follow conversation retention. The adapter processes bounded chunks, but only
+the complete validated replacement changes active context.
+
+Session settings and the API's active-context projection report effective
+mode, threshold source, queued or pending work, and recovery attempts. See
+[Sessions and runs](../using-lightspeed/sessions-and-runs.md#manage-long-conversations)
+for the user controls.
 
 ## Keep large bytes outside Temporal history
 
@@ -283,6 +347,19 @@ Images and PDFs use content descriptors too, whether they arrive as user
 input, a tool result, or a sub-agent result. The model sees a stable `media:`
 handle it can use to refer to the attachment; clients resolve that handle
 against the descriptors exposed by the API.
+
+Explicit VFS references use a separate `file:` handle and typed file
+descriptor. `vfs_reference` resolves an immutable file version; reads and
+writes do not implicitly publish file attachments. The descriptor travels
+with a sub-agent result only when its successful final answer cites that
+known attachment. The receiving session records the descriptor and retains
+the bytes, without needing the child's workspace or session.
+
+Clients resolve these handles against recorded attachments, including those
+from historical completion pages. Unknown or ambiguous handles are
+unavailable. A source workspace and path provide optional navigation; they
+do not determine which bytes the attachment opens. Short handles grant no
+access, and a hash in prose alone is not a retention root.
 
 Together, these views let the model work with a manageable context while
 people inspect retained history and the runtime reconstructs execution state.

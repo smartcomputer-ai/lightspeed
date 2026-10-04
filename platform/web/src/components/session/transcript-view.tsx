@@ -53,14 +53,15 @@ export function TranscriptEntryView({
       return <RunOutcomeLine summary={entry} showStatistics={showRunStatistics} />;
     case "marker":
       return entry.tone === "error" ? (
-        <Marker className="text-destructive">
+        <Marker className="text-destructive" role="alert">
           <MarkerIcon>
             <TriangleAlert />
           </MarkerIcon>
           <MarkerContent>{entry.text}</MarkerContent>
         </Marker>
       ) : (
-        <Marker variant="separator">
+        <Marker variant="separator" role={entry.pending ? "status" : undefined}>
+          {entry.pending && <MarkerIcon><Loader2 className="animate-spin" /></MarkerIcon>}
           <MarkerContent>{entry.text}</MarkerContent>
         </Marker>
       );

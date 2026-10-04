@@ -49,6 +49,7 @@ If the runtime exits before serving, check the error against these dependencies:
 | Object-store configuration | A nonempty bucket when any `LIGHTSPEED_OBJECT_STORE_*` variable is set, plus the intended endpoint and credentials. |
 | Role or environment routing | Valid roles and the internal environment gateway URL/token on every process without that role. |
 | Secret configuration | A base64 master key decoding to 32 bytes, matching the stored encrypted state. |
+| Retired model variables | Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL`; configure each universe's model defaults through Models or `lightspeed model defaults`. |
 
 The Platform needs its own database and authentication settings. Its migrations
 run before HTTP serving. Do not point it at the runtime database or reset
@@ -129,6 +130,22 @@ deployment fallback key. Removing the record permits fallback again, so do
 not confuse removal with disabling access. A coding-agent subscription login
 also does not authenticate Lightspeed's own session inference. Follow
 [Models and credentials](../using-lightspeed/models-and-credentials.md).
+
+If session creation reports `model_default_unset`, select an explicit session
+or profile model, or configure **Models → Defaults → Agent runs**. A provider
+key alone does not choose a model. Voice preparation and dictation need the
+separate **Speech-to-text** default.
+
+For context-length errors, inspect the effective compaction policy and recovery
+attempts in session settings. Enabled sessions can compact and retry within
+the same run; Disabled and historical omitted policies do not recover
+automatically. A protected input larger than the usable window can still fail.
+See [Manage long conversations](../using-lightspeed/sessions-and-runs.md#manage-long-conversations).
+
+If a specific entry keeps making the provider reject requests, stop active
+work and use [CLI context repair](../using-lightspeed/cli.md#repair-rejected-context)
+to inspect and replace a user message or tool result. This preserves the
+event history; do not rewrite the stored log to repair active context.
 
 If discovery succeeds but an agent has no expected tool, inspect its profile's
 capability grants and the MCP server/tool selection. Registering a server

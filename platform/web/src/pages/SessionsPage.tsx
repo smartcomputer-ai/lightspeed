@@ -1,3 +1,4 @@
+import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
 import { ActivityDot, activityLabel } from "@/components/activity-dot";
@@ -1323,6 +1324,7 @@ export function SessionDetail({
         `/api/v1/universes/${universeId}/sessions/${sessionId}`,
       ),
   });
+  const compaction = useSessionCompaction(universeId, sessionId, session.data);
   // Deleting a session, like sharing it, is for its creator or an admin.
   const owner = useSessionOwner(universeId, session.data?.access);
   const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
@@ -1926,9 +1928,10 @@ export function SessionDetail({
               variant="more"
               sessionId={sessionId}
               metadata={session.data?.metadata}
-              pending={closeSession.isPending || deleteSession.isPending}
               open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotFaceIcon /> } : undefined}
               onSettings={canControl ? () => setSettingsOpen(true) : undefined}
+              onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
+              compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
               lifecycle={!managed && ((canStop && !closed) || (canDelete && closed)) ? (
                 closed ? (
@@ -2118,6 +2121,14 @@ export function SessionDetail({
                   />
                 </MessageScrollerItem>
               ))}
+              {compaction.error && (
+                <MessageScrollerItem messageId="compaction-request-error">
+                  <TranscriptEntryView entry={{
+                    kind: "marker", key: "compaction-request-error",
+                    text: `Compaction failed: ${compaction.error}`, tone: "error",
+                  }} />
+                </MessageScrollerItem>
+              )}
               {approvalRun && (
                 <MessageScrollerItem messageId={`approvals-${approvalRun.id}`}>
                   <ApprovalCards

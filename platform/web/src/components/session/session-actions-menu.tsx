@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ChevronDown, Ellipsis, LoaderCircle, Share2, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Minimize2, Ellipsis, LoaderCircle, Share2, SlidersHorizontal } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,31 +16,40 @@ import { SessionMenuPreferences } from "@/components/session/session-menu-prefer
 /**
  * One menu for a session, on the Sessions page (behind ⋯) and on a bot's
  * conversation tab (behind its chevron): what can be done to the session
- * (settings, sharing, where else it opens, its lifecycle), then view
- * preferences, then its id and metadata. Pages pass their lifecycle items
+ * (settings, sharing, where else it opens), then view preferences and session
+ * details. Within the action group, bot compaction follows reset and session
+ * compaction precedes close/delete. Pages pass lifecycle items
  * (close and delete, or reset) and own every confirmation.
  */
 export function SessionActionsMenu({
   sessionId,
   metadata,
   variant,
-  pending = false,
   open,
   onSettings,
   onShare,
+  onCompact,
+  compactionLabel,
   lifecycle,
 }: {
   sessionId: string;
   metadata: Record<string, string> | undefined;
   variant: "more" | "tab";
-  pending?: boolean;
   open?: { label: string; href: string; icon: ReactNode };
   onSettings?: () => void;
   /** Offered while the session is private and the viewer may share it. */
   onShare?: () => void;
+  onCompact?: () => void;
+  compactionLabel?: string | null;
   lifecycle?: ReactNode;
 }) {
   const navigate = useNavigate();
+  const compactItem = onCompact && (
+    <DropdownMenuItem onClick={onCompact} disabled={Boolean(compactionLabel)}>
+      {compactionLabel ? <LoaderCircle className="animate-spin" /> : <Minimize2 />}
+      {compactionLabel ?? "Compact context"}
+    </DropdownMenuItem>
+  );
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -63,9 +72,7 @@ export function SessionActionsMenu({
           )
         }
       >
-        {pending ? (
-          <LoaderCircle className="size-3.5 animate-spin" />
-        ) : variant === "more" ? (
+        {variant === "more" ? (
           <Ellipsis />
         ) : (
           <ChevronDown className="size-3.5" />
@@ -75,7 +82,7 @@ export function SessionActionsMenu({
         align={variant === "more" ? "end" : "start"}
         className="max-h-[min(28rem,calc(100vh-1rem))] w-80 max-w-[calc(100vw-1rem)]"
       >
-        {(onSettings || onShare || open || lifecycle) && (
+        {(onSettings || onShare || open || lifecycle || onCompact) && (
           <>
             <DropdownMenuGroup>
               {onSettings && (
@@ -93,7 +100,9 @@ export function SessionActionsMenu({
                   {open.icon} {open.label}
                 </DropdownMenuItem>
               )}
-              {lifecycle}
+              {variant === "tab" && lifecycle}
+              {compactItem}
+              {variant === "more" && lifecycle}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
           </>

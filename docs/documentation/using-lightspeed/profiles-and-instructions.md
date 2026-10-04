@@ -136,15 +136,17 @@ lightspeed session profile apply "<session-id>" --profile release-reviewer
 ```
 
 The API equivalent is `session/profiles/apply`. The session must be open with
-no active or queued runs. Its API kind is fixed for the lifetime of the
-session, so the applied profile must use that same kind. Create a new session
-when changing API kinds.
+no active or queued runs. Its provider identity and API kind are fixed for the
+lifetime of the session. An explicit profile model must use that same route
+and be compatible with retained native state. An omitted model preserves the
+session's current model; it does not resolve the universe default again.
+Create a new session for an incompatible route or model.
 
 Applying a profile is not a deep merge of every field:
 
 | Profile content | Effect on an existing session |
 | --- | --- |
-| `config` present | Replaces the session configuration as a whole. Include the capabilities and attachments you intend to retain. |
+| `config` present | Replaces the session configuration, preserving the current model if the new model is omitted. Include the capabilities and attachments you intend to retain. |
 | `config` absent | Leaves the current configuration in place. |
 | `instructions` present or absent | Replaces or clears the profile instruction layer. Sourced prompt files follow the resulting VFS setup. |
 | The active environment is no longer attached | Clears the active environment. |

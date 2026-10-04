@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BotView } from "@/api";
 import { BotChat } from "@/components/bot/chat";
 import { sessionDraftKey } from "@/lib/sessions/draft";
-import { emptyTranscript } from "@/lib/sessions/transcript";
+import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
 import { SessionDetail } from "./SessionsPage";
 
 const mocks = vi.hoisted(() => ({
@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   tail: vi.fn(),
   scrollable: { start: true, end: true },
   scrollToEnd: vi.fn(),
+  compactions: [] as { status: string; error: Error | null }[],
 }));
 
 vi.mock("@/api", async (original) => ({
@@ -34,6 +35,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: undefined, refetch: vi.fn() }),
   useInfiniteQuery: () => ({ data: undefined, refetch: vi.fn() }),
   useMutation: () => ({ isPending: false }),
+  useMutationState: () => mocks.compactions,
 }));
 vi.mock("@/components/session/session-settings-sheet", () => ({ SessionSettingsDialog: () => null }));
 vi.mock("@/components/ui/message-scroller", () => {
@@ -43,7 +45,7 @@ vi.mock("@/components/ui/message-scroller", () => {
       <div data-auto-scroll={autoScroll}>{children}</div>
     ),
     MessageScroller: Container,
-    MessageScrollerContent: Container,
+    MessageScrollerContent: ({ children }: { children?: ReactNode }) => <div data-testid="transcript">{children}</div>,
     MessageScrollerViewport: Container,
     MessageScrollerItem: Container,
     MessageScrollerButton: () => null,
@@ -66,6 +68,7 @@ beforeEach(() => {
   window.localStorage.clear();
   mocks.permissions = new Set(["read", "control_session", "stop_session", "delete_session", "invoke_bot", "manage_bot"]);
   mocks.permissionLoading = false;
+  mocks.compactions = [];
   transcript = emptyTranscript();
   mocks.tail.mockReturnValue({
     transcript, phase: "live", error: null, reconcileRuns: vi.fn(),
@@ -158,6 +161,37 @@ describe.each<Pathway>(["session", "bot-main", "bot-other"])("%s composer", (pat
     expect(input().value).toBe("other session draft");
     await show(pathway, "another-universe", "session");
     expect(input().value).toBe("other universe draft");
+  });
+
+  it("shows compaction request failures inside the transcript", async () => {
+    mocks.compactions = [{ status: "error", error: new Error("No compactable context") }];
+    await show(pathway);
+    const error = [...container.querySelectorAll('[role="alert"]')].find((entry) => entry.textContent?.includes("Compaction failed"))!;
+    expect(error.textContent).toContain("No compactable context");
+    expect(error.closest('[data-testid="transcript"]')).not.toBeNull();
+  });
+
+  it("shows compaction progress while allowing messages and steering to be submitted", async () => {
+    mocks.compactions = [{ status: "pending", error: null }];
+    transcript.activeRun = { runId: "active-run", label: "running", cancelling: false };
+    Object.assign(transcript, applyEvents(transcript, [{
+      cursor: { seq: 1 }, observedAtMs: 1, joins: { runId: "active-run" }, sessionId: "session",
+      kind: { type: "contextCompactionRequested", baseRevision: 0, revision: 1, trigger: "manual" },
+    }]));
+    mocks.api.mockResolvedValue({ run: { id: "queued-run", status: "queued" } });
+    await show(pathway);
+    const progress = container.querySelector('[data-slot="marker"][role="status"]')!;
+    expect(progress.textContent).toBe("compacting context");
+    expect(progress.closest('[data-testid="transcript"]')).not.toBeNull();
+    expect(progress.querySelector(".animate-spin")).not.toBeNull();
+    expect(container.textContent).not.toContain("Requesting compaction");
+    expect(input().disabled).toBe(false);
+    await type("after compaction");
+    await enter();
+    expect(mocks.api).toHaveBeenCalledWith("POST", expect.stringContaining("/messages"), expect.objectContaining({ text: "after compaction" }));
+    await type("adjust the current run");
+    await enter({ ctrlKey: true });
+    expect(mocks.api).toHaveBeenCalledWith("POST", expect.stringContaining("/runs/active-run/steer"), { text: "adjust the current run" });
   });
 
   it.each(["message", "queue", "steer"] as const)("clears a submitted %s and resumes following only after acceptance", async (mode) => {

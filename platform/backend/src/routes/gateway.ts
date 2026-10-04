@@ -498,6 +498,17 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  app.post("/:id/sessions/:sessionId/context/compact", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("session/context/compact", {
+        sessionId: c.req.param("sessionId"),
+      });
+      return c.json(response.result);
+    });
+  });
+
   /// Closing is a lifecycle transition that retains session history.
   /// `force=true` also cancels active/queued work.
   app.post("/:id/sessions/:sessionId/close", async (c) => {

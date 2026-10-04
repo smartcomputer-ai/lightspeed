@@ -865,7 +865,7 @@ describe("standalone compaction", () => {
       event(3, { type: "contextCompactionRequested", trigger: "manualQueued" }),
     ]);
     expect(window.state.compaction).toMatchObject({ markerKey: "evt-5", phase: "pending", runId: "run-test" });
-    expect(window.state.entries).toEqual([{ kind: "marker", key: "evt-5", text: "compacting context", tone: "muted" }]);
+    expect(window.state.entries).toEqual([{ kind: "marker", key: "evt-5", text: "compacting context", tone: "muted", pending: true }]);
     // Older lifecycle events never resurrect the live controls.
     expect(window.state.activeRun).toBeNull();
     window.append([
@@ -889,7 +889,7 @@ describe("standalone compaction", () => {
     state = applyEvents(state, [event(4, { type: "contextCompactionRequested", trigger: "manual" })]);
     expect(state.activeRun?.label).toBe("compacting context");
     expect(state.entries.filter((entry) => entry.kind === "marker")).toEqual([
-      { kind: "marker", key: "evt-3", text: "compacting context", tone: "muted" },
+      { kind: "marker", key: "evt-3", text: "compacting context", tone: "muted", pending: true },
     ]);
     state = applyEvents(state, [event(5, { type: "contextCompactionFinished", status: "succeeded" })]);
     expect(state.activeRun?.label).toBe("working");
@@ -904,7 +904,7 @@ describe("standalone compaction", () => {
   it("shows idle progress and failure without inventing a run", () => {
     let state = applyEvents(emptyTranscript(), [event(1, { type: "contextCompactionRequested", trigger: "manual" })]);
     expect(state.activeRun).toBeNull();
-    expect(state.entries).toEqual([{ kind: "marker", key: "evt-1", text: "compacting context", tone: "muted" }]);
+    expect(state.entries).toEqual([{ kind: "marker", key: "evt-1", text: "compacting context", tone: "muted", pending: true }]);
     state = applyEvents(state, [event(2, { type: "contextCompactionFinished", status: "failed", failureRef: "sha256:failure" })]);
     expect(state.entries).toEqual([{ kind: "marker", key: "evt-1", text: "context compaction failed", tone: "error" }]);
     expect(state.runUsage.size).toBe(0);

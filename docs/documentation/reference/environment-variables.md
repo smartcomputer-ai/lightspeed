@@ -91,10 +91,16 @@ Provider keys in the environment are deployment-wide fallback credentials.
 They may be omitted when every request resolves a stored, universe-scoped
 provider credential.
 
+Model selections belong to each universe. Set **Agent runs** and
+**Speech-to-text** under **Models → Defaults**, or use
+[`lightspeed model defaults`](../using-lightspeed/cli.md#configure-universe-model-defaults).
+`LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` are retired: setting
+either prevents runtime startup. Remove them and save the intended complete
+provider/API/model route in each universe that needs it. Credential fallback
+does not supply an unset model default.
+
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_CHAT_PROVIDER` | `openai` | Deployment default provider ID for sessions that do not choose a model. |
-| `LIGHTSPEED_CHAT_MODEL` | `gpt-5.5` | Deployment default model for sessions that do not choose a model. |
 | `OPENAI_API_KEY` | Conditional | Default OpenAI Responses, Chat Completions, and audio-transcription credential. |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Deployment fallback URL for the built-in `openai` provider, shared by Responses, Chat Completions, and audio transcription. Custom universe providers use their stored endpoint instead. |
 | `OPENAI_ORG_ID` | Unset | Optional `OpenAI-Organization` header. |
@@ -123,6 +129,12 @@ writes above that inline limit fail.
 | `AWS_SECRET_ACCESS_KEY` | Credential-chain dependent | S3 secret key. |
 
 ### Audio preprocessing
+
+These settings control the optional transcoder used by standalone
+transcription. Select the transcription provider and model through the
+universe's **Speech-to-text** default or an explicit `transcriptions/start`
+model. Session input must already be transcribed; see
+[the integration flow](../integrating-and-extending/api-and-typescript.md#transcribe-audio-before-submitting-session-input).
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |

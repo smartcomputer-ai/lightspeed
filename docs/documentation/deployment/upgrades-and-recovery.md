@@ -56,13 +56,38 @@ not guarantee compatibility with saved session configuration or workflow
 histories. Use matching clients and review daemon changes even when protocol
 mismatch would not trigger an automatic daemon update.
 
+## Review model and context configuration
+
+Remove `LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` from the runtime
+environment before starting current workers; both variables are retired and
+cause startup to fail. After the runtime is available, save the intended
+provider/API/model route in each universe's **Agent runs** default using
+**Models → Defaults** or `lightspeed model defaults set agent-run`. Configure
+**Speech-to-text** separately for dictation and channel voice messages.
+Deployment provider credentials remain supported, but do not choose a model.
+See [Configure universe model defaults](../using-lightspeed/cli.md#configure-universe-model-defaults).
+
+Existing sessions retain their stored model. Historical sessions with an
+omitted compaction policy also retain their disabled replay behavior. New
+sessions and configuration replacements resolve omission to automatic
+standalone compaction; preserve an explicit Disabled setting when automatic
+compaction and context-limit recovery should stay off. Review these settings
+when applying a profile or replacing configuration during an upgrade.
+See [Manage long conversations](../using-lightspeed/sessions-and-runs.md#manage-long-conversations).
+
+Audio integrations must transcribe before session admission. Run start,
+context append, and steering reject raw audio; use the
+[standalone transcription flow](../integrating-and-extending/api-and-typescript.md#transcribe-audio-before-submitting-session-input)
+and submit prepared text.
+
 ## Enable company sign-in on an existing Platform
 
 The company-identity migration adds identity provenance, session revocation
 versions and durable access records. Existing users remain local and keep
 their memberships; the migration does not grant company or emergency access.
-The current Platform schema revision is 3. Startup applies the generated
-Platform migrations before serving requests.
+The required Platform revision is `LIGHTSPEED_PLATFORM_SCHEMA_REVISION` in
+the target release's [metadata](../../../release/metadata.env). Startup applies
+the generated Platform migrations before serving requests.
 
 Before enabling OIDC, designate an existing local password admin through
 `LIGHTSPEED_PLATFORM_ADMIN_EMAIL` and verify its emergency login. Use a

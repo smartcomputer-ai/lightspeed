@@ -123,6 +123,28 @@ documents referenced in the child's answer can also pass back to the parent.
 A child returns one run's result and closes automatically. Delegate a new
 task when more work is needed.
 
+## Return file attachments
+
+A child can deliver a file even when its parent cannot access the child's
+workspace. Ask it to save the deliverable, call `vfs_reference`, and cite the
+returned `file:` link in its successful final answer. Both joined `agent_run`
+results and spawned/awaited results carry descriptors for the known attachments
+referenced in that answer. Intermediate files that are not cited stay with
+the child. A parent handing the result to its own parent follows the same rule.
+
+The descriptor identifies immutable bytes. A later workspace edit or deletion
+does not retarget the attachment, and the receiving session retains the
+referenced content. A digest written only in prose does not establish an
+attachment or keep its bytes alive. Access to downloads still follows the
+universe's blob permissions.
+
+Image and PDF media use the existing `media:` links and native-media admission
+rules. File references preserve a downloadable attachment without loading it
+as model input. Either `[label](file:HANDLE)` or image Markdown for a returned
+image handle can select an attachment for handoff. See
+[Workspaces and skills](workspaces-and-skills.md#share-an-immutable-file-in-an-answer)
+for creating references and capturing outputs from a machine.
+
 ## Bound the delegation tree
 
 The default limits are depth `2`, `16` total descendants, `4` concurrent open

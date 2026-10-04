@@ -227,8 +227,8 @@ Without `--model`, the harness uses the provider's model environment variables
 and then its compiled default. OpenAI Responses checks
 `OPENAI_RESPONSES_MODEL`, Completions checks `OPENAI_COMPLETIONS_MODEL`, and
 both fall back to `OPENAI_LIVE_MODEL`. Anthropic checks
-`ANTHROPIC_MESSAGES_MODEL`, then `ANTHROPIC_LIVE_MODEL`. The product's
-`LIGHTSPEED_CHAT_MODEL` setting does not configure this harness. Provider base
+`ANTHROPIC_MESSAGES_MODEL`, then `ANTHROPIC_LIVE_MODEL`. Universe model
+defaults do not configure this evaluation harness. Provider base
 URL overrides are honored too; record them with a comparison.
 
 ### Add a case with observable assertions

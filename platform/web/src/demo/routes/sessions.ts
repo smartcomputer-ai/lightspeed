@@ -201,6 +201,11 @@ export function sessionRoutes(store: DemoStore): Hono {
     return c.json(session.view);
   });
 
+  app.post("/:id/sessions/:sessionId/context/compact", (c) => {
+    if (!lookup(c)) return notFound(c, "not found in engine");
+    return c.json({ error: "Manual compaction requires a connected engine and is unavailable in the demo." }, 501);
+  });
+
   /// Closing keeps history; `force` cancels active and queued work first.
   /// Environment lifecycles are independent.
   app.post("/:id/sessions/:sessionId/close", async (c) => {

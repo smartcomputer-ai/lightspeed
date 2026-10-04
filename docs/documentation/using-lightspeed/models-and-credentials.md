@@ -42,8 +42,9 @@ to use a subscription inside a machine.
 ## Connect an OpenAI-compatible provider
 
 Compatible providers let Lightspeed use a service implementing OpenAI-style
-Responses or Chat Completions endpoints. Compatibility describes the request
-format; individual services and models can support different features.
+Responses, Chat Completions, or Audio Transcriptions endpoints. Compatibility
+describes the request format; individual services and models can support
+different features.
 
 Open **Models → Add provider → OpenAI-compatible
 provider**. Choose a **Provider** preset for DeepSeek, OpenRouter, Ollama, or
@@ -54,7 +55,7 @@ vLLM, or choose **Custom provider**. Configure:
 | Custom provider ID | For a custom provider, a stable identifier used by model selections. Presets supply their IDs automatically; `deepseek` and `openrouter` select the corresponding compatibility rules. |
 | Base URL | The API base URL advertised by the service, including its API path when required. |
 | API key (optional) | The service's key, or leave it empty for an endpoint that does not require authentication. |
-| API kinds | The endpoints the service actually implements: Chat Completions, Responses, or both. The form defaults to Chat Completions. |
+| API kinds | The endpoints the service actually implements: Chat Completions, Responses, and/or Audio Transcriptions. The form defaults to Chat Completions. |
 | Extra headers | Non-secret service-specific headers, if required. Authentication has its own field. |
 
 Choose **Save provider**, check model discovery, and select a model in your
@@ -93,15 +94,71 @@ Chat Completions instead of the picker's preferred Responses route. Select
 an API kind implemented by that provider.
 
 For an existing session, change compatible model settings only while it is
-idle. The API kind is fixed for that session because its conversation is
-stored in the provider's native format. Create a new session to use another
-API kind. A profile change can select a different kind for future sessions.
+idle. Provider identity and API kind are fixed for that session because its
+conversation can contain provider-native state. Retained reasoning or native
+compaction state can also restrict model changes within that route. Create a
+new session for an incompatible model or route. A profile change can select
+a different route for future sessions.
 
 Leave optional reasoning and generation settings unset until you need them
 and have verified the chosen model supports them. A provider can accept a
 model name while refusing an incompatible parameter.
 
-## Understand deployment defaults
+<a id="understand-deployment-defaults"></a>
+
+## Choose universe defaults
+
+Under **Models → Defaults**, an Operator or Admin can choose, change, or clear
+two independent defaults:
+
+| Default | Used for |
+| --- | --- |
+| **Agent runs** | New sessions whose setup and profile leave the model unset. |
+| **Speech-to-text** | Transcription jobs without an explicit model, including web dictation and channel voice messages. |
+
+Choose **Choose model** or **Change**, select a discovered model or enter its
+provider, API kind, and model name, then choose **Save default**. Manual models
+do not need to appear in discovery. Adding a provider credential alone does
+not choose a default.
+
+For a new session, an explicit session model takes precedence over the
+profile's model, followed by the universe's **Agent runs** default. If all
+three are unset, creation fails with `model_default_unset`; Lightspeed does
+not assume an OpenAI route. An explicit model works without a universe default.
+
+The resolved model is saved in the session. Changing or clearing a default
+does not retarget existing sessions, forks, clones, or admitted work. Applying
+a profile or replacing an existing session's configuration with the model
+omitted preserves that session's current model. Other configuration fields
+retain their replacement semantics.
+
+The [CLI](cli.md#configure-universe-model-defaults) and
+`models/defaults/read` and `models/defaults/put` APIs manage the same defaults.
+Updates check a revision; if someone changes the defaults first, reload and
+review their selection before saving again.
+
+## Configure speech-to-text
+
+To use web dictation or channel voice messages, configure a provider that
+supports `openai:audio-transcriptions`, then choose its transcription model
+under **Models → Defaults → Speech-to-text**. The built-in OpenAI provider and
+compatible endpoints use this protocol. A compatible endpoint uses its saved
+URL, headers, and authentication, including an explicitly credentialless
+configuration; it does not fall back to OpenAI if that setup fails.
+
+Choose a discovered speech model or enter the exact model name manually.
+Some providers omit transcription models from discovery. The speech default
+is independent of **Agent runs**, so the conversational model does not need
+to accept audio. Setting only a conversational default leaves dictation
+unavailable.
+
+The microphone in the [session composer](sessions-and-runs.md#dictate-a-message)
+reports why dictation is unavailable. Check the selected speech route and its
+credential, browser recording support, microphone permission, and a secure
+browser origin. [Channel voice messages](chat-channels.md#understand-replies-and-media)
+use the same universe default before delivering text to the bot.
+
+## Understand deployment credentials
 
 An operator can supply deployment-level OpenAI or Anthropic credentials.
 Those are fallback credentials when the universe has no corresponding model
@@ -113,12 +170,10 @@ using the deployment's credential. Removing the built-in provider record
 allows fallback again. Consider that difference when rotating or disabling
 keys.
 
-The runtime defaults to provider `openai` and API kind `openai:responses`.
-`LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` change the default
-provider ID and model name. The runtime's default API kind remains Responses,
-so setting an Anthropic provider ID alone does not create an Anthropic route.
-Select the full route in a profile when using Anthropic or a compatible
-service. Exact deployment settings are in the
+`LIGHTSPEED_CHAT_PROVIDER` and `LIGHTSPEED_CHAT_MODEL` are retired. The runtime
+refuses startup if either is set. Remove them and configure each universe's
+model defaults instead. Provider credentials and transport settings remain
+deployment options, as listed in the
 [environment-variable reference](../reference/environment-variables.md).
 
 The API also supports model OAuth records that refer to a suitable stored
@@ -143,6 +198,8 @@ Verify the input types used by your actual tasks.
 
 | Symptom | What to check |
 | --- | --- |
+| Creating a session reports `model_default_unset` | Choose the universe's Agent runs default, or select a model explicitly in the session or profile. |
+| Runtime startup rejects `LIGHTSPEED_CHAT_PROVIDER` or `LIGHTSPEED_CHAT_MODEL` | Remove the retired variables and configure universe defaults through Models or the CLI. |
 | The provider connects but the model is missing | Refresh discovery or enter the exact route manually. Confirm that the credential can access that model. |
 | Authentication fails despite a deployment key | Check for an existing universe provider record. Disabled or unusable records block fallback. |
 | A compatible service is unreachable | Test reachability from the gateway and session-worker network, and check the base URL and API path. |

@@ -687,7 +687,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "api",
@@ -1304,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "environment-daemon"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "api",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "environment-provider-incus"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4147,7 +4147,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "release-info"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "tempfile",
 ]
@@ -5160,7 +5160,7 @@ dependencies = [
 
 [[package]]
 name = "temporal-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "api",
