@@ -8,6 +8,12 @@
 
 <p align="center"><strong>Run thousands of agents. Efficient, durable, auditable.</strong></p>
 
+<p align="center">
+  <a href="https://ls.bot/" target="_blank">Website</a> ·
+  <a href="https://ls.bot/docs/" target="_blank">Documentation</a> ·
+  <a href="https://ls.bot/demo" target="_blank">Demo</a>
+</p>
+
 Lightspeed is open-source infrastructure for running managed agent fleets as durable workflows.
 
 "Managed agents" is an emerging pattern that separates the core agent loops from the VM or sandbox they use. Agents survive restarts, can run for months, and stay cheap when idle. When they
@@ -126,7 +132,7 @@ The current implementation includes:
 - [x] **Workflow-backed plugins**: external Temporal workflows can extend session with various tools and custom logic
 - [x] **One backend binary**: run every runtime role in one process or scale them independently across Temporal workers
 
-**Borrowed compute**
+**Attached compute**
 
 - [x] **Dedicated VMs**: attach an existing machine or provision one through the
   included Incus provider
