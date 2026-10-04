@@ -1928,7 +1928,6 @@ export function SessionDetail({
               variant="more"
               sessionId={sessionId}
               metadata={session.data?.metadata}
-              pending={closeSession.isPending || deleteSession.isPending}
               open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotFaceIcon /> } : undefined}
               onSettings={canControl ? () => setSettingsOpen(true) : undefined}
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
@@ -2122,6 +2121,14 @@ export function SessionDetail({
                   />
                 </MessageScrollerItem>
               ))}
+              {compaction.error && (
+                <MessageScrollerItem messageId="compaction-request-error">
+                  <TranscriptEntryView entry={{
+                    kind: "marker", key: "compaction-request-error",
+                    text: `Compaction failed: ${compaction.error}`, tone: "error",
+                  }} />
+                </MessageScrollerItem>
+              )}
               {approvalRun && (
                 <MessageScrollerItem messageId={`approvals-${approvalRun.id}`}>
                   <ApprovalCards
@@ -2151,15 +2158,6 @@ export function SessionDetail({
         </TranscriptMotionProvider>
       </MessageScrollerProvider>
       </TranscriptLinksContext.Provider>
-      {compaction.label && !closed && (
-        <div role="status" className="flex shrink-0 items-center gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
-          <LoaderCircle className="size-3.5 animate-spin" />
-          <span>{compaction.label}{session.data?.activeContext?.compaction?.pending && " Messages and steering wait until it finishes."}</span>
-        </div>
-      )}
-      {compaction.error && (
-        <p role="alert" className="px-4 py-2 text-xs text-destructive">Compaction failed: {compaction.error}</p>
-      )}
       {!closed && (
         <QueuedRunsBar items={queuedItems} onCancel={canStop ? (runId) => void cancelQueued(runId) : undefined} />
       )}

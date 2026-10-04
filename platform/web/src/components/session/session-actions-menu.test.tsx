@@ -11,7 +11,7 @@ vi.mock("@/components/ui/dropdown-menu", () => {
   const pass = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
   return {
     DropdownMenu: pass,
-    DropdownMenuTrigger: () => null,
+    DropdownMenuTrigger: ({ children }: { children?: ReactNode }) => <div data-testid="menu-trigger">{children}</div>,
     DropdownMenuContent: pass,
     DropdownMenuGroup: pass,
     DropdownMenuLabel: pass,
@@ -51,13 +51,14 @@ async function groups(props: Partial<Parameters<typeof SessionActionsMenu>[0]>):
     });
 }
 
-it("puts what can be done first, then view preferences, then the id and metadata", async () => {
+it("keeps compaction directly above close in the action group", async () => {
   const [actions, preferences, identity, metadata, ...rest] = await groups({
     onSettings: () => undefined,
     onShare: () => undefined,
+    onCompact: () => undefined,
     lifecycle: <span>Close session…</span>,
   });
-  expect(actions).toMatch(/^Session settings\s*Share with universe…\s*Close session…$/);
+  expect(actions).toMatch(/^Session settings\s*Share with universe…\s*Compact context\s*Close session…$/);
   expect(preferences).toMatch(/^Collapse completed runs\s*Show run statistics\s*Show session resources$/);
   expect(identity).toMatch(/^Session ID\s*session-1/);
   expect(metadata).toContain("team");
@@ -73,7 +74,18 @@ it("starts with view preferences for someone who can do nothing", async () => {
 
 it.each(["more", "tab"] as const)("offers compaction in the %s menu and prevents duplicate requests", async (variant) => {
   const compact = vi.fn();
-  await groups({ variant, onCompact: compact });
+  const menuGroups = await groups({
+    variant,
+    onCompact: compact,
+    open: { label: "Open session", href: "/session-1", icon: null },
+    lifecycle: <span>{variant === "tab" ? "Reset conversation…" : "Close session…"}</span>,
+  });
+  expect(menuGroups[0]).toMatch(variant === "tab"
+    ? /^Open session\s*Reset conversation…\s*Compact context$/
+    : /^Open session\s*Compact context\s*Close session…$/);
+  expect(menuGroups).toHaveLength(4);
+  expect(menuGroups[1]).toMatch(/^Collapse completed runs/);
+  expect(menuGroups.at(-1)).toContain("team");
   const button = [...container.querySelectorAll("button")].find((item) => item.textContent === "Compact context")!;
   await act(async () => button.click());
   expect(compact).toHaveBeenCalledTimes(1);
@@ -81,6 +93,9 @@ it.each(["more", "tab"] as const)("offers compaction in the %s menu and prevents
     await groups({ variant, onCompact: compact, compactionLabel });
     const busy = [...container.querySelectorAll("button")].find((item) => item.textContent === compactionLabel)!;
     expect(busy.disabled).toBe(true);
+    const trigger = container.querySelector('[data-testid="menu-trigger"]')!;
+    expect(trigger.querySelector(".animate-spin")).toBeNull();
+    expect(trigger.querySelector(variant === "more" ? ".lucide-ellipsis" : ".lucide-chevron-down")).not.toBeNull();
     await act(async () => busy.click());
     expect(compact).toHaveBeenCalledTimes(1);
   }

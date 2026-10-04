@@ -430,7 +430,6 @@ function ConversationMenu({
         variant="tab"
         sessionId={sessionId}
         metadata={session.data?.metadata}
-        pending={reset.isPending}
         onCompact={canCompact && session.data && session.data.status !== "closed" ? compaction.compact : undefined}
         compactionLabel={compaction.label}
         open={{

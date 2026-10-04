@@ -56,7 +56,7 @@ export type TranscriptEntry =
   | { kind: "reasoning"; key: string; text: string; runId?: string; turnId?: string; providerKind?: string }
   | TranscriptToolGroup
   | TranscriptRunSummary
-  | { kind: "marker"; key: string; text: string; tone: "muted" | "error" };
+  | { kind: "marker"; key: string; text: string; tone: "muted" | "error"; pending?: boolean };
 
 export interface TranscriptRunSummary {
   kind: "run-summary";
@@ -417,7 +417,7 @@ export function applyEvents(
         const queued = kind.trigger === "manualQueued";
         const markerKey = next.compaction?.markerKey ?? `evt-${event.cursor.seq}`;
         next.compaction = { markerKey, phase: queued ? "queued" : "pending", ...(runId ? { runId } : {}) };
-        setCompactionMarker(next, markerKey, queued ? "context compaction queued" : "compacting context", "muted");
+        setCompactionMarker(next, markerKey, queued ? "context compaction queued" : "compacting context", "muted", true);
         if (!queued && runId === next.activeRun?.runId) setRunLabel(next, "compacting context");
         next.runRevision += 1;
         break;
@@ -500,8 +500,8 @@ function compactionRunId(state: TranscriptState, event: SessionEvent): string | 
   return runId && state.completeUsageRuns.has(runId) ? runId : undefined;
 }
 
-function setCompactionMarker(state: TranscriptState, key: string, text: string, tone: "muted" | "error") {
-  const marker: TranscriptEntry = { kind: "marker", key, text, tone };
+function setCompactionMarker(state: TranscriptState, key: string, text: string, tone: "muted" | "error", pending = false) {
+  const marker: TranscriptEntry = { kind: "marker", key, text, tone, ...(pending ? { pending: true } : {}) };
   const index = state.entries.findIndex((entry) => entry.key === key);
   if (index < 0) state.entries.push(marker);
   else state.entries[index] = marker;

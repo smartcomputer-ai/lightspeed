@@ -457,6 +457,30 @@ for 93 shell and 23 JSON examples without executing their operations.
 Documentation whitespace checks passed. No live service or credentialed tests
 were run.
 
+### Recent runtime and workspace documentation refresh
+
+Updated the manual against the implemented model-default, transcription,
+context-reliability, and workspace changes on 2026-10-04:
+
+- Replaced retired deployment model settings with universe defaults and CLI
+  setup, including profile precedence and existing-session preservation.
+- Explained standalone compaction defaults, active-run scheduling, bounded
+  context-limit recovery, native provider behavior, and historical policy.
+- Added speech configuration, dictation controls, channel voice preparation,
+  and the standalone transcription integration flow.
+- Documented context repair, request-time image normalization and media
+  budgeting, while distinguishing active context from retained history.
+- Added workspace upload/download procedures, immutable file references,
+  selected sub-agent attachment handoff, and stale skill-catalog behavior.
+- Corrected environment catalog contents and short-reference semantics, and
+  pointed upgrade guidance to authoritative release schema metadata.
+
+The root README and generated contracts are unchanged. `npm run check:docs`
+passed all nine adapter tests, Astro diagnostics, and the production build,
+including verification of 55 HTML/Markdown pages, 15 diagrams, links, anchors,
+assets, search, sitemap, and Markdown exports. `git diff --check` passed.
+No live services or credentialed tests were needed.
+
 ### Screenshot refresh after the manual review
 
 Refreshed all seven existing screenshots with Playwright against the current

@@ -61,6 +61,33 @@ describe("TranscriptEntryView", () => {
     expect(loadFullText).not.toHaveBeenCalled();
   });
 
+  it.each(["succeeded", "failed", "closed"] as const)("updates one inline compaction marker through %s and stops its spinner", (outcome) => {
+    const event = (seq: number, kind: SessionEvent["kind"]): SessionEvent => ({
+      cursor: { seq }, observedAtMs: seq, joins: {}, sessionId: "session-test", kind,
+    });
+    let state = emptyTranscript();
+    for (const [index, trigger] of (["manualQueued", "manual"] as const).entries()) {
+      state = applyEvents(state, [event(index + 1, {
+        type: "contextCompactionRequested", baseRevision: index, revision: index + 1, trigger,
+      })]);
+      expect(state.entries).toHaveLength(1);
+      expect(state.entries[0]?.key).toBe("evt-1");
+      const html = renderToString(createElement(TranscriptEntryView, { entry: state.entries[0]! }));
+      expect(html).toContain(trigger === "manualQueued" ? "context compaction queued" : "compacting context");
+      expect(html).toContain('role="status"');
+      expect(html).toContain("animate-spin");
+    }
+    state = applyEvents(state, [event(3, outcome === "closed"
+      ? { type: "sessionClosed" }
+      : { type: "contextCompactionFinished", baseRevision: 2, revision: 3, status: outcome })]);
+    const marker = state.entries.find((entry) => entry.key === "evt-1")!;
+    const html = renderToString(createElement(TranscriptEntryView, { entry: marker }));
+    expect(html).toContain(outcome === "succeeded" ? "context compacted"
+      : outcome === "failed" ? "context compaction failed" : "context compaction interrupted");
+    expect(html).not.toContain("animate-spin");
+    if (outcome === "failed") expect(html).toContain('role="alert"');
+  });
+
   it.each(["user", "assistant"] as const)("retains full %s message text without fetching it", (role) => {
     const text = "Complete message 🦀. ".repeat(700) + "The final sentence.";
     const loadFullText = vi.fn();
