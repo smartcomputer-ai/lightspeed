@@ -1,3 +1,4 @@
+import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
 import { ActivityDot, activityLabel } from "@/components/activity-dot";
@@ -1323,6 +1324,7 @@ export function SessionDetail({
         `/api/v1/universes/${universeId}/sessions/${sessionId}`,
       ),
   });
+  const compaction = useSessionCompaction(universeId, sessionId, session.data);
   // Deleting a session, like sharing it, is for its creator or an admin.
   const owner = useSessionOwner(universeId, session.data?.access);
   const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
@@ -1929,6 +1931,8 @@ export function SessionDetail({
               pending={closeSession.isPending || deleteSession.isPending}
               open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotFaceIcon /> } : undefined}
               onSettings={canControl ? () => setSettingsOpen(true) : undefined}
+              onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
+              compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
               lifecycle={!managed && ((canStop && !closed) || (canDelete && closed)) ? (
                 closed ? (
@@ -2147,6 +2151,15 @@ export function SessionDetail({
         </TranscriptMotionProvider>
       </MessageScrollerProvider>
       </TranscriptLinksContext.Provider>
+      {compaction.label && !closed && (
+        <div role="status" className="flex shrink-0 items-center gap-2 border-t px-4 py-2 text-xs text-muted-foreground">
+          <LoaderCircle className="size-3.5 animate-spin" />
+          <span>{compaction.label}{session.data?.activeContext?.compaction?.pending && " Messages and steering wait until it finishes."}</span>
+        </div>
+      )}
+      {compaction.error && (
+        <p role="alert" className="px-4 py-2 text-xs text-destructive">Compaction failed: {compaction.error}</p>
+      )}
       {!closed && (
         <QueuedRunsBar items={queuedItems} onCancel={canStop ? (runId) => void cancelQueued(runId) : undefined} />
       )}

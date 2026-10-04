@@ -1,3 +1,4 @@
+import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -409,6 +410,8 @@ function ConversationMenu({
         `/api/v1/universes/${universeId}/sessions/${encodeURIComponent(sessionId)}`,
       ),
   });
+  const compaction = useSessionCompaction(universeId, sessionId, session.data);
+  const canCompact = useActionPermissions(universeId).can("control_session");
   const reset = useMutation({
     mutationFn: () =>
       api(
@@ -428,6 +431,8 @@ function ConversationMenu({
         sessionId={sessionId}
         metadata={session.data?.metadata}
         pending={reset.isPending}
+        onCompact={canCompact && session.data && session.data.status !== "closed" ? compaction.compact : undefined}
+        compactionLabel={compaction.label}
         open={{
           label: "Open on the Sessions page",
           href: `/u/${slug}/sessions/${encodeURIComponent(sessionId)}`,

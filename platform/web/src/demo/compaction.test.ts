@@ -113,3 +113,12 @@ describe("demo compaction conversations", () => {
     } } });
   });
 });
+
+it("explains why manual compaction is unavailable without a connected engine", async () => {
+  const store = createDemoStore();
+  const universe = store.universe(PERSONAL_ASSISTANT_UNIVERSE_ID)!;
+  const session = [...universe.sessions.values()][0]!;
+  const response = await createDemoRouter(store).request(`/api/v1/universes/${PERSONAL_ASSISTANT_UNIVERSE_ID}/sessions/${encodeURIComponent(session.view.id)}/context/compact`, { method: "POST" });
+  expect(response.status).toBe(501);
+  expect(await response.json()).toMatchObject({ error: expect.stringContaining("unavailable in the demo") });
+});

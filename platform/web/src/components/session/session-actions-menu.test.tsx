@@ -15,7 +15,7 @@ vi.mock("@/components/ui/dropdown-menu", () => {
     DropdownMenuContent: pass,
     DropdownMenuGroup: pass,
     DropdownMenuLabel: pass,
-    DropdownMenuItem: pass,
+    DropdownMenuItem: ({ children, onClick, disabled }: { children?: ReactNode; onClick?: () => void; disabled?: boolean }) => <button onClick={onClick} disabled={disabled}>{children}</button>,
     DropdownMenuCheckboxItem: pass,
     DropdownMenuSeparator: () => <hr />,
   };
@@ -69,4 +69,19 @@ it("starts with view preferences for someone who can do nothing", async () => {
   expect(first).toMatch(/^Collapse completed runs/);
   expect(identity).toContain("session-1");
   expect(metadata).toContain("team");
+});
+
+it.each(["more", "tab"] as const)("offers compaction in the %s menu and prevents duplicate requests", async (variant) => {
+  const compact = vi.fn();
+  await groups({ variant, onCompact: compact });
+  const button = [...container.querySelectorAll("button")].find((item) => item.textContent === "Compact context")!;
+  await act(async () => button.click());
+  expect(compact).toHaveBeenCalledTimes(1);
+  for (const compactionLabel of ["Requesting compaction…", "Context compaction queued…", "Compacting context…"]) {
+    await groups({ variant, onCompact: compact, compactionLabel });
+    const busy = [...container.querySelectorAll("button")].find((item) => item.textContent === compactionLabel)!;
+    expect(busy.disabled).toBe(true);
+    await act(async () => busy.click());
+    expect(compact).toHaveBeenCalledTimes(1);
+  }
 });

@@ -21,6 +21,11 @@ vi.mock("@/components/bot/bot-actions-menu", () => ({
     ? <button type="button">{pause.enabled ? "Pause bot" : "Resume bot"}</button>
     : null,
 }));
+vi.mock("@/components/session/session-actions-menu", () => ({
+  SessionActionsMenu: ({ onCompact, compactionLabel }: { onCompact?: () => void; compactionLabel?: string }) => onCompact
+    ? <button disabled={Boolean(compactionLabel)} onClick={onCompact}>{compactionLabel ?? "Compact context"}</button>
+    : null,
+}));
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
@@ -126,4 +131,10 @@ it("does not turn bot management into profile or environment administration", as
   await settle();
   expect(button("Pause")).toBeDefined();
   expect(button("Idle policy…")).toBeDefined();
+});
+
+it.each(["viewer", "contributor", "operator"])("offers conversation compaction according to the %s role", async (role) => {
+  mocks.role = role;
+  await show("chat");
+  expect(Boolean(button("Compact context"))).toBe(role !== "viewer");
 });
