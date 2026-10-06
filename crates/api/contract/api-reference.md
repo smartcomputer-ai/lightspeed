@@ -96,9 +96,9 @@ Returns a cursor-paginated summary list ordered by most recent update, optionall
 
 Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"configure_session"}`
 - Group: `session`
-- Role: `contributor`
+- Role: `operator`
 - Target: `sessionId`
 - Params: `SessionConfigPutParams`
 - Result: `AgentApiOutcome<SessionConfigPutResponse>`
@@ -122,9 +122,9 @@ Sets the display name, or clears it when displayName is omitted.
 
 Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"configure_session"}`
 - Group: `session`
-- Role: `contributor`
+- Role: `operator`
 - Target: `sessionId`
 - Params: `SessionMetadataPutParams`
 - Result: `AgentApiOutcome<SessionMetadataPutResponse>`
@@ -135,9 +135,9 @@ Replaces the complete descriptive key/value map (bounded like session/start); an
 
 Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.
 
-- Access: `{"kind":"universe","action":"control_session"}`
-- Group: `session`
-- Role: `contributor`
+- Access: `{"kind":"universe","action":"delete_session"}`
+- Group: `session/delete`
+- Role: `admin`
 - Target: `sessionId`
 - Params: `SessionRetentionPutParams`
 - Result: `AgentApiOutcome<SessionRetentionPutResponse>`
@@ -148,7 +148,7 @@ Sets the positive close-relative automatic-deletion duration on a retention root
 
 Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.
 
-- Access: `{"kind":"universe","action":"stop_session"}`
+- Access: `{"kind":"universe","action":"close_session"}`
 - Group: `session`
 - Role: `contributor`
 - Target: `sessionId`
@@ -159,11 +159,11 @@ Closes an idle session and detaches its environment bindings. Force mode cancels
 
 **Delete closed sessions**
 
-Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.
+Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.
 
 - Access: `{"kind":"universe","action":"delete_session"}`
-- Group: `session`
-- Role: `contributor`
+- Group: `session/delete`
+- Role: `admin`
 - Target: `sessionId`
 - Params: `SessionDeleteParams`
 - Result: `AgentApiOutcome<SessionDeleteResponse>`
@@ -343,9 +343,9 @@ Returns separate VFS and environment catalogs with source, reference, availabili
 
 Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"configure_session"}`
 - Group: `session`
-- Role: `contributor`
+- Role: `operator`
 - Target: `sessionId`
 - Params: `ProfileApplyParams`
 - Result: `AgentApiOutcome<ProfileApplyResponse>`
@@ -356,9 +356,9 @@ Applies a named or inline profile's config, instructions, and environment setup 
 
 Selects an attached, live universe environment for environment-targeted tools while the session is idle.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"configure_session"}`
 - Group: `session`
-- Role: `contributor`
+- Role: `operator`
 - Target: `sessionId`
 - Params: `SessionEnvironmentActivateParams`
 - Result: `AgentApiOutcome<SessionEnvironmentActivateResponse>`
@@ -369,9 +369,9 @@ Selects an attached, live universe environment for environment-targeted tools wh
 
 Clears active environment selection without changing or closing the universe environment.
 
-- Access: `{"kind":"universe","action":"control_session"}`
+- Access: `{"kind":"universe","action":"configure_session"}`
 - Group: `session`
-- Role: `contributor`
+- Role: `operator`
 - Target: `sessionId`
 - Params: `SessionEnvironmentDeactivateParams`
 - Result: `AgentApiOutcome<SessionEnvironmentDeactivateResponse>`
@@ -1309,7 +1309,7 @@ Terminal and idempotent: disables every trigger, drops schedules, and tells the 
 
 **Delete a bot**
 
-Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.
+Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
 
 - Access: `{"kind":"universe","action":"manage_bot"}`
 - Group: `bots`
@@ -1586,6 +1586,32 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 
 
 ## Deployment methods
+
+### `deployment/sessions/audit/list`
+
+**Read session lifecycle audit**
+
+Returns durable lifecycle records, including deletion and purge evidence that survives session removal.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/sessions`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentSessionAuditListParams`
+- Result: `AgentApiOutcome<DeploymentSessionAuditListResponse>`
+
+### `deployment/sessions/purge`
+
+**Permanently purge deleted sessions**
+
+Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.
+
+- Access: `{"kind":"deployment"}`
+- Group: `deployment/sessions`
+- Role: `none`
+- Target: `none`
+- Params: `DeploymentSessionPurgeParams`
+- Result: `AgentApiOutcome<DeploymentSessionPurgeResponse>`
 
 ### `deployment/environment-provider-bindings/list`
 

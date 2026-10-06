@@ -21,6 +21,7 @@ import {
 } from "@/lib/mcp/tool-discovery";
 
 type Props = {
+  readOnly?: boolean;
   scope: "server" | "session";
   serverId: string;
   revision?: number;
@@ -45,15 +46,19 @@ export function McpToolPicker(props: Props) {
 }
 
 function ToolPicker({
+  readOnly = false,
   scope,
   serverId,
   revision,
   source,
   allowedTools,
   value,
-  onChange,
+  onChange: onToolsChange,
   discoveryDisabledReason,
 }: Props) {
+  const onChange = (tools: string[] | undefined) => {
+    if (!readOnly) onToolsChange(tools);
+  };
   const id = useId();
   const limited = value !== undefined;
   // A session subset starts closed like every optional setting; its summary
@@ -100,7 +105,7 @@ function ToolPicker({
   const title = scope === "server" ? "Allowed tools" : "Tools";
   const settings = (
     <>
-      <Select
+      <Select disabled={readOnly}
         value={limited ? "selected" : "all"}
         onValueChange={(mode) => {
           if (mode === "all") {
@@ -203,7 +208,7 @@ function ToolPicker({
                     : "Not verified"
                   : undefined
             }
-            disabled={!allowed(name) && !value?.includes(name)}
+            disabled={readOnly || (!allowed(name) && !value?.includes(name))}
             onChange={(checked) =>
               onChange(
                 checked

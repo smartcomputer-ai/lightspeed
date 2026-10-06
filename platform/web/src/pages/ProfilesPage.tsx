@@ -417,21 +417,14 @@ function ProfileEditor({
           <div className="mx-auto grid w-full max-w-5xl gap-8 px-4 py-6 md:px-8">
             <GeneralSection draft={draft} mutate={mutate} readOnly={!manage} />
             <InstructionsSection draft={draft} mutate={mutate} readOnly={!manage} />
-            {manage ? (
-              <ConfigSection
-                universeId={universeId}
-                draft={draft}
-                mutate={mutate}
-                onValidityChange={setConfigError}
-                onRetentionValidityChange={setRetentionError}
-              />
-            ) : (
-              <Section title="Configuration">
-                <pre className="overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs">
-                  {JSON.stringify({ config: draft.config, metadata: draft.metadata, retention: draft.retention }, null, 2)}
-                </pre>
-              </Section>
-            )}
+            <ConfigSection
+              universeId={universeId}
+              draft={draft}
+              mutate={mutate}
+              readOnly={!manage}
+              onValidityChange={setConfigError}
+              onRetentionValidityChange={setRetentionError}
+            />
           </div>
         )}
       </div>
@@ -556,12 +549,14 @@ function InstructionsSection({
 }
 
 function ConfigSection({
+  readOnly,
   universeId,
   draft,
   mutate,
   onValidityChange,
   onRetentionValidityChange,
 }: {
+  readOnly: boolean;
   universeId: string;
   draft: ProfileDocument;
   mutate: Mutate;
@@ -575,6 +570,7 @@ function ConfigSection({
       description="Choose a model or inherit the universe default when a session is created. Unset reasoning uses the provider default."
     >
       <SessionConfigEditor
+        readOnly={readOnly}
         value={draft.config}
         allowInherit
         mcpServers={options.mcpServers}
@@ -588,6 +584,7 @@ function ConfigSection({
         featureDisableReasons={resourceFeatureDisableReasons(draft)}
         metadataSetup={(
           <MetadataMapEditor
+            disabled={readOnly}
             value={draft.metadata}
             onChange={(metadata) =>
               mutate((document) => {
@@ -600,6 +597,7 @@ function ConfigSection({
         metadataDescription="Defaults copied when a session is created. Start-time metadata overrides matching keys."
         retentionSetup={(
           <ProfileRetentionEditor
+            disabled={readOnly}
             value={draft.retention?.deleteAfterCloseMs}
             onValidityChange={onRetentionValidityChange}
             onChange={(deleteAfterCloseMs) =>

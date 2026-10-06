@@ -123,7 +123,7 @@ import {
 } from "@/lib/sessions/resource-features";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
 import { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
-import { useActionPermissions } from "@/lib/permissions";
+import { useActionPermissions, useSessionClosePermission } from "@/lib/permissions";
 import { useActiveUniverse, useFeature } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import {
@@ -242,10 +242,11 @@ function SessionList({
   const visibleIds = sessions.map((session) => session.id);
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
   const permissions = useActionPermissions(universeId);
+  const mayClose = useSessionClosePermission(universeId);
   const canCreate = permissions.can("create_session");
-  const canSelect = sessions.some((session) => !session.managed && permissions.can(session.lifecycleStatus === "closed" ? "delete_session" : "stop_session"));
-  const selectedOpen = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus !== "closed" && permissions.can("stop_session"));
-  const selectedClosed = selectedSessions.filter((session) => !session.managed && session.lifecycleStatus === "closed" && permissions.can("delete_session"));
+  const canSelect = sessions.some((session) => (!session.managed || permissions.role === "admin") && (session.lifecycleStatus === "closed" ? permissions.can("delete_session") : mayClose(session.access)));
+  const selectedOpen = selectedSessions.filter((session) => (!session.managed || permissions.role === "admin") && session.lifecycleStatus !== "closed" && mayClose(session.access));
+  const selectedClosed = selectedSessions.filter((session) => (!session.managed || permissions.role === "admin") && session.lifecycleStatus === "closed" && permissions.can("delete_session"));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   // Only metadata filters count; which sessions the list includes is its scope.
   const activeFilterCount = filterEntries.length;
@@ -341,7 +342,7 @@ function SessionList({
   /// primitive and the client loops, a few requests at a time.
   const bulk = useMutation({
     mutationFn: async ({ action, ids }: { action: "close" | "delete"; ids: string[] }) => {
-      const actionName = action === "close" ? "stop_session" : "delete_session";
+      const actionName = action === "close" ? "close_session" : "delete_session";
       if (!permissions.can(actionName)) throw new Error("Session permissions changed. Review the selection.");
       const results = await runBatched(ids, 6, (id): Promise<unknown> =>
         action === "close"
@@ -726,7 +727,7 @@ function BulkActionDialog({
           <AlertDialogDescription>
             {action === "close"
               ? "Each permitted open session is force-closed in turn: active and queued work is cancelled and the session cannot be reopened. Other selected sessions are left alone."
-              : "Each permitted closed session is deleted in turn, removing its history. Other selected sessions are left alone."}
+              : "Each permitted closed session disappears for all universe members. Retained records are purged after 30 days. Other selected sessions are left alone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -928,8 +929,10 @@ function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   search: string;
 }) {
+  const canSetRetention = useActionPermissions(universeId).can("delete_session");
   const [displayName, setDisplayName] = useState("");
   const [profileId, setProfileId] = useState("");
+  const canConfigure = useActionPermissions(universeId).can("configure_session");
   const [step, setStep] = useState<"basics" | "setup">("basics");
   const [inlineProfile, setInlineProfile] = useState<InlineProfile | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
@@ -951,7 +954,7 @@ function NewSessionDialog({
   });
   const editorOptions = useSessionConfigEditorOptions(universeId, open && step === "setup");
   const defaults = useModelDefaults(universeId, open);
-  const creationProfile = profileForCreate(profileId, inlineProfile, selectedProfile.data);
+  const creationProfile = profileForCreate(profileId, canConfigure ? inlineProfile : null, selectedProfile.data);
   const effectiveModel = resolveCreationModel(
     creationProfile.kind === "inline" ? modelFromConfig(creationProfile.profile.config) : null,
     creationProfile.kind === "named" ? modelFromConfig(selectedProfile.data?.config) : null,
@@ -1045,7 +1048,7 @@ function NewSessionDialog({
             <DialogHeader>
               <DialogTitle>New session</DialogTitle>
               <DialogDescription>
-                Start from a named profile or customize an inline setup for this session.
+                {canConfigure ? "Start from a named profile or customize an inline setup for this session." : "Start with the universe defaults or choose an existing profile."}
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={submit} className="grid gap-4">
@@ -1094,14 +1097,14 @@ function NewSessionDialog({
                 </FieldDescription>
               </Field>
               {modelSummary}
-              <Button
+              {canConfigure && <Button
                 type="button"
                 variant="outline"
                 disabled={Boolean(profileId) && selectedProfile.isLoading}
                 onClick={customize}
               >
                 {inlineProfile ? "Edit customized setup" : "Customize setup…"}
-              </Button>
+              </Button>}
               <p className="text-xs text-muted-foreground">
                 A new session is private: you and the universe admins see it until you share it.
               </p>
@@ -1132,6 +1135,7 @@ function NewSessionDialog({
             <div className="min-h-0 space-y-5 overflow-y-auto p-6">
               {modelSummary}
               <InlineSetupEditor
+                canSetRetention={canSetRetention}
                 value={inlineProfile ?? {}}
                 options={editorOptions}
                 onValidityChange={setConfigError}
@@ -1174,12 +1178,14 @@ function NewSessionDialog({
 }
 
 function InlineSetupEditor({
+  canSetRetention,
   value,
   options,
   onValidityChange,
   onRetentionValidityChange,
   onChange,
 }: {
+  canSetRetention: boolean;
   value: InlineProfile;
   options: ReturnType<typeof useSessionConfigEditorOptions>;
   onValidityChange: (message: string | null) => void;
@@ -1236,7 +1242,7 @@ function InlineSetupEditor({
             />
           )}
           metadataDescription="Metadata copied onto the new session. It helps with filtering and does not affect how the session runs."
-          retentionSetup={(
+          retentionSetup={canSetRetention && (
             <ProfileRetentionEditor
               value={value.retention?.deleteAfterCloseMs}
               onValidityChange={onRetentionValidityChange}
@@ -1325,7 +1331,6 @@ export function SessionDetail({
       ),
   });
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
-  // Deleting a session, like sharing it, is for its creator or an admin.
   const owner = useSessionOwner(universeId, session.data?.access);
   const canShare = useCanShareSession(universeId, session.data?.access, Boolean(session.data?.origin));
   const [pending, setPending] = useState<PendingMessage[]>([]);
@@ -1347,9 +1352,12 @@ export function SessionDetail({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteCascade, setDeleteCascade] = useState(false);
   const permissions = useActionPermissions(universeId);
+  const mayClose = useSessionClosePermission(universeId);
   const canControl = permissions.can("control_session");
+  const canConfigure = permissions.can("configure_session");
   const canStop = permissions.can("stop_session");
-  const canDelete = owner && permissions.can("delete_session");
+  const canClose = mayClose(session.data?.access);
+  const canDelete = permissions.can("delete_session");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [decidingApproval, setDecidingApproval] = useState<{
     approvalId: string;
@@ -1671,7 +1679,7 @@ export function SessionDetail({
           text,
           submissionId,
           ...(message.attachments.length ? { attachments: message.attachments.map(wireAttachment) } : {}),
-          ...(message.options ? { options: message.options } : {}),
+          ...(canConfigure && message.options ? { options: message.options } : {}),
         },
       );
       setFollowRequest((request) => request + 1);
@@ -1722,6 +1730,7 @@ export function SessionDetail({
   /// The composer's model choice becomes the session default. Config
   /// replacement needs an idle session and the revision last read.
   const saveModelDefault = async (config: Record<string, unknown>) => {
+    if (!canConfigure) return;
     const current = session.data;
     if (!current) return;
     const updated = await api<SessionView>(
@@ -1929,11 +1938,11 @@ export function SessionDetail({
               sessionId={sessionId}
               metadata={session.data?.metadata}
               open={owningBotHref ? { label: "Open in bot", href: owningBotHref, icon: <BotFaceIcon /> } : undefined}
-              onSettings={canControl ? () => setSettingsOpen(true) : undefined}
+              onSettings={permissions.can("read") ? () => setSettingsOpen(true) : undefined}
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
               compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
-              lifecycle={!managed && ((canStop && !closed) || (canDelete && closed)) ? (
+              lifecycle={(!managed || permissions.role === "admin") && ((canClose && !closed) || (canDelete && closed)) ? (
                 closed ? (
                   <DropdownMenuItem
                     variant="destructive"
@@ -1969,7 +1978,7 @@ export function SessionDetail({
         />
 
         <AlertDialog
-          open={closeOpen && canStop}
+          open={closeOpen && canClose}
           onOpenChange={(open) => {
             setCloseOpen(open);
             if (open) setCloseError(null);
@@ -2024,9 +2033,9 @@ export function SessionDetail({
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete this session permanently?</AlertDialogTitle>
+              <AlertDialogTitle>Delete this session?</AlertDialogTitle>
               <AlertDialogDescription>
-                This removes the session and its retained history. It cannot be undone.
+                This hides the session and its history from all universe members, including admins. Retained records are permanently purged after 30 days.
                 A session with history forks or delegated children cannot be deleted
                 unless cascade is enabled.
               </AlertDialogDescription>
@@ -2040,7 +2049,7 @@ export function SessionDetail({
               <span className="min-w-0">
                 <span className="block font-medium">Also delete forks and delegated children</span>
                 <span className="block text-xs text-muted-foreground">
-                  Every descendant must already be closed and you must have permission to delete each one. Config-only clones are not included.
+                  Every descendant must already be closed. Deleted sessions disappear for all universe members; retained records are purged after 30 days. Config-only clones are not included.
                 </span>
               </span>
             </label>
@@ -2052,7 +2061,7 @@ export function SessionDetail({
                 disabled={deleteSession.isPending}
                 onClick={() => deleteSession.mutate()}
               >
-                {deleteSession.isPending ? "Deleting…" : "Delete permanently"}
+                {deleteSession.isPending ? "Deleting…" : "Delete session"}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -2068,7 +2077,7 @@ export function SessionDetail({
         sessionHref={sessionHref}
         resources={showSessionResources && session.data && hasResources(resources) ? (
           <SessionResourceChips resources={resources} slug={slug}
-            onConfigure={!embedded && canControl ? () => setSettingsOpen(true) : undefined} />
+            onConfigure={!embedded && canConfigure ? () => setSettingsOpen(true) : undefined} />
         ) : undefined}
       />
       <TranscriptLinksContext.Provider value={transcriptLinks}>
@@ -2197,10 +2206,10 @@ export function SessionDetail({
           </div>
         ) : undefined}
         attachments={{ universeId, apiKind: modelFromConfig(session.data?.config)?.apiKind }}
-        model={session.data?.config ? {
+        model={canConfigure && session.data?.config ? {
           config: session.data.config,
           models: modelDiscovery.data?.models,
-          canSaveDefault: canControl && !closed,
+          canSaveDefault: canConfigure && !closed,
           onSaveDefault: saveModelDefault,
         } : undefined}
         error={sendError}
@@ -2208,7 +2217,7 @@ export function SessionDetail({
         onSend={(message, mode) => void send(message, mode)}
         onStop={() => void stop()}
       />
-      {!embedded && canControl && (
+      {!embedded && permissions.can("read") && (
         <SessionSettingsDialog
           universeId={universeId}
           sessionId={sessionId}

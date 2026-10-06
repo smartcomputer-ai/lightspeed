@@ -1,3 +1,4 @@
+import { useActionPermissions } from "@/lib/permissions";
 import { attachedEnvironments, isEnvironmentAttached } from "@/lib/sessions/resource-features";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -62,6 +63,7 @@ export function SessionSettingsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const canConfigure = useActionPermissions(universeId).can("configure_session");
   const management = session?.management;
   const managed = session?.managed === true;
 
@@ -71,7 +73,7 @@ export function SessionSettingsDialog({
         <DialogHeader className="border-b p-6 pr-14">
           <DialogTitle>Session settings</DialogTitle>
           <DialogDescription>
-            {managed
+            {!canConfigure ? "View this session’s configuration. Operator permission is required to change it." : managed
               ? `Edit configuration directly. Lifecycle and chat delivery remain managed by ${managedSessionOwnerLabel(management)}.`
               : "Edit this live session directly, then apply the setup in one operation."}
           </DialogDescription>
@@ -105,6 +107,7 @@ function LiveSessionSetup({
   /** Called once the whole setup has applied; the dialog closes then. */
   onApplied: () => void;
 }) {
+  const canConfigure = useActionPermissions(universeId).can("configure_session");
   const queryClient = useQueryClient();
   const options = useSessionConfigEditorOptions(universeId, enabled);
   const instructions = useQuery({
@@ -128,6 +131,7 @@ function LiveSessionSetup({
   const [originalActiveEnvironmentId, setOriginalActiveEnvironmentId] = useState<string | null>(null);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [originalMetadata, setOriginalMetadata] = useState<Record<string, string>>({});
+  const canSetRetention = useActionPermissions(universeId).can("delete_session");
   const [retentionDaysDraft, setRetentionDaysDraft] = useState("");
   const [originalRetentionDays, setOriginalRetentionDays] = useState("");
   const [configError, setConfigError] = useState<string | null>(null);
@@ -202,6 +206,7 @@ function LiveSessionSetup({
 
   const save = useMutation({
     mutationFn: async () => {
+      if (!canConfigure) throw new Error("Operator permission is required to configure sessions.");
       if (!session) throw new Error("Session is still loading.");
       const attachmentError = workspaceAttachmentsError(nextWorkspaceAttachments);
       if (attachmentError) throw new Error(attachmentError);
@@ -265,7 +270,7 @@ function LiveSessionSetup({
         );
       }
 
-      if (retentionDirty) {
+      if (retentionDirty && canSetRetention) {
         await api<SessionView>(
           "PUT",
           `/api/v1/universes/${universeId}/sessions/${sessionId}/retention`,
@@ -307,6 +312,7 @@ function LiveSessionSetup({
               <p className="text-sm text-muted-foreground">Loading instructions…</p>
             ) : (
               <textarea
+                readOnly={!canConfigure}
                 className="min-h-32 w-full resize-y rounded-lg border border-input bg-transparent p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                 value={instructionsDraft ?? ""}
                 onChange={(event) => setInstructionsDraft(event.target.value)}
@@ -335,6 +341,7 @@ function LiveSessionSetup({
               </div>
             ) : null}
             <SessionConfigEditor
+              readOnly={!canConfigure}
               value={configDraft}
               onChange={(config) => {
                 setConfigDraft(config);
@@ -355,11 +362,11 @@ function LiveSessionSetup({
                 <MetadataEditor
                   rows={metadataRows}
                   onChange={setMetadataRows}
-                  disabled={save.isPending}
+                  disabled={!canConfigure || save.isPending}
                 />
               )}
               metadataDescription="Descriptive key/value pairs for finding this session in the list. Keys are limited to 64 bytes, values to 256 bytes, and the lightspeed. prefix is reserved."
-              retentionSetup={session?.retention.rootSessionId === sessionId ? (
+              retentionSetup={canSetRetention && (session?.retention.rootSessionId === sessionId ? (
                 <div className="grid max-w-xs gap-1.5">
                   <label className="text-xs font-medium" htmlFor="session-retention-days">
                     Delete after close (days)
@@ -372,7 +379,7 @@ function LiveSessionSetup({
                     value={retentionDaysDraft}
                     onChange={(event) => setRetentionDaysDraft(event.target.value)}
                     placeholder="Keep until manually deleted"
-                    disabled={save.isPending}
+                    disabled={!canConfigure || save.isPending}
                   />
                   <p className="text-xs text-muted-foreground">
                     Deletes this session, its history forks, and delegated children after the root closes. Leave blank to keep the tree.
@@ -386,7 +393,7 @@ function LiveSessionSetup({
                     {session?.retention.rootSessionId}
                   </a>. Change automatic deletion from the root.
                 </p>
-              )}
+              ))}
               retentionDescription="Delete the retained session tree automatically after its root session closes."
               environmentSetup={(
                 <ActiveEnvironmentEditor
@@ -394,7 +401,7 @@ function LiveSessionSetup({
                   value={activeEnvironmentDraft}
                   environments={attachedEnvironments(configDraft, environments.data ?? [])}
                   loading={environments.isLoading}
-                  disabled={!hasSessionFeature(configDraft, "environments")}
+                  disabled={!canConfigure || !hasSessionFeature(configDraft, "environments")}
                   onChange={setActiveEnvironmentDraft}
                 />
               )}
@@ -407,7 +414,7 @@ function LiveSessionSetup({
         </div>
       </div>
       <div className="grid gap-2 border-t p-4">
-        {runActive && (
+        {canConfigure && runActive && (
           <p className="text-sm text-muted-foreground">
             Session setup can be applied after the active run finishes.
           </p>
@@ -415,7 +422,7 @@ function LiveSessionSetup({
         {environmentError && <p className="text-sm text-destructive">{environmentError}</p>}
         {retentionError && <p className="text-sm text-destructive">{retentionError}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
-        <div className="flex justify-end">
+        {canConfigure && <div className="flex justify-end">
           <Button
             disabled={
               !session
@@ -428,7 +435,7 @@ function LiveSessionSetup({
           >
             {save.isPending ? "Applying setup…" : "Apply setup"}
           </Button>
-        </div>
+        </div>}
       </div>
     </>
   );

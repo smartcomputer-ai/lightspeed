@@ -21,12 +21,25 @@ the universe's resources.
 | Role | What the person can do |
 | --- | --- |
 | **Viewer** | Read visible sessions, bots, and universe resources. A session they previously created remains visible after a downgrade to Viewer. |
-| **Contributor** | Create and continue sessions, steer or stop work, decide tool approvals, invoke bots, and use resources. Create and update workspaces. |
-| **Operator** | Create and configure profiles, bots, environments, MCP servers, credentials, and channels; manage bot triggers and replay bot events. |
+| **Contributor** | Create sessions with universe defaults or an existing profile; continue sessions, steer or stop work, decide tool approvals, invoke bots, and update workspace contents. |
+| **Operator** | Customize session setup and run options; create workspaces and create or configure profiles, bots, environments, MCP servers, credentials, and channels; manage bot triggers and replay bot events. |
 | **Admin** | Manage universe members, settings, and API keys. Read, control, share, and delete every session, including private sessions. |
 
-Contributors and Operators can control any shared session. Sharing and deleting
-a session require its creator, with at least the Contributor role, or an Admin.
+Contributors can name a new session and choose its saved profile, but cannot
+author inline setup, override the chosen setup, create managed sessions, or
+create or edit profiles. After creation, changing configuration, custom
+instructions, metadata, or the active environment requires an Operator or
+Admin. Per-message model and reasoning overrides also require an Operator or
+Admin. These checks apply to the server, including a Contributor’s own sessions.
+
+Viewers and Contributors can inspect profiles in **Form** or **JSON** view and
+open **Session settings** for sessions they can read. The form keeps sections
+expandable and values readable, with editing controls protected and save
+actions hidden.
+
+Contributors and Operators can start and control runs in any shared session.
+Sharing and deleting a session require its creator, with at least the
+Contributor role, or an Admin.
 The [private and shared work guide](private-and-shared-work.md) develops those
 rules with an example.
 

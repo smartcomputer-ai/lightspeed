@@ -125,6 +125,8 @@ export const METHODS = [
   "channels/pairings/list",
   "channels/pairings/delete",
   "channels/conversations/read",
+  "deployment/sessions/audit/list",
+  "deployment/sessions/purge",
   "deployment/environment-provider-bindings/list",
   "deployment/universes/create",
   "deployment/universes/list",
@@ -184,7 +186,7 @@ export const METHOD_INFO = {
   },
   "session/config/put": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"configure_session","kind":"universe"},
     summary: "Replace session configuration",
     description: "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
   },
@@ -196,19 +198,19 @@ export const METHOD_INFO = {
   },
   "session/metadata/put": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"configure_session","kind":"universe"},
     summary: "Replace session metadata",
     description: "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
   },
   "session/retention/put": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"delete_session","kind":"universe"},
     summary: "Replace session retention",
     description: "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
   },
   "session/close": {
     scope: "universe",
-    access: {"action":"stop_session","kind":"universe"},
+    access: {"action":"close_session","kind":"universe"},
     summary: "Close a session",
     description: "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
   },
@@ -216,7 +218,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"delete_session","kind":"universe"},
     summary: "Delete closed sessions",
-    description: "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
+    description: "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
   },
   "session/share": {
     scope: "universe",
@@ -298,19 +300,19 @@ export const METHOD_INFO = {
   },
   "session/profiles/apply": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"configure_session","kind":"universe"},
     summary: "Apply a profile to a session",
     description: "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
   },
   "session/environments/activate": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"configure_session","kind":"universe"},
     summary: "Activate a session environment",
     description: "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
   },
   "session/environments/deactivate": {
     scope: "universe",
-    access: {"action":"control_session","kind":"universe"},
+    access: {"action":"configure_session","kind":"universe"},
     summary: "Deactivate the session environment",
     description: "Clears active environment selection without changing or closing the universe environment.",
   },
@@ -744,7 +746,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"manage_bot","kind":"universe"},
     summary: "Delete a bot",
-    description: "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
+    description: "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
   },
   "bots/state/read": {
     scope: "universe",
@@ -865,6 +867,18 @@ export const METHOD_INFO = {
     access: {"action":"read","kind":"universe"},
     summary: "Read a conversation snapshot",
     description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
+  },
+  "deployment/sessions/audit/list": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Read session lifecycle audit",
+    description: "Returns durable lifecycle records, including deletion and purge evidence that survives session removal.",
+  },
+  "deployment/sessions/purge": {
+    scope: "deployment",
+    access: {"kind":"deployment"},
+    summary: "Permanently purge deleted sessions",
+    description: "Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.",
   },
   "deployment/environment-provider-bindings/list": {
     scope: "deployment",
@@ -1091,7 +1105,7 @@ export interface MethodMap {
   /**
    * Delete closed sessions
    *
-   * Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.
+   * Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.
    */
   "session/delete": {
     params: Api.SessionDeleteParams;
@@ -1883,7 +1897,7 @@ export interface MethodMap {
   /**
    * Delete a bot
    *
-   * Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.
+   * Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
    */
   "bots/delete": {
     params: Api.BotDeleteParams;
@@ -2068,6 +2082,24 @@ export interface MethodMap {
   "channels/conversations/read": {
     params: Api.ChannelConversationReadParams;
     result: Api.AgentApiOutcomeOfChannelConversationReadResponse;
+  };
+  /**
+   * Read session lifecycle audit
+   *
+   * Returns durable lifecycle records, including deletion and purge evidence that survives session removal.
+   */
+  "deployment/sessions/audit/list": {
+    params: Api.DeploymentSessionAuditListParams;
+    result: Api.AgentApiOutcomeOfDeploymentSessionAuditListResponse;
+  };
+  /**
+   * Permanently purge deleted sessions
+   *
+   * Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.
+   */
+  "deployment/sessions/purge": {
+    params: Api.DeploymentSessionPurgeParams;
+    result: Api.AgentApiOutcomeOfDeploymentSessionPurgeResponse;
   };
   /**
    * List a universe's deployment provider bindings
@@ -2332,7 +2364,7 @@ export const rpc = {
   /**
    * Delete closed sessions
    *
-   * Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.
+   * Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.
    */
   sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
     return client.call("session/delete", params);
@@ -3036,7 +3068,7 @@ export const rpc = {
   /**
    * Delete a bot
    *
-   * Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.
+   * Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.
    */
   botsDelete(client: RpcCaller, params: Api.BotDeleteParams): Promise<Api.AgentApiOutcomeOfBotDeleteResponse> {
     return client.call("bots/delete", params);
@@ -3200,6 +3232,22 @@ export const rpc = {
    */
   channelsConversationsRead(client: RpcCaller, params: Api.ChannelConversationReadParams): Promise<Api.AgentApiOutcomeOfChannelConversationReadResponse> {
     return client.call("channels/conversations/read", params);
+  },
+  /**
+   * Read session lifecycle audit
+   *
+   * Returns durable lifecycle records, including deletion and purge evidence that survives session removal.
+   */
+  deploymentSessionsAuditList(client: RpcCaller, params: Api.DeploymentSessionAuditListParams): Promise<Api.AgentApiOutcomeOfDeploymentSessionAuditListResponse> {
+    return client.call("deployment/sessions/audit/list", params);
+  },
+  /**
+   * Permanently purge deleted sessions
+   *
+   * Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.
+   */
+  deploymentSessionsPurge(client: RpcCaller, params: Api.DeploymentSessionPurgeParams): Promise<Api.AgentApiOutcomeOfDeploymentSessionPurgeResponse> {
+    return client.call("deployment/sessions/purge", params);
   },
   /**
    * List a universe's deployment provider bindings

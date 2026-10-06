@@ -151,7 +151,7 @@
     },
     {
       "access": {
-        "action": "control_session",
+        "action": "configure_session",
         "kind": "universe"
       },
       "description": "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",
@@ -169,7 +169,7 @@
         },
         "type": "AgentApiOutcome<SessionConfigPutResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Replace session configuration",
       "target": "sessionId"
@@ -201,7 +201,7 @@
     },
     {
       "access": {
-        "action": "control_session",
+        "action": "configure_session",
         "kind": "universe"
       },
       "description": "Replaces the complete descriptive key/value map (bounded like session/start); an omitted or empty map clears it. Record-only: the event log and updatedAtMs are untouched.",
@@ -219,18 +219,18 @@
         },
         "type": "AgentApiOutcome<SessionMetadataPutResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Replace session metadata",
       "target": "sessionId"
     },
     {
       "access": {
-        "action": "control_session",
+        "action": "delete_session",
         "kind": "universe"
       },
       "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
-      "group": "session",
+      "group": "session/delete",
       "method": "session/retention/put",
       "params": {
         "schema": {
@@ -244,14 +244,14 @@
         },
         "type": "AgentApiOutcome<SessionRetentionPutResponse>"
       },
-      "role": "contributor",
+      "role": "admin",
       "scope": "universe",
       "summary": "Replace session retention",
       "target": "sessionId"
     },
     {
       "access": {
-        "action": "stop_session",
+        "action": "close_session",
         "kind": "universe"
       },
       "description": "Closes an idle session and detaches its environment bindings. Force mode cancels active work, drops queued runs, and can recover a session whose workflow is unavailable.",
@@ -279,8 +279,8 @@
         "action": "delete_session",
         "kind": "universe"
       },
-      "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
-      "group": "session",
+      "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
+      "group": "session/delete",
       "method": "session/delete",
       "params": {
         "schema": {
@@ -294,7 +294,7 @@
         },
         "type": "AgentApiOutcome<SessionDeleteResponse>"
       },
-      "role": "contributor",
+      "role": "admin",
       "scope": "universe",
       "summary": "Delete closed sessions",
       "target": "sessionId"
@@ -626,7 +626,7 @@
     },
     {
       "access": {
-        "action": "control_session",
+        "action": "configure_session",
         "kind": "universe"
       },
       "description": "Applies a named or inline profile's config, instructions, and environment setup to an existing session; mutating profile sections require it to be open and idle. Pass current revisions to guard concurrent changes.",
@@ -644,14 +644,14 @@
         },
         "type": "AgentApiOutcome<ProfileApplyResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Apply a profile to a session",
       "target": "sessionId"
     },
     {
       "access": {
-        "action": "control_session",
+        "action": "configure_session",
         "kind": "universe"
       },
       "description": "Selects an attached, live universe environment for environment-targeted tools while the session is idle.",
@@ -669,14 +669,14 @@
         },
         "type": "AgentApiOutcome<SessionEnvironmentActivateResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Activate a session environment",
       "target": "sessionId"
     },
     {
       "access": {
-        "action": "control_session",
+        "action": "configure_session",
         "kind": "universe"
       },
       "description": "Clears active environment selection without changing or closing the universe environment.",
@@ -694,7 +694,7 @@
         },
         "type": "AgentApiOutcome<SessionEnvironmentDeactivateResponse>"
       },
-      "role": "contributor",
+      "role": "operator",
       "scope": "universe",
       "summary": "Deactivate the session environment",
       "target": "sessionId"
@@ -2478,7 +2478,7 @@
         "action": "manage_bot",
         "kind": "universe"
       },
-      "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
+      "description": "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
       "group": "bots",
       "method": "bots/delete",
       "params": {
@@ -2995,6 +2995,54 @@
       "role": "viewer",
       "scope": "universe",
       "summary": "Read a conversation snapshot",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Returns durable lifecycle records, including deletion and purge evidence that survives session removal.",
+      "group": "deployment/sessions",
+      "method": "deployment/sessions/audit/list",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentSessionAuditListParams"
+        },
+        "type": "DeploymentSessionAuditListParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentSessionAuditListResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentSessionAuditListResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Read session lifecycle audit",
+      "target": null
+    },
+    {
+      "access": {
+        "kind": "deployment"
+      },
+      "description": "Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.",
+      "group": "deployment/sessions",
+      "method": "deployment/sessions/purge",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/DeploymentSessionPurgeParams"
+        },
+        "type": "DeploymentSessionPurgeParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentSessionPurgeResponse"
+        },
+        "type": "AgentApiOutcome<DeploymentSessionPurgeResponse>"
+      },
+      "role": null,
+      "scope": "deployment",
+      "summary": "Permanently purge deleted sessions",
       "target": null
     },
     {

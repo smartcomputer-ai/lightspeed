@@ -2174,7 +2174,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_retention_put",
     "method": "session/retention/put",
-    "group": "session",
+    "group": "session/delete",
     "summary": "Replace session retention",
     "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
     "paramsType": "SessionRetentionPutParams",
@@ -2234,9 +2234,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_delete",
     "method": "session/delete",
-    "group": "session",
+    "group": "session/delete",
     "summary": "Delete closed sessions",
-    "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
+    "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
     "paramsType": "SessionDeleteParams",
     "resultType": "AgentApiOutcome<SessionDeleteResponse>",
     "inputSchema": {
@@ -9997,7 +9997,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/delete",
     "group": "bots",
     "summary": "Delete a bot",
-    "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
+    "description": "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
     "paramsType": "BotDeleteParams",
     "resultType": "AgentApiOutcome<BotDeleteResponse>",
     "inputSchema": {

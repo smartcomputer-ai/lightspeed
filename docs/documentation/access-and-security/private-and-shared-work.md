@@ -36,8 +36,9 @@ flowchart LR
 
 Sharing changes who may use the same continuing conversation. It does not make
 a snapshot or start another session. Viewers can inspect it; Contributors and
-above can continue, steer, cancel, or configure its work, subject to ordinary
-session lifecycle rules. Someone joining the universe later can read its
+above can continue, steer, or cancel its work, subject to ordinary session
+lifecycle rules. Configuring the session or overriding a run's model or
+reasoning options requires an Operator or Admin. Someone joining the universe later can read its
 shared history too.
 
 ## What each person may do
@@ -48,7 +49,8 @@ creator. These checks apply on the server as well as in the UI.
 | Operation | Private session | Shared session |
 | --- | --- | --- |
 | Read | Creator and Admins | Every member |
-| Start, steer, cancel, approve tools, configure, or close | Creator with Contributor or Operator role, and Admins | Contributors, Operators, and Admins |
+| Start runs, steer, cancel, approve tools, or close | Creator with Contributor or Operator role, and Admins | Contributors, Operators, and Admins |
+| Configure setup or override run options | Creator with Operator role, and Admins | Operators and Admins |
 | Share | Creator with Contributor or Operator role, and Admins | Already shared; no reverse operation |
 | Delete | Creator with Contributor or Operator role, and Admins | Creator with Contributor or Operator role, and Admins |
 

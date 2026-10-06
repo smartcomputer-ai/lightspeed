@@ -83,13 +83,13 @@ it("marks shared work in the list and leaves private work unmarked", async () =>
   expect(rows.find((row) => row.textContent?.includes("own"))?.querySelector('[aria-label="Shared"]')).toBeNull();
   expect(rows.find((row) => row.textContent?.includes("other"))?.querySelector('[aria-label="Shared"]')).not.toBeNull();
 });
-it("offers bulk actions to a contributor over the listed sessions", async () => {
+it("offers contributor bulk close only for their unshared sessions", async () => {
   await show();
   expect(container.querySelector('[aria-label="New session"]')).not.toBeNull();
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select sessions"]')!.click());
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select all listed sessions"]')!.click());
   expect(container.textContent).toContain("2 selected");
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Close 2")).toBe(true);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Close 1")).toBe(true);
 });
 
 async function openCreate() {
@@ -123,4 +123,26 @@ it("blocks creation without a default but allows a profile's own model", async (
   expect(create().disabled).toBe(false);
   await act(async () => create().click());
   expect(mocks.api.mock.calls.find(([method]) => method === "POST")?.[2]).toEqual({ profile: { kind: "named", profileId: "custom" } });
+});
+
+
+it("offers contributors only default or saved-profile creation", async () => {
+  const dialog = await openCreate();
+  expect(dialog.textContent).toContain("choose an existing profile");
+  expect(dialog.textContent).not.toContain("Customize setup");
+});
+
+it("still offers operators an ad hoc setup", async () => {
+  mocks.role = "operator";
+  const dialog = await openCreate();
+  expect(dialog.textContent).toContain("Customize setup");
+});
+
+it("offers operators bulk close for their own and shared sessions", async () => {
+  mocks.role = "operator";
+  await show();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select sessions"]')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select all listed sessions"]')!.click());
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Close 2")).toBe(true);
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Delete"))).toBe(false);
 });

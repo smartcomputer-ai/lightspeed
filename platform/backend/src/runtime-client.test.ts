@@ -98,9 +98,9 @@ describe("session targets", () => {
     expect(calls.map((call) => call.method)).toEqual(["session/events/read"]);
   });
 
-  it("keep share and delete with the creator even on shared work", async () => {
+  it("keep sharing with the creator even on shared work", async () => {
     core({ team: { visibility: "universe", createdBy: { kind: "actor", id: "bob" } } });
-    for (const method of ["session/share", "session/delete"] as const) {
+    for (const method of ["session/share"] as const) {
       const error = await refusal(as("contributor").call(method, { sessionId: "team" } as never));
       expect((error as GateRefusal).status).toBe(404);
     }
@@ -143,5 +143,103 @@ describe("lists and transport", () => {
       expect(() => deploymentClient(env, gatewayUrl)).toThrow("runtime endpoint");
     }
     expect(() => deploymentClient({ ...env, lightspeedApiKey: null })).toThrow("runtime endpoint");
+  });
+});
+
+
+describe("prepared contributor sessions", () => {
+  it.each([
+    {},
+    { displayName: "Research", profile: { kind: "inline", profile: {} } },
+    { profile: { kind: "named", profileId: "approved" } },
+  ])("allows defaults and existing profiles: %j", async (params) => {
+    const calls = core();
+    await as("contributor").call("session/start", params as never);
+    expect(calls.map((call) => call.method)).toEqual(["session/start"]);
+    expect(calls[0]!.params).toMatchObject(params);
+  });
+
+  it.each([
+    { config: {} },
+    { config: { model: { model: "custom" } } },
+    { metadata: { team: "custom" } },
+    { deleteAfterCloseMs: null },
+    { deleteAfterCloseMs: 1000 },
+    { access: { visibility: "universe" } },
+    { profile: { kind: "inline", profile: { instructions: { type: "text", text: "Override" } } } },
+    { profile: { kind: "inline", profile: { config: {} } } },
+    { profile: { kind: "named", profileId: "approved", config: {} } },
+    { profile: { kind: "named", profileId: "approved" }, config: {} },
+  ])("refuses contributor overrides before calling core: %j", async (params) => {
+    const calls = core();
+    const error = await refusal(as("contributor").call("session/start", params as never));
+    expect(error).toBeInstanceOf(GateRefusal);
+    expect((error as GateRefusal).status).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    "session/config/put", "session/profiles/apply", "session/metadata/put",
+    "session/environments/activate", "session/environments/deactivate",
+    "session/managed/start", "profiles/create", "profiles/put", "profiles/delete",
+  ] as const)("keeps %s out of contributor access, including owned sessions", async (method) => {
+    const calls = core({ own: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
+    const error = await refusal(as("contributor").call(method, { sessionId: "own" } as never));
+    expect(error).toBeInstanceOf(GateRefusal);
+    expect((error as GateRefusal).status).toBe(403);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("allows contributor runs but refuses per-run configuration overrides", async () => {
+    const calls = core({ own: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
+    const params = { sessionId: "own", source: { type: "input", items: [] } } as const;
+    const error = await refusal(as("contributor").call("session/runs/start", { ...params, config: {} } as never));
+    expect((error as GateRefusal).status).toBe(403);
+    expect(calls).toHaveLength(0);
+    await as("contributor").call("session/runs/start", params as never);
+    expect(calls.map((call) => call.method)).toEqual(["session/read", "session/runs/start"]);
+  });
+
+  it.each(["operator", "admin"] as const)("preserves custom creation and configuration for %s", async (role) => {
+    const calls = core({ own: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
+    await as(role).call("session/start", { profile: { kind: "inline", profile: { config: {} } } } as never);
+    await as(role).call("session/config/put", { sessionId: "own", config: {} } as never);
+    expect(calls.map((call) => call.method)).toContain("session/config/put");
+  });
+});
+
+
+describe("session lifecycle permissions", () => {
+  for (const role of ["viewer", "contributor", "operator", "admin"] as const) {
+    for (const creator of [true, false]) for (const shared of [true, false]) {
+      it(`${role} closes creator=${creator} shared=${shared} only when permitted`, async () => {
+        core({ s: { visibility: shared ? "universe" : "restricted", createdBy: { kind: "actor", id: creator ? "alice" : "bob" } } });
+        const allowed = role === "admin" || (role === "operator" && (creator || shared)) || (role === "contributor" && creator && !shared);
+        for (const force of [false, true]) {
+          const error = await refusal(as(role).call("session/close", { sessionId: "s", force }));
+          expect(error === null).toBe(allowed);
+        }
+      });
+    }
+    it(`${role} deletes and configures retention only as admin`, async () => {
+      const calls = core({ s: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
+      for (const method of ["session/delete", "session/retention/put"] as const) {
+        const error = await refusal(as(role).call(method, { sessionId: "s", deleteAfterCloseMs: 1 } as never));
+        expect(error === null).toBe(role === "admin");
+      }
+      if (role !== "admin") expect(calls).toHaveLength(0);
+    });
+  }
+  it("contributors still cancel shared runs", async () => {
+    core({ s: { visibility: "universe" } });
+    await expect(as("contributor").call("session/runs/cancel", { sessionId: "s", runId: "r" })).resolves.toBeDefined();
+  });
+  it("non-admin starts override profile retention and reject an explicit deletion schedule", async () => {
+    const calls = core();
+    for (const method of ["session/start", "session/managed/start"] as const) {
+      await as("operator").call(method, { profile: { kind: "named", profileId: "scheduled" } } as never);
+      expect(calls.at(-1)!.params.deleteAfterCloseMs).toBeNull();
+      expect(await refusal(as("operator").call(method, { deleteAfterCloseMs: 1 } as never))).toBeInstanceOf(GateRefusal);
+    }
   });
 });

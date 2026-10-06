@@ -1340,8 +1340,10 @@ export type MethodGroup =
       | "bots"
       | "deployment/universes"
       | "deployment/api-keys"
+      | "deployment/sessions"
     )
   | "session"
+  | "session/delete"
   | "blobs/put"
   | "environments"
   | "channels"
@@ -1817,7 +1819,9 @@ export type UniverseAction =
       | "read"
       | "create_session"
       | "control_session"
+      | "configure_session"
       | "stop_session"
+      | "close_session"
       | "delete_session"
       | "create_profile"
       | "manage_profile"
@@ -4810,6 +4814,51 @@ export interface DeploymentProviderBindingPutResponse {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentSessionAuditListResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentSessionAuditListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentSessionAuditListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentSessionAuditListResponse".
+ */
+export interface DeploymentSessionAuditListResponse {
+  events: SessionAuditEvent[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionAuditEvent".
+ */
+export interface SessionAuditEvent {
+  action: string;
+  affectedSessionIds: string[];
+  attribution: Attribution;
+  cause: string;
+  createdAtMs: number;
+  id: string;
+  outcome: string;
+  sessionId: string;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentSessionPurgeResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentSessionPurgeResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentSessionPurgeResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentSessionPurgeResponse".
+ */
+export interface DeploymentSessionPurgeResponse {
+  purgedSessionIds: string[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfDeploymentUniverseCreateResponse".
  */
 export interface AgentApiOutcomeOfDeploymentUniverseCreateResponse {
@@ -7330,6 +7379,28 @@ export interface DeploymentProviderBindingPutParams {
   };
   providerId: string;
   status: EnvironmentProviderBindingStatusView;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentSessionAuditListParams".
+ */
+export interface DeploymentSessionAuditListParams {
+  /**
+   * Most recent records, between 1 and 1000; defaults to 100.
+   */
+  limit?: number | null;
+  universeId?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentSessionPurgeParams".
+ */
+export interface DeploymentSessionPurgeParams {
+  /**
+   * An already deleted session; includes its deleted descendants.
+   */
+  sessionId: string;
   universeId: string;
 }
 /**

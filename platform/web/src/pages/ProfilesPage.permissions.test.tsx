@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
 vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role }, slug: "universe", isLoading: false }) }));
 vi.mock("@/lib/sessions/editor-options", () => ({ useSessionConfigEditorOptions: () => ({}) }));
-vi.mock("@/components/session/session-config-editor", () => ({ SessionConfigEditor: () => <div data-testid="config-editor">Model configuration editor</div> }));
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
@@ -53,7 +52,7 @@ it("lets an operator create, edit and delete profiles", async () => {
   expect(container.querySelector('[aria-label="New profile"]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Delete profile"]')).not.toBeNull();
   expect(container.querySelector<HTMLInputElement>("#profile-display-name")?.readOnly).toBe(false);
-  expect(container.querySelector('[data-testid="config-editor"]')).not.toBeNull();
+  expect([...container.querySelectorAll<HTMLInputElement>("input")].find((input) => input.value === "internal-model")?.readOnly).toBe(false);
 });
 it("keeps profiles readable but not editable for a contributor", async () => {
   mocks.role = "contributor";
@@ -62,8 +61,8 @@ it("keeps profiles readable but not editable for a contributor", async () => {
   expect(container.querySelector('[aria-label="Delete profile"]')).toBeNull();
   expect(container.querySelector<HTMLInputElement>("#profile-display-name")?.readOnly).toBe(true);
   expect(container.textContent).toContain("Profile instructions");
-  expect(container.textContent).toContain("internal-model");
-  expect(container.querySelector('[data-testid="config-editor"]')).toBeNull();
+  expect([...container.querySelectorAll<HTMLInputElement>("input")].find((input) => input.value === "internal-model")?.readOnly).toBe(true);
+  expect(container.querySelector("pre")).toBeNull();
 });
 it("keeps JSON available but read-only for a viewer", async () => {
   mocks.role = "viewer";

@@ -102,12 +102,15 @@ has nothing to check on `blobs/read` beyond the method's role.
 | Role | May |
 | --- | --- |
 | viewer | read shared work, lists, files, models |
-| contributor | viewer, plus start and control sessions and runs, create workspaces, invoke bots, approve tool calls in sessions they control, share their own sessions |
-| operator | contributor, plus create and configure profiles, bots, environments, MCP servers, credentials, channels |
+| contributor | viewer, plus create sessions from defaults or existing profiles, start and control runs, update workspace contents, invoke bots, approve tool calls in sessions they control, share their own sessions |
+| operator | contributor, plus customize session setup and run options, create workspaces, and create and configure profiles, bots, environments, MCP servers, credentials, channels |
 | admin | operator, plus members and roles, delete any session, share any session, read unshared work |
 
 The exact per-method table is the generated file; this table is what the
-manifest's `role` metadata must reproduce.
+manifest's `role` metadata must reproduce. The member client also checks
+creation and run payloads: contributor session creation permits only defaults
+or an existing named profile, and run requests cannot carry configuration
+overrides. Managed-session creation requires an operator.
 
 ### 5. Unshared work in the product
 
@@ -247,6 +250,27 @@ Notes on steps 1 and 2 as built:
   route requires groups so no key silently holds every group, and the list
   shows what each key may call. The Configurator installer lets an admin keep
   its key, mint one with chosen groups, or bring an existing key.
+
+## Contributor setup restrictions — implemented 2026-10-06
+
+- [x] Separate `ConfigureSession` from ordinary session control in the method
+  manifest. Config replacement, profile application, metadata, and environment
+  selection require an operator. Internal controller authority is preserved.
+- [x] Enforce prepared contributor creation in the member client, including
+  refusal of inline setup, creation overrides, managed sessions, and per-run
+  configuration overrides before forwarding to core. Profile writes remain
+  operator-only.
+- [x] Limit the contributor creation UI to universe defaults or an existing
+  profile. Remove contributor model/reasoning overrides and saved-default
+  controls from the composer.
+- [x] Reuse the config form for read-only profile and session inspection. Keep
+  disclosures usable, protect editing controls and change callbacks, and hide
+  save actions. Profile JSON remains readable.
+- [x] Regenerate the API contract and TypeScript consumers. Focused gate, form,
+  API access, controller, and contract-freshness tests pass; TypeScript checks
+  pass. Broader tests encountered concurrent session-deletion changes.
+- [x] Update the role, sharing, session, profile, and Platform documentation
+  with user approval.
 
 ## Validation
 
