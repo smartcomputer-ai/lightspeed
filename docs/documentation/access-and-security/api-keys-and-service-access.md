@@ -44,10 +44,13 @@ session mutations as well as reads and blob reads. `blobs/put` is separate so
 a connector can upload attachments without reading sessions. Exact groups are
 listed in the [API reference](../../../crates/api/contract/api-reference.md).
 
-Soft deletion and retention changes require the separate `session/delete`
-group; existing `session` keys do not gain those capabilities. Listing deleted
-sessions and permanently deleting them require a deployment key with
-`deployment/sessions`. Provision these groups on service keys that need them.
+Session deletion and retention changes require the separate `session/delete`
+group; existing `session` keys do not gain those capabilities. Direct
+`session/delete` calls permanently delete by default; `softDelete: true` retains
+hidden history. Listing and purging already soft-deleted sessions require a
+deployment key with `deployment/sessions`. Provision these groups on service
+keys that need them. Platform always forces soft deletion for member requests
+and reserves its audited purge route for Platform admins.
 
 An actor assertion uses `x-lightspeed-actor`. Only keys created with
 `assertActor` may send it. Core records the opaque actor ID for attribution;

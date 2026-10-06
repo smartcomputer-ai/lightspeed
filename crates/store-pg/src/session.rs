@@ -850,7 +850,7 @@ impl SessionStore for PgStore {
         &self,
         request: DeleteClosedSessions,
     ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
-        self.delete_closed_sessions_with_visibility(request, false)
+        self.delete_closed_sessions_with_options(request, false, false)
             .await
     }
 
@@ -1790,7 +1790,7 @@ impl PgStore {
     }
 }
 
-/// Permanent deletion is separate from ordinary session storage operations.
+/// Administrative purge requires prior soft deletion.
 #[derive(Debug, thiserror::Error)]
 pub enum PurgeSessionError {
     #[error("session {session_id} must be soft-deleted before permanent deletion")]
@@ -1851,9 +1851,11 @@ impl PgStore {
 }
 
 impl PgStore {
-    pub async fn delete_closed_sessions_with_visibility(
+    /// Both modes atomically enforce lifecycle, cascade and audience constraints.
+    pub async fn delete_closed_sessions_with_options(
         &self,
         request: DeleteClosedSessions,
+        soft_delete: bool,
         shared_only: bool,
     ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
         let target_snapshot = self
@@ -1907,13 +1909,14 @@ impl PgStore {
                   ON (child.source_seq IS NOT NULL
                       AND child.source_session_id = parent.session_id)
                   OR child.origin_parent_session_id = parent.session_id
-                WHERE child.universe_id = $1 AND child.deleted_at_ms IS NULL
+                WHERE child.universe_id = $1 AND (NOT $3 OR child.deleted_at_ms IS NULL)
             )
             SELECT session_id FROM tree ORDER BY session_id
             "#,
         )
         .bind(self.config.universe_id)
         .bind(request.session_id.as_str())
+        .bind(soft_delete)
         .fetch_all(&mut *tx)
         .await
         .map_err(|error| session_sql_error("list session retention subtree", error))?;
@@ -1931,7 +1934,7 @@ impl PgStore {
             r#"
             SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
-            WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL
+            WHERE universe_id = $1 AND session_id = ANY($2) AND (NOT $3 OR deleted_at_ms IS NULL)
             ORDER BY session_id
             FOR UPDATE
             "#,
@@ -1939,6 +1942,7 @@ impl PgStore {
         let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .bind(&selected_ids)
+            .bind(soft_delete)
             .fetch_all(&mut *tx)
             .await
             .map_err(|error| session_sql_error("lock session retention subtree", error))?;
@@ -1985,19 +1989,24 @@ impl PgStore {
         sqlx::query("UPDATE sessions SET source_session_id = NULL WHERE universe_id=$1 AND source_session_id=ANY($2) AND source_seq IS NULL")
             .bind(self.config.universe_id).bind(&selected_ids).execute(&mut *tx).await
             .map_err(|error| session_sql_error("detach deleted clone sources", error))?;
-        let now = crate::shared::unix_now_ms();
-        sqlx::query(
-            r#"
-            UPDATE sessions SET deleted_at_ms = $3
-            WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(&selected_ids)
-        .bind(now)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| session_sql_error("delete session subtree", error))?;
+        if soft_delete {
+            sqlx::query(
+                "UPDATE sessions SET deleted_at_ms = $3 WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL",
+            )
+            .bind(self.config.universe_id)
+            .bind(&selected_ids)
+            .bind(crate::shared::unix_now_ms())
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("soft delete session subtree", error))?;
+        } else {
+            sqlx::query("DELETE FROM sessions WHERE universe_id = $1 AND session_id = ANY($2)")
+                .bind(self.config.universe_id)
+                .bind(&selected_ids)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| session_sql_error("permanently delete session subtree", error))?;
+        }
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit delete session", error))?;

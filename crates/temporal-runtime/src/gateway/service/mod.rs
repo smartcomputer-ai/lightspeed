@@ -2680,6 +2680,7 @@ impl AgentApiService for GatewayAgentApi {
                 due_at_or_before_ms: None,
             },
             crate::session_deletion::SessionDeletionCause::Manual,
+            params.soft_delete,
             params.shared_only,
         )
         .await

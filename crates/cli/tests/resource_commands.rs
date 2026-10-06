@@ -149,6 +149,32 @@ fn session_summary(id: &str) -> Value {
 }
 
 #[test]
+fn session_delete_is_permanent_unless_soft_delete_is_requested() {
+    for soft_delete in [false, true] {
+        let runtime = Runtime::start(move |method, params| {
+            assert_eq!(method, "session/delete");
+            assert_eq!(params["sessionId"], "s1");
+            assert_eq!(params["cascade"], true);
+            assert_eq!(
+                params
+                    .get("softDelete")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                soft_delete
+            );
+            let mut summary = session_summary("s1");
+            summary["lifecycleStatus"] = json!("closed");
+            json!({"session": summary, "deletedSessionCount": 1})
+        });
+        let mut args = vec!["session", "delete", "s1", "--cascade"];
+        if soft_delete {
+            args.push("--soft-delete");
+        }
+        runtime.success(&args);
+    }
+}
+
+#[test]
 fn chat_list_requests_only_ten_unmanaged_roots_and_shows_status_without_starting_chat() {
     let runtime = Runtime::start(|method, params| {
         assert_eq!(method, "session/list");

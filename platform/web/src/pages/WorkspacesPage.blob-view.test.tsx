@@ -46,6 +46,7 @@ const tree = () => ({
           kind: "directory",
           entries: {
             "other.txt": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false },
+            "image.png": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false, media_type: "image/png" },
             [name]: {
               kind: "file",
               blob_ref: blobRef,
@@ -205,11 +206,38 @@ it("previews unsaved edits, preserves them in source, and saves the draft from p
   });
 });
 
-it("returns to source when navigating to a different workspace file", async () => {
+it("keeps the selected view when navigating between workspace files", async () => {
+  stored = "# Notes";
+  await render();
+  const editor = container.querySelector("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "# Unsaved draft");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("Preview").click());
+  stored = "# Other file";
+  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/other.txt"]')!.click());
+  await waitForUi(() => expect(container.querySelector("section h1:not(header h1)")?.textContent).toBe("Other file"));
+  expect(button("Preview").getAttribute("aria-selected")).toBe("true");
+  expect(container.querySelector("textarea")).toBeNull();
+  expect(button("Saved").disabled).toBe(true);
+  await act(async () => button("Source").click());
+  stored = "# Notes";
+  await act(async () => container.querySelector<HTMLAnchorElement>(`a[href$="/files/docs/${encodeURIComponent(name)}"]`)!.click());
+  await waitForUi(() => expect(container.querySelector("textarea")?.value).toBe("# Notes"));
+  expect(button("Source").getAttribute("aria-selected")).toBe("true");
+});
+
+it("keeps the selected view after visiting a non-text file", async () => {
   stored = "# Notes";
   await render();
   await act(async () => button("Preview").click());
+  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/image.png"]')!.click());
+  await waitForUi(() => expect(container.querySelector('img[alt="docs/image.png"]')).not.toBeNull());
+  expect(container.querySelector('[aria-label="Markdown view"]')).toBeNull();
   await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/other.txt"]')!.click());
+  await waitForUi(() => expect(container.querySelector("section h1:not(header h1)")?.textContent).toBe("Notes"));
+  expect(button("Preview").getAttribute("aria-selected")).toBe("true");
+  await act(async () => button("Source").click());
   await waitForUi(() => expect(container.querySelector("textarea")?.value).toBe(stored));
-  expect(button("Source").getAttribute("aria-pressed")).toBe("true");
 });

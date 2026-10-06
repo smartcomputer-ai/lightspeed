@@ -63,6 +63,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
   const [newFile, setNewFile] = useState<{ parent: string; revision: number } | null>(null);
+  const [preview, setPreview] = useState(false);
   const [editor, setEditor] = useState({ workspaceId, path: filePath, identity: 0 });
   const [pendingRename, setPendingRename] = useState<{
     from: string;
@@ -124,6 +125,8 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
             workspaceId={workspaceId}
             filePath={filePath}
             fileIdentity={editor.identity}
+            preview={preview}
+            onPreviewChange={setPreview}
           />
         ) : (
           workspaceId ? (
@@ -303,12 +306,16 @@ function FileDetail({
   workspaceId,
   filePath,
   fileIdentity,
+  preview,
+  onPreviewChange,
 }: {
   universeId: string;
   slug: string;
   workspaceId: string;
   filePath: string;
   fileIdentity: number;
+  preview: boolean;
+  onPreviewChange: (preview: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const permissions = useActionPermissions(universeId);
@@ -360,15 +367,13 @@ function FileDetail({
     decoded?.kind === "text" ? new TextDecoder().decode(decoded.bytes) : null;
   const [editor, setEditor] = useState<{
     identity: number;
-    preview: boolean;
     draft: string | null;
     saved: { text: string; previousBlob: string } | null;
     error: string | null;
-  }>({ identity: fileIdentity, preview: false, draft: null, saved: null, error: null });
+  }>({ identity: fileIdentity, draft: null, saved: null, error: null });
   if (editor.identity !== fileIdentity) {
     setEditor({
       identity: fileIdentity,
-      preview: false,
       draft: null,
       saved: null,
       error: null,
@@ -510,9 +515,7 @@ function FileDetail({
         </span>
         <div className="ml-auto flex shrink-0 basis-full items-center justify-end gap-1.5 sm:basis-auto">
           {decoded?.kind === "text" && (
-            <MarkdownViewToggle preview={editor.preview} onPreviewChange={(preview) =>
-              setEditor((current) => ({ ...current, preview }))
-            } />
+            <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
           )}
           {blobLink && (
             <Button
@@ -553,7 +556,7 @@ function FileDetail({
         {blob.error && (
           <p className="p-4 text-sm text-destructive">{blob.error.message}</p>
         )}
-        {decoded?.kind === "text" && (editor.preview ? (
+        {decoded?.kind === "text" && (preview ? (
           <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
         ) : (
           <textarea

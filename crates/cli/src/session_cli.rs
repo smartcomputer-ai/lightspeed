@@ -48,12 +48,12 @@ enum SessionCommand {
     Metadata(MetadataCommandArgs),
     /// List active context entries, or replace ones the provider rejects.
     Context(ContextCommandArgs),
-    /// Set or clear automatic deletion for a retention root.
+    /// Set or clear automatic soft deletion for a retention root.
     Retention(RetentionArgs),
     /// Close one session by id, or every open session matching a filter.
     Close(CloseArgs),
-    /// Delete one closed session by id, or every closed session matching a
-    /// filter; open matches are skipped.
+    /// Permanently delete one closed session or closed filter matches;
+    /// --soft-delete retains history, and open matches are skipped.
     Delete(DeleteArgs),
 }
 
@@ -104,7 +104,7 @@ struct StartArgs {
     profile: Option<String>,
     #[command(flatten)]
     metadata: MetadataPairs,
-    /// Delete this retention tree after the root closes (for example 30m,
+    /// Soft-delete this retention tree after the root closes (for example 30m,
     /// 24h, or 7d).
     #[arg(long = "delete-after", value_parser = parse_duration_ms)]
     delete_after_close_ms: Option<u64>,
@@ -198,7 +198,7 @@ struct RetentionArgs {
     #[command(flatten)]
     common: CommonArgs,
     session_id: String,
-    /// Delete the tree this long after its root closes (for example 24h).
+    /// Soft-delete the tree this long after its root closes (for example 24h).
     #[arg(long = "delete-after", value_parser = parse_duration_ms, conflicts_with = "off")]
     delete_after_close_ms: Option<u64>,
     /// Disable automatic deletion.
@@ -232,6 +232,9 @@ struct DeleteArgs {
     /// Also delete history forks and delegated child sessions.
     #[arg(long)]
     cascade: bool,
+    /// Hide sessions and retain their history instead of permanently deleting it.
+    #[arg(long)]
+    soft_delete: bool,
 }
 
 pub(crate) async fn handle(args: SessionArgs) -> Result<()> {
@@ -549,6 +552,7 @@ async fn delete(args: DeleteArgs) -> Result<()> {
         match client
             .delete_session(api::SessionDeleteParams {
                 shared_only: false,
+                soft_delete: args.soft_delete,
                 session_id: session_id.clone(),
                 cascade: args.cascade,
             })

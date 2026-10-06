@@ -15,9 +15,11 @@ afterEach(() => vi.unstubAllGlobals());
 function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMutation?: boolean; purgedIds?: string[] } = {}) {
   const audits = vi.fn(async () => undefined);
   const rpcCalls: string[] = [];
+  const rpcParams: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
     rpcCalls.push(rpc.method);
+    rpcParams.push(rpc.params);
     if (failMutation && rpc.method !== "session/read") {
       return Response.json({ id: rpc.id, error: { code: -32009, message: "failed", data: { kind: "conflict" } } });
     }
@@ -38,7 +40,7 @@ function fixture({ failMutation = false, purgedIds = ["s1", "child"] }: { failMu
   const call = (path: string, method = "POST", body: unknown = {}) => app.request(path, { method,
     headers: { "content-type": "application/json" }, ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
   });
-  return { call, audits, rpcCalls };
+  return { call, audits, rpcCalls, rpcParams };
 }
 
 it.each([false, true])("closes with force=%s without writing an audit record", async (force) => {
@@ -47,11 +49,12 @@ it.each([false, true])("closes with force=%s without writing an audit record", a
   expect(f.rpcCalls).toContain("session/close");
   expect(f.audits).not.toHaveBeenCalled();
 });
-it("soft deletes shared sessions without writing an audit record", async () => {
-  auth.role = "operator";
+it.each(["operator", "admin"])("%s always soft deletes even if the URL requests permanent deletion", async (role) => {
+  auth.role = role;
   const f = fixture();
-  expect((await f.call("/universes/universe/sessions/s1?cascade=true", "DELETE")).status).toBe(200);
+  expect((await f.call("/universes/universe/sessions/s1?cascade=true&softDelete=false", "DELETE")).status).toBe(200);
   expect(f.rpcCalls).toContain("session/delete");
+  expect(f.rpcParams[f.rpcCalls.indexOf("session/delete")]).toMatchObject({ sessionId: "s1", cascade: true, softDelete: true });
   expect(f.audits).not.toHaveBeenCalled();
 });
 it("does not record successful purge when the runtime rejects it", async () => {

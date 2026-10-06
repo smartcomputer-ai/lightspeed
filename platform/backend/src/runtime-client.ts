@@ -95,8 +95,9 @@ class MemberClient extends LightspeedClient {
       }
     }
     const admin = this.member.role === "admin";
-    if (!admin && method === "session/delete") {
-      params = { ...params, sharedOnly: true } as MethodParams<M>;
+    if (method === "session/delete") {
+      // Permanent deletion must use the separately authorized, audited purge route.
+      params = { ...params, softDelete: true, ...(!admin ? { sharedOnly: true } : {}) } as MethodParams<M>;
     }
     if (!admin && CREATION_METHODS.has(method)) {
       const start = params as { deleteAfterCloseMs?: number | null };

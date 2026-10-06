@@ -154,7 +154,7 @@ Session closure, soft deletion, permanent deletion, blob collection, Temporal
 history retention, and machine cleanup are separate operations. Closing a session
 keeps its history. If the root session has a `deleteAfterCloseMs` policy,
 it owns the later soft-deletion deadline; otherwise there is no automatic
-deletion deadline. Setting deletion retention requires an Admin.
+deletion deadline. In Platform, setting deletion retention requires an Admin.
 
 Forked and delegated descendants share that retained root. Automatic soft
 deletion waits until the deadline and until the entire retained tree is closed. An
@@ -163,11 +163,12 @@ retention reaper checks every five minutes and reports due roots, deletions,
 open-tree skips, conflicts, and errors.
 
 Soft deletion hides sessions but retains events, checkpoints and blob roots.
-There is no automatic purge: a Platform admin must
-[permanently delete the retained history](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
-before its blob roots are released. Retention alone therefore does not reclaim
-that storage. It also does not remove workspaces, environments, backups or
-Temporal history.
+There is no automatic purge: use `deployment/sessions/purge` or
+[Platform administration](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
+to permanently remove retained history and release its blob roots. Retention
+alone therefore does not reclaim that storage. Direct runtime `session/delete` calls permanently delete closed
+sessions by default; `softDelete: true` retains them instead. Neither mode
+removes workspaces, environments, backups or Temporal history.
 
 Blob collection runs separately. One elected `sessions` process examines the
 CAS catalog hourly for old blobs without durable holders. The default grace

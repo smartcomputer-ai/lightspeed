@@ -308,8 +308,8 @@ Leaving a browser tab or quitting the CLI has no effect on session lifecycle.
 accept more work or be reopened. Its retained history is still inspectable.
 **Force close session** also cancels outstanding work, including queued runs.
 
-Deleting a closed session **soft-deletes** it: it disappears from ordinary
-session views for everyone, including Admins, while its history remains stored.
+Deleting a closed session in Platform **soft-deletes** it: it disappears from
+ordinary session views for everyone, including Admins, while its history remains stored.
 **Also delete forks and delegated children** includes its retention descendants,
 which must also be closed; configuration-only clones are separate. Without
 that option, the session must have no retention descendants. Closing and
@@ -320,14 +320,21 @@ closed session tree; a blank value keeps it until manual deletion. The root
 owns this policy for its retention tree, and deletion waits until all descendants
 are closed. This policy never permanently removes stored history.
 
-Only Platform admins can permanently delete retained session history. In the
-delete dialog, select **Also permanently delete retained history** to soft-delete
+Within Platform, only Platform admins can permanently delete retained session
+history. In the delete dialog, select **Also permanently delete retained history** to soft-delete
 and then purge. For already deleted sessions, open **Platform admin → Universes →
 Deleted sessions**, select sessions and choose **Purge selected…**, or use
 **Purge all…**, then confirm removal of their deleted history trees. There is
 no automatic purge or restore action.
 Permanent deletion through Platform is recorded in the
 [audit log](../access-and-security/overview.md#what-is-recorded-today).
+
+Direct runtime clients use `session/delete`, which permanently deletes by
+default; pass `softDelete: true` to retain hidden history. Similarly,
+`lightspeed session delete` deletes permanently unless `--soft-delete` is set.
+Both modes require closed sessions and use `cascade` for retention descendants.
+Platform always requests soft deletion before its separate admin purge step;
+automatic retention also continues to soft-delete only.
 
 Bot and channel conversations have a lifecycle controller. Their session
 inspector identifies what manages them; use that controller's reset or close

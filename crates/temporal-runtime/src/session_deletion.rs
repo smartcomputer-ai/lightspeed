@@ -21,12 +21,13 @@ pub(crate) async fn delete_session_subtree(
     store: &PgStore,
     request: DeleteClosedSessions,
     cause: SessionDeletionCause,
+    soft_delete: bool,
     shared_only: bool,
 ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
     let requested_session_id = request.session_id.clone();
     let cascade = request.cascade;
     let deleted = store
-        .delete_closed_sessions_with_visibility(request, shared_only)
+        .delete_closed_sessions_with_options(request, soft_delete, shared_only)
         .await?;
     tracing::info!(
         target: "temporal_runtime",
@@ -34,6 +35,7 @@ pub(crate) async fn delete_session_subtree(
         retention_root_session_id = %deleted.target.retention_root_session_id,
         deleted_session_count = deleted.deleted_session_ids.len(),
         cascade,
+        soft_delete,
         cause = cause.as_str(),
         "session deletion complete"
     );

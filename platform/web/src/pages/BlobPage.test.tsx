@@ -98,9 +98,9 @@ it.each(["", "?type=text/markdown", "?name=notes.md"])(
     stored = "# Notes\n\n**Bold** and ~~removed~~\n\n| Name | Value |\n| --- | --- |\n| A | B |\n\n<script>alert(1)</script>\n\n[unsafe](javascript:alert)";
     await open(`/u/acme/blobs/${digest}${query}`);
     const button = (label: string) => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === label)!;
-    expect(button("Source").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Source").getAttribute("aria-selected")).toBe("true");
     await act(async () => button("Preview").click());
-    expect(button("Preview").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Preview").getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector("div h1:not(header h1)")?.textContent).toBe("Notes");
     expect(container.querySelector("strong")?.textContent).toBe("Bold");
     expect(container.querySelector("del")?.textContent).toBe("removed");
@@ -113,6 +113,24 @@ it.each(["", "?type=text/markdown", "?name=notes.md"])(
     expect(mocks.api.mock.calls.filter(([, path]) => String(path).includes("/blobs/"))).toHaveLength(1);
   },
 );
+
+it("switches Markdown views with the tab arrow keys", async () => {
+  await open(`/u/acme/blobs/${digest}`);
+  const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+  expect(container.querySelector('[role="tablist"]')?.getAttribute("aria-label")).toBe("Markdown view");
+  await act(async () => {
+    tabs[0]!.focus();
+    tabs[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+  expect(document.activeElement).toBe(tabs[1]);
+  expect(tabs[1]!.getAttribute("aria-selected")).toBe("true");
+  expect(container.querySelector("pre")).toBeNull();
+  await act(async () => {
+    tabs[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+  });
+  expect(tabs[0]!.getAttribute("aria-selected")).toBe("true");
+  expect(container.querySelector("pre")!.textContent).toBe(stored);
+});
 
 it("names a source session the viewer cannot read by its id, without a link", async () => {
   await open(`/u/acme/blobs/${digest}?session=private`);

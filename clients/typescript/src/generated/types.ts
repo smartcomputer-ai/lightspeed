@@ -8108,6 +8108,11 @@ export interface SessionDeleteParams {
    * Delegating services use this guard for operators deleting shared work.
    */
   sharedOnly?: boolean;
+  /**
+   * Hide sessions while retaining records, events, checkpoints and blob roots.
+   * False (the default) permanently deletes them without prior soft deletion.
+   */
+  softDelete?: boolean;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8244,7 +8249,7 @@ export interface SessionRenameParams {
  */
 export interface SessionRetentionPutParams {
   /**
-   * Positive duration enables automatic tree deletion; null disables it.
+   * Positive duration enables automatic tree soft deletion; null disables it.
    */
   deleteAfterCloseMs: number | null;
   sessionId: string;
@@ -8268,7 +8273,7 @@ export interface SessionStartParams {
   access?: AccessInput | null;
   config?: SessionConfig | null;
   /**
-   * Root-owned automatic deletion measured from close. Absent inherits a
+   * Root-owned automatic soft deletion measured from close. Absent inherits a
    * profile default, explicit null keeps the tree, and a duration overrides
    * the profile.
    */

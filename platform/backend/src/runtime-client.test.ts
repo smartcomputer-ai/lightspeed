@@ -223,8 +223,9 @@ describe("session lifecycle permissions", () => {
     }
     for (const shared of [true, false]) it(`${role} soft deletes shared=${shared} only when permitted`, async () => {
       const calls = core({ s: { visibility: shared ? "universe" : "restricted", createdBy: { kind: "actor", id: "alice" } } });
-      const error = await refusal(as(role).call("session/delete", { sessionId: "s", sharedOnly: false }));
+      const error = await refusal(as(role).call("session/delete", { sessionId: "s", sharedOnly: false, softDelete: false }));
       expect(error === null).toBe(role === "admin" || (role === "operator" && shared));
+      if (error === null) expect(calls.at(-1)?.params.softDelete).toBe(true);
       if (role === "operator" && shared) expect(calls.at(-1)?.params.sharedOnly).toBe(true);
     });
     it(`${role} deletes and configures retention only as admin`, async () => {

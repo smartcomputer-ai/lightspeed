@@ -133,7 +133,7 @@ Replaces the complete descriptive key/value map (bounded like session/start); an
 
 **Replace session retention**
 
-Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.
+Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
 
 - Access: `{"kind":"universe","action":"set_session_retention"}`
 - Group: `session/delete`
@@ -159,7 +159,7 @@ Closes an idle session and detaches its environment bindings. Force mode cancels
 
 **Delete closed sessions**
 
-Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.
+Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
 
 - Access: `{"kind":"universe","action":"delete_session"}`
 - Group: `session/delete`

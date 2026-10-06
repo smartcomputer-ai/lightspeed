@@ -547,6 +547,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const response = await client.call("session/delete", {
         sessionId: c.req.param("sessionId"),
+        softDelete: true,
         cascade: c.req.query("cascade") === "true",
       });
       return c.json(response.result.session);

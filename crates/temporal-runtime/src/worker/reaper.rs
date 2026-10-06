@@ -6,7 +6,7 @@
 //! cancellation. The promise reaper is the backstop for the cases that no
 //! single workflow can repair by itself: missed signals, terminated
 //! workflows, or promise/source state that is only visible by scanning
-//! session logs. The retention reaper deletes closed session trees whose
+//! session logs. The retention reaper soft-deletes closed session trees whose
 //! deadline passed, and the blob sweeper frees the blobs nothing references
 //! any more.
 
@@ -513,6 +513,7 @@ impl SessionRetentionReaper {
                         due_at_or_before_ms: Some(now_ms),
                     },
                     SessionDeletionCause::Retention,
+                    true,
                     false,
                 )
                 .await;

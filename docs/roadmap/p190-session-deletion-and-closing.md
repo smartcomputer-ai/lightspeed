@@ -6,8 +6,9 @@ Status: implemented and validated.
 
 Closing ends execution and retains readable history. Soft deletion makes a closed
 session disappear from every ordinary universe interface, including admin views.
-Only Platform administration can inspect deleted-session metadata and permanently
-remove the retained session records.
+Within Platform, only Platform administration can inspect deleted-session
+metadata and permanently remove the retained session records. Direct runtime
+clients can permanently delete closed sessions without first soft-deleting them.
 
 | Role | Close | Soft delete | Permanently delete |
 | --- | --- | --- | --- |
@@ -25,11 +26,17 @@ controller rules still apply to managed sessions.
 
 ## Storage and deletion
 
-`session/delete` sets `sessions.deleted_at_ms`. There are no tombstone or runtime
-audit tables. Every selected session must already be closed. Existing leaf and
-explicit cascade behavior remains: history forks and delegated descendants are
-included; configuration-only clones remain independent. An atomic shared-only
-guard prevents operator cascades from deleting private forks.
+`session/delete` permanently deletes by default. With `softDelete: true`, it sets
+`sessions.deleted_at_ms` instead. Platform forces that option server-side for
+every member, including admins; retention also explicitly chooses soft deletion.
+The CLI defaults to permanent deletion and exposes `--soft-delete`.
+There are no tombstone or runtime audit tables. Every selected session must
+already be closed. Existing leaf and explicit cascade behavior remains:
+history forks and delegated descendants are
+included; permanent cascades also include already soft-deleted descendants so
+retained forks cannot lose their source history. Configuration-only clones
+remain independent. An atomic shared-only guard prevents operator cascades
+from deleting private forks.
 
 Normal reads, lists, access lookups, mutations, event reads, and source-based
 creation exclude deleted sessions. Universe admins get no trash view or
@@ -38,8 +45,9 @@ its scheduling remains admin-only. Retained events, checkpoints and CAS roots
 remain intact until explicit permanent deletion. Soft-deleted rows prevent reuse
 of their session IDs while retained.
 
-Permanent deletion is a deployment-scoped operation, exposed only to platform
-admins through the Universes administration page or an unchecked-by-default
+Purging already soft-deleted sessions is a deployment-scoped operation, exposed
+in Platform only to platform admins through the Universes administration page
+or an unchecked-by-default
 “Also permanently delete retained history” option in the ordinary session delete
 dialog. Both paths use the same audited Platform purge endpoint. The inline path
 soft-deletes first, then purges; a failed purge leaves a retry available without
@@ -69,9 +77,9 @@ Platform enforces the role and audience rules on the server, including direct
 HTTP requests, and mirrors them in individual and bulk UI controls. The runtime
 continues to enforce service-key scopes and method groups, not human memberships.
 
-`session/delete` and `session/retention/put` require the explicit `session/delete`
-key group. Existing ordinary `session` keys do not silently acquire deletion
-access. Administrators deploying this change must provision that capability on
+`session/delete` (either mode) and `session/retention/put` require the explicit
+`session/delete` key group. Existing ordinary `session` keys do not silently
+acquire deletion access. Administrators deploying this change must provision that capability on
 service keys that need it. Deleted-session administration requires a deployment
 key with `deployment/sessions`; Platform independently requires platform admin.
 
@@ -107,8 +115,14 @@ as successful actions; empty purge retries do not duplicate successful purge log
 - [x] Align individual, bulk and demo lifecycle controls.
 - [x] Complete regression coverage, regenerated contracts and component checks.
 - [x] Align existing user, access and operations guides with deletion and audit behavior.
+- [x] Restore permanent deletion by default for direct runtime clients, with explicit soft deletion in Platform and retention.
 
 Validation passed: workspace Clippy with warnings denied; API, PostgreSQL-store
 and runtime unit tests; local PostgreSQL lifecycle and CAS-retention tests; the
 serialized live bot history/recreation test; full backend, web, SDK and Configurator
 tests; TypeScript checks; production web/demo builds; and release metadata checks.
+
+Direct-deletion follow-up validated with API schema/default tests, PostgreSQL
+lifecycle and blob-retention tests, both deletion modes through the live runtime
+API and CLI, Platform permission/audit regressions, SDK and Configurator tests,
+TypeScript checks, documentation checks and workspace Clippy.
