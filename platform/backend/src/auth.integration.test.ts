@@ -248,6 +248,7 @@ it("keeps universe roles local, enforces their edits on existing sessions, and r
   expect((await fixture.request(`${base}/members/${member.id}`, undefined, adminCookie, "DELETE")).status).toBe(200);
   expect(await (await fixture.request("/api/v1/universes", undefined, (await login()).cookie)).json()).toEqual([]);
   expect((await fixture.request("/api/v1/admin/audit", undefined, cookie)).status).toBe(403);
+  expect((await fixture.request("/api/v1/admin/universes/u/sessions/s/purge", {}, cookie, "POST")).status).toBe(403);
   await fixture.db.delete(schema.user).where(eq(schema.user.id, company.id));
   const events = await (await fixture.request("/api/v1/admin/audit", undefined, adminCookie)).json() as Array<{ targetId: string; action: string }>;
   expect(events.filter((event) => event.targetId === company.id).map((event) => event.action)).toEqual(expect.arrayContaining(["member.add", "member.role", "member.remove"]));

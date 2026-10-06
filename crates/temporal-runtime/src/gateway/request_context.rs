@@ -214,6 +214,19 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_session_keys_cannot_delete_or_schedule_deletion() {
+        let ordinary = keyed(&[MethodGroup::Session], None);
+        assert!(ordinary.permits("session/close"));
+        assert!(!ordinary.permits("session/delete"));
+        assert!(!ordinary.permits("session/retention/put"));
+        assert!(!ordinary.permits("deployment/sessions/purge"));
+        let destructive = keyed(&[MethodGroup::SessionDelete], None);
+        assert!(destructive.permits("session/delete"));
+        assert!(destructive.permits("session/retention/put"));
+        assert!(!destructive.permits("deployment/sessions/purge"));
+    }
+
+    #[test]
     fn caller_access_reports_what_permits_allows() {
         let connector = keyed(&[MethodGroup::ChannelsInbound, MethodGroup::BlobsPut], None);
         assert_eq!(

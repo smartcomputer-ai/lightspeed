@@ -24,7 +24,7 @@ use bots::{
 };
 use harness::storage::BlobStore;
 use serde_json::Value;
-use temporal_workflow::bots::BotControllerArgs;
+use temporal_workflow::bots::{BotControllerArgs, BotControllerCarry};
 use temporalio_client::{UntypedSignal, UntypedWorkflow, WorkflowStartOptions};
 use temporalio_common::data_converters::{PayloadConverter, RawValue};
 use temporalio_common::protos::coresdk::AsJsonPayloadExt as _;
@@ -219,6 +219,7 @@ impl GatewayAgentApi {
             WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
         self.start_bot_controller(
             config,
+            bot.created_at_ms,
             options,
             bots::BOT_EVENT_SIGNAL,
             RawValue::new(vec![payload]),
@@ -231,14 +232,20 @@ impl GatewayAgentApi {
     async fn start_bot_controller(
         &self,
         config: BotControllerConfig,
+        created_at_ms: i64,
         options: WorkflowStartOptions,
         signal_name: &str,
         signal_input: RawValue,
     ) -> anyhow::Result<()> {
+        let previous = self
+            .store()
+            .previous_bot_session_ids(&config.bot_id, created_at_ms)
+            .await?;
+        let carry = carry_after_previous_sessions(&config.bot_id, previous)?;
         let input = RawValue::from_value(
             &BotControllerArgs {
                 config,
-                carry: None,
+                carry: Some(carry),
             },
             &PayloadConverter::default(),
         );
@@ -266,6 +273,7 @@ impl GatewayAgentApi {
             WorkflowStartOptions::new(self.bot_task_queue().to_owned(), workflow_id).build();
         self.start_bot_controller(
             config,
+            bot.created_at_ms,
             options,
             bots::BOT_CONFIG_SIGNAL,
             RawValue::new(vec![payload]),
@@ -485,5 +493,71 @@ mod tests {
         input.deliver = false;
         assert!(!input.deliver);
         assert!(input.trigger_id.is_none());
+    }
+}
+
+/// Reusing a bot id starts after its retained session generations.
+fn carry_after_previous_sessions(
+    bot_id: &BotId,
+    ids: Vec<String>,
+) -> anyhow::Result<BotControllerCarry> {
+    let main = bots::ids::bot_main_session_id(bot_id, 1);
+    let mut carry = BotControllerCarry::default();
+    for id in ids {
+        let (base, generation) = if id == main {
+            (id.as_str(), 1)
+        } else if let Some(generation) = id.strip_prefix(&format!("{main}-g"))
+            && let Ok(generation) = generation.parse::<u32>()
+        {
+            (main.as_str(), generation)
+        } else if id.starts_with(&format!("{main}:")) {
+            let base = bots::ids::routed_session_base(&id);
+            let generation = if base == id {
+                1
+            } else {
+                id[base.len() + 2..].parse::<u32>()?
+            };
+            (base, generation)
+        } else {
+            continue;
+        };
+        let next = generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("bot session generation exhausted"))?;
+        if base == main {
+            carry.main_generation = carry.main_generation.max(next);
+        } else {
+            let current = carry
+                .session_generations
+                .entry(base.to_owned())
+                .or_insert(1);
+            *current = (*current).max(next);
+        }
+    }
+    Ok(carry)
+}
+
+#[cfg(test)]
+mod retained_session_tests {
+    use super::*;
+    #[test]
+    fn new_bot_incarnation_skips_old_main_and_routed_generations() {
+        let carry = carry_after_previous_sessions(
+            &BotId::new("triage"),
+            vec![
+                "bot:v1:triage".into(),
+                "bot:v1:triage-g4".into(),
+                "bot:v1:triage:k-mail-g3".into(),
+                "bot:v1:triage-other".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(carry.main_generation, 5);
+        assert_eq!(
+            carry.session_generations.get("bot:v1:triage:k-mail"),
+            Some(&4)
+        );
+        assert_eq!(carry.session_generations.len(), 1);
+        assert!(!carry.session_ready);
     }
 }

@@ -226,7 +226,7 @@
     },
     {
       "access": {
-        "action": "delete_session",
+        "action": "set_session_retention",
         "kind": "universe"
       },
       "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
@@ -279,7 +279,7 @@
         "action": "delete_session",
         "kind": "universe"
       },
-      "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
+      "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.",
       "group": "session/delete",
       "method": "session/delete",
       "params": {
@@ -294,7 +294,7 @@
         },
         "type": "AgentApiOutcome<SessionDeleteResponse>"
       },
-      "role": "admin",
+      "role": "operator",
       "scope": "universe",
       "summary": "Delete closed sessions",
       "target": "sessionId"
@@ -3001,31 +3001,31 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns durable lifecycle records, including deletion and purge evidence that survives session removal.",
+      "description": "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.",
       "group": "deployment/sessions",
-      "method": "deployment/sessions/audit/list",
+      "method": "deployment/sessions/deleted/list",
       "params": {
         "schema": {
-          "$ref": "#/definitions/DeploymentSessionAuditListParams"
+          "$ref": "#/definitions/DeploymentDeletedSessionsListParams"
         },
-        "type": "DeploymentSessionAuditListParams"
+        "type": "DeploymentDeletedSessionsListParams"
       },
       "result": {
         "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentSessionAuditListResponse"
+          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentDeletedSessionsListResponse"
         },
-        "type": "AgentApiOutcome<DeploymentSessionAuditListResponse>"
+        "type": "AgentApiOutcome<DeploymentDeletedSessionsListResponse>"
       },
       "role": null,
       "scope": "deployment",
-      "summary": "Read session lifecycle audit",
+      "summary": "List deleted sessions",
       "target": null
     },
     {
       "access": {
         "kind": "deployment"
       },
-      "description": "Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.",
+      "description": "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.",
       "group": "deployment/sessions",
       "method": "deployment/sessions/purge",
       "params": {
@@ -3042,7 +3042,7 @@
       },
       "role": null,
       "scope": "deployment",
-      "summary": "Permanently purge deleted sessions",
+      "summary": "Permanently delete a session",
       "target": null
     },
     {

@@ -1126,9 +1126,6 @@ export function botRoutes(store: DemoStore): Hono {
     const { universe, record } = found;
     closeBot(universe, record);
     const deletedSessions: string[] = [];
-    for (const sessionId of record.bot.closedSessions ?? []) {
-      if (universe.sessions.delete(sessionId)) deletedSessions.push(sessionId);
-    }
     universe.channelPairings = universe.channelPairings.filter(
       (pairing) => pairing.botId !== record.bot.botId,
     );

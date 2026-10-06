@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { ResourceAccessSummary, UniverseAction } from "@lightspeed-ai/sdk";
-import { canCloseSession, roleAtLeast, universeRoleSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { canCloseSession, canDeleteSession, roleAtLeast, universeRoleSchema, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import { useActiveUniverse } from "@/lib/universes";
 
 type Identity = { userId: string; platformAdmin: boolean };
@@ -23,7 +23,8 @@ const ACTION_ROLES: Record<PermissionAction, UniverseRole> = {
   configure_session: "operator",
   stop_session: "contributor",
   close_session: "contributor",
-  delete_session: "admin",
+  delete_session: "operator",
+  set_session_retention: "admin",
   share_session: "contributor",
   invoke_bot: "contributor",
   use_resource: "contributor",
@@ -77,4 +78,9 @@ export function useSessionClosePermission(universeId: string | undefined) {
     role, access.createdBy?.kind === "actor" && access.createdBy.id === userId,
     access.visibility === "universe",
   );
+}
+
+export function useSessionDeletePermission(universeId: string | undefined) {
+  const role = useUniverseRole(universeId);
+  return (access: ResourceAccessSummary | undefined) => !!access && canDeleteSession(role, access.visibility === "universe");
 }

@@ -19,7 +19,37 @@ export function createDemoRouter(store: DemoStore): Hono {
   const app = new Hono();
   app.get("/health", (c) => c.json({ ok: true, demo: true }));
   app.get("/api/login-config", (c) => c.json({ sso: false, providerId: null, password: "local", autoSignIn: false }));
-  app.get("/api/v1/admin/audit", (c) => c.json([]));
+  app.get("/api/v1/admin/audit", (c) => store.currentUser.role === "admin"
+    ? c.json(store.auditEvents.slice(-100).reverse()) : c.json({ error: "platform admin required" }, 403));
+  app.get("/api/v1/admin/universes/:id/deleted-sessions", (c) => {
+    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    const prefix = `${c.req.param("id")}:`;
+    const sessions = [...store.deletedSessions.entries()].filter(([key]) => key.startsWith(prefix))
+      .map(([, { record, deletedAtMs }]) => ({ sessionId: record.view.id, displayName: record.view.displayName ?? null, deletedAtMs }))
+      .sort((a, b) => a.sessionId.localeCompare(b.sessionId)).filter((session) => !c.req.query("after") || session.sessionId > c.req.query("after")!);
+    return c.json({ sessions: sessions.slice(0, 100), nextAfter: sessions.length > 100 ? sessions[99]!.sessionId : null });
+  });
+  app.post("/api/v1/admin/universes/:id/sessions/:sessionId/purge", (c) => {
+    if (store.currentUser.role !== "admin") return c.json({ error: "platform admin required" }, 403);
+    const universeId = c.req.param("id");
+    const sessionId = c.req.param("sessionId");
+    if (store.universes.get(universeId)?.sessions.has(sessionId)) return c.json({ error: "session must be soft-deleted first" }, 409);
+    const all = [...store.deletedSessions.entries()].filter(([key]) => key.startsWith(`${universeId}:`));
+    const ids = new Set<string>();
+    if (store.deletedSessions.has(`${universeId}:${sessionId}`)) ids.add(sessionId);
+    let previous = -1;
+    while (previous !== ids.size) {
+      previous = ids.size;
+      for (const [, { record }] of all) {
+        const view = record.view;
+        if ((view.origin?.parentSessionId && ids.has(view.origin.parentSessionId))) ids.add(view.id);
+      }
+    }
+    for (const id of ids) store.deletedSessions.delete(`${universeId}:${id}`);
+    if (ids.size) store.auditEvents.push({ id: store.nextId("audit"), universeId, targetId: sessionId,
+      actorId: store.currentUser.id, action: "session.purge", outcome: "success", createdAt: new Date().toISOString(), details: { deletedSessionIds: [...ids] } });
+    return c.json({ deletedSessionIds: [...ids] });
+  });
   app.route("/api/auth", authRoutes(store));
   // The public webhook ingress lives outside /api, exactly like the core's
   // POST /hooks/bots/{universe}/{bot}/{trigger}/{token} route.

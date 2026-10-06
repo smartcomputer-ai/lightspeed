@@ -513,6 +513,7 @@ impl SessionRetentionReaper {
                         due_at_or_before_ms: Some(now_ms),
                     },
                     SessionDeletionCause::Retention,
+                    false,
                 )
                 .await;
                 match result {

@@ -135,7 +135,7 @@ Replaces the complete descriptive key/value map (bounded like session/start); an
 
 Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.
 
-- Access: `{"kind":"universe","action":"delete_session"}`
+- Access: `{"kind":"universe","action":"set_session_retention"}`
 - Group: `session/delete`
 - Role: `admin`
 - Target: `sessionId`
@@ -159,11 +159,11 @@ Closes an idle session and detaches its environment bindings. Force mode cancels
 
 **Delete closed sessions**
 
-Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.
+Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.
 
 - Access: `{"kind":"universe","action":"delete_session"}`
 - Group: `session/delete`
-- Role: `admin`
+- Role: `operator`
 - Target: `sessionId`
 - Params: `SessionDeleteParams`
 - Result: `AgentApiOutcome<SessionDeleteResponse>`
@@ -1587,24 +1587,24 @@ Queries the conversation workflow's live state for one chat, for debugging; abse
 
 ## Deployment methods
 
-### `deployment/sessions/audit/list`
+### `deployment/sessions/deleted/list`
 
-**Read session lifecycle audit**
+**List deleted sessions**
 
-Returns durable lifecycle records, including deletion and purge evidence that survives session removal.
+Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/sessions`
 - Role: `none`
 - Target: `none`
-- Params: `DeploymentSessionAuditListParams`
-- Result: `AgentApiOutcome<DeploymentSessionAuditListResponse>`
+- Params: `DeploymentDeletedSessionsListParams`
+- Result: `AgentApiOutcome<DeploymentDeletedSessionsListResponse>`
 
 ### `deployment/sessions/purge`
 
-**Permanently purge deleted sessions**
+**Permanently delete a session**
 
-Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.
+Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/sessions`

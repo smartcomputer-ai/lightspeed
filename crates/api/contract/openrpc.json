@@ -1067,6 +1067,23 @@
         ],
         "type": "object"
       },
+      "AgentApiOutcomeOfDeploymentDeletedSessionsListResponse": {
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/AgentNotification"
+            },
+            "type": "array"
+          },
+          "result": {
+            "$ref": "#/components/schemas/DeploymentDeletedSessionsListResponse"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      },
       "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse": {
         "properties": {
           "notifications": {
@@ -1179,23 +1196,6 @@
           },
           "result": {
             "$ref": "#/components/schemas/DeploymentProviderBindingPutResponse"
-          }
-        },
-        "required": [
-          "result"
-        ],
-        "type": "object"
-      },
-      "AgentApiOutcomeOfDeploymentSessionAuditListResponse": {
-        "properties": {
-          "notifications": {
-            "items": {
-              "$ref": "#/components/schemas/AgentNotification"
-            },
-            "type": "array"
-          },
-          "result": {
-            "$ref": "#/components/schemas/DeploymentSessionAuditListResponse"
           }
         },
         "required": [
@@ -8272,6 +8272,28 @@
         ],
         "type": "object"
       },
+      "DeletedSessionView": {
+        "properties": {
+          "deletedAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "deletedAtMs"
+        ],
+        "type": "object"
+      },
       "DeploymentApiKeyCreateParams": {
         "additionalProperties": false,
         "properties": {
@@ -8541,6 +8563,46 @@
           "displayName",
           "createdAtMs",
           "updatedAtMs"
+        ],
+        "type": "object"
+      },
+      "DeploymentDeletedSessionsListParams": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "default": null,
+            "description": "Exclusive session ID cursor; each page contains at most 100 entries.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "universeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "universeId"
+        ],
+        "type": "object"
+      },
+      "DeploymentDeletedSessionsListResponse": {
+        "properties": {
+          "nextAfter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/DeletedSessionView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
         ],
         "type": "object"
       },
@@ -8890,46 +8952,10 @@
         ],
         "type": "object"
       },
-      "DeploymentSessionAuditListParams": {
-        "additionalProperties": false,
-        "properties": {
-          "limit": {
-            "description": "Most recent records, between 1 and 1000; defaults to 100.",
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "universeId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "DeploymentSessionAuditListResponse": {
-        "properties": {
-          "events": {
-            "items": {
-              "$ref": "#/components/schemas/SessionAuditEvent"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "events"
-        ],
-        "type": "object"
-      },
       "DeploymentSessionPurgeParams": {
         "additionalProperties": false,
         "properties": {
           "sessionId": {
-            "description": "An already deleted session; includes its deleted descendants.",
             "type": "string"
           },
           "universeId": {
@@ -8944,7 +8970,8 @@
       },
       "DeploymentSessionPurgeResponse": {
         "properties": {
-          "purgedSessionIds": {
+          "deletedSessionIds": {
+            "description": "Includes soft-deleted history forks and delegated descendants.\nEmpty when the target has already been permanently deleted.",
             "items": {
               "type": "string"
             },
@@ -8952,7 +8979,7 @@
           }
         },
         "required": [
-          "purgedSessionIds"
+          "deletedSessionIds"
         ],
         "type": "object"
       },
@@ -13869,54 +13896,6 @@
           }
         ]
       },
-      "SessionAuditEvent": {
-        "properties": {
-          "action": {
-            "type": "string"
-          },
-          "affectedSessionIds": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "attribution": {
-            "$ref": "#/components/schemas/Attribution"
-          },
-          "cause": {
-            "type": "string"
-          },
-          "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "id": {
-            "type": "string"
-          },
-          "outcome": {
-            "type": "string"
-          },
-          "sessionId": {
-            "type": "string"
-          },
-          "universeId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "universeId",
-          "sessionId",
-          "action",
-          "attribution",
-          "cause",
-          "affectedSessionIds",
-          "createdAtMs",
-          "outcome"
-        ],
-        "type": "object"
-      },
       "SessionCloseParams": {
         "properties": {
           "force": {
@@ -14046,6 +14025,10 @@
           },
           "sessionId": {
             "type": "string"
+          },
+          "sharedOnly": {
+            "description": "Atomically require every selected session's audience to be shared.\nDelegating services use this guard for operators deleting shared work.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -17837,6 +17820,7 @@
               "stop_session",
               "close_session",
               "delete_session",
+              "set_session_retention",
               "create_profile",
               "manage_profile",
               "create_bot",
@@ -19025,7 +19009,7 @@
       },
       "summary": "Replace session retention",
       "x-lightspeed-access": {
-        "action": "delete_session",
+        "action": "set_session_retention",
         "kind": "universe"
       },
       "x-lightspeed-group": "session/delete",
@@ -19061,7 +19045,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
+      "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.",
       "name": "session/delete",
       "paramStructure": "by-name",
       "params": [
@@ -19085,7 +19069,7 @@
         "kind": "universe"
       },
       "x-lightspeed-group": "session/delete",
-      "x-lightspeed-role": "admin",
+      "x-lightspeed-role": "operator",
       "x-lightspeed-target": "sessionId"
     },
     {
@@ -22111,25 +22095,25 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns durable lifecycle records, including deletion and purge evidence that survives session removal.",
-      "name": "deployment/sessions/audit/list",
+      "description": "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.",
+      "name": "deployment/sessions/deleted/list",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "params",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/DeploymentSessionAuditListParams"
+            "$ref": "#/components/schemas/DeploymentDeletedSessionsListParams"
           }
         }
       ],
       "result": {
         "name": "result",
         "schema": {
-          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentSessionAuditListResponse"
+          "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentDeletedSessionsListResponse"
         }
       },
-      "summary": "Read session lifecycle audit",
+      "summary": "List deleted sessions",
       "x-lightspeed-access": {
         "kind": "deployment"
       },
@@ -22138,7 +22122,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.",
+      "description": "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.",
       "name": "deployment/sessions/purge",
       "paramStructure": "by-name",
       "params": [
@@ -22156,7 +22140,7 @@
           "$ref": "#/components/schemas/AgentApiOutcomeOfDeploymentSessionPurgeResponse"
         }
       },
-      "summary": "Permanently purge deleted sessions",
+      "summary": "Permanently delete a session",
       "x-lightspeed-access": {
         "kind": "deployment"
       },

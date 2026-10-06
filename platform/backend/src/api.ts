@@ -1,3 +1,4 @@
+import { sessionAdminRoutes } from "./routes/session-admin.js";
 import { withGateway } from "./routes/gateway.js";
 import { Hono } from "hono";
 import { and, desc, eq, or } from "drizzle-orm";
@@ -94,6 +95,7 @@ export function buildApp(ctx: AppContext) {
   api.route("/universes", gatewayRoutes(ctx));
   api.route("/universes", botRoutes(ctx));
   api.route("/universes", channelUniverseRoutes(ctx));
+  api.route("/admin", sessionAdminRoutes(ctx));
   api.route("/admin", environmentDeploymentRoutes(ctx));
   api.route("/admin", apiKeyAdminRoutes(ctx));
   api.route("/channel-accounts", channelAccountAdminRoutes(ctx));

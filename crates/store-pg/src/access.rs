@@ -57,7 +57,7 @@ fn error(error: impl std::fmt::Display) -> AccessStoreError {
 
 /// Joins the root of session `s` as `r`. A left join: a root that is gone
 /// leaves its tree unshared and created by no one.
-pub(crate) const SESSION_ROOT_JOIN: &str = "LEFT JOIN sessions r ON r.universe_id = s.universe_id AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)";
+pub(crate) const SESSION_ROOT_JOIN: &str = "LEFT JOIN sessions r ON r.universe_id = s.universe_id AND r.deleted_at_ms IS NULL AND r.session_id = COALESCE(s.origin_root_session_id, s.session_id)";
 
 /// The bot whose worker controls session `s`'s tree, if any.
 const SESSION_BOT: &str = "COALESCE(r.bot_id, s.bot_id)";
@@ -177,6 +177,12 @@ impl PgAccessStore {
         universe: Uuid,
         resource: &ResourceRef,
     ) -> Result<bool, AccessStoreError> {
+        if matches!(resource, ResourceRef::Session(_)) {
+            return Ok(self
+                .session_access(universe, resource.id())
+                .await?
+                .is_some());
+        }
         let (table, id_column) = content_table(resource);
         sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT EXISTS(SELECT 1 FROM {table} WHERE universe_id=$1 AND {id_column}=$2)"
@@ -201,7 +207,7 @@ impl PgAccessStore {
     ) -> Result<(), AccessStoreError> {
         sqlx::query(
             "UPDATE sessions SET created_by = $3, visibility = $4, bot_id = $5
-             WHERE universe_id = $1 AND session_id = $2 AND created_by IS NULL",
+             WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND created_by IS NULL",
         )
         .bind(universe)
         .bind(session)
@@ -245,7 +251,7 @@ impl PgAccessStore {
             "SELECT s.origin_parent_session_id, COALESCE(s.origin_root_session_id, s.session_id) AS root_session_id,
                     {SESSION_BOT} AS root_bot_id, {summary}
              FROM sessions s {SESSION_ROOT_JOIN}
-             WHERE s.universe_id = $1 AND s.session_id = $2"
+             WHERE s.deleted_at_ms IS NULL AND s.universe_id = $1 AND s.session_id = $2"
         )))
         .bind(universe)
         .bind(session)
@@ -299,7 +305,7 @@ impl PgAccessStore {
     ) -> Result<bool, AccessStoreError> {
         Ok(sqlx::query(
             "UPDATE sessions SET visibility = 'universe'
-             WHERE universe_id = $1 AND session_id = $2 AND origin_root_session_id IS NULL
+             WHERE deleted_at_ms IS NULL AND universe_id = $1 AND session_id = $2 AND origin_root_session_id IS NULL
                AND bot_id IS NULL AND COALESCE(visibility, 'restricted') = 'restricted'",
         )
         .bind(universe)
@@ -322,7 +328,7 @@ impl PgAccessStore {
             "WITH RECURSIVE tree(session_id) AS (
             SELECT $2::text UNION SELECT child.session_id FROM sessions child JOIN tree parent
             ON (child.source_seq IS NOT NULL AND child.source_session_id=parent.session_id)
-            OR child.origin_parent_session_id=parent.session_id WHERE child.universe_id=$1)
+            OR child.origin_parent_session_id=parent.session_id WHERE child.universe_id=$1 AND child.deleted_at_ms IS NULL)
             SELECT session_id FROM tree",
         )
         .bind(universe)

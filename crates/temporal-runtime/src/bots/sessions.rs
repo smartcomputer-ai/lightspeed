@@ -469,7 +469,7 @@ pub async fn ensure_session(
             profile: Some(ProfileSource::Inline {
                 profile: Box::new(resolved.clone()),
             }),
-            delete_after_close_ms: None,
+            delete_after_close_ms: Some(None),
             workflow_tools: ManagedSessionWorkflowToolsInput {
                 version: MANAGED_TOOLS_VERSION,
                 lifecycle_controller: Some(controller),

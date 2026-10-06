@@ -40,6 +40,48 @@ pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE: &str =
 pub const METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT: &str = "deployment/environments/adopt";
 pub const METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST: &str = "deployment/channels/accounts/list";
 
+pub const METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST: &str = "deployment/sessions/deleted/list";
+pub const METHOD_DEPLOYMENT_SESSIONS_PURGE: &str = "deployment/sessions/purge";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentDeletedSessionsListParams {
+    pub universe_id: String,
+    /// Exclusive session ID cursor; each page contains at most 100 entries.
+    #[serde(default)]
+    pub after: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedSessionView {
+    pub session_id: String,
+    pub display_name: Option<String>,
+    pub deleted_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentDeletedSessionsListResponse {
+    pub sessions: Vec<DeletedSessionView>,
+    pub next_after: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeploymentSessionPurgeParams {
+    pub universe_id: String,
+    pub session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentSessionPurgeResponse {
+    /// Includes soft-deleted history forks and delegated descendants.
+    /// Empty when the target has already been permanently deleted.
+    pub deleted_session_ids: Vec<String>,
+}
+
 pub fn is_deployment_method(method: &str) -> bool {
     method.starts_with(DEPLOYMENT_METHOD_PREFIX)
 }
@@ -400,6 +442,23 @@ pub struct DeploymentChannelAccountListResponse {
 
 #[async_trait]
 pub trait DeploymentApiService: Send + Sync {
+    async fn list_deleted_sessions(
+        &self,
+        _params: DeploymentDeletedSessionsListParams,
+    ) -> Result<AgentApiOutcome<DeploymentDeletedSessionsListResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "deleted session administration is unavailable",
+        ))
+    }
+    async fn purge_session(
+        &self,
+        _params: DeploymentSessionPurgeParams,
+    ) -> Result<AgentApiOutcome<DeploymentSessionPurgeResponse>, AgentApiError> {
+        Err(AgentApiError::internal(
+            "deleted session administration is unavailable",
+        ))
+    }
+
     async fn list_deployment_provider_bindings(
         &self,
         _params: DeploymentUniverseReadParams,
@@ -577,6 +636,11 @@ macro_rules! deployment_api_methods {
 }
 
 deployment_api_methods! {
+    METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST => list_deleted_sessions(DeploymentDeletedSessionsListParams) -> DeploymentDeletedSessionsListResponse =>
+        ["List deleted sessions", "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods."], access: MethodAccess::Deployment,
+    METHOD_DEPLOYMENT_SESSIONS_PURGE => purge_session(DeploymentSessionPurgeParams) -> DeploymentSessionPurgeResponse =>
+        ["Permanently delete a session", "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history."], access: MethodAccess::Deployment,
+
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_LIST => list_deployment_provider_bindings(DeploymentUniverseReadParams) -> EnvironmentProviderBindingListResponse =>
         ["List a universe's deployment provider bindings", "Deployment configuration inventory of one universe's provider bindings."], access: MethodAccess::Deployment,
 

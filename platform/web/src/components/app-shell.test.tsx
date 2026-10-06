@@ -42,17 +42,17 @@ afterEach(async () => {
 });
 
 /// The sidebar as label → nav items, with the unlabelled first group as "".
-async function sidebarFor(role: string, features = { bots: true, channels: true }): Promise<Record<string, string[]>> {
+async function sidebarFor(role: string, features = { bots: true, channels: true }, platformAdmin = false): Promise<Record<string, string[]>> {
   mocks.role = role;
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
     if (path === "/api/v1/universes") return [{ id: "universe", slug: "test", name: "Test", status: "active", role: mocks.role, features }];
     throw new Error(`Unexpected request: ${path}`);
   });
   await act(async () => root.render(
-    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={false}>
-      <MemoryRouter initialEntries={["/u/test/bots"]}>
+    <QueryClientProvider client={client}><PermissionIdentityProvider userId="user" platformAdmin={platformAdmin}>
+      <MemoryRouter initialEntries={[platformAdmin ? "/admin/audit" : "/u/test/bots"]}>
         <Routes>
-          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={false} />}>
+          <Route element={<AppShell user={{ id: "user", name: "User", email: "user@example.test" } as SessionUser} admin={platformAdmin} />}>
             <Route path="*" element={null} />
           </Route>
         </Routes>
@@ -143,4 +143,10 @@ it("keeps the menu folded to icons from the account's preference, and ⌘B unfol
   expect(sidebar().dataset.state).toBe("expanded");
   expect(JSON.parse(localStorage.getItem(key)!).sidebarCollapsed).toBe(false);
   localStorage.removeItem(key);
+});
+
+it("offers Audit log in Platform admin navigation", async () => {
+  const groups = await sidebarFor("admin", { bots: true, channels: true }, true);
+  expect(groups["Platform admin"]).toContain("Audit log");
+  expect(container.querySelector('a[href="/admin/audit"]')?.getAttribute("aria-current")).toBe("page");
 });

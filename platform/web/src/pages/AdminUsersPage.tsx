@@ -3,7 +3,6 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus } from "lucide-react";
 import { authClient, useLoginConfig, type SessionUser } from "@/auth";
-import { api } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,10 +40,6 @@ interface UserRow extends SessionUser {
 
 export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
   const config = useLoginConfig();
-  const [showAudit, setShowAudit] = useState(false);
-  const audit = useQuery({ queryKey: ["admin", "audit"], enabled: showAudit, queryFn: () => api<Array<{
-    id: string; createdAt: string; action: string; actorId: string | null; targetId: string | null; outcome: string;
-  }>>("GET", "/api/v1/admin/audit") });
   const users = useQuery({
     queryKey: ["admin", "users"],
     queryFn: async () => {
@@ -137,20 +132,6 @@ export function AdminUsersPage({ currentUser }: { currentUser: SessionUser }) {
           </Table>
         </TableCard>
       )}
-      <details onToggle={(event) => setShowAudit(event.currentTarget.open)}>
-        <summary className="cursor-pointer font-medium">Recent access changes</summary>
-        <p className="my-3 text-sm text-muted-foreground">The latest 100 recorded access events. Records survive user and session deletion.</p>
-        {audit.error && <ReadError error={audit.error} loading={!audit.data} />}
-        {audit.isFetching && <LoadingNote />}
-        {audit.data && <TableCard><Table>
-          <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Action</TableHead><TableHead>Actor</TableHead><TableHead>Target</TableHead><TableHead>Outcome</TableHead></TableRow></TableHeader>
-          <TableBody>{audit.data.map((event) => <TableRow key={event.id}>
-            <TableCell>{new Date(event.createdAt).toLocaleString()}</TableCell><TableCell>{auditAction(event.action)}</TableCell>
-            <TableCell>{users.data?.find((user) => user.id === event.actorId)?.email ?? event.actorId ?? "System"}</TableCell>
-            <TableCell>{users.data?.find((user) => user.id === event.targetId)?.email ?? event.targetId ?? "—"}</TableCell><TableCell>{event.outcome}</TableCell>
-          </TableRow>)}</TableBody>
-        </Table></TableCard>}
-      </details>
     </>
   );
 }
@@ -526,18 +507,4 @@ function CreateUserDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function auditAction(action: string): string {
-  const labels: Record<string, string> = {
-    "company.access": "Company access updated", "company.sign_in": "Company sign-in",
-    "emergency.sign_in": "Emergency sign-in", "password.sign_in": "Password sign-in",
-    "user.suspend": "User suspended", "user.reinstate": "User reinstated",
-    "session.revoke_all": "All sessions signed out", "member.add": "Universe member added",
-    "member.role": "Universe role changed", "member.remove": "Universe member removed",
-    "key.create": "API key created", "key.revoke": "API key revoked", "key.rotate": "API key rotated",
-    "create_user": "User created", "update_user": "User updated", "set_user_password": "Password reset",
-    "emergency.designate": "Emergency admin designated", "emergency.create": "Emergency admin created",
-  };
-  return labels[action] ?? action;
 }

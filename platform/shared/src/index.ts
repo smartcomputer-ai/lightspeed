@@ -170,3 +170,14 @@ export {
   type MessageAttachment,
   type MessageRunOptions,
 } from "./messages.js";
+
+/** Closing shared work is an operator responsibility, even for its creator. */
+export function canCloseSession(role: UniverseRole | null | undefined, creator: boolean, shared: boolean): boolean {
+  return role === "admin" || (role === "operator" && (creator || shared)) ||
+    (role === "contributor" && creator && !shared);
+}
+
+/** Operators may remove shared sessions; private sessions require an admin. */
+export function canDeleteSession(role: UniverseRole | null | undefined, shared: boolean): boolean {
+  return role === "admin" || (role === "operator" && shared);
+}

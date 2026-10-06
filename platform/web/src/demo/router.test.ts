@@ -630,7 +630,7 @@ describe("demo router", () => {
   );
 
   it("session start, close, and deletion leave environments independently managed", async () => {
-    const { call } = await boot();
+    const { call, store } = await boot();
     const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const before = (await call("GET", `${base}/environments`)).json as Environment[];
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: unknown };
@@ -644,7 +644,18 @@ describe("demo router", () => {
     expect(((await call("GET", `${base}/environments`)).json as Environment[]).map((env) => env.environmentId))
       .toEqual(before.map((env) => env.environmentId));
     expect((await call("POST", `${base}/sessions/${session.id}/close`, { force: true })).status).toBe(200);
+    expect(store.auditEvents.filter((event) => event.targetId === session.id)).toEqual([]);
     expect((await call("DELETE", `${base}/sessions/${session.id}`)).status).toBe(200);
+    expect(store.auditEvents.filter((event) => event.targetId === session.id)).toEqual([]);
+    expect((await call("GET", `${base}/sessions/${session.id}`)).status).toBe(404);
+    const adminBase = `/api/v1/admin/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+    const deleted = (await call("GET", `${adminBase}/deleted-sessions`)).json as { sessions: { sessionId: string }[] };
+    expect(deleted.sessions.map((entry) => entry.sessionId)).toContain(session.id);
+    expect(store.deletedSessions.size).toBe(1);
+    expect((await call("POST", `${adminBase}/sessions/${session.id}/purge`, {})).status).toBe(200);
+    expect(store.deletedSessions.size).toBe(0);
+    const audit = (await call("GET", "/api/v1/admin/audit")).json as { action: string; targetId: string }[];
+    expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
     const after = (await call("GET", `${base}/environments`)).json as Environment[];
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
   });

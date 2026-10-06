@@ -26,6 +26,8 @@ vi.mock("@/api", async (original) => ({
 vi.mock("@/lib/sessions/tail", () => ({ useSessionTail: mocks.tail }));
 vi.mock("@/lib/permissions", () => ({
   useActionPermissions: () => ({ can: (action: string) => mocks.permissions.has(action), isLoading: mocks.permissionLoading }),
+  useSessionDeletePermission: () => () => mocks.permissions.has("delete_session"),
+  useSessionClosePermission: () => () => mocks.permissions.has("close_session"),
   usePermissionIdentity: () => "user",
   useUniverseRole: () => "contributor",
 }));

@@ -1,3 +1,4 @@
+import { DeletedSessionsDialog } from "@/components/admin/deleted-sessions";
 import { universeSlugSchema } from "@lightspeed-ai/platform-shared";
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
@@ -60,6 +61,7 @@ export function AdminUniversesPage() {
   const universes = useUniverses();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [deletedUniverse, setDeletedUniverse] = useState<Universe | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [adopting, setAdopting] = useState<EngineUniverse | null>(null);
 
@@ -122,6 +124,7 @@ export function AdminUniversesPage() {
           </div>
         }
       />
+      <DeletedSessionsDialog universe={deletedUniverse} onClose={() => setDeletedUniverse(null)} />
       <NewUniverseDialog open={createOpen} onOpenChange={setCreateOpen} />
       {syncSlugs.error && <p role="alert" className="mb-4 text-sm text-destructive">{syncSlugs.error.message}</p>}
       {syncSlugs.data && !syncSlugs.isPending && !syncSlugs.error && (
@@ -171,6 +174,7 @@ export function AdminUniversesPage() {
                     {new Date(universe.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableActionsCell>
+                    <Button variant="ghost" size="sm" onClick={() => setDeletedUniverse(universe)}>Deleted sessions</Button>
                     {engineStatus.get(universe.id) === "missing" && (
                       <Button
                         variant="ghost"

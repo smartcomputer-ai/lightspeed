@@ -6,7 +6,7 @@ import {
   type MethodParams,
   type MethodResult,
 } from "@lightspeed-ai/sdk";
-import { canCloseSession, roleAtLeast, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { canCloseSession, canDeleteSession, roleAtLeast, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ServerEnv } from "./env.js";
 import { METHOD_ROLES, SESSION_TARGET_METHODS } from "./routes/method-roles.js";
 
@@ -33,8 +33,8 @@ const CREATION_METHODS: ReadonlySet<string> = new Set(["session/start", "session
 
 /// Deployment methods, with the Platform's deployment key and no universe or
 /// actor. Callers check that the user is a platform admin.
-export function deploymentClient(env: ServerEnv, endpoint?: string | null, actorId?: string): LightspeedClient {
-  return new LightspeedClient(clientOptions(env, endpoint, actorId ? { "x-lightspeed-actor": actorId } : {}));
+export function deploymentClient(env: ServerEnv, endpoint?: string | null): LightspeedClient {
+  return new LightspeedClient(clientOptions(env, endpoint, {}));
 }
 
 /// Calls as a universe key someone handed the Platform, to learn which key a
@@ -95,6 +95,9 @@ class MemberClient extends LightspeedClient {
       }
     }
     const admin = this.member.role === "admin";
+    if (!admin && method === "session/delete") {
+      params = { ...params, sharedOnly: true } as MethodParams<M>;
+    }
     if (!admin && CREATION_METHODS.has(method)) {
       const start = params as { deleteAfterCloseMs?: number | null };
       if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "admin role required for deletion retention");
@@ -125,6 +128,9 @@ class MemberClient extends LightspeedClient {
     const creator = access.createdBy?.kind === "actor" && access.createdBy.id === this.member.userId;
     const visible = CREATOR_METHODS.has(method) ? creator : creator || access.visibility === "universe";
     if (!visible) throw new GateRefusal(404, "session not found");
+    if (method === "session/delete" && !canDeleteSession(this.member.role, access.visibility === "universe")) {
+      throw new GateRefusal(403, "operators may only delete shared sessions");
+    }
     if (method === "session/close" && !canCloseSession(this.member.role, creator, access.visibility === "universe")) {
       throw new GateRefusal(403, "contributors may close only their own unshared sessions");
     }

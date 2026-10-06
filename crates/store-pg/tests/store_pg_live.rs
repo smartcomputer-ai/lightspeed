@@ -1284,6 +1284,14 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         })
         .await
         .expect("delete doomed session");
+    assert_eq!(
+        candidate_refs(&store, cutoff_ms, &pinned).await,
+        before_delete
+    );
+    store
+        .purge_deleted_session(doomed.as_str())
+        .await
+        .expect("purge doomed session");
     let candidates = store
         .list_sweep_candidates(cutoff_ms, &pinned, 1024)
         .await
@@ -1534,6 +1542,11 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
         .await
         .expect("delete fork tree");
     assert_eq!(deleted.deleted_session_ids.len(), 2);
+    assert!(candidate_refs(&store, cutoff_ms, &pinned).await.is_empty());
+    store
+        .purge_deleted_session(root.as_str())
+        .await
+        .expect("purge fork tree");
     assert_eq!(
         candidate_refs(&store, cutoff_ms, &pinned).await,
         vec![fork_only.clone()]
@@ -1546,6 +1559,10 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
         })
         .await
         .expect("delete clone");
+    store
+        .purge_deleted_session(clone.as_str())
+        .await
+        .expect("purge clone");
     assert_eq!(
         candidate_refs(&store, cutoff_ms, &pinned).await,
         sorted([&config_blob, &fork_only])

@@ -66,7 +66,7 @@ impl PgStore {
             r#"
             SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
-            WHERE universe_id = $1 AND session_id = $2
+            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             FOR UPDATE
             "#,
         );
@@ -157,7 +157,7 @@ impl PgStore {
                     closed_at_seq = $6,
                     managed = $7,
                     closed_at_ms = $8
-                WHERE universe_id = $1 AND session_id = $2
+                WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
                 "#,
             )
             .bind(self.config.universe_id)
@@ -473,7 +473,7 @@ impl PgStore {
             LEFT JOIN session_activity sa
                 ON sa.universe_id = s.universe_id AND sa.session_id = s.session_id
             {root_join}
-            WHERE s.universe_id = $1
+            WHERE s.universe_id = $1 AND s.deleted_at_ms IS NULL
               AND ($2::bigint IS NULL OR (s.updated_at_ms, s.session_id) < ($2, $3))
               AND ($4::text IS NULL OR s.origin_parent_session_id = $4)
               {closed_predicate}
@@ -674,7 +674,7 @@ impl SessionStore for PgStore {
             r#"
             SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
-            WHERE universe_id = $1 AND session_id = $2
+            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             "#,
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -713,7 +713,7 @@ impl SessionStore for PgStore {
             r#"
             UPDATE sessions
             SET display_name = $3
-            WHERE universe_id = $1 AND session_id = $2
+            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
@@ -742,7 +742,7 @@ impl SessionStore for PgStore {
             r#"
             UPDATE sessions
             SET metadata_json = $3
-            WHERE universe_id = $1 AND session_id = $2
+            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
@@ -794,7 +794,7 @@ impl SessionStore for PgStore {
             r#"
             UPDATE sessions
             SET delete_after_close_ms = $3
-            WHERE universe_id = $1 AND session_id = $2
+            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             RETURNING {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             "#,
         );
@@ -827,7 +827,7 @@ impl SessionStore for PgStore {
             r#"
             SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
             FROM sessions
-            WHERE universe_id = $1
+            WHERE universe_id = $1 AND deleted_at_ms IS NULL
               AND retention_root_session_id = session_id
               AND lifecycle_status = 'closed'
               AND delete_at_ms IS NOT NULL
@@ -850,137 +850,8 @@ impl SessionStore for PgStore {
         &self,
         request: DeleteClosedSessions,
     ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
-        let target_snapshot = self
-            .load_session(&request.session_id)
-            .await?
-            .ok_or_else(|| SessionStoreError::SessionNotFound {
-                session_id: request.session_id.clone(),
-            })?;
-        let mut tx = self
-            .pool
-            .begin()
+        self.delete_closed_sessions_with_visibility(request, false)
             .await
-            .map_err(|error| session_sql_error("begin delete session transaction", error))?;
-        let root = lock_session(
-            &mut tx,
-            self.config.universe_id,
-            &target_snapshot.retention_root_session_id,
-            "lock retention root for delete",
-        )
-        .await?;
-        let target = if target_snapshot.session_id == root.session_id {
-            root
-        } else {
-            lock_session(
-                &mut tx,
-                self.config.universe_id,
-                &request.session_id,
-                "lock session for delete",
-            )
-            .await?
-        };
-        if let Some(now_ms) = request.due_at_or_before_ms
-            && (target.retention_root_session_id != target.session_id
-                || !target
-                    .delete_at_ms
-                    .is_some_and(|deadline| deadline <= now_ms))
-        {
-            return Err(SessionStoreError::SessionRetentionNotDue {
-                session_id: target.session_id,
-            });
-        }
-
-        let session_ids: Vec<String> = sqlx::query_scalar(
-            r#"
-            WITH RECURSIVE tree(session_id) AS (
-                SELECT $2::text
-                UNION
-                SELECT child.session_id
-                FROM sessions AS child
-                JOIN tree AS parent
-                  ON (child.source_seq IS NOT NULL
-                      AND child.source_session_id = parent.session_id)
-                  OR child.origin_parent_session_id = parent.session_id
-                WHERE child.universe_id = $1
-            )
-            SELECT session_id FROM tree ORDER BY session_id
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(request.session_id.as_str())
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(|error| session_sql_error("list session retention subtree", error))?;
-        if !request.cascade && session_ids.len() > 1 {
-            return Err(SessionStoreError::SessionHasChildren {
-                session_id: request.session_id,
-            });
-        }
-        let selected_ids = if request.cascade {
-            session_ids
-        } else {
-            vec![request.session_id.as_str().to_owned()]
-        };
-        let query = format!(
-            r#"
-            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
-            FROM sessions
-            WHERE universe_id = $1 AND session_id = ANY($2)
-            ORDER BY session_id
-            FOR UPDATE
-            "#,
-        );
-        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
-            .bind(self.config.universe_id)
-            .bind(&selected_ids)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(|error| session_sql_error("lock session retention subtree", error))?;
-        let records = rows
-            .iter()
-            .map(session_record_from_row)
-            .collect::<Result<Vec<_>, _>>()?;
-        for record in &records {
-            if record.lifecycle_status != SessionLifecycleStatus::Closed {
-                let error = if record.session_id == request.session_id {
-                    SessionStoreError::SessionNotClosed {
-                        session_id: record.session_id.clone(),
-                        lifecycle_status: record.lifecycle_status,
-                    }
-                } else {
-                    SessionStoreError::SessionTreeNotClosed {
-                        session_id: record.session_id.clone(),
-                        lifecycle_status: record.lifecycle_status,
-                    }
-                };
-                return Err(error);
-            }
-        }
-        sqlx::query(
-            r#"
-            DELETE FROM sessions
-            WHERE universe_id = $1 AND session_id = ANY($2)
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(&selected_ids)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| session_sql_error("delete session subtree", error))?;
-        tx.commit()
-            .await
-            .map_err(|error| session_sql_error("commit delete session", error))?;
-        let deleted_session_ids = selected_ids
-            .into_iter()
-            .map(SessionId::parse)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| SessionStoreError::Store {
-                message: format!("decode deleted session id: {error}"),
-            })?;
-        Ok(DeleteClosedSessionsResult {
-            target,
-            deleted_session_ids,
-        })
     }
 
     async fn create_cloned_session(
@@ -1219,6 +1090,7 @@ impl SessionStore for PgStore {
         if request.limit == 0 {
             return Err(SessionStoreError::InvalidLimit { limit: 0 });
         }
+        self.load_session_required(&request.session_id).await?;
         if request.after >= request.through {
             return Ok(SessionPage {
                 entries: Vec::new(),
@@ -1257,6 +1129,7 @@ impl SessionStore for PgStore {
                    byte_len, created_at_ms
             FROM session_checkpoints
             WHERE universe_id = $1 AND session_id = $2
+              AND EXISTS (SELECT 1 FROM sessions s WHERE s.universe_id = $1 AND s.session_id = $2 AND s.deleted_at_ms IS NULL)
             "#,
         )
         .bind(self.config.universe_id)
@@ -1328,6 +1201,18 @@ impl SessionStore for PgStore {
         request: AdvanceSessionCheckpoint,
     ) -> Result<bool, SessionStoreError> {
         let checkpoint = request.checkpoint;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| session_sql_error("begin checkpoint transaction", e))?;
+        lock_session(
+            &mut tx,
+            self.config.universe_id,
+            &checkpoint.session_id,
+            "lock checkpoint session",
+        )
+        .await?;
         let digest = checkpoint
             .state_ref
             .as_str()
@@ -1380,9 +1265,12 @@ impl SessionStore for PgStore {
             checkpoint.created_at_ms,
             "checkpoint created time",
         )?)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|error| session_sql_error("advance session checkpoint", error))?;
+        tx.commit()
+            .await
+            .map_err(|e| session_sql_error("commit checkpoint transaction", e))?;
         Ok(result.rows_affected() == 1)
     }
 
@@ -1580,7 +1468,7 @@ async fn origin_counts_in_tx(
             count(*) AS descendants,
             count(*) FILTER (WHERE lifecycle_status <> 'closed') AS open_descendants
         FROM sessions
-        WHERE universe_id = $1 AND origin_root_session_id = $2
+        WHERE universe_id = $1 AND origin_root_session_id = $2 AND deleted_at_ms IS NULL
         "#,
     )
     .bind(universe_id)
@@ -1672,7 +1560,7 @@ async fn lock_session(
         r#"
         SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
         FROM sessions
-        WHERE universe_id = $1 AND session_id = $2
+        WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
         FOR UPDATE
         "#,
     );
@@ -1748,7 +1636,7 @@ async fn append_events_in_tx(
                 closed_at_seq = $6,
                 managed = $7,
                 closed_at_ms = $8
-            WHERE universe_id = $1 AND session_id = $2
+            WHERE universe_id = $1 AND session_id = $2 AND deleted_at_ms IS NULL
             "#,
         )
         .bind(universe_id)
@@ -1881,4 +1769,248 @@ async fn write_activity(
     .await
     .map_err(|error| session_sql_error("write session activity", error))?;
     Ok(())
+}
+
+impl PgStore {
+    pub async fn session_is_deleted(&self, session_id: &str) -> Result<bool, SessionStoreError> {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE universe_id=$1 AND session_id=$2 AND deleted_at_ms IS NOT NULL)")
+            .bind(self.config.universe_id).bind(session_id).fetch_one(&self.pool).await
+            .map_err(|error| session_sql_error("check deleted session", error))
+    }
+
+    /// Recreated bots keep their previous conversations and start fresh generations.
+    pub async fn previous_bot_session_ids(
+        &self,
+        bot_id: &api::BotId,
+        created_at_ms: i64,
+    ) -> Result<Vec<String>, SessionStoreError> {
+        sqlx::query_scalar("SELECT session_id FROM sessions WHERE universe_id=$1 AND bot_id=$2 AND created_at_ms < $3")
+            .bind(self.config.universe_id).bind(bot_id.as_str()).bind(created_at_ms)
+            .fetch_all(&self.pool).await.map_err(|error| session_sql_error("read previous bot sessions", error))
+    }
+}
+
+/// Permanent deletion is separate from ordinary session storage operations.
+#[derive(Debug, thiserror::Error)]
+pub enum PurgeSessionError {
+    #[error("session {session_id} must be soft-deleted before permanent deletion")]
+    NotDeleted { session_id: String },
+    #[error("postgres failure: {0}")]
+    Postgres(#[from] sqlx::Error),
+}
+
+impl PgStore {
+    /// Administrative metadata only; ordinary lists never include these rows.
+    pub async fn list_deleted_sessions(
+        &self,
+        after: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<(String, Option<String>, i64)>, sqlx::Error> {
+        sqlx::query_as("SELECT session_id, display_name, deleted_at_ms FROM sessions WHERE universe_id=$1 AND deleted_at_ms IS NOT NULL AND ($2::text IS NULL OR session_id > $2) ORDER BY session_id LIMIT $3")
+            .bind(self.config.universe_id).bind(after).bind(limit).fetch_all(&self.pool).await
+    }
+
+    /// Removes a soft-deleted history subtree. Foreign keys release its events,
+    /// checkpoints and CAS roots; shared blobs remain governed by normal GC.
+    pub async fn purge_deleted_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<String>, PurgeSessionError> {
+        let mut tx = self.pool.begin().await?;
+        // Match creation/deletion lock order, including a still-visible ancestor.
+        sqlx::query("SELECT session_id FROM sessions WHERE universe_id=$1 AND session_id=(SELECT retention_root_session_id FROM sessions WHERE universe_id=$1 AND session_id=$2) FOR UPDATE")
+            .bind(self.config.universe_id).bind(session_id).fetch_optional(&mut *tx).await?;
+        let rows: Vec<(String, Option<i64>)> = sqlx::query_as(r#"
+            WITH RECURSIVE tree(session_id) AS (
+                SELECT session_id FROM sessions WHERE universe_id=$1 AND session_id=$2
+                UNION
+                SELECT child.session_id FROM sessions child JOIN tree parent
+                  ON (child.source_seq IS NOT NULL AND child.source_session_id=parent.session_id)
+                  OR child.origin_parent_session_id=parent.session_id
+                WHERE child.universe_id=$1
+            )
+            SELECT session_id, deleted_at_ms FROM sessions WHERE universe_id=$1 AND session_id IN (SELECT session_id FROM tree)
+            ORDER BY session_id FOR UPDATE
+        "#).bind(self.config.universe_id).bind(session_id).fetch_all(&mut *tx).await?;
+        for (id, deleted_at) in &rows {
+            if deleted_at.is_none() {
+                return Err(PurgeSessionError::NotDeleted {
+                    session_id: id.clone(),
+                });
+            }
+        }
+        let ids: Vec<String> = rows.into_iter().map(|(id, _)| id).collect();
+        sqlx::query("DELETE FROM sessions WHERE universe_id=$1 AND session_id=ANY($2)")
+            .bind(self.config.universe_id)
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(ids)
+    }
+}
+
+impl PgStore {
+    pub async fn delete_closed_sessions_with_visibility(
+        &self,
+        request: DeleteClosedSessions,
+        shared_only: bool,
+    ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
+        let target_snapshot = self
+            .load_session(&request.session_id)
+            .await?
+            .ok_or_else(|| SessionStoreError::SessionNotFound {
+                session_id: request.session_id.clone(),
+            })?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| session_sql_error("begin delete session transaction", error))?;
+        let root = lock_session(
+            &mut tx,
+            self.config.universe_id,
+            &target_snapshot.retention_root_session_id,
+            "lock retention root for delete",
+        )
+        .await?;
+        let target = if target_snapshot.session_id == root.session_id {
+            root
+        } else {
+            lock_session(
+                &mut tx,
+                self.config.universe_id,
+                &request.session_id,
+                "lock session for delete",
+            )
+            .await?
+        };
+        if let Some(now_ms) = request.due_at_or_before_ms
+            && (target.retention_root_session_id != target.session_id
+                || !target
+                    .delete_at_ms
+                    .is_some_and(|deadline| deadline <= now_ms))
+        {
+            return Err(SessionStoreError::SessionRetentionNotDue {
+                session_id: target.session_id,
+            });
+        }
+
+        let session_ids: Vec<String> = sqlx::query_scalar(
+            r#"
+            WITH RECURSIVE tree(session_id) AS (
+                SELECT $2::text
+                UNION
+                SELECT child.session_id
+                FROM sessions AS child
+                JOIN tree AS parent
+                  ON (child.source_seq IS NOT NULL
+                      AND child.source_session_id = parent.session_id)
+                  OR child.origin_parent_session_id = parent.session_id
+                WHERE child.universe_id = $1 AND child.deleted_at_ms IS NULL
+            )
+            SELECT session_id FROM tree ORDER BY session_id
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.session_id.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|error| session_sql_error("list session retention subtree", error))?;
+        if !request.cascade && session_ids.len() > 1 {
+            return Err(SessionStoreError::SessionHasChildren {
+                session_id: request.session_id,
+            });
+        }
+        let selected_ids = if request.cascade {
+            session_ids
+        } else {
+            vec![request.session_id.as_str().to_owned()]
+        };
+        let query = format!(
+            r#"
+            SELECT {SESSION_COLUMNS}, {SESSION_ACTIVITY}
+            FROM sessions
+            WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL
+            ORDER BY session_id
+            FOR UPDATE
+            "#,
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(self.config.universe_id)
+            .bind(&selected_ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|error| session_sql_error("lock session retention subtree", error))?;
+        let records = rows
+            .iter()
+            .map(session_record_from_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        for record in &records {
+            if record.lifecycle_status != SessionLifecycleStatus::Closed {
+                let error = if record.session_id == request.session_id {
+                    SessionStoreError::SessionNotClosed {
+                        session_id: record.session_id.clone(),
+                        lifecycle_status: record.lifecycle_status,
+                    }
+                } else {
+                    SessionStoreError::SessionTreeNotClosed {
+                        session_id: record.session_id.clone(),
+                        lifecycle_status: record.lifecycle_status,
+                    }
+                };
+                return Err(error);
+            }
+        }
+        if shared_only {
+            let query = format!(
+                "SELECT EXISTS(SELECT 1 FROM sessions s {} WHERE s.universe_id=$1 AND s.session_id=ANY($2) AND {} <> 'universe')",
+                crate::access::SESSION_ROOT_JOIN,
+                crate::access::SESSION_VISIBILITY
+            );
+            let has_private: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+                .bind(self.config.universe_id)
+                .bind(&selected_ids)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|error| session_sql_error("check deletion audience", error))?;
+            if has_private {
+                return Err(SessionStoreError::SessionNotFound {
+                    session_id: request.session_id,
+                });
+            }
+        }
+        // A configuration-only clone keeps no history dependency and must
+        // not expose a link to a session that has disappeared.
+        sqlx::query("UPDATE sessions SET source_session_id = NULL WHERE universe_id=$1 AND source_session_id=ANY($2) AND source_seq IS NULL")
+            .bind(self.config.universe_id).bind(&selected_ids).execute(&mut *tx).await
+            .map_err(|error| session_sql_error("detach deleted clone sources", error))?;
+        let now = crate::shared::unix_now_ms();
+        sqlx::query(
+            r#"
+            UPDATE sessions SET deleted_at_ms = $3
+            WHERE universe_id = $1 AND session_id = ANY($2) AND deleted_at_ms IS NULL
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(&selected_ids)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| session_sql_error("delete session subtree", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| session_sql_error("commit delete session", error))?;
+        let deleted_session_ids = selected_ids
+            .into_iter()
+            .map(SessionId::parse)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| SessionStoreError::Store {
+                message: format!("decode deleted session id: {error}"),
+            })?;
+        Ok(DeleteClosedSessionsResult {
+            target,
+            deleted_session_ids,
+        })
+    }
 }

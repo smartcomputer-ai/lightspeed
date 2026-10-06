@@ -51,7 +51,8 @@ it("gives each role what the one below has, plus its own", () => {
   expect(offered("read")).toEqual(["viewer", "contributor", "operator", "admin"]);
   expect(offered("control_session")).toEqual(["contributor", "operator", "admin"]);
   expect(offered("configure_session")).toEqual(["operator", "admin"]);
-  expect(offered("delete_session")).toEqual(["admin"]);
+  expect(offered("delete_session")).toEqual(["operator", "admin"]);
+  expect(offered("set_session_retention")).toEqual(["admin"]);
   expect(offered("close_session")).toEqual(["contributor", "operator", "admin"]);
   expect(offered("share_session")).toEqual(["contributor", "operator", "admin"]);
   expect(offered("configure_resource")).toEqual(["operator", "admin"]);

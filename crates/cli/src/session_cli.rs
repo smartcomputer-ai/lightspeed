@@ -548,6 +548,7 @@ async fn delete(args: DeleteArgs) -> Result<()> {
     for session_id in targets.ids {
         match client
             .delete_session(api::SessionDeleteParams {
+                shared_only: false,
                 session_id: session_id.clone(),
                 cascade: args.cascade,
             })

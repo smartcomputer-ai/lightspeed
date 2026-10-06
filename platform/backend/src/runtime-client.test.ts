@@ -221,13 +221,19 @@ describe("session lifecycle permissions", () => {
         }
       });
     }
+    for (const shared of [true, false]) it(`${role} soft deletes shared=${shared} only when permitted`, async () => {
+      const calls = core({ s: { visibility: shared ? "universe" : "restricted", createdBy: { kind: "actor", id: "alice" } } });
+      const error = await refusal(as(role).call("session/delete", { sessionId: "s", sharedOnly: false }));
+      expect(error === null).toBe(role === "admin" || (role === "operator" && shared));
+      if (role === "operator" && shared) expect(calls.at(-1)?.params.sharedOnly).toBe(true);
+    });
     it(`${role} deletes and configures retention only as admin`, async () => {
       const calls = core({ s: { visibility: "restricted", createdBy: { kind: "actor", id: "alice" } } });
       for (const method of ["session/delete", "session/retention/put"] as const) {
         const error = await refusal(as(role).call(method, { sessionId: "s", deleteAfterCloseMs: 1 } as never));
         expect(error === null).toBe(role === "admin");
       }
-      if (role !== "admin") expect(calls).toHaveLength(0);
+      if (role !== "admin") expect(calls.every((call) => call.method === "session/read")).toBe(true);
     });
   }
   it("contributors still cancel shared runs", async () => {

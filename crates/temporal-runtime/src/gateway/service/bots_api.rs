@@ -538,21 +538,7 @@ impl GatewayAgentApi {
             self.close_bot_record(bot_id).await?;
         }
         self.wait_for_bot_controller_closed(bot_id).await?;
-        let bot = self.read_bot_record(bot_id).await?;
-        let mut deleted_sessions = Vec::new();
-        for session_id in &bot.closed_sessions {
-            match self
-                .delete_session(SessionDeleteParams {
-                    session_id: session_id.clone(),
-                    cascade: true,
-                })
-                .await
-            {
-                Ok(_) => deleted_sessions.push(session_id.clone()),
-                Err(error) if error.kind == AgentApiErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-        }
+        // Bot configuration removal does not remove retained session history.
         let store = self.store();
         for trigger in store
             .list_bot_triggers(bot_id)
@@ -566,7 +552,7 @@ impl GatewayAgentApi {
             }
         }
         let bot = store.delete_bot(bot_id).await.map_err(map_bot_error)?;
-        Ok((bot, deleted_sessions))
+        Ok((bot, Vec::new()))
     }
 
     pub(crate) async fn bot_state_view(

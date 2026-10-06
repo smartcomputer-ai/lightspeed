@@ -125,7 +125,7 @@ export const METHODS = [
   "channels/pairings/list",
   "channels/pairings/delete",
   "channels/conversations/read",
-  "deployment/sessions/audit/list",
+  "deployment/sessions/deleted/list",
   "deployment/sessions/purge",
   "deployment/environment-provider-bindings/list",
   "deployment/universes/create",
@@ -204,7 +204,7 @@ export const METHOD_INFO = {
   },
   "session/retention/put": {
     scope: "universe",
-    access: {"action":"delete_session","kind":"universe"},
+    access: {"action":"set_session_retention","kind":"universe"},
     summary: "Replace session retention",
     description: "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
   },
@@ -218,7 +218,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"delete_session","kind":"universe"},
     summary: "Delete closed sessions",
-    description: "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
+    description: "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.",
   },
   "session/share": {
     scope: "universe",
@@ -868,17 +868,17 @@ export const METHOD_INFO = {
     summary: "Read a conversation snapshot",
     description: "Queries the conversation workflow's live state for one chat, for debugging; absent when no workflow exists yet.",
   },
-  "deployment/sessions/audit/list": {
+  "deployment/sessions/deleted/list": {
     scope: "deployment",
     access: {"kind":"deployment"},
-    summary: "Read session lifecycle audit",
-    description: "Returns durable lifecycle records, including deletion and purge evidence that survives session removal.",
+    summary: "List deleted sessions",
+    description: "Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.",
   },
   "deployment/sessions/purge": {
     scope: "deployment",
     access: {"kind":"deployment"},
-    summary: "Permanently purge deleted sessions",
-    description: "Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.",
+    summary: "Permanently delete a session",
+    description: "Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.",
   },
   "deployment/environment-provider-bindings/list": {
     scope: "deployment",
@@ -1105,7 +1105,7 @@ export interface MethodMap {
   /**
    * Delete closed sessions
    *
-   * Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.
+   * Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.
    */
   "session/delete": {
     params: Api.SessionDeleteParams;
@@ -2084,18 +2084,18 @@ export interface MethodMap {
     result: Api.AgentApiOutcomeOfChannelConversationReadResponse;
   };
   /**
-   * Read session lifecycle audit
+   * List deleted sessions
    *
-   * Returns durable lifecycle records, including deletion and purge evidence that survives session removal.
+   * Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
    */
-  "deployment/sessions/audit/list": {
-    params: Api.DeploymentSessionAuditListParams;
-    result: Api.AgentApiOutcomeOfDeploymentSessionAuditListResponse;
+  "deployment/sessions/deleted/list": {
+    params: Api.DeploymentDeletedSessionsListParams;
+    result: Api.AgentApiOutcomeOfDeploymentDeletedSessionsListResponse;
   };
   /**
-   * Permanently purge deleted sessions
+   * Permanently delete a session
    *
-   * Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.
+   * Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.
    */
   "deployment/sessions/purge": {
     params: Api.DeploymentSessionPurgeParams;
@@ -2364,7 +2364,7 @@ export const rpc = {
   /**
    * Delete closed sessions
    *
-   * Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.
+   * Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.
    */
   sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
     return client.call("session/delete", params);
@@ -3234,17 +3234,17 @@ export const rpc = {
     return client.call("channels/conversations/read", params);
   },
   /**
-   * Read session lifecycle audit
+   * List deleted sessions
    *
-   * Returns durable lifecycle records, including deletion and purge evidence that survives session removal.
+   * Administrative metadata for soft-deleted sessions, ordered by session ID. Unavailable through universe-scoped methods.
    */
-  deploymentSessionsAuditList(client: RpcCaller, params: Api.DeploymentSessionAuditListParams): Promise<Api.AgentApiOutcomeOfDeploymentSessionAuditListResponse> {
-    return client.call("deployment/sessions/audit/list", params);
+  deploymentSessionsDeletedList(client: RpcCaller, params: Api.DeploymentDeletedSessionsListParams): Promise<Api.AgentApiOutcomeOfDeploymentDeletedSessionsListResponse> {
+    return client.call("deployment/sessions/deleted/list", params);
   },
   /**
-   * Permanently purge deleted sessions
+   * Permanently delete a session
    *
-   * Permanently removes an already deleted session and its deleted descendants before the automatic purge deadline. Idempotent; does not delete attached workspaces or environments.
+   * Removes a soft-deleted session and its soft-deleted history subtree. Rejects any selected session that has not been soft-deleted. Releases event, checkpoint and blob references; unreferenced blobs follow normal garbage collection. Does not delete external workspaces, environments, backups or Temporal history.
    */
   deploymentSessionsPurge(client: RpcCaller, params: Api.DeploymentSessionPurgeParams): Promise<Api.AgentApiOutcomeOfDeploymentSessionPurgeResponse> {
     return client.call("deployment/sessions/purge", params);

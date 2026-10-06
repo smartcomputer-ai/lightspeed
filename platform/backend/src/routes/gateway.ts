@@ -533,7 +533,7 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
-  /// Deletion removes retained history and is accepted by Lightspeed only
+  /// Soft deletion hides retained history and is accepted by Lightspeed only
   /// after the selected sessions are closed. Non-cascade deletion requires a
   /// leaf; cascade includes history forks and delegated children.
   app.delete("/:id/sessions/:sessionId", async (c) => {

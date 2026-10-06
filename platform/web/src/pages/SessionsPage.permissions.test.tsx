@@ -144,5 +144,17 @@ it("offers operators bulk close for their own and shared sessions", async () => 
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select sessions"]')!.click());
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select all listed sessions"]')!.click());
   expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Close 2")).toBe(true);
-  expect([...container.querySelectorAll("button")].some((button) => button.textContent?.startsWith("Delete"))).toBe(false);
+  expect([...container.querySelectorAll("button")].find((button) => button.textContent?.startsWith("Delete"))?.disabled).toBe(true);
+});
+
+it("offers operators bulk deletion only for closed shared sessions, including managed history", async () => {
+  mocks.role = "operator";
+  mocks.api.mockImplementation(async (_method: string, path: string) => {
+    if (path.includes("/sessions?")) return { sessions: sessions.map((session) => ({ ...session, lifecycleStatus: "closed", managed: true })) };
+    return [];
+  });
+  await show();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select sessions"]')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Select all listed sessions"]')!.click());
+  expect([...container.querySelectorAll("button")].some((button) => button.textContent === "Delete 1" && !button.disabled)).toBe(true);
 });

@@ -2236,7 +2236,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/delete",
     "group": "session/delete",
     "summary": "Delete closed sessions",
-    "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Retained records are purged after 30 days. Config-only clones are never included.",
+    "description": "Hides a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Records and history are retained until a deployment administrator permanently deletes them. Config-only clones are never included.",
     "paramsType": "SessionDeleteParams",
     "resultType": "AgentApiOutcome<SessionDeleteResponse>",
     "inputSchema": {
@@ -2248,6 +2248,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         },
         "sessionId": {
           "type": "string"
+        },
+        "sharedOnly": {
+          "description": "Atomically require every selected session's audience to be shared.\nDelegating services use this guard for operators deleting shared work.",
+          "type": "boolean"
         }
       },
       "required": [

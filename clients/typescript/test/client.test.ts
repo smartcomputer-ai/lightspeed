@@ -43,7 +43,7 @@ describe("LightspeedClient", () => {
   it("ships canonical method documentation from the Rust manifest", () => {
     expect(METHOD_INFO["session/config/put"]).toEqual({
       scope: "universe",
-      access: { kind: "universe", action: "control_session" },
+      access: { kind: "universe", action: "configure_session" },
       summary: "Replace session configuration",
       description:
         "Replaces the complete sparse config while the session is idle. Use the current config revision for safe read-modify-write; omitted features are revoked, an omitted model preserves the current model, and an identical document is a no-op.",

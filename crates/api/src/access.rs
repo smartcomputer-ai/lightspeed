@@ -344,6 +344,7 @@ pub enum UniverseAction {
     StopSession,
     CloseSession,
     DeleteSession,
+    SetSessionRetention,
     /// Share an unshared session with the universe.
     ShareSession,
     CreateProfile,
@@ -396,11 +397,11 @@ impl MethodAccess {
         };
         Some(match action {
             Read => RecommendedRole::Viewer,
-            DeleteSession => RecommendedRole::Admin,
+            SetSessionRetention => RecommendedRole::Admin,
             CreateSession | ControlSession | StopSession | CloseSession | ShareSession
             | InvokeBot | UseResource => RecommendedRole::Contributor,
-            ConfigureSession | CreateProfile | ManageProfile | CreateBot | ManageBot
-            | ConfigureResource | CreateWorkspace => RecommendedRole::Operator,
+            DeleteSession | ConfigureSession | CreateProfile | ManageProfile | CreateBot
+            | ManageBot | ConfigureResource | CreateWorkspace => RecommendedRole::Operator,
         })
     }
 }

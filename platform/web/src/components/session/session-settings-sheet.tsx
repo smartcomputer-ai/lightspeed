@@ -131,7 +131,7 @@ function LiveSessionSetup({
   const [originalActiveEnvironmentId, setOriginalActiveEnvironmentId] = useState<string | null>(null);
   const [metadataRows, setMetadataRows] = useState<MetadataRow[]>([]);
   const [originalMetadata, setOriginalMetadata] = useState<Record<string, string>>({});
-  const canSetRetention = useActionPermissions(universeId).can("delete_session");
+  const canSetRetention = useActionPermissions(universeId).can("set_session_retention");
   const [retentionDaysDraft, setRetentionDaysDraft] = useState("");
   const [originalRetentionDays, setOriginalRetentionDays] = useState("");
   const [configError, setConfigError] = useState<string | null>(null);

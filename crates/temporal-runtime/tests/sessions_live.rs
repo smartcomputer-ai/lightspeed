@@ -611,6 +611,7 @@ async fn run_checkpoint_and_bounded_reads_live_client(
     .await?;
     wait_for_session_status(&api, &session_id, SessionStatus::Closed).await?;
     api.delete_session(SessionDeleteParams {
+        shared_only: false,
         session_id: session_id.as_str().to_owned(),
         cascade: false,
     })
@@ -947,6 +948,7 @@ async fn run_lifecycle_delete_live_client(
 
     let delete_open = api
         .delete_session(SessionDeleteParams {
+            shared_only: false,
             session_id: session_id.as_str().to_owned(),
             cascade: false,
         })
@@ -974,6 +976,7 @@ async fn run_lifecycle_delete_live_client(
 
     let deleted = api
         .delete_session(SessionDeleteParams {
+            shared_only: false,
             session_id: session_id.as_str().to_owned(),
             cascade: false,
         })

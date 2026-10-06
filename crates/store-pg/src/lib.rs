@@ -22,6 +22,7 @@ mod object;
 mod profile;
 mod providers;
 mod session;
+pub use session::PurgeSessionError;
 mod shared;
 mod vfs;
 

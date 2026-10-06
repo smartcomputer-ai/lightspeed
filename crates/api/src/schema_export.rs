@@ -205,13 +205,13 @@ mod tests {
         methods.sort_unstable();
         methods.dedup();
         assert_eq!(methods.len(), total, "duplicate method in manifest");
-        assert_eq!(total, 138);
+        assert_eq!(total, 140);
         assert_eq!(
             manifest
                 .iter()
                 .filter(|spec| spec.scope == crate::MethodScope::Deployment)
                 .count(),
-            18
+            20
         );
     }
 
@@ -303,7 +303,8 @@ mod tests {
             let has_session_id = !params["properties"]["sessionId"].is_null();
             let session_scoped = (method.starts_with("session/")
                 && method != crate::METHOD_SESSION_LIST)
-                || method == crate::METHOD_BOTS_SESSIONS_ROTATE;
+                || method == crate::METHOD_BOTS_SESSIONS_ROTATE
+                || method == crate::METHOD_DEPLOYMENT_SESSIONS_PURGE;
             assert_eq!(
                 has_session_id, session_scoped,
                 "{method}: sessionId param presence must match its session/ prefix"

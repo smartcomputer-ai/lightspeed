@@ -12,6 +12,7 @@ import { AccountPage } from "@/pages/AccountPage";
 import { ApiKeysPage } from "@/pages/ApiKeysPage";
 import { AdminApiKeysPage } from "@/pages/AdminApiKeysPage";
 import { AdminUniversesPage } from "@/pages/AdminUniversesPage";
+import { AdminAuditPage } from "@/pages/AdminAuditPage";
 import { AdminUsersPage } from "@/pages/AdminUsersPage";
 import { AdminChannelsPage } from "@/pages/AdminChannelsPage";
 import { AdminEnvironmentProvidersPage } from "@/pages/AdminEnvironmentProvidersPage";
@@ -153,6 +154,7 @@ export function App() {
         {admin && (
           <>
             <Route path="admin" element={<Navigate to="/admin/users" replace />} />
+            <Route path="admin/audit" element={<AdminAuditPage />} />
             <Route path="admin/users" element={<AdminUsersPage currentUser={user} />} />
             <Route path="admin/universes" element={<AdminUniversesPage />} />
             <Route path="admin/api-keys" element={<AdminApiKeysPage />} />

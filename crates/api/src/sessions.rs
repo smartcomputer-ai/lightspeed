@@ -1192,6 +1192,10 @@ pub struct SessionDeleteParams {
     /// target to be a closed retention-tree leaf.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cascade: bool,
+    /// Atomically require every selected session's audience to be shared.
+    /// Delegating services use this guard for operators deleting shared work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_only: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

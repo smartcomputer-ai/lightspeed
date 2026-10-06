@@ -1071,8 +1071,8 @@ function DangerSection({
       )}
       <div className="flex min-w-0 items-start justify-between gap-3">
         <p className="min-w-0 text-xs text-muted-foreground">
-          <b className="font-medium text-foreground">Delete</b> erases the bot, its triggers, its event history, and
-          its conversations, and frees the id{closed ? "." : " — it closes the bot first."} Environments and
+          <b className="font-medium text-foreground">Delete</b> erases the bot, its triggers, and its event history,
+          retains its conversations, and frees the id{closed ? "." : " — it closes the bot first."} Environments and
           profiles are never deleted with a bot.
         </p>
         <AlertDialog>
@@ -1084,8 +1084,8 @@ function DangerSection({
               <AlertDialogTitle>Delete {botLabel(bot)}?</AlertDialogTitle>
               <AlertDialogDescription>
                 {closed
-                  ? "The record, its event history, and its conversations are erased; the id becomes available again."
-                  : "The bot is closed first (runs cancelled, conversations closed, events refused), then the record, its event history, and its conversations are erased and the id becomes available again."}
+                  ? "The record and its event history are erased. Conversation history is retained; the id becomes available again."
+                  : "The bot is closed first (runs cancelled, conversations closed, events refused), then the record and its event history are erased. Conversation history is retained and the id becomes available again."}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

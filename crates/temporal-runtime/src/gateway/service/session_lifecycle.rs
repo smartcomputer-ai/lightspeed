@@ -307,6 +307,16 @@ impl GatewayAgentApi {
             operation_timeout: self.operation_timeout,
             poll_interval: self.poll_interval,
         };
+        if self
+            .store
+            .session_is_deleted(session_id.as_str())
+            .await
+            .map_err(map_session_store_error)?
+        {
+            return Err(AgentApiError::not_found(format!(
+                "session not found: {session_id}"
+            )));
+        }
         // Recover the original intent before resolving a mutable named profile.
         if client_supplied_id
             && let Some(loaded) = lifecycle
@@ -333,6 +343,12 @@ impl GatewayAgentApi {
             delete_after_close_ms,
         );
         validate_delete_after_close_ms(effective_delete_after_close_ms)?;
+        if effective_delete_after_close_ms.is_some()
+            && self.current_controller().is_none()
+            && !self.caller()?.permits(METHOD_SESSION_RETENTION_PUT)
+        {
+            return Err(AgentApiError::forbidden());
+        }
         let start_config = Self::merge_profile_start_config(
             resolved_profile
                 .as_ref()

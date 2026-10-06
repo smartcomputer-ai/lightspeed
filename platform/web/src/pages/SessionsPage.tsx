@@ -123,7 +123,7 @@ import {
 } from "@/lib/sessions/resource-features";
 import { ProviderReadinessBanner } from "@/components/provider-readiness-banner";
 import { modelFromConfig, modelLabel, resolveCreationModel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
-import { useActionPermissions, useSessionClosePermission } from "@/lib/permissions";
+import { useActionPermissions, useSessionClosePermission, useSessionDeletePermission } from "@/lib/permissions";
 import { useActiveUniverse, useFeature } from "@/lib/universes";
 import { cn } from "@/lib/utils";
 import {
@@ -243,10 +243,11 @@ function SessionList({
   const selectedSessions = sessions.filter((session) => selected.has(session.id));
   const permissions = useActionPermissions(universeId);
   const mayClose = useSessionClosePermission(universeId);
+  const mayDelete = useSessionDeletePermission(universeId);
   const canCreate = permissions.can("create_session");
-  const canSelect = sessions.some((session) => (!session.managed || permissions.role === "admin") && (session.lifecycleStatus === "closed" ? permissions.can("delete_session") : mayClose(session.access)));
+  const canSelect = sessions.some((session) => session.lifecycleStatus === "closed" ? mayDelete(session.access) : (!session.managed || permissions.role === "admin") && mayClose(session.access));
   const selectedOpen = selectedSessions.filter((session) => (!session.managed || permissions.role === "admin") && session.lifecycleStatus !== "closed" && mayClose(session.access));
-  const selectedClosed = selectedSessions.filter((session) => (!session.managed || permissions.role === "admin") && session.lifecycleStatus === "closed" && permissions.can("delete_session"));
+  const selectedClosed = selectedSessions.filter((session) => session.lifecycleStatus === "closed" && mayDelete(session.access));
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   // Only metadata filters count; which sessions the list includes is its scope.
   const activeFilterCount = filterEntries.length;
@@ -727,7 +728,7 @@ function BulkActionDialog({
           <AlertDialogDescription>
             {action === "close"
               ? "Each permitted open session is force-closed in turn: active and queued work is cancelled and the session cannot be reopened. Other selected sessions are left alone."
-              : "Each permitted closed session disappears for all universe members. Retained records are purged after 30 days. Other selected sessions are left alone."}
+              : "Each permitted closed session disappears for all universe members. History is retained. Other selected sessions are left alone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -929,7 +930,7 @@ function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   search: string;
 }) {
-  const canSetRetention = useActionPermissions(universeId).can("delete_session");
+  const canSetRetention = useActionPermissions(universeId).can("set_session_retention");
   const [displayName, setDisplayName] = useState("");
   const [profileId, setProfileId] = useState("");
   const canConfigure = useActionPermissions(universeId).can("configure_session");
@@ -1353,11 +1354,12 @@ export function SessionDetail({
   const [deleteCascade, setDeleteCascade] = useState(false);
   const permissions = useActionPermissions(universeId);
   const mayClose = useSessionClosePermission(universeId);
+  const mayDelete = useSessionDeletePermission(universeId);
   const canControl = permissions.can("control_session");
   const canConfigure = permissions.can("configure_session");
   const canStop = permissions.can("stop_session");
   const canClose = mayClose(session.data?.access);
-  const canDelete = permissions.can("delete_session");
+  const canDelete = mayDelete(session.data?.access);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [decidingApproval, setDecidingApproval] = useState<{
     approvalId: string;
@@ -1942,7 +1944,7 @@ export function SessionDetail({
               onCompact={canControl && session.data && !closed ? compaction.compact : undefined}
               compactionLabel={compaction.label}
               onShare={canShare ? () => setShareOpen(true) : undefined}
-              lifecycle={(!managed || permissions.role === "admin") && ((canClose && !closed) || (canDelete && closed)) ? (
+              lifecycle={((!managed || permissions.role === "admin") && canClose && !closed) || (canDelete && closed) ? (
                 closed ? (
                   <DropdownMenuItem
                     variant="destructive"
@@ -2035,7 +2037,7 @@ export function SessionDetail({
             <AlertDialogHeader>
               <AlertDialogTitle>Delete this session?</AlertDialogTitle>
               <AlertDialogDescription>
-                This hides the session and its history from all universe members, including admins. Retained records are permanently purged after 30 days.
+                This hides the session and its history from all universe members, including admins. History is retained until a platform admin permanently deletes it.
                 A session with history forks or delegated children cannot be deleted
                 unless cascade is enabled.
               </AlertDialogDescription>
@@ -2049,7 +2051,7 @@ export function SessionDetail({
               <span className="min-w-0">
                 <span className="block font-medium">Also delete forks and delegated children</span>
                 <span className="block text-xs text-muted-foreground">
-                  Every descendant must already be closed. Deleted sessions disappear for all universe members; retained records are purged after 30 days. Config-only clones are not included.
+                  Every descendant must already be closed. Deleted sessions disappear for all universe members; history is retained. Config-only clones are not included.
                 </span>
               </span>
             </label>
