@@ -6,7 +6,7 @@ import {
   type MethodParams,
   type MethodResult,
 } from "@lightspeed-ai/sdk";
-import { roleAtLeast, type UniverseRole } from "@lightspeed-ai/platform-shared";
+import { canCloseSession, canDeleteSession, roleAtLeast, type UniverseRole } from "@lightspeed-ai/platform-shared";
 import type { ServerEnv } from "./env.js";
 import { METHOD_ROLES, SESSION_TARGET_METHODS } from "./routes/method-roles.js";
 
@@ -27,7 +27,7 @@ export interface Member {
 }
 
 /// Methods only a session's creator, or an admin, may call.
-const CREATOR_METHODS: ReadonlySet<string> = new Set(["session/share", "session/delete"]);
+const CREATOR_METHODS: ReadonlySet<string> = new Set(["session/share"]);
 /// Methods that may name a session that does not exist yet.
 const CREATION_METHODS: ReadonlySet<string> = new Set(["session/start", "session/managed/start"]);
 
@@ -85,7 +85,26 @@ class MemberClient extends LightspeedClient {
     const required = METHOD_ROLES[method];
     if (!required) throw new GateRefusal(403, `${method} is not a member method`);
     if (!roleAtLeast(this.member.role, required)) throw new GateRefusal(403, `${required} role required`);
+    if (!roleAtLeast(this.member.role, "operator")) {
+      if (method === "session/managed/start") {
+        throw new GateRefusal(403, "operator role required to create managed sessions");
+      }
+      if (method === "session/start") requirePreparedSession(params as MethodParams<"session/start">);
+      if (method === "session/runs/start" && (params as MethodParams<"session/runs/start">).config != null) {
+        throw new GateRefusal(403, "operator role required for run configuration overrides");
+      }
+    }
     const admin = this.member.role === "admin";
+    if (method === "session/delete") {
+      // Permanent deletion must use the separately authorized, audited purge route.
+      params = { ...params, softDelete: true, ...(!admin ? { sharedOnly: true } : {}) } as MethodParams<M>;
+    }
+    if (!admin && CREATION_METHODS.has(method)) {
+      const start = params as { deleteAfterCloseMs?: number | null };
+      if (start.deleteAfterCloseMs != null) throw new GateRefusal(403, "admin role required for deletion retention");
+      // Explicit null also overrides profile-derived deletion schedules.
+      params = { ...params, deleteAfterCloseMs: null } as MethodParams<M>;
+    }
     if (!admin && SESSION_TARGET_METHODS.has(method)) {
       await this.requireSession(method, (params as { sessionId?: string }).sessionId);
     }
@@ -110,5 +129,28 @@ class MemberClient extends LightspeedClient {
     const creator = access.createdBy?.kind === "actor" && access.createdBy.id === this.member.userId;
     const visible = CREATOR_METHODS.has(method) ? creator : creator || access.visibility === "universe";
     if (!visible) throw new GateRefusal(404, "session not found");
+    if (method === "session/delete" && !canDeleteSession(this.member.role, access.visibility === "universe")) {
+      throw new GateRefusal(403, "operators may only delete shared sessions");
+    }
+    if (method === "session/close" && !canCloseSession(this.member.role, creator, access.visibility === "universe")) {
+      throw new GateRefusal(403, "contributors may close only their own unshared sessions");
+    }
+  }
+}
+
+/** Contributors choose a saved profile or the universe defaults, without overrides. */
+function requirePreparedSession(params: MethodParams<"session/start">): void {
+  const profile = params.profile;
+  const defaultProfile = profile == null || (profile.kind === "inline"
+    && profile.profile != null && Object.keys(profile.profile).length === 0
+    && Object.keys(profile).every((key) => key === "kind" || key === "profile"));
+  const namedProfile = profile?.kind === "named"
+    && Object.keys(profile).every((key) => key === "kind" || key === "profileId");
+  const allowedFields = new Set(["sessionId", "displayName", "profile", "access"]);
+  const overrides = Object.entries(params).some(([key, value]) =>
+    !allowedFields.has(key) && value !== undefined,
+  );
+  if ((!defaultProfile && !namedProfile) || overrides || params.access?.visibility === "universe") {
+    throw new GateRefusal(403, "contributors may create only default sessions or use an existing profile without overrides");
   }
 }

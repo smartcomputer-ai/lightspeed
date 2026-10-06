@@ -64,9 +64,9 @@ function sniffImage(bytes: Uint8Array): string | null {
 }
 
 /// How to show a blob, decided by its bytes. Images and PDFs go to the
-/// browser's own viewers; UTF-8 text is shown exactly as stored, with no
-/// Markdown rendering or reformatting; anything else is download-only. Nothing
-/// is ever shown as a web page, so stored HTML or SVG appears as its source.
+/// browser's own viewers; UTF-8 text retains its exact source for display or
+/// Markdown preview; anything else is download-only. Stored HTML and SVG are
+/// never rendered as web pages.
 export function blobView(bytes: Uint8Array, hint: string | undefined): BlobView {
   const image = sniffImage(bytes);
   if (image) return { kind: "image", mime: image };

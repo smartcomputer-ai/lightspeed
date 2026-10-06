@@ -180,6 +180,8 @@ const fallbackResponder: DemoResponder = (input) => ({
 });
 
 export class DemoStore {
+  readonly auditEvents: Array<{ id: string; createdAt: string; actorId: string; targetId: string; universeId: string; action: string; outcome: string; details: Record<string, unknown> }> = [];
+  readonly deletedSessions = new Map<string, { record: SessionRecord; deletedAtMs: number }>();
   readonly users = new Map<string, DemoUser>();
   currentUser: DemoUser;
   readonly universes = new Map<string, UniverseState>();

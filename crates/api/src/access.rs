@@ -47,6 +47,9 @@ pub enum MethodGroup {
     /// `session/*`, `blobs/read` and `blobs/has`.
     #[serde(rename = "session")]
     Session,
+    /// Destructive session operations and deletion retention.
+    #[serde(rename = "session/delete")]
+    SessionDelete,
     /// `blobs/put` alone, so connectors can upload attachments without
     /// reading sessions.
     #[serde(rename = "blobs/put")]
@@ -88,11 +91,14 @@ pub enum MethodGroup {
     /// `deployment/channels/accounts/list`: a connector host's discovery.
     #[serde(rename = "deployment/channels")]
     DeploymentChannels,
+    #[serde(rename = "deployment/sessions")]
+    DeploymentSessions,
 }
 
 impl MethodGroup {
-    pub const ALL: [MethodGroup; 17] = [
+    pub const ALL: [MethodGroup; 19] = [
         Self::Session,
+        Self::SessionDelete,
         Self::BlobsPut,
         Self::Vfs,
         Self::Profiles,
@@ -109,12 +115,14 @@ impl MethodGroup {
         Self::DeploymentApiKeys,
         Self::DeploymentEnvironmentProviders,
         Self::DeploymentChannels,
+        Self::DeploymentSessions,
     ];
 
     /// The stored and wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Session => "session",
+            Self::SessionDelete => "session/delete",
             Self::BlobsPut => "blobs/put",
             Self::Vfs => "vfs",
             Self::Profiles => "profiles",
@@ -131,6 +139,7 @@ impl MethodGroup {
             Self::DeploymentApiKeys => "deployment/api-keys",
             Self::DeploymentEnvironmentProviders => "deployment/environment-providers",
             Self::DeploymentChannels => "deployment/channels",
+            Self::DeploymentSessions => "deployment/sessions",
         }
     }
 
@@ -147,6 +156,7 @@ impl MethodGroup {
                 | Self::DeploymentApiKeys
                 | Self::DeploymentEnvironmentProviders
                 | Self::DeploymentChannels
+                | Self::DeploymentSessions
         )
     }
 
@@ -166,6 +176,10 @@ impl MethodGroup {
         let group = |prefix: &str| method.starts_with(prefix);
         Some(if method == "blobs/put" {
             Self::BlobsPut
+        } else if matches!(method, "session/delete" | "session/retention/put") {
+            Self::SessionDelete
+        } else if group("deployment/sessions/") {
+            Self::DeploymentSessions
         } else if group("session/") || group("blobs/") {
             Self::Session
         } else if group("transcriptions/") {
@@ -326,8 +340,11 @@ pub enum UniverseAction {
     Read,
     CreateSession,
     ControlSession,
+    ConfigureSession,
     StopSession,
+    CloseSession,
     DeleteSession,
+    SetSessionRetention,
     /// Share an unshared session with the universe.
     ShareSession,
     CreateProfile,
@@ -371,7 +388,7 @@ impl MethodAccess {
 
     /// The least universe role a person should hold to call the method, for
     /// gates built on this contract. `None` for machine and deployment
-    /// methods. Ownership rules (a Contributor deleting only their own work)
+    /// methods. Ownership rules (a Contributor closing only their own unshared work)
     /// are the gate's to add.
     pub const fn recommended_role(self) -> Option<RecommendedRole> {
         use UniverseAction::*;
@@ -380,10 +397,11 @@ impl MethodAccess {
         };
         Some(match action {
             Read => RecommendedRole::Viewer,
-            CreateSession | ControlSession | StopSession | DeleteSession | ShareSession
+            SetSessionRetention => RecommendedRole::Admin,
+            CreateSession | ControlSession | StopSession | CloseSession | ShareSession
             | InvokeBot | UseResource => RecommendedRole::Contributor,
-            CreateProfile | ManageProfile | CreateBot | ManageBot | ConfigureResource
-            | CreateWorkspace => RecommendedRole::Operator,
+            DeleteSession | ConfigureSession | CreateProfile | ManageProfile | CreateBot
+            | ManageBot | ConfigureResource | CreateWorkspace => RecommendedRole::Operator,
         })
     }
 }
@@ -524,6 +542,30 @@ mod tests {
             MethodGroup::allowed_in(AccessScope::Deployment),
             MethodGroup::ALL.into_iter().collect()
         );
+    }
+
+    #[test]
+    fn session_setup_requires_an_operator_but_ordinary_creation_and_runs_do_not() {
+        for method in [
+            "session/config/put",
+            "session/profiles/apply",
+            "session/metadata/put",
+            "session/environments/activate",
+            "session/environments/deactivate",
+        ] {
+            assert_eq!(
+                method_access(method).unwrap().recommended_role(),
+                Some(RecommendedRole::Operator),
+                "{method}",
+            );
+        }
+        for method in ["session/start", "session/runs/start", "session/rename"] {
+            assert_eq!(
+                method_access(method).unwrap().recommended_role(),
+                Some(RecommendedRole::Contributor),
+                "{method}",
+            );
+        }
     }
 
     #[test]

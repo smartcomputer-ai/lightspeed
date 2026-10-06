@@ -1277,13 +1277,25 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
     );
 
     store
-        .delete_closed_sessions(DeleteClosedSessions {
-            session_id: doomed.clone(),
-            cascade: true,
-            due_at_or_before_ms: None,
-        })
+        .delete_closed_sessions_with_options(
+            DeleteClosedSessions {
+                session_id: doomed.clone(),
+                cascade: true,
+                due_at_or_before_ms: None,
+            },
+            true,
+            false,
+        )
         .await
         .expect("delete doomed session");
+    assert_eq!(
+        candidate_refs(&store, cutoff_ms, &pinned).await,
+        before_delete
+    );
+    store
+        .purge_deleted_session(doomed.as_str())
+        .await
+        .expect("purge doomed session");
     let candidates = store
         .list_sweep_candidates(cutoff_ms, &pinned, 1024)
         .await

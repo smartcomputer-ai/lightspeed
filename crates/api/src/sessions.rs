@@ -40,7 +40,7 @@ pub struct SessionStartParams {
     pub config: Option<SessionConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<ProfileSource>,
-    /// Root-owned automatic deletion measured from close. Absent inherits a
+    /// Root-owned automatic soft deletion measured from close. Absent inherits a
     /// profile default, explicit null keeps the tree, and a duration overrides
     /// the profile.
     #[serde(
@@ -1150,7 +1150,7 @@ pub struct SessionMetadataPutResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionRetentionPutParams {
     pub session_id: SessionId,
-    /// Positive duration enables automatic tree deletion; null disables it.
+    /// Positive duration enables automatic tree soft deletion; null disables it.
     #[serde(deserialize_with = "deserialize_required_delete_after_close_ms")]
     #[schemars(
         required,
@@ -1188,10 +1188,18 @@ pub struct SessionRetentionPutResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SessionDeleteParams {
     pub session_id: SessionId,
+    /// Hide sessions while retaining records, events, checkpoints and blob roots.
+    /// False (the default) permanently deletes them without prior soft deletion.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub soft_delete: bool,
     /// Delete history forks and delegated descendants too. False requires the
     /// target to be a closed retention-tree leaf.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cascade: bool,
+    /// Atomically require every selected session's audience to be shared.
+    /// Delegating services use this guard for operators deleting shared work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_only: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

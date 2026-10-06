@@ -237,8 +237,9 @@ thread gets its next conversation when another event needs it.
 Under **Settings → Danger zone**, **Close bot** is terminal. It cancels work,
 closes conversations and descendants, archives pending events, removes
 schedules, and refuses new work while keeping the bot and its history.
-Deleting additionally removes the bot record, triggers, events, and
-conversations, and makes its ID available again.
+Deleting additionally removes the bot record, triggers and events, and makes
+its ID available again. Closed conversation history remains retained and follows
+the separate [session deletion lifecycle](sessions-and-runs.md#close-and-retain-a-session).
 
 Profiles and environments remain independent resources. Closing or deleting a
 bot or any of its sessions leaves its environments intact. Manage machine

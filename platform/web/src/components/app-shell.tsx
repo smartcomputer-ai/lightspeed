@@ -3,6 +3,7 @@ import { useEffect, type ComponentType, type CSSProperties } from "react";
 import { Link, NavLink, Outlet, useLocation, useMatch } from "react-router-dom";
 import {
   ArrowLeft,
+  ScrollText,
   Globe,
   KeyRound,
   Palette,
@@ -185,6 +186,7 @@ export function AppShell({ user, admin }: { user: SessionUser; admin: boolean })
                   <NavItem to="/admin/universes" icon={Globe} label="Universes" />
                   <NavItem to="/admin/api-keys" icon={KeyRound} label="API keys" />
                   <NavItem to="/admin/channels" icon={RadioTower} label="Channels" />
+                  <NavItem to="/admin/audit" icon={ScrollText} label="Audit log" />
                   <NavItem
                     to="/admin/environment-providers"
                     icon={ServerCog}

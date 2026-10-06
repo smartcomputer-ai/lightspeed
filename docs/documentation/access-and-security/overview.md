@@ -80,16 +80,20 @@ runtime controller responsible for internal work.
 
 The Platform also keeps a durable access history for company admission and
 admin-status changes, emergency sign-ins, suspension, session revocation,
-local membership edits, and key creation/revocation through Platform routes.
-Platform admins can view the latest 100 records under **Users → Recent access
-changes**. Records contain identifiers, action, time, outcome and safe details;
-they survive deletion of users and sessions. Provider tokens and passwords
-are never included.
+local membership edits, key creation/revocation, and successful permanent session
+deletion through Platform routes. Platform admins can view the latest 100 records
+under **Platform admin → Audit log**. Records contain identifiers, action, time,
+outcome and safe details; permanent deletion includes the actor, universe, target
+session and all removed session IDs. Records survive deletion of users and
+sessions. Provider tokens and passwords are never included.
 
-This is a small access trail. Comprehensive gateway-operation auditing,
-retention controls and export are deferred. Core operations made directly
-with an API key do not pass through this trail. Core session attribution
-remains subject to session retention and deletion. Company OIDC sign-in is
+For sessions, only permanent deletion is audited: creation, sharing, closing,
+force-closing, retention changes and soft deletion are not. Automatic retention
+work appears in runtime operational logs, not this audit log. Core operations
+made directly with an API key do not pass through this trail. Comprehensive
+gateway-operation auditing, audit retention controls and export are deferred.
+Core session attribution remains subject to session retention and deletion.
+Company OIDC sign-in is
 supported; directory synchronization, SCIM and member invitations are deferred.
 
 ## Choose the next detail

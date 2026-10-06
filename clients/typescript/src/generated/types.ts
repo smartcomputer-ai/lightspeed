@@ -1340,8 +1340,10 @@ export type MethodGroup =
       | "bots"
       | "deployment/universes"
       | "deployment/api-keys"
+      | "deployment/sessions"
     )
   | "session"
+  | "session/delete"
   | "blobs/put"
   | "environments"
   | "channels"
@@ -1817,8 +1819,11 @@ export type UniverseAction =
       | "read"
       | "create_session"
       | "control_session"
+      | "configure_session"
       | "stop_session"
+      | "close_session"
       | "delete_session"
+      | "set_session_retention"
       | "create_profile"
       | "manage_profile"
       | "create_bot"
@@ -4600,6 +4605,31 @@ export interface DeploymentChannelAccountView {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentDeletedSessionsListResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentDeletedSessionsListResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentDeletedSessionsListResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentDeletedSessionsListResponse".
+ */
+export interface DeploymentDeletedSessionsListResponse {
+  nextAfter?: string | null;
+  sessions: DeletedSessionView[];
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeletedSessionView".
+ */
+export interface DeletedSessionView {
+  deletedAtMs: number;
+  displayName?: string | null;
+  sessionId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse".
  */
 export interface AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse {
@@ -4807,6 +4837,25 @@ export interface AgentApiOutcomeOfDeploymentProviderBindingPutResponse {
  */
 export interface DeploymentProviderBindingPutResponse {
   binding: EnvironmentProviderBindingView;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "AgentApiOutcomeOfDeploymentSessionPurgeResponse".
+ */
+export interface AgentApiOutcomeOfDeploymentSessionPurgeResponse {
+  notifications?: AgentNotification[];
+  result: DeploymentSessionPurgeResponse;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentSessionPurgeResponse".
+ */
+export interface DeploymentSessionPurgeResponse {
+  /**
+   * Includes soft-deleted history forks and delegated descendants.
+   * Empty when the target has already been permanently deleted.
+   */
+  deletedSessionIds: string[];
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -7255,6 +7304,17 @@ export interface DeploymentChannelAccountListParams {
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentDeletedSessionsListParams".
+ */
+export interface DeploymentDeletedSessionsListParams {
+  /**
+   * Exclusive session ID cursor; each page contains at most 100 entries.
+   */
+  after?: string | null;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "DeploymentEnvironmentAdoptParams".
  */
 export interface DeploymentEnvironmentAdoptParams {
@@ -7330,6 +7390,14 @@ export interface DeploymentProviderBindingPutParams {
   };
   providerId: string;
   status: EnvironmentProviderBindingStatusView;
+  universeId: string;
+}
+/**
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "DeploymentSessionPurgeParams".
+ */
+export interface DeploymentSessionPurgeParams {
+  sessionId: string;
   universeId: string;
 }
 /**
@@ -8035,6 +8103,16 @@ export interface SessionDeleteParams {
    */
   cascade?: boolean;
   sessionId: string;
+  /**
+   * Atomically require every selected session's audience to be shared.
+   * Delegating services use this guard for operators deleting shared work.
+   */
+  sharedOnly?: boolean;
+  /**
+   * Hide sessions while retaining records, events, checkpoints and blob roots.
+   * False (the default) permanently deletes them without prior soft deletion.
+   */
+  softDelete?: boolean;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -8171,7 +8249,7 @@ export interface SessionRenameParams {
  */
 export interface SessionRetentionPutParams {
   /**
-   * Positive duration enables automatic tree deletion; null disables it.
+   * Positive duration enables automatic tree soft deletion; null disables it.
    */
   deleteAfterCloseMs: number | null;
   sessionId: string;
@@ -8195,7 +8273,7 @@ export interface SessionStartParams {
   access?: AccessInput | null;
   config?: SessionConfig | null;
   /**
-   * Root-owned automatic deletion measured from close. Absent inherits a
+   * Root-owned automatic soft deletion measured from close. Absent inherits a
    * profile default, explicit null keeps the tree, and a duration overrides
    * the profile.
    */

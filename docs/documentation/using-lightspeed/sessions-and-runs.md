@@ -12,16 +12,21 @@ retains both the work and its history when you leave the page.
 Use a Contributor, Operator or Admin account in the universe for the web
 procedures below. To control an existing private session, you must be its
 creator or an Admin; shared sessions can be controlled by Contributors and
-above. If you haven't completed a task yet, start with
+above. Changing session setup or per-message model and reasoning options
+requires an Operator or Admin. If you haven't completed a task yet, start with
 [Build your first agent](../getting-started/first-agent.md).
 
 ## Start and continue a session
 
-Open **Sessions → New session**, enter a **Name**, and select a **Profile**.
-Choose **Create** to use the saved profile. **Customize setup…** lets you
-change the setup for this session without saving those changes back to the
-profile. After customizing, choose **Create session**. You can also start
-without a profile and configure the session directly.
+Open **Sessions → New session**, enter a **Name**, and select an existing
+**Profile** or **No profile (universe default)**. Choose **Create**. The profile
+is resolved at creation; later profile edits do not change this session.
+Contributors use these prepared choices without configuration overrides.
+
+Operators and Admins can choose **Customize setup…** to change the setup for
+this session without saving those changes back to the profile. After
+customizing, choose **Create session**. They can also customize a session
+that starts without a profile.
 
 Send a task in the composer. For the release editor from the first-agent
 walkthrough, try:
@@ -46,9 +51,9 @@ title menu, choose **Share with universe…**, and confirm with **Share**. This
 also shares its sub-agents. Sharing cannot be undone.
 
 Every member can then read the conversation, and Contributors and above can
-continue or control it. Sharing and deletion remain creator-or-Admin actions
-and require at least the Contributor role. Bot conversations are always
-shared; delegated sessions follow their root's visibility.
+continue runs, steer, cancel work, or decide tool approvals. Sharing requires
+the creator with at least the Contributor role, or an Admin. Bot conversations
+are always shared; delegated sessions follow their root's visibility.
 
 Files written into an attached shared workspace remain visible through that
 workspace even while the conversation is private. Direct core keys with the
@@ -140,8 +145,8 @@ window. Recovery resumes the same run with completed tool results retained.
 It can still fail when the protected input is too large or its bounded
 attempts cannot make enough room.
 
-In the profile or idle session's model setup, open **Customize run controls →
-Context compaction**. **Engine default** and **Engine managed standalone**
+As an Operator or Admin, open **Customize run controls → Context compaction**
+in the profile or idle session's model setup. **Engine default** and **Engine managed standalone**
 enable standalone compaction; **Provider triggered** uses supported OpenAI
 Responses or Anthropic Messages generation compaction. **Disabled** turns off
 automatic compaction and recovery. **Input limit tokens** overrides usable
@@ -190,9 +195,15 @@ those conversations. **Metadata filters** accept `key=value` pairs, and
 
 Metadata is a descriptive map, for example `project=acorn` and
 `purpose=release-review`. It does not grant access or instruct the model.
-Open **Session settings** to edit it, custom instructions, model configuration,
-and other setup, then choose **Apply setup**. Changes to the agent's working
-setup require an open session with no active or queued runs.
+Open **Session settings** to inspect metadata, custom instructions, model
+configuration, and attached resources. Viewers and Contributors see a read-only
+form: sections still expand, but values cannot be changed and **Apply setup**
+is hidden.
+
+Operators and Admins can edit the setup and choose **Apply setup**. Changes to
+the agent's working setup require an open session with no active or queued
+runs. The composer's per-message model and reasoning choices, including saving
+a model choice as the session default, also require an Operator or Admin.
 
 A session keeps its configured provider identity and API kind for its entire
 lifetime, including before its first run. You can switch model names within
@@ -297,12 +308,33 @@ Leaving a browser tab or quitting the CLI has no effect on session lifecycle.
 accept more work or be reopened. Its retained history is still inspectable.
 **Force close session** also cancels outstanding work, including queued runs.
 
-Closed ordinary sessions can be deleted. **Also delete forks and delegated
-children** includes their retention descendants, which must also be closed;
-configuration-only clones are separate. **Delete after close (days)** sets
-automatic retention, with a blank value keeping history until manual deletion.
-The root session owns this policy for its retention tree, so descendants do
-not independently choose how long that tree is kept.
+Deleting a closed session in Platform **soft-deletes** it: it disappears from
+ordinary session views for everyone, including Admins, while its history remains stored.
+**Also delete forks and delegated children** includes its retention descendants,
+which must also be closed; configuration-only clones are separate. Without
+that option, the session must have no retention descendants. Closing and
+deletion have different [role requirements](../access-and-security/private-and-shared-work.md#what-each-person-may-do).
+
+Admins can set **Delete after close (days)** to automatically soft-delete a
+closed session tree; a blank value keeps it until manual deletion. The root
+owns this policy for its retention tree, and deletion waits until all descendants
+are closed. This policy never permanently removes stored history.
+
+Within Platform, only Platform admins can permanently delete retained session
+history. In the delete dialog, select **Also permanently delete retained history** to soft-delete
+and then purge. For already deleted sessions, open **Platform admin → Universes →
+Deleted sessions**, select sessions and choose **Purge selected…**, or use
+**Purge all…**, then confirm removal of their deleted history trees. There is
+no automatic purge or restore action.
+Permanent deletion through Platform is recorded in the
+[audit log](../access-and-security/overview.md#what-is-recorded-today).
+
+Direct runtime clients use `session/delete`, which permanently deletes by
+default; pass `softDelete: true` to retain hidden history. Similarly,
+`lightspeed session delete` deletes permanently unless `--soft-delete` is set.
+Both modes require closed sessions and use `cascade` for retention descendants.
+Platform always requests soft deletion before its separate admin purge step;
+automatic retention also continues to soft-delete only.
 
 Bot and channel conversations have a lifecycle controller. Their session
 inspector identifies what manages them; use that controller's reset or close
@@ -317,6 +349,6 @@ the [bot conversation](bots-and-triggers.md) or connected chat for normal work.
 | A message is waiting while the agent works | It may be a queued run. Use steering for an instruction intended for the current task. |
 | Steering has no immediate visible effect | The current model call or tool batch must finish before the next model turn can consume it. |
 | Work starts again after stopping | Check for other queued runs. Stopping one run leaves those tasks in place. |
-| Setup changes are refused | Wait for active work to finish and drain or cancel queued runs. Reload settings if another editor changed them. |
+| Setup changes are refused | Confirm you have an Operator or Admin role. Wait for active work to finish and drain or cancel queued runs. Reload settings if another editor changed them. |
 | A finished child or closed conversation is missing | Under **Filter sessions → Include**, select **Closed sessions** and **Sub-agent sessions**, or follow the child link from the parent transcript. |
 | The agent lost a detail from much earlier | Inspect the retained history and restate the needed fact or point it to the source file. The current model context can be smaller than the transcript. |

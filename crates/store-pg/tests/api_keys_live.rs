@@ -117,28 +117,101 @@ async fn exercise(pool: &sqlx::PgPool) {
     );
 
     assert_eq!(
-        api_keys.provision_api_key(&gate_key, false).await.unwrap(),
+        api_keys
+            .provision_api_key(&gate_key, false, false)
+            .await
+            .unwrap(),
         gate_key.record
     );
     assert_eq!(
-        api_keys.provision_api_key(&gate_key, true).await.unwrap(),
+        api_keys
+            .provision_api_key(&gate_key, true, false)
+            .await
+            .unwrap(),
         gate_key.record
     );
     let mut changed = gate_key.clone();
     changed.record.assert_actor = false;
     assert!(matches!(
-        api_keys.provision_api_key(&changed, false).await,
+        api_keys.provision_api_key(&changed, false, false).await,
         Err(auth::ApiKeyError::Invalid { .. })
     ));
+    assert!(matches!(
+        api_keys.provision_api_key(&changed, false, true).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+    changed = gate_key.clone();
+    changed.record.scope = left;
+    assert!(matches!(
+        api_keys.provision_api_key(&changed, false, true).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+
+    // An older development key gains newly introduced method groups without
+    // changing its secret, creation metadata, or actor assertion.
+    let older = minted(
+        AccessScope::Deployment,
+        Some(&[MethodGroup::Session]),
+        false,
+        13,
+    );
+    api_keys
+        .create_api_key(&older.key_hash, &older.record)
+        .await
+        .unwrap();
+    let mut current = older.clone();
+    current.record.groups = MethodGroup::allowed_in(AccessScope::Deployment);
+    current.record.created_at_ms = 99;
+    current.record.display_name = Some("new provisioning name".into());
+    assert!(matches!(
+        api_keys.provision_api_key(&current, false, false).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+    let mut expected = older.record.clone();
+    expected.groups = current.record.groups.clone();
+    assert_eq!(
+        api_keys
+            .provision_api_key(&current, false, true)
+            .await
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        api_keys
+            .provision_api_key(&current, true, true)
+            .await
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        api_keys
+            .resolve_api_key(&older.key_hash, 0)
+            .await
+            .unwrap()
+            .unwrap()
+            .groups,
+        expected.groups
+    );
+
     let absent = minted(AccessScope::Deployment, None, false, 14);
-    assert!(api_keys.provision_api_key(&absent, true).await.is_err());
-    let provisioned = api_keys.provision_api_key(&absent, false).await.unwrap();
+    assert!(matches!(
+        api_keys.provision_api_key(&absent, true, true).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+    let provisioned = api_keys
+        .provision_api_key(&absent, false, true)
+        .await
+        .unwrap();
     api_keys
         .revoke_api_key(&provisioned.key_prefix, 15)
         .await
         .unwrap();
     assert!(matches!(
-        api_keys.provision_api_key(&absent, false).await,
+        api_keys.provision_api_key(&absent, false, false).await,
+        Err(auth::ApiKeyError::Invalid { .. })
+    ));
+    assert!(matches!(
+        api_keys.provision_api_key(&absent, false, true).await,
         Err(auth::ApiKeyError::Invalid { .. })
     ));
     assert!(

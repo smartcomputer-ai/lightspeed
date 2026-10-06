@@ -315,9 +315,9 @@ edge protects it. Removing a parent can release its children for a later pass.
 
 An elected collector runs hourly with bounded scanning. The default grace is
 seven days since the last put or API admission of an existing reference;
-reading content does not renew that grace. Session deletion releases its roots,
-while compaction leaves those roots intact because session history still
-records the original content. Reducing a model window and reclaiming disk
+reading content does not renew that grace. Permanent session deletion releases
+its roots; soft deletion retains them. Compaction also leaves roots intact
+because session history still records the original content. Reducing a model window and reclaiming disk
 space are therefore separate operations.
 
 Profiles borrow their content references rather than holding blobs indefinitely.

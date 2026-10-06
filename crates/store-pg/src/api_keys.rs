@@ -57,18 +57,46 @@ impl PgApiKeyStore {
         Ok(())
     }
 
-    /// Idempotent host-side provisioning. Conflicts never resurrect revoked
-    /// credentials or change their scope, groups, or actor authority.
+    /// Idempotent host-side provisioning. Explicit group refresh updates active
+    /// credentials only; scope and actor authority must still match.
     pub async fn provision_api_key(
         &self,
         key: &auth::MintedApiKey,
         require_existing: bool,
+        refresh_groups: bool,
     ) -> Result<ApiKeyRecord, ApiKeyError> {
         if !require_existing {
             match self.create_api_key(&key.key_hash, &key.record).await {
                 Ok(()) => return Ok(key.record.clone()),
                 Err(ApiKeyError::AlreadyExists { .. }) => {}
                 Err(error) => return Err(error),
+            }
+        }
+        if refresh_groups {
+            let groups: Vec<&str> = key
+                .record
+                .groups
+                .iter()
+                .map(|group| group.as_str())
+                .collect();
+            // Match authority and revocation in the write itself so concurrent
+            // revocation cannot be undone by development startup.
+            let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE api_keys SET groups = $2
+                 WHERE key_hash = $1 AND revoked_at_ms IS NULL
+                   AND universe_id IS NOT DISTINCT FROM $3 AND assert_actor = $4
+                   AND groups IS DISTINCT FROM $2
+                 RETURNING {KEY_COLUMNS}"
+            )))
+            .bind(&key.key_hash)
+            .bind(groups)
+            .bind(key.record.scope.universe_id())
+            .bind(key.record.assert_actor)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+            if let Some(row) = row {
+                return record_from_row(&row);
             }
         }
         let row = sqlx::query(sqlx::AssertSqlSafe(format!(

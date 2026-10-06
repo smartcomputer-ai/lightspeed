@@ -37,7 +37,7 @@ test("runtime and full profiles share a persistent CLI key and separate Platform
   const second = await prepareCliConnection({ ...f, full: true });
   assert.equal(readFileSync(handoff.credentialFile, "utf8"), secret);
   assert.notEqual(second.platformSecret, secret);
-  assert.ok(f.calls.some(c => c.args.includes("--require-existing")));
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--refresh-groups")));
   f.keys.set(secret, "revoked");
   await assert.rejects(prepareCliConnection({ ...f, full: true }), /revoked/);
   assert.equal(f.keys.size, 2, "revocation does not trigger another key");
@@ -53,12 +53,24 @@ test("key bootstrap opt-out preserves universe setup and requires existing servi
   assert.equal(supplied.platformSecret, "external");
   assert.equal(f.keys.size, 0);
 });
-test("ordinary startup refuses saved credentials absent from the database", async t => {
+test("ordinary startup restores saved credentials absent from the database", async t => {
+  const f = fixture(t);
+  const before = await prepareCliConnection({ ...f, full: true });
+  const keys = [...f.keys.keys()];
+  f.keys.clear();
+  const after = await prepareCliConnection({ ...f, full: true });
+  assert.deepEqual([...f.keys.keys()], keys);
+  assert.equal(after.platformSecret, before.platformSecret);
+});
+test("bootstrap opt-out does not repair missing database credentials or refresh groups", async t => {
   const f = fixture(t);
   await prepareCliConnection({ ...f, full: true });
+  f.calls.length = 0;
+  await prepareCliConnection({ ...f, full: true, noBootstrap: true });
+  assert.ok(f.calls.filter(c => c.args.includes("provision")).every(c => c.args.includes("--require-existing") && !c.args.includes("--refresh-groups")));
   f.keys.clear();
-  await assert.rejects(prepareCliConnection({ ...f, full: true }), /restart must use an active key/);
-  assert.equal(f.keys.size, 0, "startup does not recreate missing administrator keys");
+  await assert.rejects(prepareCliConnection({ ...f, full: true, noBootstrap: true }), /restart must use an active key/);
+  assert.equal(f.keys.size, 0);
 });
 test("single mode writes a credential-free handoff", async t => {
   const f = fixture(t);
@@ -69,14 +81,23 @@ test("single mode writes a credential-free handoff", async t => {
   assert.equal(handoff.universe, undefined);
   assert.equal(f.keys.size, 0);
 });
-test("supplied bootstrap input is registered once and missing local credentials require repair", async t => {
+test("missing local credentials are replaced and the handoff is repaired", async t => {
   const f = fixture(t);
   const result = await prepareCliConnection({ ...f, env: { ...f.env, LIGHTSPEED_BOOTSTRAP_API_KEY: "lsk_supplied" }, full: true });
   const handoff = JSON.parse(readFileSync(result.handoff));
   assert.equal(readFileSync(handoff.credentialFile, "utf8"), "lsk_supplied");
   assert.notEqual(result.platformSecret, "lsk_supplied");
   rmSync(handoff.credentialFile);
-  await assert.rejects(prepareCliConnection({ ...f, full: false }), /missing/);
+  await assert.rejects(prepareCliConnection({ ...f, full: false, noBootstrap: true }), /missing/);
+  rmSync(path.join(f.root, ".lightspeed/cli/platform.key"));
+  const repaired = await prepareCliConnection({ ...f, full: true });
+  const secret = readFileSync(handoff.credentialFile, "utf8");
+  assert.notEqual(secret, "lsk_supplied");
+  assert.notEqual(repaired.platformSecret, result.platformSecret);
+  assert.equal(statSync(handoff.credentialFile).mode & 0o777, 0o600);
+  assert.deepEqual(JSON.parse(readFileSync(repaired.handoff)), handoff);
+  await prepareCliConnection({ ...f, full: true });
+  assert.equal(readFileSync(handoff.credentialFile, "utf8"), secret);
 });
 
 test("model seeding selects universes explicitly and preserves changed or cleared defaults", async () => {

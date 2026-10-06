@@ -70,7 +70,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "deleteAfterCloseMs": {
-          "description": "Root-owned automatic deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
+          "description": "Root-owned automatic soft deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
           "format": "uint64",
           "maximum": 3153600000000,
           "minimum": 1,
@@ -2174,9 +2174,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_retention_put",
     "method": "session/retention/put",
-    "group": "session",
+    "group": "session/delete",
     "summary": "Replace session retention",
-    "description": "Sets the positive close-relative automatic-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it.",
+    "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
     "paramsType": "SessionRetentionPutParams",
     "resultType": "AgentApiOutcome<SessionRetentionPutResponse>",
     "inputSchema": {
@@ -2186,7 +2186,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "properties": {
         "deleteAfterCloseMs": {
-          "description": "Positive duration enables automatic tree deletion; null disables it.",
+          "description": "Positive duration enables automatic tree soft deletion; null disables it.",
           "format": "uint64",
           "minimum": 1,
           "type": [
@@ -2234,9 +2234,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
   {
     "name": "lightspeed_session_delete",
     "method": "session/delete",
-    "group": "session",
+    "group": "session/delete",
     "summary": "Delete closed sessions",
-    "description": "Permanently removes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Config-only clones are never included.",
+    "description": "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
     "paramsType": "SessionDeleteParams",
     "resultType": "AgentApiOutcome<SessionDeleteResponse>",
     "inputSchema": {
@@ -2248,6 +2248,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         },
         "sessionId": {
           "type": "string"
+        },
+        "sharedOnly": {
+          "description": "Atomically require every selected session's audience to be shared.\nDelegating services use this guard for operators deleting shared work.",
+          "type": "boolean"
+        },
+        "softDelete": {
+          "description": "Hide sessions while retaining records, events, checkpoints and blob roots.\nFalse (the default) permanently deletes them without prior soft deletion.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -9997,7 +10005,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "bots/delete",
     "group": "bots",
     "summary": "Delete a bot",
-    "description": "Closes the bot if needed, waits for its controller to complete, deletes the sessions it closed, and removes the record so the bot id is free again.",
+    "description": "Closes the bot if needed, waits for its controller to complete, retains its session history, and removes the record so the bot id is free again.",
     "paramsType": "BotDeleteParams",
     "resultType": "AgentApiOutcome<BotDeleteResponse>",
     "inputSchema": {

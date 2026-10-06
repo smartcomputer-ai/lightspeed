@@ -41,7 +41,8 @@ function fixture() {
   return { call, requests, fetch };
 }
 
-it("sends attachments as media items before the text, with per-message run options", async () => {
+it("sends operator attachments as media items before the text, with per-message run options", async () => {
+  auth.role = "operator";
   const f = fixture();
   const response = await f.call("/sessions/s1/messages", {
     text: "Compare these", submissionId: "sub", attachments: [image, pdf],
@@ -103,4 +104,13 @@ it("uploads attachments as blobs for contributors only", async () => {
   const viewer = fixture();
   expect((await viewer.call("/attachments", { bytesBase64: btoa("png") })).status).toBe(403);
   expect(viewer.fetch).not.toHaveBeenCalled();
+});
+
+
+it("rejects contributor model and reasoning overrides before reaching the runtime", async () => {
+  const f = fixture();
+  for (const options of [{ model: route }, { reasoningEffort: "high" }]) {
+    expect((await f.call("/sessions/s1/messages", { text: "Hello", submissionId: "sub", options })).status).toBe(403);
+  }
+  expect(f.fetch).not.toHaveBeenCalled();
 });

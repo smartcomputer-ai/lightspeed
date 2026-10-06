@@ -1067,6 +1067,23 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfDeploymentDeletedSessionsListResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentDeletedSessionsListResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse": {
       "properties": {
         "notifications": {
@@ -1179,6 +1196,23 @@
         },
         "result": {
           "$ref": "#/definitions/DeploymentProviderBindingPutResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfDeploymentSessionPurgeResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/DeploymentSessionPurgeResponse"
         }
       },
       "required": [
@@ -8238,6 +8272,28 @@
       ],
       "type": "object"
     },
+    "DeletedSessionView": {
+      "properties": {
+        "deletedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId",
+        "deletedAtMs"
+      ],
+      "type": "object"
+    },
     "DeploymentApiKeyCreateParams": {
       "additionalProperties": false,
       "properties": {
@@ -8507,6 +8563,46 @@
         "displayName",
         "createdAtMs",
         "updatedAtMs"
+      ],
+      "type": "object"
+    },
+    "DeploymentDeletedSessionsListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "default": null,
+          "description": "Exclusive session ID cursor; each page contains at most 100 entries.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId"
+      ],
+      "type": "object"
+    },
+    "DeploymentDeletedSessionsListResponse": {
+      "properties": {
+        "nextAfter": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/definitions/DeletedSessionView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sessions"
       ],
       "type": "object"
     },
@@ -8853,6 +8949,37 @@
       },
       "required": [
         "binding"
+      ],
+      "type": "object"
+    },
+    "DeploymentSessionPurgeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "universeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "universeId",
+        "sessionId"
+      ],
+      "type": "object"
+    },
+    "DeploymentSessionPurgeResponse": {
+      "properties": {
+        "deletedSessionIds": {
+          "description": "Includes soft-deleted history forks and delegated descendants.\nEmpty when the target has already been permanently deleted.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "deletedSessionIds"
       ],
       "type": "object"
     },
@@ -11998,13 +12125,19 @@
             "mcp",
             "bots",
             "deployment/universes",
-            "deployment/api-keys"
+            "deployment/api-keys",
+            "deployment/sessions"
           ],
           "type": "string"
         },
         {
           "const": "session",
           "description": "`session/*`, `blobs/read` and `blobs/has`.",
+          "type": "string"
+        },
+        {
+          "const": "session/delete",
+          "description": "Destructive session operations and deletion retention.",
           "type": "string"
         },
         {
@@ -13892,6 +14025,14 @@
         },
         "sessionId": {
           "type": "string"
+        },
+        "sharedOnly": {
+          "description": "Atomically require every selected session's audience to be shared.\nDelegating services use this guard for operators deleting shared work.",
+          "type": "boolean"
+        },
+        "softDelete": {
+          "description": "Hide sessions while retaining records, events, checkpoints and blob roots.\nFalse (the default) permanently deletes them without prior soft deletion.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -16184,7 +16325,7 @@
       "additionalProperties": false,
       "properties": {
         "deleteAfterCloseMs": {
-          "description": "Positive duration enables automatic tree deletion; null disables it.",
+          "description": "Positive duration enables automatic tree soft deletion; null disables it.",
           "format": "uint64",
           "minimum": 1,
           "type": [
@@ -16289,7 +16430,7 @@
           ]
         },
         "deleteAfterCloseMs": {
-          "description": "Root-owned automatic deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
+          "description": "Root-owned automatic soft deletion measured from close. Absent inherits a\nprofile default, explicit null keeps the tree, and a duration overrides\nthe profile.",
           "format": "uint64",
           "maximum": 3153600000000,
           "minimum": 1,
@@ -17679,8 +17820,11 @@
             "read",
             "create_session",
             "control_session",
+            "configure_session",
             "stop_session",
+            "close_session",
             "delete_session",
+            "set_session_retention",
             "create_profile",
             "manage_profile",
             "create_bot",

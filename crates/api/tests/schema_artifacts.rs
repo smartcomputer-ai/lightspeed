@@ -15,6 +15,26 @@ fn schemas_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("contract")
 }
 
+#[test]
+fn session_deletion_defaults_to_permanent_and_accepts_explicit_soft_deletion() {
+    let bundle = api::export_schemas().schema_bundle;
+    for soft_delete in [None, Some(false), Some(true)] {
+        let mut request = json!({"sessionId": "closed-session"});
+        if let Some(value) = soft_delete {
+            request["softDelete"] = json!(value);
+        }
+        assert_validates(&bundle, "SessionDeleteParams", &request);
+        let params: api::SessionDeleteParams = serde_json::from_value(request).unwrap();
+        assert_eq!(params.soft_delete, soft_delete.unwrap_or(false));
+        let serialized = serde_json::to_value(params).unwrap();
+        if soft_delete == Some(true) {
+            assert_eq!(serialized["softDelete"], true);
+        } else {
+            assert!(serialized.get("softDelete").is_none());
+        }
+    }
+}
+
 fn committed(name: &str) -> Value {
     let path = schemas_dir().join(name);
     let text = fs::read_to_string(&path).unwrap_or_else(|error| {

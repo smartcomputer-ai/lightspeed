@@ -122,9 +122,9 @@ for development.
 **Revocation and history.** With OIDC, sessions expire absolutely after eight
 hours by default and activity cannot renew them. Every authenticated request
 checks current admission, suspension and permissions. **Users** supports
-suspension, reinstatement and signing out all sessions, and shows the latest
-100 durable access events. Membership changes apply on the next request;
-provider login preserves them. Core keys and already admitted work remain
+suspension, reinstatement and signing out all sessions. **Audit log** shows the
+latest 100 durable access and permanent session deletion events. Membership
+changes apply on the next request; provider login preserves them. Core keys and already admitted work remain
 independent and require separate revocation or cancellation.
 
 **Universes and roles.** A universe is an organization. Its members hold one of
@@ -133,9 +133,9 @@ four roles, least to most:
 | Role | May |
 | --- | --- |
 | viewer | read shared work and their own private sessions |
-| contributor | also start and continue sessions and runs, invoke bots, share their own sessions |
-| operator | also configure profiles, bots, environments, MCP servers, credentials and channels |
-| admin | also manage members and keys, and read, share and delete any session |
+| contributor | also create sessions from defaults or an existing profile, continue runs, invoke bots, share their own sessions |
+| operator | also customize sessions and run options, and configure profiles, bots, environments, MCP servers, credentials and channels |
+| admin | also manage members and keys, read and share any session, soft-delete closed sessions and set deletion retention |
 
 A universe's creator is its admin, and a universe always keeps one. A platform
 admin acts as an admin in every universe. Universe admins manage members on
@@ -151,9 +151,15 @@ a route makes for a member goes through one client
   `backend/src/routes/method-roles.ts`. That table is generated from the core
   method manifest by `node platform/scripts/generate-method-roles.mjs`, and
   `npm run check` fails when it is stale;
+- limits contributor creation to ordinary sessions with universe defaults or a
+  named profile, without setup overrides; managed creation and run configuration
+  overrides require an operator;
 - for a method that names a session, unless the member is an admin, requires the
-  session to be shared with the universe or created by the member; sharing and
-  deleting need its creator;
+  session to be shared with the universe or created by the member; sharing
+  requires its creator;
+- limits closing to contributors' own unshared sessions, operators' own or
+  shared sessions, or any session for admins; soft deletion requires a closed
+  session and an admin, or an operator for shared sessions;
 - narrows a member's session list to shared work and their own; and
 - calls core with the Platform's deployment key, naming the universe and the
   member as the actor.
@@ -161,6 +167,16 @@ a route makes for a member goes through one client
 The Platform's own refusals are 403 and 404. Core refusing the Platform is a
 server fault (500 or 502), since the member was already admitted. The web's
 permission hints come from the same role and never replace these checks.
+Only platform admins can permanently delete soft-deleted session history,
+through the audited Platform purge route. See the
+[session lifecycle guide](../docs/documentation/using-lightspeed/sessions-and-runs.md#close-and-retain-a-session).
+
+`configure_session` is separate from `control_session`: configuration, profile
+application, metadata, and active-environment changes require an operator,
+while ordinary run controls remain available to contributors. Profile creation
+and editing also require an operator. Readers use the same expandable
+configuration form in profiles and session settings, with protected controls
+and no save action; profile JSON remains available for inspection.
 
 **Private work.** Sessions start private: their creator and the universe's
 admins see them. **Share with universe…** in the session's ⋯ menu shares a

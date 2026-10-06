@@ -822,7 +822,7 @@ async fn bots_live_schedule_trigger_reconciles_temporal_schedule() -> anyhow::Re
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the local Temporal + PostgreSQL stack (source scripts/dev/env.sh)"]
-async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
+async fn bots_live_close_and_delete_preserve_history_and_recreate() -> anyhow::Result<()> {
     run_bots_live(Llm::Fake, |api, _client| async move {
         let profile_id = create_profile(&api, "You are a live-test bot.").await?;
         let bot_id = create_bot(&api, &profile_id, |_| {}, Vec::new()).await?;
@@ -896,7 +896,7 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             })
             .await?
             .result;
-        assert!(deleted.deleted_sessions.contains(&main_session));
+        assert!(deleted.deleted_sessions.is_empty());
         assert!(
             api.read_bot(BotReadParams {
                 bot_id: bot_id.clone()
@@ -904,14 +904,40 @@ async fn bots_live_close_and_delete_tear_down() -> anyhow::Result<()> {
             .await
             .is_err()
         );
-        assert!(
-            api.read_session(SessionReadParams {
-                session_id: main_session,
+        let retained = api
+            .read_session(SessionReadParams {
+                session_id: main_session.clone(),
                 run_limit: None,
             })
-            .await
-            .is_err()
-        );
+            .await?
+            .result
+            .session;
+        assert_eq!(retained.status, SessionStatus::Closed);
+        assert_eq!(retained.access.visibility, api::Visibility::Universe);
+        api.create_bot(BotCreateParams {
+            bot: BotInput {
+                bot_id: bot_id.clone(),
+                document: bot_document(&profile_id),
+            },
+            triggers: vec![],
+        })
+        .await?;
+        api.admit_bot_event(BotEventAdmitParams {
+            bot_id: bot_id.clone(),
+            event: manual_event("new incarnation"),
+        })
+        .await?;
+        wait_for_outcomes(&api, &bot_id, 1).await?;
+        let successor = api
+            .read_session(SessionReadParams {
+                session_id: bot_main_session_id(&bot_id, 2),
+                run_limit: None,
+            })
+            .await?
+            .result
+            .session;
+        assert_ne!(successor.id, retained.id);
+        api.delete_bot(BotDeleteParams { bot_id }).await?;
         Ok(())
     })
     .await

@@ -23,6 +23,7 @@ it("shows company access and provides suspension without local role or password 
   await act(async () => root.render(<QueryClientProvider client={client}><AdminUsersPage currentUser={{ id: "admin", name: "Admin", email: "admin@example.test" }} /></QueryClientProvider>));
   await settle();
   expect(container.textContent).toContain("Company account");
+  expect(container.textContent).not.toContain("Recent audit events");
   expect(container.textContent).toContain("Last company check");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Edit user@example.test"]')!.click());
   await settle();

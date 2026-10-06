@@ -46,6 +46,8 @@ import { appHref, blobHref } from "@/lib/blob-view";
 import { ListPane } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
+import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
+import { MarkdownContent } from "@/components/session/markdown-content";
 import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
@@ -61,6 +63,7 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
   const workspaceId = params.workspaceId;
   const filePath = params["*"] || undefined;
   const [newFile, setNewFile] = useState<{ parent: string; revision: number } | null>(null);
+  const [preview, setPreview] = useState(false);
   const [editor, setEditor] = useState({ workspaceId, path: filePath, identity: 0 });
   const [pendingRename, setPendingRename] = useState<{
     from: string;
@@ -122,6 +125,8 @@ export function WorkspacesPage({ admin: _admin }: { admin: boolean }) {
             workspaceId={workspaceId}
             filePath={filePath}
             fileIdentity={editor.identity}
+            preview={preview}
+            onPreviewChange={setPreview}
           />
         ) : (
           workspaceId ? (
@@ -301,12 +306,16 @@ function FileDetail({
   workspaceId,
   filePath,
   fileIdentity,
+  preview,
+  onPreviewChange,
 }: {
   universeId: string;
   slug: string;
   workspaceId: string;
   filePath: string;
   fileIdentity: number;
+  preview: boolean;
+  onPreviewChange: (preview: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const permissions = useActionPermissions(universeId);
@@ -493,18 +502,18 @@ function FileDetail({
         if (dirty && !save.isPending && !event.repeat) saveCurrent();
       }}
     >
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
         <NavLink
           to={`/u/${slug}/workspaces/${workspaceId}`}
           className="md:hidden"
         >
           <ChevronRight className="size-4 rotate-180" />
         </NavLink>
-        <h1 className="truncate font-mono text-sm">{filePath}</h1>
+        <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{filePath}</h1>
         <span className="shrink-0 text-xs text-muted-foreground">
           {file ? formatBytes(file.size_bytes) : ""}
         </span>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="ml-auto flex shrink-0 basis-full items-center justify-end gap-1.5 sm:basis-auto">
           {blobLink && (
             <Button
               variant="ghost"
@@ -516,6 +525,9 @@ function FileDetail({
             >
               <ExternalLink />
             </Button>
+          )}
+          {decoded?.kind === "text" && (
+            <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
           )}
           {canEditFiles && decoded?.kind === "text" && (
             <Button
@@ -544,7 +556,9 @@ function FileDetail({
         {blob.error && (
           <p className="p-4 text-sm text-destructive">{blob.error.message}</p>
         )}
-        {decoded?.kind === "text" && (
+        {decoded?.kind === "text" && (preview ? (
+          <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
+        ) : (
           <textarea
             className="h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
             value={value}
@@ -557,7 +571,7 @@ function FileDetail({
               canEditFiles ? "File contents" : "File contents (read only)"
             }
           />
-        )}
+        ))}
         {decoded?.kind === "image" && (
           <div className="flex items-start p-4">
             <img

@@ -7,6 +7,8 @@ import { api, type SessionView, type WorkspaceTree, type VfsTreeEntry } from "@/
 import { LoadingNote, UniverseNotFound } from "@/components/page";
 import { ReadError } from "@/components/read-error";
 import { Button } from "@/components/ui/button";
+import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
+import { MarkdownContent } from "@/components/session/markdown-content";
 import { formatBytes } from "@/lib/composer-attachments";
 import { blobView, type BlobView } from "@/lib/blob-view";
 import { useActionPermissions } from "@/lib/permissions";
@@ -30,6 +32,7 @@ export function BlobPage({ admin: _admin }: { admin: boolean }) {
 }
 
 function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: string; digest: string }) {
+  const [preview, setPreview] = useState(false);
   const [search] = useSearchParams();
   const name = search.get("name")?.trim() || undefined;
   const hint = search.get("type")?.trim() || undefined;
@@ -57,8 +60,8 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header className="sticky top-0 z-10 flex min-h-12 shrink-0 items-center gap-3 border-b bg-background px-4 py-2">
-        <div className="min-w-0 flex-1">
+      <header className="sticky top-0 z-10 flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b bg-background px-4 py-2">
+        <div className="min-w-0 flex-1 basis-full sm:basis-auto">
           <div className="flex min-w-0 items-baseline gap-2">
             <h1 className="truncate text-sm font-semibold" title={title}>{title}</h1>
             <span className="shrink-0 text-xs text-muted-foreground">
@@ -69,12 +72,13 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
           {workspace && <LinkedFromWorkspace universeId={universeId} slug={slug} workspaceId={workspace} path={path} />}
         </div>
         <CopyLink />
+        {view?.kind === "text" && <MarkdownViewToggle preview={preview} onPreviewChange={setPreview} />}
         {bytes && view && <DownloadLink bytes={bytes} name={name ?? `${digest.slice(0, 12)}${extension(view)}`} />}
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
         {blob.isLoading && <LoadingNote />}
         {blob.error && <ReadError error={blob.error} className="p-6" />}
-        {bytes && view && <BlobBody bytes={bytes} view={view} name={title} />}
+        {bytes && view && <BlobBody bytes={bytes} view={view} name={title} preview={preview} />}
       </div>
     </div>
   );
@@ -134,7 +138,7 @@ function LinkedFromWorkspace({ universeId, slug, workspaceId, path }: {
   );
 }
 
-function BlobBody({ bytes, view, name }: { bytes: Uint8Array; view: BlobView; name: string }) {
+function BlobBody({ bytes, view, name, preview }: { bytes: Uint8Array; view: BlobView; name: string; preview: boolean }) {
   const url = useObjectUrl(bytes, view.kind === "image" || view.kind === "pdf" ? view.mime : null);
   switch (view.kind) {
     case "image":
@@ -146,7 +150,9 @@ function BlobBody({ bytes, view, name }: { bytes: Uint8Array; view: BlobView; na
     case "pdf":
       return url ? <iframe src={url} title={name} className="block h-full min-h-[70vh] w-full border-0" /> : null;
     case "text":
-      return <div className="mx-auto max-w-5xl px-6 py-6"><TextBlock text={view.text} /></div>;
+      return <div className="mx-auto max-w-5xl px-6 py-6">
+        {preview ? <MarkdownContent>{view.text}</MarkdownContent> : <TextBlock text={view.text} />}
+      </div>;
     case "binary":
       return (
         <div className="flex flex-col items-center gap-2 p-12 text-sm text-muted-foreground">

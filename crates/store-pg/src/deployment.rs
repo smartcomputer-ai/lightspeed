@@ -31,9 +31,9 @@ const UNIVERSE_STATS_SELECT: &str = r#"
         u.slug,
         u.created_at_ms,
         (SELECT max(s.updated_at_ms) FROM sessions s
-            WHERE s.universe_id = u.universe_id) AS last_activity_at_ms,
+            WHERE s.universe_id = u.universe_id AND s.deleted_at_ms IS NULL) AS last_activity_at_ms,
         (SELECT count(*) FROM sessions s
-            WHERE s.universe_id = u.universe_id) AS sessions,
+            WHERE s.universe_id = u.universe_id AND s.deleted_at_ms IS NULL) AS sessions,
         (SELECT count(*) FROM vfs_workspaces w
             WHERE w.universe_id = u.universe_id) AS workspaces,
         (SELECT count(*) FROM agent_profiles p

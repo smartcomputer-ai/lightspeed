@@ -29,6 +29,9 @@ export const workspaceEntryRenameSchema = workspaceEntryDeleteSchema.extend({
     "Enter a single file or folder name",
   ),
 });
+export const workspaceEntryMoveSchema = workspaceEntryDeleteSchema.extend({
+  destination: pathSchema,
+});
 const fileSchema = z.object({
   kind: z.literal("file"),
   path: pathSchema,
@@ -166,20 +169,50 @@ export function renameWorkspaceEntry<T extends TransferManifest>(
       .success
   )
     throw new WorkspaceTransferError("Enter a valid file or folder name", 400);
+  return moveWorkspaceEntry(
+    source,
+    path,
+    [...path.split("/").slice(0, -1), name].join("/"),
+  );
+}
+
+export function moveWorkspaceEntry<T extends TransferManifest>(
+  source: T,
+  path: string,
+  destination: string,
+): T {
+  if (
+    !workspaceEntryMoveSchema.safeParse({ path, destination, expectedRevision: 0 })
+      .success
+  )
+    throw new WorkspaceTransferError(
+      "Enter valid source and destination paths",
+      400,
+    );
   const manifest = structuredClone(source);
   const entry = findEntry(manifest, path);
+  if (path === destination) return manifest;
+  if (destination.startsWith(`${path}/`))
+    throw new WorkspaceTransferError(
+      "A folder cannot be moved inside itself.",
+      400,
+    );
+  const destinationParts = destination.split("/");
+  const name = destinationParts.pop()!;
+  const destinationParent = findEntry(manifest, destinationParts.join("/"));
+  if (destinationParent.kind !== "directory")
+    throw new WorkspaceTransferError("The destination must be a folder.", 409);
+  if (own(destinationParent.entries, name))
+    throw new WorkspaceTransferError(
+      "A file or folder with this name already exists.",
+      409,
+    );
   const parts = path.split("/");
   const previousName = parts.pop()!;
   let parent = manifest.root.entries;
   for (const part of parts)
     parent = (own(parent, part) as TransferDirectory).entries;
-  if (previousName === name) return manifest;
-  if (own(parent, name))
-    throw new WorkspaceTransferError(
-      "A file or folder with this name already exists.",
-      409,
-    );
-  assign(parent, name, entry);
+  assign(destinationParent.entries, name, entry);
   delete parent[previousName];
   return manifest;
 }

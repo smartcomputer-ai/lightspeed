@@ -567,3 +567,74 @@ it("returns a missing-path error and exports an empty workspace as a valid ZIP",
     Object.keys(unzipSync(new Uint8Array(await result.arrayBuffer()))),
   ).toEqual(["docs/"]);
 });
+
+async function move(path: string, destination: string, expectedRevision = revision) {
+  return app().request("/u/workspaces/docs/move", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path, destination, expectedRevision }),
+  });
+}
+
+it("moves subtrees and files in one revision without copying blobs or losing empty folders", async () => {
+  await upload({}, [...entries, { kind: "directory", path: "archive" }]);
+  const original = structuredClone(manifest);
+  calls = [];
+  expect((await move("reports", "archive/reports")).status).toBe(200);
+  expect(manifest.root.entries.reports).toBeUndefined();
+  const archive = manifest.root.entries.archive!;
+  if (archive.kind !== "directory") throw new Error("Expected directory");
+  expect(archive.entries.reports).toEqual(original.root.entries.reports);
+  expect(manifest.totals).toEqual(original.totals);
+  expect(revision).toBe(2);
+  expect(calls).toEqual([
+    "vfs/workspaces/read", "vfs/snapshots/read",
+    "vfs/snapshots/commit", "vfs/workspaces/update",
+  ]);
+  expect((await move("archive/reports/résumé #1?.pdf", "__proto__")).status).toBe(200);
+  const result = await app().request("/u/workspaces/docs/download?path=__proto__");
+  expect(new Uint8Array(await result.arrayBuffer())).toEqual(new Uint8Array([0, 255, 12, 4]));
+  expect((await move("archive/reports/empty", "empty")).status).toBe(200);
+  expect(manifest.root.entries.empty).toEqual({ kind: "directory", entries: {} });
+  expect(manifest.totals).toEqual(original.totals);
+});
+
+it("rejects invalid moves without changing the workspace", async () => {
+  await upload();
+  const original = structuredClone(manifest);
+  calls = [];
+  for (const [path, destination, status] of [
+    ["reports", "reports/empty/reports", 400],
+    ["reports/notes.txt", "reports/empty", 409],
+    ["reports/empty", "reports/notes.txt/empty", 409],
+    ["reports", "missing/reports", 404],
+    ["missing", "new", 404],
+    ["", "root", 400],
+    ["reports", "", 400],
+    ["reports", "../escape", 400],
+    ["reports", "/absolute", 400],
+    ["reports", "a//b", 400],
+    ["reports", "a\\b", 400],
+  ] as const) {
+    expect((await move(path, destination)).status, `${path} -> ${destination}`).toBe(status);
+  }
+  expect(manifest).toEqual(original);
+  expect(revision).toBe(1);
+  expect(calls).not.toContain("vfs/snapshots/commit");
+});
+
+it("guards moves with permissions and revisions, including concurrent updates", async () => {
+  await upload();
+  const original = structuredClone(manifest);
+  calls = [];
+  identity.role = "viewer";
+  expect((await move("reports/notes.txt", "notes.txt")).status).toBe(403);
+  expect(calls).toEqual([]);
+  identity.role = "contributor";
+  expect((await move("reports/notes.txt", "notes.txt", 0)).status).toBe(409);
+  expect(calls).not.toContain("vfs/snapshots/commit");
+  race = true;
+  expect((await move("reports/notes.txt", "notes.txt")).status).toBe(409);
+  expect(revision).toBe(1);
+  expect(manifest).toEqual(original);
+});

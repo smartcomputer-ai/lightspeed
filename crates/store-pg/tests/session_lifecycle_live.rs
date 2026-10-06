@@ -444,3 +444,358 @@ async fn cleanup_universe(store: &PgStore) {
         .await
         .expect("clean up test universe");
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres env"]
+async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
+    use harness::{session::SessionPosition, storage::DeleteClosedSessions};
+    let store = live_store().await;
+    let root = SessionId::new("permanent-root");
+    let fork = SessionId::new("permanent-fork");
+    let clone_id = SessionId::new("independent-clone");
+    let create = CreateSession {
+        session_id: root.clone(),
+        display_name: None,
+        metadata: Default::default(),
+        origin: None,
+        delete_after_close_ms: None,
+        created_at_ms: 1,
+    };
+    store.create_session(create.clone()).await.unwrap();
+    store
+        .append(AppendSessionEvents {
+            session_id: root.clone(),
+            expected_head: None,
+            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+        })
+        .await
+        .unwrap();
+    let deletion = DeleteClosedSessions {
+        session_id: root.clone(),
+        cascade: true,
+        due_at_or_before_ms: None,
+    };
+    assert!(matches!(
+        store.delete_closed_sessions(deletion.clone()).await,
+        Err(SessionStoreError::SessionNotClosed { .. })
+    ));
+    store
+        .create_forked_session(CreateForkedSession {
+            session_id: fork.clone(),
+            source_session_id: root.clone(),
+            source_seq: EventSeq::new(1),
+            created_at_ms: 11,
+        })
+        .await
+        .unwrap();
+    store
+        .create_cloned_session(CreateClonedSession {
+            session_id: clone_id.clone(),
+            source_session_id: root.clone(),
+            created_at_ms: 12,
+            opening_events: vec![],
+        })
+        .await
+        .unwrap();
+    store
+        .append(AppendSessionEvents {
+            session_id: root.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(1),
+            }),
+            events: vec![lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.delete_closed_sessions(deletion.clone()).await,
+        Err(SessionStoreError::SessionTreeNotClosed { .. })
+    ));
+    assert!(store.load_session(&root).await.unwrap().is_some());
+    store
+        .append(AppendSessionEvents {
+            session_id: fork.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(1),
+            }),
+            events: vec![lifecycle_event(21, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+        })
+        .await
+        .unwrap();
+    store
+        .delete_closed_sessions_with_options(
+            DeleteClosedSessions {
+                session_id: fork.clone(),
+                cascade: false,
+                due_at_or_before_ms: None,
+            },
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+    // A retained fork still depends on the parent's events, even while hidden.
+    assert!(matches!(
+        store
+            .delete_closed_sessions(DeleteClosedSessions {
+                cascade: false,
+                ..deletion.clone()
+            })
+            .await,
+        Err(SessionStoreError::SessionHasChildren { .. })
+    ));
+    let deleted = store.delete_closed_sessions(deletion).await.unwrap();
+    assert_eq!(deleted.deleted_session_ids.len(), 2);
+    let retained: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sessions WHERE universe_id=$1 AND session_id=ANY($2)",
+    )
+    .bind(store.config().universe_id)
+    .bind([root.as_str(), fork.as_str()])
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(retained, 0);
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM session_events WHERE universe_id=$1 AND session_id=ANY($2)",
+    )
+    .bind(store.config().universe_id)
+    .bind([root.as_str(), fork.as_str()])
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(events, 0);
+    assert!(
+        store
+            .load_session(&clone_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .source_session_id
+            .is_none()
+    );
+    store
+        .create_session(create)
+        .await
+        .expect("permanent deletion releases the session ID");
+    cleanup_universe(&store).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres env"]
+async fn soft_delete_hides_history_until_explicit_permanent_deletion() {
+    use harness::storage::{DeleteClosedSessions, ReadSessionEventRange, ReadSessionEvents};
+    let store = live_store().await;
+    let root = SessionId::new("deleted-root");
+    let create = CreateSession {
+        session_id: root.clone(),
+        display_name: None,
+        metadata: Default::default(),
+        origin: None,
+        delete_after_close_ms: Some(100),
+        created_at_ms: 1,
+    };
+    store.create_session(create.clone()).await.unwrap();
+    let deletion = DeleteClosedSessions {
+        session_id: root.clone(),
+        cascade: true,
+        due_at_or_before_ms: None,
+    };
+    assert!(matches!(
+        store.delete_closed_sessions(deletion.clone()).await,
+        Err(SessionStoreError::SessionNotClosed { .. })
+    ));
+    assert!(matches!(
+        store.purge_deleted_session(root.as_str()).await,
+        Err(store_pg::PurgeSessionError::NotDeleted { .. })
+    ));
+    store
+        .append(AppendSessionEvents {
+            session_id: root.clone(),
+            expected_head: None,
+            events: vec![
+                lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
+                lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+            ],
+        })
+        .await
+        .unwrap();
+    let fork = SessionId::new("deleted-fork");
+    store
+        .create_forked_session(CreateForkedSession {
+            session_id: fork.clone(),
+            source_session_id: root.clone(),
+            source_seq: EventSeq::new(2),
+            created_at_ms: 21,
+        })
+        .await
+        .unwrap();
+    let clone_id = SessionId::new("independent-clone");
+    store
+        .create_cloned_session(CreateClonedSession {
+            session_id: clone_id.clone(),
+            source_session_id: root.clone(),
+            created_at_ms: 22,
+            opening_events: vec![],
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .delete_closed_sessions(DeleteClosedSessions {
+                cascade: false,
+                ..deletion.clone()
+            })
+            .await,
+        Err(SessionStoreError::SessionHasChildren { .. })
+    ));
+    let access = store_pg::PgAccessStore::new(store.pool().clone());
+    assert!(
+        access
+            .share_session(store.config().universe_id, root.as_str())
+            .await
+            .unwrap()
+    );
+    assert!(matches!(
+        store
+            .delete_closed_sessions_with_options(deletion.clone(), true, true)
+            .await,
+        Err(SessionStoreError::SessionNotFound { .. })
+    ));
+    assert!(store.load_session(&root).await.unwrap().is_some());
+    assert!(store.load_session(&fork).await.unwrap().is_some());
+    assert!(
+        access
+            .share_session(store.config().universe_id, fork.as_str())
+            .await
+            .unwrap()
+    );
+    let deleted = store
+        .delete_closed_sessions_with_options(deletion.clone(), true, true)
+        .await
+        .unwrap();
+    assert_eq!(deleted.deleted_session_ids.len(), 2);
+    for id in [&root, &fork] {
+        assert!(store.load_session(id).await.unwrap().is_none());
+        assert!(matches!(
+            store
+                .read_after(ReadSessionEvents {
+                    session_id: id.clone(),
+                    after: None,
+                    limit: 10
+                })
+                .await,
+            Err(SessionStoreError::SessionNotFound { .. })
+        ));
+        assert!(matches!(
+            store
+                .read_range(ReadSessionEventRange {
+                    session_id: id.clone(),
+                    after: EventSeq::new(2),
+                    through: EventSeq::new(2),
+                    limit: 10
+                })
+                .await,
+            Err(SessionStoreError::SessionNotFound { .. })
+        ));
+        assert!(
+            store_pg::PgAccessStore::new(store.pool().clone())
+                .session_access(store.config().universe_id, id.as_str())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            store
+                .set_session_display_name(id, Some("resurrect".into()))
+                .await,
+            Err(SessionStoreError::SessionNotFound { .. })
+        ));
+    }
+    assert_eq!(
+        store
+            .list_sessions(ListSessions {
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .sessions
+            .len(),
+        1
+    );
+    assert!(
+        store
+            .load_session(&clone_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .source_session_id
+            .is_none()
+    );
+    assert!(
+        store
+            .list_retention_roots_due_for_deletion(u64::MAX / 2, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let retained: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sessions WHERE universe_id=$1 AND deleted_at_ms IS NOT NULL",
+    )
+    .bind(store.config().universe_id)
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(retained, 2);
+    assert!(matches!(
+        store.create_session(create).await,
+        Err(SessionStoreError::SessionAlreadyExists { .. })
+    ));
+    assert!(matches!(
+        store.delete_closed_sessions(deletion).await,
+        Err(SessionStoreError::SessionNotFound { .. })
+    ));
+    let listed = store.list_deleted_sessions(None, 100).await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(
+        store
+            .list_deleted_sessions(Some(&listed[0].0), 100)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store
+            .purge_deleted_session(root.as_str())
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        store
+            .purge_deleted_session(root.as_str())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .list_deleted_sessions(None, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM session_events WHERE universe_id=$1 AND session_id=ANY($2)",
+    )
+    .bind(store.config().universe_id)
+    .bind(vec![root.as_str(), fork.as_str()])
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0);
+    assert!(store.load_session(&clone_id).await.unwrap().is_some());
+    cleanup_universe(&store).await;
+}

@@ -48,7 +48,8 @@ pub fn authorize_controller(
         || matches!((&context.actor, &target.parent), (ResourceRef::Session(actor), Some(parent)) if actor == parent);
     match action {
         Read | CreateSession | UseResource => true,
-        ControlSession | StopSession | DeleteSession | ManageBot => controls,
+        ControlSession | ConfigureSession | StopSession | CloseSession | DeleteSession
+        | ManageBot => controls,
         _ => false,
     }
 }
@@ -104,11 +105,23 @@ mod tests {
             Visibility::Universe,
         );
         let helper = bot("helper");
-        for action in [ControlSession, StopSession, DeleteSession, Read] {
+        for action in [
+            ControlSession,
+            ConfigureSession,
+            StopSession,
+            DeleteSession,
+            Read,
+        ] {
             assert!(authorize_controller(&helper, action, Some(&own)));
         }
         assert!(authorize_controller(&helper, Read, Some(&other)));
-        for action in [ControlSession, StopSession, DeleteSession, ShareSession] {
+        for action in [
+            ControlSession,
+            ConfigureSession,
+            StopSession,
+            DeleteSession,
+            ShareSession,
+        ] {
             assert!(!authorize_controller(&helper, action, Some(&other)));
         }
         // A bot manages itself, never another bot.

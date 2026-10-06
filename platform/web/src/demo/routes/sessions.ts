@@ -9,6 +9,8 @@ import {
   MAX_ATTACHMENT_BYTES,
   attachmentUploadSchema,
   roleAtLeast,
+  canCloseSession,
+  canDeleteSession,
   sessionMessageSchema,
   sessionSteerSchema,
   type MessageAttachment,
@@ -117,6 +119,8 @@ export function sessionRoutes(store: DemoStore): Hono {
     }>(c);
     if (Object.hasOwn(body, "environment")) return badRequest(c, "environment is not a session creation field; configure environment attachments instead");
     if (!body.profile) return badRequest(c, "profile is required");
+    const admin = store.currentUser.role === "admin" || universe.universe.role === "admin";
+    if (!admin && body.deleteAfterCloseMs != null) return c.json({ error: "admin role required for deletion retention" }, 403);
     const profile = resolveProfile(universe, body.profile);
     if (!profile) return notFound(c, "not found in engine");
     const config = sessionConfig(profile.config, universe.modelDefaults.agentRun);
@@ -128,7 +132,7 @@ export function sessionRoutes(store: DemoStore): Hono {
       id: sessionId,
       displayName: body.displayName?.trim() || null,
       metadata: { ...profile.metadata, ...(body.metadata ?? {}) },
-      deleteAfterCloseMs: Object.hasOwn(body, "deleteAfterCloseMs")
+      deleteAfterCloseMs: !admin ? null : Object.hasOwn(body, "deleteAfterCloseMs")
         ? body.deleteAfterCloseMs
         : profile.retention?.deleteAfterCloseMs,
       config,
@@ -171,6 +175,7 @@ export function sessionRoutes(store: DemoStore): Hono {
   app.put("/:id/sessions/:sessionId/retention", async (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
+    if (!canDeleteSession(store.currentUser.role === "admin" ? "admin" : found.universe.universe.role, found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
     const { session } = found;
     if (session.view.retention.rootSessionId !== session.view.id) {
       return conflict(
@@ -212,6 +217,11 @@ export function sessionRoutes(store: DemoStore): Hono {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
     const { session } = found;
+    const role = store.currentUser.role === "admin" ? "admin" : found.universe.universe.role;
+    const access = session.view.access;
+    if (!canCloseSession(role, access.createdBy?.kind === "actor" && access.createdBy.id === store.currentUser.id, access.visibility === "universe")) {
+      return c.json({ error: "not permitted to close this session" }, 403);
+    }
     const body = await readBody<{ force?: boolean }>(c);
     if (!closeSession(session, body.force === true)) {
       return conflict(c, "engine conflict: session has active work; close with force to cancel it");
@@ -222,6 +232,7 @@ export function sessionRoutes(store: DemoStore): Hono {
   app.delete("/:id/sessions/:sessionId", (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
+    if (!canDeleteSession(store.currentUser.role === "admin" ? "admin" : found.universe.universe.role, found.session.view.access.visibility === "universe")) return c.json({ error: "not permitted to delete this session" }, 403);
     const { universe, session } = found;
     if (session.view.status !== "closed") {
       return conflict(c, "engine conflict: only closed sessions can be deleted");
@@ -235,11 +246,17 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (selected.some((candidate) => candidate.view.status !== "closed")) {
       return conflict(c, "engine conflict: every session in the subtree must be closed");
     }
+    const role = store.currentUser.role === "admin" ? "admin" : universe.universe.role;
+    if (selected.some((candidate) => !canDeleteSession(role, candidate.view.access.visibility === "universe"))) {
+      return c.json({ error: "not permitted to delete this session subtree" }, 403);
+    }
+    const deletedAtMs = Date.now();
     for (const candidate of selected.reverse()) {
       for (const timer of candidate.timers) clearTimeout(timer);
       candidate.timers.clear();
       // A parked tail returns now instead of waiting out its poll.
       for (const wake of [...candidate.waiters]) wake();
+      store.deletedSessions.set(`${universe.universe.id}:${candidate.view.id}`, { record: candidate, deletedAtMs });
       universe.sessions.delete(candidate.view.id);
     }
     return c.json(sessionSummary(session));

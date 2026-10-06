@@ -1,5 +1,5 @@
 import { AGENT_MODEL_API_KINDS } from "@lightspeed-ai/platform-shared";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useState, type ReactNode } from "react";
 import type { WorkspaceAttachmentDraft } from "@/api";
 import {
   ChevronDown,
@@ -88,7 +88,10 @@ export type EnvironmentOption = {
   status?: string;
 };
 
+const ConfigReadOnlyContext = createContext(false);
+
 type Props = {
+  readOnly?: boolean;
   value?: unknown;
   onChange: (config: SessionConfig | undefined) => void;
   onValidityChange?: (message: string | null) => void;
@@ -536,8 +539,9 @@ function pathsOverlap(left: string, right: string): boolean {
 }
 
 export function SessionConfigEditor({
+  readOnly = false,
   value,
-  onChange,
+  onChange: onConfigChange,
   onValidityChange,
   mcpServers = [],
   workspaces = [],
@@ -558,6 +562,9 @@ export function SessionConfigEditor({
   pinnedProviderId,
   className,
 }: Props) {
+  const onChange = (next: SessionConfig | undefined) => {
+    if (!readOnly) onConfigChange(next);
+  };
   const config = normalizeSessionConfig(value) ?? {};
   const error = configError(config, pinnedApiKind, allowInherit, pinnedProviderId) ?? mcpAttachmentError(config, mcpServers);
   const [manualModel, setManualModel] = useState(false);
@@ -599,100 +606,102 @@ export function SessionConfigEditor({
     });
 
   return (
-    <div className={cn("grid min-w-0 max-w-full gap-8", className)}>
-      <section className="grid min-w-0 gap-5">
-        <ModelFields
-          config={config}
-          models={models}
-          defaultModelLabel={defaultModelLabel}
-          manualModel={manualModel}
-          onManualModelChange={setManualModel}
-          pinnedApiKind={pinnedApiKind}
-          pinnedProviderId={pinnedProviderId}
-          change={change}
-        />
-        <AdvancedFields config={config} change={change} />
-      </section>
+    <ConfigReadOnlyContext.Provider value={readOnly}>
+      <div className={cn("grid min-w-0 max-w-full gap-8", className)}>
+        <section className="grid min-w-0 gap-5">
+          <ModelFields
+            config={config}
+            models={models}
+            defaultModelLabel={defaultModelLabel}
+            manualModel={manualModel}
+            onManualModelChange={setManualModel}
+            pinnedApiKind={pinnedApiKind}
+            pinnedProviderId={pinnedProviderId}
+            change={change}
+          />
+          <AdvancedFields config={config} change={change} />
+        </section>
 
-      <section className="grid min-w-0 gap-4">
-        <div className="grid gap-0.5">
-          <h2 className="text-sm font-semibold">Features</h2>
-          <p className="text-xs text-muted-foreground">
-            Features are capability grants. Disabled features are absent from the config.
-          </p>
-        </div>
-        <div className="grid min-w-0 gap-2">
-          {featureDisplayOrder
-            .map((name) => name === "environments" ? (
-              <EnvironmentFeatureEditor
-                key={name}
-                value={config}
-                environments={environments}
-                allowInherit={allowInherit}
-                disableReason={disableReasons.environments}
-                onChange={onChange}
+        <section className="grid min-w-0 gap-4">
+          <div className="grid gap-0.5">
+            <h2 className="text-sm font-semibold">Features</h2>
+            <p className="text-xs text-muted-foreground">
+              Features are capability grants. Disabled features are absent from the config.
+            </p>
+          </div>
+          <div className="grid min-w-0 gap-2">
+            {featureDisplayOrder
+              .map((name) => name === "environments" ? (
+                <EnvironmentFeatureEditor
+                  key={name}
+                  value={config}
+                  environments={environments}
+                  allowInherit={allowInherit}
+                  disableReason={disableReasons.environments}
+                  onChange={onChange}
+                >
+                  {environmentSetup}
+                </EnvironmentFeatureEditor>
+              ) : (
+                <FeaturePanel
+                  key={name}
+                  name={name}
+                  enabled={name in features}
+                  feature={record(features[name])}
+                  disableReason={disableReasons[name]}
+                  expandable={name !== "timers"}
+                  onEnabledChange={(enabled) => setFeature(name, enabled)}
+                >
+                  {name === "vfs" && (
+                    <VfsFields
+                      feature={record(features.vfs)}
+                      environmentsGranted={"environments" in features}
+                      workspaces={workspaces}
+                      workspacesLoading={workspacesLoading}
+                      patch={(fn) => patchFeature("vfs", fn)}
+                    />
+                  )}
+                  {name === "web" && (
+                    <WebFields
+                      feature={record(features.web)}
+                      apiKind={pinnedApiKind ?? string(record(config.model).apiKind)}
+                      patch={(fn) => patchFeature("web", fn)}
+                    />
+                  )}
+                  {name === "subagents" && <SubagentFields feature={record(features.subagents)} profiles={profiles} patch={(fn) => patchFeature("subagents", fn)} />}
+                  {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} discoverySource={mcpToolDiscovery} patch={(fn) => patchFeature("mcp", fn)} />}
+                </FeaturePanel>
+              ))}
+            {(metadataSetup || retentionSetup) && (
+              <div className="grid gap-0.5 pb-1 pt-5">
+                <h2 className="text-sm font-semibold">Session data</h2>
+                <p className="text-xs text-muted-foreground">
+                  Organize sessions with metadata and control how long retained data is kept.
+                </p>
+              </div>
+            )}
+            {metadataSetup && (
+              <ExpandableSetupPanel
+                title="Session metadata"
+                description={metadataDescription}
+                icon={Tags}
               >
-                {environmentSetup}
-              </EnvironmentFeatureEditor>
-            ) : (
-              <FeaturePanel
-                key={name}
-                name={name}
-                enabled={name in features}
-                feature={record(features[name])}
-                disableReason={disableReasons[name]}
-                expandable={name !== "timers"}
-                onEnabledChange={(enabled) => setFeature(name, enabled)}
+                {metadataSetup}
+              </ExpandableSetupPanel>
+            )}
+            {retentionSetup && (
+              <ExpandableSetupPanel
+                title="Automatic deletion"
+                description={retentionDescription}
+                icon={CalendarClock}
               >
-                {name === "vfs" && (
-                  <VfsFields
-                    feature={record(features.vfs)}
-                    environmentsGranted={"environments" in features}
-                    workspaces={workspaces}
-                    workspacesLoading={workspacesLoading}
-                    patch={(fn) => patchFeature("vfs", fn)}
-                  />
-                )}
-                {name === "web" && (
-                  <WebFields
-                    feature={record(features.web)}
-                    apiKind={pinnedApiKind ?? string(record(config.model).apiKind)}
-                    patch={(fn) => patchFeature("web", fn)}
-                  />
-                )}
-                {name === "subagents" && <SubagentFields feature={record(features.subagents)} profiles={profiles} patch={(fn) => patchFeature("subagents", fn)} />}
-                {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} discoverySource={mcpToolDiscovery} patch={(fn) => patchFeature("mcp", fn)} />}
-              </FeaturePanel>
-            ))}
-          {(metadataSetup || retentionSetup) && (
-            <div className="grid gap-0.5 pb-1 pt-5">
-              <h2 className="text-sm font-semibold">Session data</h2>
-              <p className="text-xs text-muted-foreground">
-                Organize sessions with metadata and control how long retained data is kept.
-              </p>
-            </div>
-          )}
-          {metadataSetup && (
-            <ExpandableSetupPanel
-              title="Session metadata"
-              description={metadataDescription}
-              icon={Tags}
-            >
-              {metadataSetup}
-            </ExpandableSetupPanel>
-          )}
-          {retentionSetup && (
-            <ExpandableSetupPanel
-              title="Automatic deletion"
-              description={retentionDescription}
-              icon={CalendarClock}
-            >
-              {retentionSetup}
-            </ExpandableSetupPanel>
-          )}
-        </div>
-      </section>
-    </div>
+                {retentionSetup}
+              </ExpandableSetupPanel>
+            )}
+          </div>
+        </section>
+      </div>
+    </ConfigReadOnlyContext.Provider>
   );
 }
 
@@ -803,6 +812,7 @@ function ModelFields({ config, models, defaultModelLabel, manualModel, onManualM
   pinnedProviderId?: string;
   change: (fn: (next: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const model = record(config.model);
   const currentModel = models.find(
     (option) =>
@@ -875,7 +885,7 @@ function ModelFields({ config, models, defaultModelLabel, manualModel, onManualM
       <div className="grid gap-3 md:grid-cols-2">
         <Field>
         <FieldLabel>Model</FieldLabel>
-        <Combobox
+        <Combobox disabled={readOnly}
           items={choiceKeys}
           value={selected}
           inputValue={modelSearch}
@@ -914,7 +924,7 @@ function ModelFields({ config, models, defaultModelLabel, manualModel, onManualM
             });
           }}
         >
-          <ComboboxInput
+          <ComboboxInput readOnly={readOnly} showTrigger={!readOnly}
             id="session-config-model"
             className="w-full"
             placeholder="Search models..."
@@ -964,7 +974,7 @@ function ModelFields({ config, models, defaultModelLabel, manualModel, onManualM
         </Field>
         <Field>
           <FieldLabel>Reasoning effort</FieldLabel>
-          <Input
+          <Input readOnly={readOnly}
             value={reasoningEffort}
             list={reasoningOptions.length ? reasoningOptionsId : undefined}
             onChange={(e) => updateReasoningEffort(e.target.value || undefined)}
@@ -986,9 +996,9 @@ function ModelFields({ config, models, defaultModelLabel, manualModel, onManualM
       </div>
       {selected === "manual" && (
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field><FieldLabel>Provider id</FieldLabel><Input value={pinnedProviderId ?? string(model.providerId)} disabled={Boolean(pinnedProviderId)} onChange={(e) => update("providerId", e.target.value)} placeholder="openai" /></Field>
-          <Field><FieldLabel>API kind</FieldLabel><Input value={pinnedApiKind ?? string(model.apiKind)} disabled={Boolean(pinnedApiKind)} onChange={(e) => update("apiKind", e.target.value)} placeholder="openai:responses" /></Field>
-          <Field><FieldLabel>Model</FieldLabel><Input value={string(model.model)} onChange={(e) => update("model", e.target.value)} placeholder="gpt-5.5" /></Field>
+          <Field><FieldLabel>Provider id</FieldLabel><Input readOnly={readOnly} value={pinnedProviderId ?? string(model.providerId)} disabled={Boolean(pinnedProviderId)} onChange={(e) => update("providerId", e.target.value)} placeholder="openai" /></Field>
+          <Field><FieldLabel>API kind</FieldLabel><Input readOnly={readOnly} value={pinnedApiKind ?? string(model.apiKind)} disabled={Boolean(pinnedApiKind)} onChange={(e) => update("apiKind", e.target.value)} placeholder="openai:responses" /></Field>
+          <Field><FieldLabel>Model</FieldLabel><Input readOnly={readOnly} value={string(model.model)} onChange={(e) => update("model", e.target.value)} placeholder="gpt-5.5" /></Field>
         </div>
       )}
     </div>
@@ -1125,6 +1135,7 @@ function AdvancedFields({ config, change }: { config: RecordValue; change: (fn: 
 }
 
 function GenerationFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const generation = record(config.generation);
   const supportsProcessingTier = supportsOpenAiProcessingTier({ model: record(config.model) });
   const processingTier = string(generation.processingTier) || "providerDefault";
@@ -1140,7 +1151,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
     <div className="grid gap-3 sm:grid-cols-2">
       <Field>
         <FieldLabel>Max output tokens</FieldLabel>
-        <Input
+        <Input readOnly={readOnly}
           type="number"
           min="0"
           value={numberString(generation.maxOutputTokens)}
@@ -1150,7 +1161,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
       </Field>
       <Field>
         <FieldLabel>Parallel tool use</FieldLabel>
-        <Select value={parallel} onValueChange={(value) => update("parallelToolUse", value === "default" ? undefined : value === "true")}>
+        <Select disabled={readOnly} value={parallel} onValueChange={(value) => update("parallelToolUse", value === "default" ? undefined : value === "true")}>
           <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="default">Provider default</SelectItem>
@@ -1162,7 +1173,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
       {supportsProcessingTier && (
         <Field>
           <FieldLabel>Processing tier</FieldLabel>
-          <Select
+          <Select disabled={readOnly}
             value={processingTier}
             onValueChange={(value) => update(
               "processingTier",
@@ -1184,7 +1195,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
       )}
       <Field>
         <FieldLabel>Tool choice</FieldLabel>
-        <Select value={toolChoiceType} onValueChange={(value) => update("toolChoice", value === "default" ? undefined : { type: value })}>
+        <Select disabled={readOnly} value={toolChoiceType} onValueChange={(value) => update("toolChoice", value === "default" ? undefined : { type: value })}>
           <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="default">Provider default</SelectItem>
@@ -1198,7 +1209,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
       {toolChoiceType === "specific" && (
         <Field className="sm:col-span-2">
           <FieldLabel>Tool ID</FieldLabel>
-          <Input
+          <Input readOnly={readOnly}
             value={string(toolChoice.toolId)}
             onChange={(e) => update("toolChoice", { type: "specific", toolId: e.target.value })}
             placeholder="env.run_process"
@@ -1214,6 +1225,7 @@ function GenerationFields({ config, change }: { config: RecordValue; change: (fn
 }
 
 function LimitsFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const limits = record(config.limits);
   const update = (key: string, value: string) => change((next) => {
     const item = record(next.limits);
@@ -1221,10 +1233,11 @@ function LimitsFields({ config, change }: { config: RecordValue; change: (fn: (n
     if (number === undefined) delete item[key]; else item[key] = number;
     if (Object.keys(item).length) next.limits = item; else delete next.limits;
   });
-  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input type="number" min="0" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field><Field><FieldLabel>Max tool rounds</FieldLabel><Input type="number" min="0" value={numberString(limits.maxToolRounds)} onChange={(e) => update("maxToolRounds", e.target.value)} /></Field></div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field><Field><FieldLabel>Max tool rounds</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(limits.maxToolRounds)} onChange={(e) => update("maxToolRounds", e.target.value)} /></Field></div>;
 }
 
 function ContextFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const context = record(config.context);
   const compaction = record(context.compaction);
   const mode = string(compaction.mode) || "default";
@@ -1236,7 +1249,7 @@ function ContextFields({ config, change }: { config: RecordValue; change: (fn: (
     if (Object.keys(compact).length) context.compaction = compact; else delete context.compaction;
     if (Object.keys(context).length) next.context = context; else delete next.context;
   });
-  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Mode</FieldLabel><Select value={mode} onValueChange={(value) => update("mode", value === "default" ? undefined : value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">Engine default</SelectItem><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="providerTriggered">Provider triggered</SelectItem><SelectItem value="providerStandalone">Engine managed standalone</SelectItem></SelectContent></Select><FieldDescription>Engine default uses standalone compaction. Unknown context limits recover when the provider reports a full context window.</FieldDescription></Field><Field><FieldLabel>Input limit tokens</FieldLabel><Input type="number" min="1" value={numberString(context.inputLimitTokens)} onChange={(e) => change((next) => { const updated = record(next.context); const value = parseNumber(e.target.value); if (value === undefined) delete updated.inputLimitTokens; else updated.inputLimitTokens = value; if (Object.keys(updated).length) next.context = updated; else delete next.context; })} /><FieldDescription>Override the usable input capacity. Leave blank to use reported capacity or error-driven recovery.</FieldDescription></Field>{mode === "providerTriggered" || mode === "providerStandalone" ? <Field><FieldLabel>Compact threshold tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.compactThresholdTokens)} onChange={(e) => update("compactThresholdTokens", parseNumber(e.target.value))} /></Field> : null}{mode === "providerStandalone" ? <Field><FieldLabel>Target tokens</FieldLabel><Input type="number" min="0" value={numberString(compaction.targetTokens)} onChange={(e) => update("targetTokens", parseNumber(e.target.value))} /></Field> : null}</div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Mode</FieldLabel><Select disabled={readOnly} value={mode} onValueChange={(value) => update("mode", value === "default" ? undefined : value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">Engine default</SelectItem><SelectItem value="disabled">Disabled</SelectItem><SelectItem value="providerTriggered">Provider triggered</SelectItem><SelectItem value="providerStandalone">Engine managed standalone</SelectItem></SelectContent></Select><FieldDescription>Engine default uses standalone compaction. Unknown context limits recover when the provider reports a full context window.</FieldDescription></Field><Field><FieldLabel>Input limit tokens</FieldLabel><Input readOnly={readOnly} type="number" min="1" value={numberString(context.inputLimitTokens)} onChange={(e) => change((next) => { const updated = record(next.context); const value = parseNumber(e.target.value); if (value === undefined) delete updated.inputLimitTokens; else updated.inputLimitTokens = value; if (Object.keys(updated).length) next.context = updated; else delete next.context; })} /><FieldDescription>Override the usable input capacity. Leave blank to use reported capacity or error-driven recovery.</FieldDescription></Field>{mode === "providerTriggered" || mode === "providerStandalone" ? <Field><FieldLabel>Compact threshold tokens</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(compaction.compactThresholdTokens)} onChange={(e) => update("compactThresholdTokens", parseNumber(e.target.value))} /></Field> : null}{mode === "providerStandalone" ? <Field><FieldLabel>Target tokens</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(compaction.targetTokens)} onChange={(e) => update("targetTokens", parseNumber(e.target.value))} /></Field> : null}</div>;
 }
 
 function FeaturePanel({
@@ -1256,6 +1269,7 @@ function FeaturePanel({
   onEnabledChange: (enabled: boolean) => void;
   children?: React.ReactNode;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const [open, setOpen] = useState(false);
   const info = featureInfo[name];
   const Icon = info.icon;
@@ -1269,7 +1283,7 @@ function FeaturePanel({
         <div className="flex items-center">
           <Switch
             checked={enabled}
-            disabled={enabled && Boolean(disableReason)}
+            disabled={readOnly || enabled && Boolean(disableReason)}
             onCheckedChange={(checked) => {
               const nextEnabled = checked === true;
               setOpen(nextEnabled && configurable);
@@ -1323,6 +1337,7 @@ function VfsFields({
   workspacesLoading: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const attachments = Array.isArray(feature.workspaces)
     ? feature.workspaces.map(record)
     : [];
@@ -1361,7 +1376,7 @@ function VfsFields({
               Attach workspaces at session paths with their own access grants. Files written here remain visible through the workspace, even when the session is restricted.
             </p>
           </div>
-          <Button
+          <Button disabled={readOnly}
             variant="outline"
             size="xs"
             onClick={() => updateAttachments([
@@ -1391,7 +1406,7 @@ function VfsFields({
                 {snapshot ? (
                   <Field>
                     <FieldLabel>Snapshot ref</FieldLabel>
-                    <Input
+                    <Input readOnly={readOnly}
                       className="font-mono"
                       value={string(attachment.snapshotRef)}
                       onChange={(event) => updateAttachment(index, (next) => {
@@ -1405,7 +1420,7 @@ function VfsFields({
                     {options.length || workspacesLoading ? (
                       <Select
                         value={string(attachment.workspaceId)}
-                        disabled={workspacesLoading}
+                        disabled={readOnly || workspacesLoading}
                         onValueChange={(workspaceId) => updateAttachment(index, (next) => {
                           next.workspaceId = workspaceId;
                         })}
@@ -1429,7 +1444,7 @@ function VfsFields({
                         </SelectContent>
                       </Select>
                     ) : (
-                      <Input
+                      <Input readOnly={readOnly}
                         className="font-mono"
                         value={string(attachment.workspaceId)}
                         onChange={(event) => updateAttachment(index, (next) => {
@@ -1442,7 +1457,7 @@ function VfsFields({
                 )}
                 <Field>
                   <FieldLabel>Session path</FieldLabel>
-                  <Input
+                  <Input readOnly={readOnly}
                     className="font-mono"
                     value={string(attachment.path)}
                     onChange={(event) => updateAttachment(index, (next) => {
@@ -1454,7 +1469,7 @@ function VfsFields({
                   <FieldLabel>Access</FieldLabel>
                   <Select
                     value={string(attachment.access) || "edit"}
-                    disabled={snapshot}
+                    disabled={readOnly || snapshot}
                     onValueChange={(access) => updateAttachment(index, (next) => {
                       next.access = access;
                     })}
@@ -1467,7 +1482,7 @@ function VfsFields({
                   </Select>
                 </Field>
               </div>
-              <Button
+              <Button disabled={readOnly}
                 variant="ghost"
                 size="icon-sm"
                 className="self-start text-destructive"
@@ -1509,6 +1524,7 @@ function WebFields({
   apiKind: string;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const id = useId();
   const search = record(feature.search);
   const allowedCount = stringList(search.allowedDomains).length;
@@ -1526,8 +1542,8 @@ function WebFields({
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap gap-x-6 gap-y-3">
-        <Label className="gap-2 font-normal"><Checkbox checked={fetchEnabled} onCheckedChange={(checked) => setSubfeature("fetch", checked === true)} />Fetch pages</Label>
-        <Label className="gap-2 font-normal"><Checkbox checked={searchEnabled} onCheckedChange={(checked) => setSubfeature("search", checked === true)} />Search the web</Label>
+        <Label className="gap-2 font-normal"><Checkbox disabled={readOnly} checked={fetchEnabled} onCheckedChange={(checked) => setSubfeature("fetch", checked === true)} />Fetch pages</Label>
+        <Label className="gap-2 font-normal"><Checkbox disabled={readOnly} checked={searchEnabled} onCheckedChange={(checked) => setSubfeature("search", checked === true)} />Search the web</Label>
       </div>
       {searchEnabled && (
         <SettingsDisclosure
@@ -1542,7 +1558,7 @@ function WebFields({
           <div className="grid gap-3 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor={`${id}-allowed`}>Allowed domains</FieldLabel>
-              <Input
+              <Input readOnly={readOnly}
                 id={`${id}-allowed`}
                 value={commaList(search.allowedDomains)}
                 onChange={(e) => patch((next) => {
@@ -1559,7 +1575,7 @@ function WebFields({
             </Field>
             <Field>
               <FieldLabel htmlFor={`${id}-blocked`}>Blocked domains</FieldLabel>
-              <Input
+              <Input readOnly={readOnly}
                 id={`${id}-blocked`}
                 value={commaList(search.blockedDomains)}
                 onChange={(e) => patch((next) => {
@@ -1595,6 +1611,7 @@ function SubagentFields({
   profiles: ProfileOption[];
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const id = useId();
   const agents = subagentProfileIds(feature.agents);
   const limits = [
@@ -1630,7 +1647,7 @@ function SubagentFields({
         {limits.map((limit) => (
           <Field key={limit.key}>
             <FieldLabel htmlFor={`${id}-${limit.key}`}>{limit.label}</FieldLabel>
-            <Input
+            <Input readOnly={readOnly}
               id={`${id}-${limit.key}`}
               type="number"
               min="1"
@@ -1661,12 +1678,13 @@ function ProfileMultiSelect({
   onChange: (value: string[]) => void;
   placeholder: string;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const profileMap = new Map(profiles.map((profile) => [profile.profileId, profile]));
   const items = [
     ...new Set([...profiles.map((profile) => profile.profileId), ...value]),
   ].sort((left, right) => profileLabel(profileMap.get(left), left).localeCompare(profileLabel(profileMap.get(right), right)));
   return (
-    <Combobox
+    <Combobox disabled={readOnly}
       items={items}
       multiple
       value={value}
@@ -1684,7 +1702,7 @@ function ProfileMultiSelect({
             <ComboboxChip key={profileId}>{profileLabel(profileMap.get(profileId), profileId)}</ComboboxChip>
           ))}
         </ComboboxValue>
-        <ComboboxChipsInput placeholder={value.length ? "Add profile" : placeholder} />
+        <ComboboxChipsInput disabled={readOnly} placeholder={value.length ? "Add profile" : placeholder} />
       </ComboboxChips>
       <ComboboxContent>
         <ComboboxEmpty>No matching profiles.</ComboboxEmpty>
@@ -1714,12 +1732,13 @@ function WorkingDirectoryField({ environment, feature, patch }: {
   feature: RecordValue;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const id = useId();
   const directory = string(feature.workingDirectory);
   const field = (
     <Field>
       <FieldLabel htmlFor={id}>Working directory</FieldLabel>
-      <Input id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
+      <Input readOnly={readOnly} id={id} aria-label={`${environment ? "Environment" : "VFS"} working directory`}
         className="font-mono" value={directory} placeholder={environment ? "Environment default" : "/"}
         onChange={(event) => patch((next) => {
           if (event.target.value) next.workingDirectory = event.target.value;
@@ -1750,6 +1769,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
   feature: RecordValue;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const id = useId();
   const environment = source.startsWith("environment");
   const prompts = source.endsWith("prompts");
@@ -1776,7 +1796,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
             {prompts ? "Load .md and .txt files as instructions." : "Let the agent discover and read available skills."}
           </p>
         </div>
-        <Switch id={id} aria-label={switchLabel}
+        <Switch disabled={readOnly} id={id} aria-label={switchLabel}
           checked={enabled}
           onCheckedChange={(checked) => patch((next) => {
             if (checked) next[configKey] = {};
@@ -1797,7 +1817,7 @@ function SourceDiscoveryFields({ source, feature, patch }: {
           </p>
           <Field>
             <FieldLabel htmlFor={`${id}-roots`}>{domain} {prompts ? "prompt" : "skill"} roots</FieldLabel>
-            <Input id={`${id}-roots`} className="font-mono" value={commaList(settings.roots)}
+            <Input readOnly={readOnly} id={`${id}-roots`} className="font-mono" value={commaList(settings.roots)}
               placeholder="Default directories"
               onChange={(e) => {
                 const roots = listFromInput(e.target.value);
@@ -1827,6 +1847,7 @@ function EnvironmentFields({
   allowInherit: boolean;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const selectionId = useId();
   const attachments = Array.isArray(feature.environments) ? feature.environments.map(record) : [];
   const update = (index: number, mutate: (attachment: RecordValue) => void) =>
@@ -1847,7 +1868,7 @@ function EnvironmentFields({
             profile is applied. Restricting a session does not restrict files or processes in its environment.
           </p>
         </div>
-        <Button
+        <Button disabled={readOnly}
           variant="outline"
           size="xs"
           onClick={() =>
@@ -1890,7 +1911,7 @@ function EnvironmentFields({
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
               <Field>
                 <FieldLabel>Environment</FieldLabel>
-                <Select
+                <Select disabled={readOnly}
                   value={inherited ? "__inherit__" : id}
                   onValueChange={(value) =>
                     update(index, (next) => {
@@ -1938,7 +1959,7 @@ function EnvironmentFields({
               </Field>
               <Field>
                 <FieldLabel>Access</FieldLabel>
-                <Select
+                <Select disabled={readOnly}
                   value={string(attachment.access)}
                   onValueChange={(access) =>
                     update(index, (next) => {
@@ -1960,7 +1981,7 @@ function EnvironmentFields({
                   {environmentAccessDescriptions[string(attachment.access)]}
                 </FieldDescription>
               </Field>
-              <Button
+              <Button disabled={readOnly}
                 variant="ghost"
                 size="icon-sm"
                 className="self-start text-destructive"
@@ -1980,7 +2001,7 @@ function EnvironmentFields({
               </Button>
             </div>
             <div className="flex items-center gap-2">
-              <Checkbox
+              <Checkbox disabled={readOnly}
                 aria-label={`Default environment ${index + 1}`}
                 checked={attachment.default === true}
                 onCheckedChange={(checked) =>
@@ -2013,7 +2034,7 @@ function EnvironmentFields({
             Let the agent list, activate, and deactivate attached environments.
           </p>
         </div>
-        <Switch
+        <Switch disabled={readOnly}
           id={selectionId}
           checked={feature.selection === true}
           onCheckedChange={(checked) =>
@@ -2039,6 +2060,7 @@ function McpFields({
   discoverySource?: McpToolDiscoverySource;
   patch: (fn: (feature: RecordValue) => void) => void;
 }) {
+  const readOnly = useContext(ConfigReadOnlyContext);
   const attachments = Array.isArray(feature.servers) ? feature.servers.map(record) : [];
   const options = new Map<string, McpServerOption>();
   for (const server of servers) options.set(server.serverId, server);
@@ -2068,7 +2090,7 @@ function McpFields({
         <p className="min-w-0 text-xs text-muted-foreground">
           Attach servers to make their tools available.
         </p>
-        <Button
+        <Button disabled={readOnly}
           variant="outline"
           size="xs"
           onClick={() => updateAttachments([...attachments, { serverId: firstServerId }])}
@@ -2087,7 +2109,7 @@ function McpFields({
             <Field>
               <FieldLabel>Server</FieldLabel>
               {serverOptions.length ? (
-                <Select
+                <Select disabled={readOnly}
                   value={string(attachment.serverId)}
                   onValueChange={(value) => updateAttachment(index, (next) => { next.serverId = value as string; delete next.tools; })}
                 >
@@ -2105,7 +2127,7 @@ function McpFields({
                   </SelectContent>
                 </Select>
               ) : (
-                <Input
+                <Input readOnly={readOnly}
                   className="font-mono"
                   value={string(attachment.serverId)}
                   onChange={(e) => updateAttachment(index, (next) => { next.serverId = e.target.value; delete next.tools; })}
@@ -2113,7 +2135,7 @@ function McpFields({
               )}
             </Field>
             <div className="mt-3">
-              <McpToolPicker
+              <McpToolPicker readOnly={readOnly}
                 scope="session"
                 serverId={string(attachment.serverId)}
                 revision={options.get(string(attachment.serverId))?.revision}
@@ -2128,7 +2150,7 @@ function McpFields({
               />
             </div>
           </div>
-          <Button
+          <Button disabled={readOnly}
             variant="ghost"
             size="icon-sm"
             className="self-start text-destructive"

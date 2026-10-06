@@ -611,6 +611,8 @@ async fn run_checkpoint_and_bounded_reads_live_client(
     .await?;
     wait_for_session_status(&api, &session_id, SessionStatus::Closed).await?;
     api.delete_session(SessionDeleteParams {
+        shared_only: false,
+        soft_delete: false,
         session_id: session_id.as_str().to_owned(),
         cascade: false,
     })
@@ -918,10 +920,32 @@ async fn run_lifecycle_delete_live_client(
     task_queue: String,
     session_id: SessionId,
 ) -> anyhow::Result<()> {
+    run_lifecycle_delete_mode(
+        client.clone(),
+        task_queue.clone(),
+        session_id.clone(),
+        false,
+    )
+    .await?;
+    run_lifecycle_delete_mode(
+        client,
+        task_queue,
+        SessionId::new(format!("{session_id}-soft")),
+        true,
+    )
+    .await
+}
+
+async fn run_lifecycle_delete_mode(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+    soft_delete: bool,
+) -> anyhow::Result<()> {
     let store = pg_store_from_env().await?;
     let model = support::live::openai_live_model();
     support::live::seed_agent_default(&store, &model).await?;
-    let api = GatewayAgentApi::builder(client, store)
+    let api = GatewayAgentApi::builder(client, store.clone())
         .with_task_queue(task_queue)
         .build();
 
@@ -947,6 +971,8 @@ async fn run_lifecycle_delete_live_client(
 
     let delete_open = api
         .delete_session(SessionDeleteParams {
+            shared_only: false,
+            soft_delete,
             session_id: session_id.as_str().to_owned(),
             cascade: false,
         })
@@ -974,6 +1000,8 @@ async fn run_lifecycle_delete_live_client(
 
     let deleted = api
         .delete_session(SessionDeleteParams {
+            shared_only: false,
+            soft_delete,
             session_id: session_id.as_str().to_owned(),
             cascade: false,
         })
@@ -999,6 +1027,19 @@ async fn run_lifecycle_delete_live_client(
         .await
         .expect_err("deleted session must not be readable");
     assert_eq!(read_deleted.kind, AgentApiErrorKind::NotFound);
+    let retained: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sessions WHERE universe_id=$1 AND session_id=$2")
+            .bind(store.config().universe_id)
+            .bind(session_id.as_str())
+            .fetch_one(store.pool())
+            .await?;
+    assert_eq!(retained, i64::from(soft_delete));
+    if soft_delete {
+        assert_eq!(
+            store.purge_deleted_session(session_id.as_str()).await?,
+            vec![session_id.as_str().to_owned()]
+        );
+    }
     Ok(())
 }
 

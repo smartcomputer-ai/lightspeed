@@ -197,6 +197,8 @@ async fn run_profile_environment_selection_live_client(
         api::EnvironmentLifecycleStatusView::Ready
     );
     api.delete_session(api::SessionDeleteParams {
+        shared_only: false,
+        soft_delete: false,
         session_id: session_id.to_string(),
         cascade: false,
     })

@@ -11,6 +11,8 @@ export const METHOD_GROUPS: Record<MethodGroup, { label: string; deployment?: tr
     label: "Sessions and runs, reading blobs",
     caution: "Reads and controls every session in the universe, private ones included.",
   },
+  "session/delete": { label: "Deleting sessions and setting retention", caution: "Can delete every session in the universe and schedule automatic deletion." },
+  "deployment/sessions": { label: "Deleted session administration", deployment: true },
   "blobs/put": { label: "Uploading blobs" },
   vfs: { label: "Workspaces" },
   profiles: { label: "Profiles" },

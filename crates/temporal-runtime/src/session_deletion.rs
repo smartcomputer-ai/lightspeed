@@ -1,6 +1,4 @@
-use harness::storage::{
-    DeleteClosedSessions, DeleteClosedSessionsResult, SessionStore, SessionStoreError,
-};
+use harness::storage::{DeleteClosedSessions, DeleteClosedSessionsResult, SessionStoreError};
 use store_pg::PgStore;
 
 #[derive(Clone, Copy, Debug)]
@@ -23,16 +21,21 @@ pub(crate) async fn delete_session_subtree(
     store: &PgStore,
     request: DeleteClosedSessions,
     cause: SessionDeletionCause,
+    soft_delete: bool,
+    shared_only: bool,
 ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
     let requested_session_id = request.session_id.clone();
     let cascade = request.cascade;
-    let deleted = SessionStore::delete_closed_sessions(store, request).await?;
+    let deleted = store
+        .delete_closed_sessions_with_options(request, soft_delete, shared_only)
+        .await?;
     tracing::info!(
         target: "temporal_runtime",
         requested_session_id = %requested_session_id,
         retention_root_session_id = %deleted.target.retention_root_session_id,
         deleted_session_count = deleted.deleted_session_ids.len(),
         cascade,
+        soft_delete,
         cause = cause.as_str(),
         "session deletion complete"
     );

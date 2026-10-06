@@ -5,6 +5,7 @@ import type { VfsTreeEntry } from "@/api";
 import {
   WorkspaceActionsMenu,
   useWorkspaceDropTarget,
+  useWorkspaceEntryDrag,
 } from "@/components/workspace-transfers";
 import { cn } from "@/lib/utils";
 
@@ -129,6 +130,7 @@ export function WorkspaceFileTree(props: TreeProps) {
 }
 
 function Entries({ entries, basePath, ...props }: EntriesProps) {
+  const drag = useWorkspaceEntryDrag();
   const names = Object.keys(entries).sort((a, b) => {
     const aDir = entries[a]!.kind === "directory";
     const bDir = entries[b]!.kind === "directory";
@@ -163,6 +165,8 @@ function Entries({ entries, basePath, ...props }: EntriesProps) {
         )}
       >
         <NavLink
+          draggable={drag.draggable}
+          onDragStart={(event) => drag.onDragStart(event, path)}
           data-tree-entry
           tabIndex={-1}
           to={`/u/${props.slug}/workspaces/${props.workspaceId}/files/${path.split("/").map(encodeURIComponent).join("/")}`}
@@ -197,6 +201,7 @@ function Directory({
   path: string;
   entries: Record<string, VfsTreeEntry>;
 }) {
+  const drag = useWorkspaceEntryDrag();
   const [open, setOpen] = useState(true);
   const focused = props.focusedPath === path;
   const dropTarget = useWorkspaceDropTarget() === path;
@@ -219,6 +224,8 @@ function Directory({
         )}
       >
         <button
+          draggable={drag.draggable}
+          onDragStart={(event) => drag.onDragStart(event, path)}
           data-tree-entry
           type="button"
           tabIndex={-1}

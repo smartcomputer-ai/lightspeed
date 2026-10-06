@@ -9,7 +9,14 @@ model that can call tools, and write access to the release workspace. A
 release reviewer can use the same files with read-only access and a different
 job. Separate profiles let you reuse each setup without configuring it again.
 
-Profiles belong to a universe. Use an Operator or Admin account to manage them.
+Profiles belong to a universe. Use an Operator or Admin account to create or
+edit them. Contributors can select an existing profile when creating a session,
+but cannot customize its setup or save a new profile.
+
+Viewers and Contributors can inspect the same **Form** view used by editors,
+including expandable configuration sections and readable input values. Editing
+controls are read-only or disabled, and save actions are hidden. **JSON** remains
+available as a read-only view of the underlying document.
 
 ## Create a profile for a job
 
@@ -126,9 +133,11 @@ A new ordinary session receives the profile's setup at creation. Saving a
 later profile revision affects future sessions; existing conversations keep
 their current setup until you apply a change.
 
-For a one-off change, open the idle session's **Session settings**, edit the
-setup, and choose **Apply setup**. To apply a saved profile to an existing
-ordinary session, use the CLI with the connection settings described in
+For a one-off change in the Platform, an Operator or Admin opens the idle
+session's **Session settings**, edits the setup, and chooses **Apply setup**.
+Contributors can inspect these settings but cannot change them, including
+custom instructions or the active environment. To apply a saved profile to an
+existing ordinary session, use the CLI with the connection settings described in
 [Sessions and runs](sessions-and-runs.md#continue-from-the-cli):
 
 ```bash
@@ -163,10 +172,11 @@ successor. See [Bots and triggers](bots-and-triggers.md).
 ## Set limits and a default environment
 
 The advanced **Run limits** fields include **Max turns** and **Max tool
-rounds**. They bound a run's work under the selected defaults. API callers can
-provide per-run overrides, so these fields should not be treated as hard
-authorization ceilings. Bot daily budgets and sub-agent tree limits govern
-different scopes.
+rounds**. They bound a run's work under the selected defaults. Direct runtime
+API callers with suitable key access can provide per-run overrides, so these
+fields should not be treated as hard authorization ceilings. The Platform
+refuses Contributor requests with run configuration overrides. Bot daily budgets
+and sub-agent tree limits govern different scopes.
 
 Choose a default environment attachment when new sessions should start with
 an active machine. Without one, the session starts with no active environment.
@@ -180,8 +190,11 @@ See [Environments](../environments/overview.md) for setup and cleanup.
 
 Metadata and retention settings supply defaults for newly created sessions.
 Use metadata for organization, such as `project=acorn`, and retention to
-choose how long a closed session tree should remain stored. Neither supplies
-instructions to the agent.
+choose when a closed session tree is soft-deleted from ordinary views; history
+remains stored until a Platform admin purges it. Through Platform, only Admins
+can create sessions with a deletion schedule. Non-admin creation and bot
+conversations do not inherit profile deletion schedules. Neither metadata nor
+retention supplies instructions to the agent.
 
 ## If the setup does not take effect
 

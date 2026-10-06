@@ -138,6 +138,72 @@ impl GatewayDeploymentApi {
 
 #[async_trait]
 impl DeploymentApiService for GatewayDeploymentApi {
+    async fn list_deleted_sessions(
+        &self,
+        params: api::DeploymentDeletedSessionsListParams,
+    ) -> Result<AgentApiOutcome<api::DeploymentDeletedSessionsListResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST, async {
+            let universe_id = parse_universe_id(&params.universe_id)?;
+            self.require_universe(universe_id).await?;
+            let rows = self
+                .runtime
+                .stores()
+                .store_for(universe_id)
+                .list_deleted_sessions(params.after.as_deref(), 101)
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?;
+            let next_after = (rows.len() > 100).then(|| rows[99].0.clone());
+            let sessions = rows
+                .into_iter()
+                .take(100)
+                .map(
+                    |(session_id, display_name, deleted_at_ms)| api::DeletedSessionView {
+                        session_id,
+                        display_name,
+                        deleted_at_ms,
+                    },
+                )
+                .collect();
+            Ok(AgentApiOutcome::new(
+                api::DeploymentDeletedSessionsListResponse {
+                    sessions,
+                    next_after,
+                },
+            ))
+        })
+        .await
+    }
+
+    async fn purge_session(
+        &self,
+        params: api::DeploymentSessionPurgeParams,
+    ) -> Result<AgentApiOutcome<api::DeploymentSessionPurgeResponse>, AgentApiError> {
+        self.admitted(api::METHOD_DEPLOYMENT_SESSIONS_PURGE, async {
+            let universe_id = parse_universe_id(&params.universe_id)?;
+            self.require_universe(universe_id).await?;
+            SessionId::try_new(&params.session_id)
+                .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            let deleted_session_ids = self
+                .runtime
+                .stores()
+                .store_for(universe_id)
+                .purge_deleted_session(&params.session_id)
+                .await
+                .map_err(|error| match error {
+                    store_pg::PurgeSessionError::NotDeleted { .. } => {
+                        AgentApiError::rejected(error.to_string())
+                    }
+                    store_pg::PurgeSessionError::Postgres(_) => {
+                        AgentApiError::internal(error.to_string())
+                    }
+                })?;
+            Ok(AgentApiOutcome::new(api::DeploymentSessionPurgeResponse {
+                deleted_session_ids,
+            }))
+        })
+        .await
+    }
+
     async fn list_deployment_provider_bindings(
         &self,
         params: api::DeploymentUniverseReadParams,
