@@ -514,9 +514,6 @@ function FileDetail({
           {file ? formatBytes(file.size_bytes) : ""}
         </span>
         <div className="ml-auto flex shrink-0 basis-full items-center justify-end gap-1.5 sm:basis-auto">
-          {decoded?.kind === "text" && (
-            <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
-          )}
           {blobLink && (
             <Button
               variant="ghost"
@@ -528,6 +525,9 @@ function FileDetail({
             >
               <ExternalLink />
             </Button>
+          )}
+          {decoded?.kind === "text" && (
+            <MarkdownViewToggle preview={preview} onPreviewChange={onPreviewChange} />
           )}
           {canEditFiles && decoded?.kind === "text" && (
             <Button

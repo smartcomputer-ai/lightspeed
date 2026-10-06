@@ -71,8 +71,8 @@ function BlobDetail({ universeId, slug, digest }: { universeId: string; slug: st
           {session && <LinkedFrom universeId={universeId} slug={slug} sessionId={session} />}
           {workspace && <LinkedFromWorkspace universeId={universeId} slug={slug} workspaceId={workspace} path={path} />}
         </div>
-        {view?.kind === "text" && <MarkdownViewToggle preview={preview} onPreviewChange={setPreview} />}
         <CopyLink />
+        {view?.kind === "text" && <MarkdownViewToggle preview={preview} onPreviewChange={setPreview} />}
         {bytes && view && <DownloadLink bytes={bytes} name={name ?? `${digest.slice(0, 12)}${extension(view)}`} />}
       </header>
       <div className="min-h-0 flex-1 overflow-auto">
