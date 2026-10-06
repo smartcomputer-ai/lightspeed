@@ -80,3 +80,17 @@ it("does not duplicate purge audit when the runtime reports an already-removed s
   expect((await f.call("/admin/universes/universe/sessions/s1/purge")).status).toBe(200);
   expect(f.audits).not.toHaveBeenCalled();
 });
+
+it("audits permanent deletion after the universe soft-delete step exactly once", async () => {
+  auth.platformAdmin = true;
+  const f = fixture();
+  expect((await f.call("/universes/universe/sessions/s1?cascade=true", "DELETE")).status).toBe(200);
+  expect(f.audits).not.toHaveBeenCalled();
+  expect((await f.call("/admin/universes/universe/sessions/s1/purge")).status).toBe(200);
+  expect(f.rpcCalls).toEqual(["session/delete", "deployment/sessions/purge"]);
+  expect(f.audits).toHaveBeenCalledOnce();
+  expect(f.audits).toHaveBeenCalledWith(expect.objectContaining({
+    actorId: "member", universeId: "universe", targetId: "s1", action: "session.purge",
+    details: { deletedSessionIds: '["s1","child"]' }, outcome: "success",
+  }));
+});

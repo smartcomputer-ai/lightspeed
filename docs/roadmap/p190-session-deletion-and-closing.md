@@ -39,8 +39,16 @@ remain intact until explicit permanent deletion. Soft-deleted rows prevent reuse
 of their session IDs while retained.
 
 Permanent deletion is a deployment-scoped operation, exposed only to platform
-admins through the Universes administration page. The admin selects a deleted
-session and confirms removal of it and its deleted history subtree. The operation
+admins through the Universes administration page or an unchecked-by-default
+“Also permanently delete retained history” option in the ordinary session delete
+dialog. Both paths use the same audited Platform purge endpoint. The inline path
+soft-deletes first, then purges; a failed purge leaves a retry available without
+repeating soft deletion. In the Universes modal, admins can select multiple
+deleted sessions or choose Purge all. Purge all collects every page before
+confirmation; newly deleted sessions arriving afterward are not added to that
+selection. Each purge uses the existing audit path, and partial failures can be
+retried. The admin confirms removal of the selected sessions and their deleted
+history subtrees. The operation
 rejects any selected session that has not been soft-deleted. Repeating it after
 successful removal returns no affected IDs. There is no automatic purge, grace
 period, tombstone, restore API or restore UI.
@@ -98,6 +106,7 @@ as successful actions; empty purge retries do not duplicate successful purge log
 - [x] Reuse Platform audit and add platform-admin inspection and explicit purge.
 - [x] Align individual, bulk and demo lifecycle controls.
 - [x] Complete regression coverage, regenerated contracts and component checks.
+- [x] Align existing user, access and operations guides with deletion and audit behavior.
 
 Validation passed: workspace Clippy with warnings denied; API, PostgreSQL-store
 and runtime unit tests; local PostgreSQL lifecycle and CAS-retention tests; the

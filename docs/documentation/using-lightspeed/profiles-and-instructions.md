@@ -190,8 +190,11 @@ See [Environments](../environments/overview.md) for setup and cleanup.
 
 Metadata and retention settings supply defaults for newly created sessions.
 Use metadata for organization, such as `project=acorn`, and retention to
-choose how long a closed session tree should remain stored. Neither supplies
-instructions to the agent.
+choose when a closed session tree is soft-deleted from ordinary views; history
+remains stored until a Platform admin purges it. Through Platform, only Admins
+can create sessions with a deletion schedule. Non-admin creation and bot
+conversations do not inherit profile deletion schedules. Neither metadata nor
+retention supplies instructions to the agent.
 
 ## If the setup does not take effect
 

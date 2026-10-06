@@ -5,6 +5,7 @@ import { useActiveUniverse } from "@/lib/universes";
 
 type Identity = { userId: string; platformAdmin: boolean };
 const IdentityContext = createContext<Identity | null>(null);
+export function usePlatformAdmin() { return useContext(IdentityContext)?.platformAdmin ?? false; }
 export function usePermissionIdentity() { return useContext(IdentityContext)?.userId ?? null; }
 
 /** The signed-in user permission hints are computed for. */

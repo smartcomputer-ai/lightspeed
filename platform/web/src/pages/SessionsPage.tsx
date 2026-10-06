@@ -1,3 +1,4 @@
+import { DeleteSessionDialog } from "@/components/session/delete-session-dialog";
 import { useSessionCompaction } from "@/lib/sessions/compaction";
 import { useDictationAvailability } from "@/lib/use-dictation";
 import { ShareSessionDialog, SharingMark, useCanShareSession, useSessionOwner } from "@/components/session/sharing";
@@ -966,7 +967,12 @@ function NewSessionDialog({
   const modelMissing = !modelPending && Boolean(defaults.data) && !effectiveModel.model;
   const modelSummary = (
     <div className="grid gap-2">
-      <p className="text-sm"><span className="text-muted-foreground">{effectiveModel.source}: </span>{modelPending ? "Loading…" : effectiveModel.model ? modelLabel(effectiveModel.model) : defaults.error ? "Could not load default" : "Not selected"}</p>
+      <p className="text-sm">
+        <span className="text-muted-foreground">
+          {creationProfile.kind === "named" ? "Profile model" : effectiveModel.source}:{" "}
+        </span>
+        {modelPending ? "Loading…" : effectiveModel.model ? modelLabel(effectiveModel.model) : defaults.error ? "Could not load default" : "Not selected"}
+      </p>
       <ProviderReadinessBanner universeId={universeId} slug={slug} model={effectiveModel.model ?? (defaults.data ? null : undefined)} enabled={open && !modelPending} className="rounded-lg border" />
     </div>
   );
@@ -1093,9 +1099,6 @@ function NewSessionDialog({
                     ))}
                   </SelectContent>
                 </Select>
-                <FieldDescription>
-                  The profile is resolved at creation; later profile edits do not change this session.
-                </FieldDescription>
               </Field>
               {modelSummary}
               {canConfigure && <Button
@@ -1349,9 +1352,7 @@ export function SessionDetail({
   const [closeError, setCloseError] = useState<string | null>(null);
   const [closeOpen, setCloseOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteCascade, setDeleteCascade] = useState(false);
   const permissions = useActionPermissions(universeId);
   const mayClose = useSessionClosePermission(universeId);
   const mayDelete = useSessionDeletePermission(universeId);
@@ -1859,31 +1860,23 @@ export function SessionDetail({
     onError: (error) => setCloseError(error.message),
   });
 
-  const deleteSession = useMutation({
-    mutationFn: () =>
-      api<SessionSummary>(
-        "DELETE",
-        `/api/v1/universes/${universeId}/sessions/${sessionId}${deleteCascade ? "?cascade=true" : ""}`,
-      ),
-    onSuccess: async () => {
-      setDeleteOpen(false);
-      queryClient.setQueriesData<InfiniteData<SessionListPage>>(
-        { queryKey: ["sessions", universeId] },
-        (current) => current
-          ? {
-              ...current,
-              pages: current.pages.map((page) => ({
-                ...page,
-                sessions: page.sessions.filter((candidate) => candidate.id !== sessionId),
-              })),
-            }
-          : current,
-      );
-      navigate(backTo);
-      await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
-    },
-    onError: (error) => setDeleteError(error.message),
-  });
+  const onSessionDeleted = async () => {
+    setDeleteOpen(false);
+    queryClient.setQueriesData<InfiniteData<SessionListPage>>(
+      { queryKey: ["sessions", universeId] },
+      (current) => current
+        ? {
+            ...current,
+            pages: current.pages.map((page) => ({
+              ...page,
+              sessions: page.sessions.filter((candidate) => candidate.id !== sessionId),
+            })),
+          }
+        : current,
+    );
+    navigate(backTo);
+    await queryClient.invalidateQueries({ queryKey: ["sessions", universeId] });
+  };
 
   return (
     <>
@@ -1948,11 +1941,7 @@ export function SessionDetail({
                 closed ? (
                   <DropdownMenuItem
                     variant="destructive"
-                    onClick={() => {
-                      setDeleteError(null);
-                      setDeleteCascade(false);
-                      setDeleteOpen(true);
-                    }}
+                    onClick={() => setDeleteOpen(true)}
                   >
                     <Trash2 /> Delete session…
                   </DropdownMenuItem>
@@ -2023,51 +2012,13 @@ export function SessionDetail({
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog
-          open={deleteOpen && canDelete}
-          onOpenChange={(open) => {
-            setDeleteOpen(open);
-            if (open) {
-              setDeleteError(null);
-              setDeleteCascade(false);
-            }
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this session?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This hides the session and its history from all universe members, including admins. History is retained until a platform admin permanently deletes it.
-                A session with history forks or delegated children cannot be deleted
-                unless cascade is enabled.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <label className="flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm">
-              <Checkbox
-                checked={deleteCascade}
-                onCheckedChange={(checked) => setDeleteCascade(checked === true)}
-                disabled={deleteSession.isPending}
-              />
-              <span className="min-w-0">
-                <span className="block font-medium">Also delete forks and delegated children</span>
-                <span className="block text-xs text-muted-foreground">
-                  Every descendant must already be closed. Deleted sessions disappear for all universe members; history is retained. Config-only clones are not included.
-                </span>
-              </span>
-            </label>
-            {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={deleteSession.isPending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-white hover:bg-destructive/90"
-                disabled={deleteSession.isPending}
-                onClick={() => deleteSession.mutate()}
-              >
-                {deleteSession.isPending ? "Deleting…" : "Delete session"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        {deleteOpen && <DeleteSessionDialog
+          key={`${universeId}:${sessionId}`}
+          universeId={universeId}
+          sessionId={sessionId}
+          onCancel={() => setDeleteOpen(false)}
+          onDeleted={onSessionDeleted}
+        />}
         </>
       )}
       <SessionLineage

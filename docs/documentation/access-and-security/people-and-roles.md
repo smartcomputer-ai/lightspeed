@@ -23,7 +23,7 @@ the universe's resources.
 | **Viewer** | Read visible sessions, bots, and universe resources. A session they previously created remains visible after a downgrade to Viewer. |
 | **Contributor** | Create sessions with universe defaults or an existing profile; continue sessions, steer or stop work, decide tool approvals, invoke bots, and update workspace contents. |
 | **Operator** | Customize session setup and run options; create workspaces and create or configure profiles, bots, environments, MCP servers, credentials, and channels; manage bot triggers and replay bot events. |
-| **Admin** | Manage universe members, settings, and API keys. Read, control, share, and delete every session, including private sessions. |
+| **Admin** | Manage universe members, settings, and API keys. Read, control, and share every session, including private sessions; soft-delete closed sessions and set deletion retention. |
 
 Contributors can name a new session and choose its saved profile, but cannot
 author inline setup, override the chosen setup, create managed sessions, or
@@ -38,15 +38,19 @@ expandable and values readable, with editing controls protected and save
 actions hidden.
 
 Contributors and Operators can start and control runs in any shared session.
-Sharing and deleting a session require its creator, with at least the
-Contributor role, or an Admin.
+Sharing a session requires its creator, with at least the Contributor role,
+or an Admin. Contributors can close only their own unshared sessions;
+Operators can close their own or shared sessions. Operators can soft-delete
+shared closed sessions; Admins can close and soft-delete any session in their
+universe, subject to lifecycle requirements.
 The [private and shared work guide](private-and-shared-work.md) develops those
 rules with an example.
 
 A **Platform admin** has a separate deployment-wide role. Platform admins
 create accounts and universes, manage deployment configuration, and act as
 Admin in every universe even without a membership there. Giving someone an
-Admin membership in Acorn does not make them a Platform admin.
+Admin membership in Acorn does not make them a Platform admin. Only Platform
+admins can permanently delete soft-deleted session history.
 
 ## Create an account and add a member
 

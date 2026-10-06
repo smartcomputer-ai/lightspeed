@@ -169,11 +169,11 @@ Before opening access, test the actual provider registration:
 6. Check absolute expiry and emergency password access during a provider
    outage. Verify that core API keys still require separate revocation.
 
-Platform admins can inspect **Users → Recent access changes** for company
+Platform admins can inspect **Platform admin → Audit log** for company
 admission and admin-status changes, emergency sign-ins, suspension, session
 revocation, membership edits and Platform key operations. This small durable
 trail survives user and session deletion; comprehensive gateway auditing,
-retention controls and export remain deferred. See
+audit retention controls and export remain deferred. See
 [what is recorded](overview.md#what-is-recorded-today).
 
 ## Resolve sign-in failures

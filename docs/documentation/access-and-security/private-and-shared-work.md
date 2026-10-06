@@ -49,18 +49,22 @@ creator. These checks apply on the server as well as in the UI.
 | Operation | Private session | Shared session |
 | --- | --- | --- |
 | Read | Creator and Admins | Every member |
-| Start runs, steer, cancel, approve tools, or close | Creator with Contributor or Operator role, and Admins | Contributors, Operators, and Admins |
+| Start runs, steer, cancel, or approve tools | Creator with Contributor or Operator role, and Admins | Contributors, Operators, and Admins |
+| Close or force-close | Creator with Contributor or Operator role, and Admins | Operators and Admins |
 | Configure setup or override run options | Creator with Operator role, and Admins | Operators and Admins |
 | Share | Creator with Contributor or Operator role, and Admins | Already shared; no reverse operation |
-| Delete | Creator with Contributor or Operator role, and Admins | Creator with Contributor or Operator role, and Admins |
+| Soft-delete a closed session | Admins | Operators and Admins |
+| Set deletion retention | Admins | Admins |
 
 A creator downgraded to Viewer can still read their session but cannot control,
 share, or delete it. An Operator does not acquire another creator's private
 work by managing profiles or environments. Platform admins act as Admin in
 every universe.
 
-Deleting a session still requires its lifecycle conditions, such as closing it
-first. See [Sessions and runs](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
+Soft deletion requires closing the session first and hides it even from universe
+Admins. A cascade must contain only closed sessions; Operators cannot include
+private forks. Permanent deletion requires a Platform admin and prior soft
+deletion. See [Sessions and runs](../using-lightspeed/sessions-and-runs.md#close-and-retain-a-session)
 for the procedure and retention behavior.
 
 ## One root determines the audience

@@ -44,6 +44,11 @@ session mutations as well as reads and blob reads. `blobs/put` is separate so
 a connector can upload attachments without reading sessions. Exact groups are
 listed in the [API reference](../../../crates/api/contract/api-reference.md).
 
+Soft deletion and retention changes require the separate `session/delete`
+group; existing `session` keys do not gain those capabilities. Listing deleted
+sessions and permanently deleting them require a deployment key with
+`deployment/sessions`. Provision these groups on service keys that need them.
+
 An actor assertion uses `x-lightspeed-actor`. Only keys created with
 `assertActor` may send it. Core records the opaque actor ID for attribution;
 asserting a user does not reduce the key to that person's permissions. The

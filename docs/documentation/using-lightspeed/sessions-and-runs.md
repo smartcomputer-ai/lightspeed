@@ -51,9 +51,9 @@ title menu, choose **Share with universe…**, and confirm with **Share**. This
 also shares its sub-agents. Sharing cannot be undone.
 
 Every member can then read the conversation, and Contributors and above can
-continue or control it. Sharing and deletion remain creator-or-Admin actions
-and require at least the Contributor role. Bot conversations are always
-shared; delegated sessions follow their root's visibility.
+continue runs, steer, cancel work, or decide tool approvals. Sharing requires
+the creator with at least the Contributor role, or an Admin. Bot conversations
+are always shared; delegated sessions follow their root's visibility.
 
 Files written into an attached shared workspace remain visible through that
 workspace even while the conversation is private. Direct core keys with the
@@ -308,12 +308,26 @@ Leaving a browser tab or quitting the CLI has no effect on session lifecycle.
 accept more work or be reopened. Its retained history is still inspectable.
 **Force close session** also cancels outstanding work, including queued runs.
 
-Closed ordinary sessions can be deleted. **Also delete forks and delegated
-children** includes their retention descendants, which must also be closed;
-configuration-only clones are separate. **Delete after close (days)** sets
-automatic retention, with a blank value keeping history until manual deletion.
-The root session owns this policy for its retention tree, so descendants do
-not independently choose how long that tree is kept.
+Deleting a closed session **soft-deletes** it: it disappears from ordinary
+session views for everyone, including Admins, while its history remains stored.
+**Also delete forks and delegated children** includes its retention descendants,
+which must also be closed; configuration-only clones are separate. Without
+that option, the session must have no retention descendants. Closing and
+deletion have different [role requirements](../access-and-security/private-and-shared-work.md#what-each-person-may-do).
+
+Admins can set **Delete after close (days)** to automatically soft-delete a
+closed session tree; a blank value keeps it until manual deletion. The root
+owns this policy for its retention tree, and deletion waits until all descendants
+are closed. This policy never permanently removes stored history.
+
+Only Platform admins can permanently delete retained session history. In the
+delete dialog, select **Also permanently delete retained history** to soft-delete
+and then purge. For already deleted sessions, open **Platform admin → Universes →
+Deleted sessions**, select sessions and choose **Purge selected…**, or use
+**Purge all…**, then confirm removal of their deleted history trees. There is
+no automatic purge or restore action.
+Permanent deletion through Platform is recorded in the
+[audit log](../access-and-security/overview.md#what-is-recorded-today).
 
 Bot and channel conversations have a lifecycle controller. Their session
 inspector identifies what manages them; use that controller's reset or close
