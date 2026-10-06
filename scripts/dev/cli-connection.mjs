@@ -35,7 +35,7 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
   async function provision(kind, supplied, assertActor) {
     const file = path.join(directory, `${kind}.key`);
     const exists = existsSync(file);
-    if (state[kind] && !exists) {
+    if (noBootstrap && state[kind] && !exists) {
       throw new DevError(`The saved ${kind} development credential is missing.`, { hint: "Explicitly provision a replacement and restore its protected credential file; startup will not silently mint another administrator key." });
     }
     const previous = exists ? readPrivate(file) : null;
@@ -44,7 +44,8 @@ export async function prepareCliConnection({ root, env, full, noBootstrap, run }
     if (noBootstrap && !secret) return null;
     const args = ["run", "-p", "temporal-runtime", "--", "api-key", "provision", "--name", `Development ${kind}: ${root}`];
     if (assertActor) args.push("--assert-actor");
-    if (exists || noBootstrap) args.push("--require-existing");
+    if (noBootstrap) args.push("--require-existing");
+    else args.push("--refresh-groups");
     const provisioningEnv = { ...env, RUST_LOG: "off" };
     delete provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY;
     if (secret) provisioningEnv.LIGHTSPEED_BOOTSTRAP_API_KEY = secret;

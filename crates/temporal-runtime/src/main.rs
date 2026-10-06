@@ -77,7 +77,7 @@ enum UniverseCommand {
 
 #[derive(Debug, Subcommand)]
 enum ApiKeyCommand {
-    /// Provision a deployment administrator key; reuse never changes authority.
+    /// Provision a deployment administrator key; reuse validates authority by default.
     /// Reads LIGHTSPEED_BOOTSTRAP_API_KEY when set, otherwise generates a key.
     /// Prints the credential as JSON; store it securely.
     Provision {
@@ -85,9 +85,12 @@ enum ApiKeyCommand {
         name: String,
         #[arg(long)]
         assert_actor: bool,
-        /// Validate an existing supplied key without creating it (launcher restart).
+        /// Require the supplied key to already exist in the store.
         #[arg(long)]
         require_existing: bool,
+        /// Refresh an active key's method groups; scope and actor authority must match.
+        #[arg(long)]
+        refresh_groups: bool,
     },
     #[command(about = "Mint an API key; the secret prints exactly once")]
     Create {
@@ -334,6 +337,7 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
             name,
             assert_actor,
             require_existing,
+            refresh_groups,
         } => {
             let spec = auth::ApiKeySpec {
                 scope: api::AccessScope::Deployment,
@@ -350,7 +354,9 @@ async fn run_api_key_command(command: ApiKeyCommand) -> anyhow::Result<()> {
                 Some(secret) => auth::import_api_key(spec, now_ms, secret.trim())?,
                 None => auth::mint_api_key(spec, now_ms)?,
             };
-            let record = api_keys.provision_api_key(&key, require_existing).await?;
+            let record = api_keys
+                .provision_api_key(&key, require_existing, refresh_groups)
+                .await?;
             println!(
                 "{}",
                 serde_json::json!({ "keyPrefix": record.key_prefix, "secret": key.secret.expose() })
