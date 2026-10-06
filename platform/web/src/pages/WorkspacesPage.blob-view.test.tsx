@@ -31,6 +31,7 @@ let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
 let blobRef: string;
+let stored: string;
 const tree = () => ({
   workspace: {
     workspaceId: "ws",
@@ -44,6 +45,7 @@ const tree = () => ({
         docs: {
           kind: "directory",
           entries: {
+            "other.txt": { kind: "file", blob_ref: blobRef, size_bytes: 1, executable: false },
             [name]: {
               kind: "file",
               blob_ref: blobRef,
@@ -63,13 +65,14 @@ beforeEach(() => {
   notifyManager.setNotifyFunction((notify) => act(notify));
   mocks.editable = true;
   blobRef = `sha256:${digest}`;
+  stored = "x";
   mocks.api
     .mockReset()
     .mockImplementation(async (_method: string, path: string) => {
       if (path.endsWith("/workspaces")) return [tree().workspace];
       if (path.endsWith("/tree")) return tree();
       if (path.includes("/files/"))
-        return { blobRef, bytesBase64: "eA==", bytes: 1 };
+        return { blobRef, bytesBase64: btoa(stored), bytes: stored.length };
       throw new Error(`Unexpected request: ${path}`);
     });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -159,4 +162,54 @@ it("does not offer a broken link for a malformed blob reference", async () => {
   blobRef = "invalid";
   await render();
   expect(link()).toBeNull();
+});
+
+const button = (label: string) =>
+  Array.from(container.querySelectorAll("button")).find((item) => item.textContent === label)!;
+
+it.each([true, false])("previews stored Markdown for workspace readers (editable: %s)", async (editable) => {
+  mocks.editable = editable;
+  stored = "# Notes\n\n**Bold** and ~~removed~~\n\n| Name | Value |\n| --- | --- |\n| A | B |";
+  await render();
+  await act(async () => button("Preview").click());
+  expect(container.querySelector("section h1:not(header h1)")?.textContent).toBe("Notes");
+  expect(container.querySelector("strong")?.textContent).toBe("Bold");
+  expect(container.querySelector("del")?.textContent).toBe("removed");
+  expect(container.querySelector("td")?.textContent).toBe("A");
+  expect(container.querySelector("textarea, [contenteditable=true]")).toBeNull();
+  await act(async () => button("Source").click());
+  expect(container.querySelector("textarea")!.value).toBe(stored);
+  expect(container.querySelector("textarea")!.readOnly).toBe(!editable);
+  expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+});
+
+it("previews unsaved edits, preserves them in source, and saves the draft from preview", async () => {
+  await render();
+  const editor = container.querySelector("textarea")!;
+  const draft = "# Unsaved draft\n\n**Keep this**";
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, draft);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("Preview").click());
+  expect(container.querySelector("strong")?.textContent).toBe("Keep this");
+  expect(button("Save").disabled).toBe(false);
+  expect(link()!.title).toContain("saved version");
+  await act(async () => button("Source").click());
+  expect(container.querySelector("textarea")!.value).toBe(draft);
+  expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+  await act(async () => button("Preview").click());
+  await act(async () => button("Save").click());
+  expect(mocks.api).toHaveBeenCalledWith("PUT", `/api/v1/universes/u/workspaces/ws/files/docs/${encodeURIComponent(name)}`, {
+    contentText: draft, expectedRevision: 3, mediaType: "text/plain",
+  });
+});
+
+it("returns to source when navigating to a different workspace file", async () => {
+  stored = "# Notes";
+  await render();
+  await act(async () => button("Preview").click());
+  await act(async () => container.querySelector<HTMLAnchorElement>('a[href$="/files/docs/other.txt"]')!.click());
+  await waitForUi(() => expect(container.querySelector("textarea")?.value).toBe(stored));
+  expect(button("Source").getAttribute("aria-pressed")).toBe("true");
 });

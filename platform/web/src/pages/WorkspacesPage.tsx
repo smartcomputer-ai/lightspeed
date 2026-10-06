@@ -46,6 +46,8 @@ import { appHref, blobHref } from "@/lib/blob-view";
 import { ListPane } from "@/components/list-pane";
 import { WorkspaceFileTree } from "@/components/workspace-file-tree";
 import { PdfPreview } from "@/components/pdf-preview";
+import { MarkdownViewToggle } from "@/components/markdown-view-toggle";
+import { MarkdownContent } from "@/components/session/markdown-content";
 import { WorkspaceTransfers, WorkspaceActionsMenu, WorkspaceDropArea } from "@/components/workspace-transfers";
 
 /// U4b: workspace explorer + functional editor. Pane = workspace picker +
@@ -358,13 +360,15 @@ function FileDetail({
     decoded?.kind === "text" ? new TextDecoder().decode(decoded.bytes) : null;
   const [editor, setEditor] = useState<{
     identity: number;
+    preview: boolean;
     draft: string | null;
     saved: { text: string; previousBlob: string } | null;
     error: string | null;
-  }>({ identity: fileIdentity, draft: null, saved: null, error: null });
+  }>({ identity: fileIdentity, preview: false, draft: null, saved: null, error: null });
   if (editor.identity !== fileIdentity) {
     setEditor({
       identity: fileIdentity,
+      preview: false,
       draft: null,
       saved: null,
       error: null,
@@ -493,18 +497,23 @@ function FileDetail({
         if (dirty && !save.isPending && !event.repeat) saveCurrent();
       }}
     >
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2">
         <NavLink
           to={`/u/${slug}/workspaces/${workspaceId}`}
           className="md:hidden"
         >
           <ChevronRight className="size-4 rotate-180" />
         </NavLink>
-        <h1 className="truncate font-mono text-sm">{filePath}</h1>
+        <h1 className="min-w-0 flex-1 truncate font-mono text-sm">{filePath}</h1>
         <span className="shrink-0 text-xs text-muted-foreground">
           {file ? formatBytes(file.size_bytes) : ""}
         </span>
-        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <div className="ml-auto flex shrink-0 basis-full items-center justify-end gap-1.5 sm:basis-auto">
+          {decoded?.kind === "text" && (
+            <MarkdownViewToggle preview={editor.preview} onPreviewChange={(preview) =>
+              setEditor((current) => ({ ...current, preview }))
+            } />
+          )}
           {blobLink && (
             <Button
               variant="ghost"
@@ -544,7 +553,9 @@ function FileDetail({
         {blob.error && (
           <p className="p-4 text-sm text-destructive">{blob.error.message}</p>
         )}
-        {decoded?.kind === "text" && (
+        {decoded?.kind === "text" && (editor.preview ? (
+          <MarkdownContent className="mx-auto max-w-5xl p-4">{value}</MarkdownContent>
+        ) : (
           <textarea
             className="h-full w-full resize-none bg-transparent p-4 font-mono text-sm outline-none"
             value={value}
@@ -557,7 +568,7 @@ function FileDetail({
               canEditFiles ? "File contents" : "File contents (read only)"
             }
           />
-        )}
+        ))}
         {decoded?.kind === "image" && (
           <div className="flex items-start p-4">
             <img

@@ -23,6 +23,7 @@ import {
   validWorkspaceTransferPath,
   workspaceUploadConflicts,
   renameWorkspaceEntry,
+  moveWorkspaceEntry,
   workspaceRenameSchema,
 } from "@lightspeed-ai/platform-shared";
 import { api, ApiError, type WorkspaceTree, type WorkspaceRow } from "@/api";
@@ -68,7 +69,11 @@ type DeleteReview = {
   revision: number;
   error?: string;
 };
+const workspaceEntryDragType = "application/x-lightspeed-workspace-entry";
+
 const Transfers = createContext<{
+  canDrag: boolean;
+  startDrag: (event: DragEvent, path: string) => void;
   choose: (folder: boolean, target: string, replacement?: boolean) => void;
   download: (path: string, directory: boolean) => void;
   remove: (path: string, directory: boolean) => void;
@@ -120,6 +125,11 @@ export function WorkspaceTransfers({
   const replacementInput = useRef<HTMLInputElement>(null);
   const target = useRef("");
   const dragDepth = useRef(0);
+  const draggedEntry = useRef<{
+    path: string;
+    snapshot: WorkspaceTree;
+  } | null>(null);
+  const [movingEntry, setMovingEntry] = useState(false);
   const uploadLock = useRef(false);
   const [dragTarget, setDragTarget] = useState<string | null>(null);
   const [review, setReview] = useState<UploadReview | null>(null);
@@ -247,23 +257,91 @@ export function WorkspaceTransfers({
   const dropTarget = (event: DragEvent) =>
     (event.target as Element).closest<HTMLElement>("[data-workspace-folder]")
       ?.dataset.workspaceFolder ?? "";
-  const drop = (event: DragEvent) => {
-    if (!event.dataTransfer.types.includes("Files")) return;
-    event.preventDefault();
+  const canDrag =
+    canUpload && !busy && !review && !deletion && !folder &&
+    !renaming && !workspaceDeletion && !workspaceRenaming && !error;
+  const internalDrag = (event: DragEvent) =>
+    event.dataTransfer.types.includes(workspaceEntryDragType);
+  const resetDrag = () => {
     dragDepth.current = 0;
+    draggedEntry.current = null;
+    setMovingEntry(false);
     setDragTarget(null);
-    if (
-      !canUpload ||
-      uploadLock.current ||
-      review ||
-      deletion ||
-      folder ||
-      renaming ||
-      workspaceDeletion ||
-      workspaceRenaming
-    )
+  };
+  const allowedTarget = (event: DragEvent): string | null => {
+    if (!canDrag) return null;
+    const parent = dropTarget(event);
+    if (internalDrag(event)) {
+      const source = draggedEntry.current;
+      if (
+        !source ||
+        !(event.target as Element).closest(
+          "[data-workspace-folder], [data-workspace-root]",
+        )
+      )
+        return null;
+      if (
+        parent === source.path ||
+        parent.startsWith(`${source.path}/`) ||
+        parent === source.path.split("/").slice(0, -1).join("/")
+      )
+        return null;
+    }
+    return parent;
+  };
+  const startDrag = (event: DragEvent, path: string) => {
+    if (!canDrag || !tree.data) {
+      event.preventDefault();
       return;
-    const path = dropTarget(event);
+    }
+    event.stopPropagation();
+    event.dataTransfer.setData(workspaceEntryDragType, path);
+    event.dataTransfer.effectAllowed = "move";
+    draggedEntry.current = { path, snapshot: tree.data };
+    setMovingEntry(true);
+  };
+  const move = async (
+    source: { path: string; snapshot: WorkspaceTree },
+    parent: string,
+  ) => {
+    if (!canDrag || uploadLock.current) return;
+    uploadLock.current = true;
+    setBusy(true);
+    setProgress("Moving…");
+    setError(null);
+    let attempted = false;
+    try {
+      const { path, snapshot } = source;
+      const destination = [parent, path.split("/").at(-1)!]
+        .filter(Boolean)
+        .join("/");
+      const manifest = moveWorkspaceEntry(snapshot.manifest, path, destination);
+      attempted = true;
+      const result = await api<Pick<WorkspaceTree, "workspace">>(
+        "POST",
+        `${baseUrl}/move`,
+        { path, destination, expectedRevision: snapshot.workspace.revision },
+      );
+      applyRelocation(snapshot, result.workspace, manifest, path, destination);
+    } catch (error) {
+      setError(`Move failed: ${(error as Error).message}`);
+    } finally {
+      if (attempted) await invalidate();
+      uploadLock.current = false;
+      setBusy(false);
+    }
+  };
+  const drop = (event: DragEvent) => {
+    if (!internalDrag(event) && !event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    const path = allowedTarget(event);
+    const source = draggedEntry.current;
+    resetDrag();
+    if (path === null || uploadLock.current) return;
+    if (internalDrag(event)) {
+      if (source) void move(source, path);
+      return;
+    }
     // Capture browser drag entries before the event's data store is cleared.
     const entries = droppedEntries(event.dataTransfer);
     void upload(async () => into(await entries, path));
@@ -417,6 +495,39 @@ export function WorkspaceTransfers({
       setBusy(false);
     }
   };
+  const applyRelocation = (
+    snapshot: WorkspaceTree,
+    workspace: WorkspaceTree["workspace"],
+    manifest: WorkspaceTree["manifest"],
+    path: string,
+    destination: string,
+  ) => {
+    // Keep the open editor's content available while its URL changes.
+    for (const [key, data] of queryClient.getQueriesData({
+      queryKey: ["workspace-file", universeId, workspaceId],
+    })) {
+      const oldPath = key[3];
+      if (
+        typeof oldPath === "string" &&
+        (oldPath === path || oldPath.startsWith(`${path}/`))
+      ) {
+        queryClient.setQueryData(
+          [
+            ...key.slice(0, 3),
+            destination + oldPath.slice(path.length),
+            ...key.slice(4),
+          ],
+          data,
+        );
+      }
+    }
+    queryClient.setQueryData(treeKey, {
+      ...snapshot,
+      workspace,
+      manifest,
+    });
+    onRenamed?.(path, destination);
+  };
   const confirmRename = async () => {
     if (!renaming || !canUpload || uploadLock.current) return;
     uploadLock.current = true;
@@ -437,31 +548,7 @@ export function WorkspaceTransfers({
         },
       );
       const destination = [...path.split("/").slice(0, -1), name].join("/");
-      // Keep the open editor's content available while its URL changes.
-      for (const [key, data] of queryClient.getQueriesData({
-        queryKey: ["workspace-file", universeId, workspaceId],
-      })) {
-        const oldPath = key[3];
-        if (
-          typeof oldPath === "string" &&
-          (oldPath === path || oldPath.startsWith(`${path}/`))
-        ) {
-          queryClient.setQueryData(
-            [
-              ...key.slice(0, 3),
-              destination + oldPath.slice(path.length),
-              ...key.slice(4),
-            ],
-            data,
-          );
-        }
-      }
-      queryClient.setQueryData(treeKey, {
-        ...snapshot,
-        workspace: result.workspace,
-        manifest,
-      });
-      onRenamed?.(path, destination);
+      applyRelocation(snapshot, result.workspace, manifest, path, destination);
       setRenaming(null);
     } catch (error) {
       setRenaming({ ...renaming, error: (error as Error).message });
@@ -510,6 +597,8 @@ export function WorkspaceTransfers({
   return (
     <Transfers.Provider
       value={{
+        canDrag,
+        startDrag,
         choose,
         download,
         dragTarget,
@@ -565,36 +654,19 @@ export function WorkspaceTransfers({
       <div
         className="relative flex min-h-0 flex-1 flex-col"
         onDragEnter={(event) => {
-          if (event.dataTransfer.types.includes("Files")) {
+          if (internalDrag(event) || event.dataTransfer.types.includes("Files")) {
             event.preventDefault();
             dragDepth.current++;
-            if (
-              canUpload &&
-              !busy &&
-              !review &&
-              !deletion &&
-              !folder &&
-              !renaming &&
-              !workspaceDeletion &&
-              !workspaceRenaming
-            )
-              setDragTarget(dropTarget(event));
+            setDragTarget(allowedTarget(event));
           }
         }}
         onDragOver={(event) => {
-          if (event.dataTransfer.types.includes("Files")) {
+          if (internalDrag(event) || event.dataTransfer.types.includes("Files")) {
             event.preventDefault();
-            const allowed =
-              canUpload &&
-              !busy &&
-              !review &&
-              !deletion &&
-              !folder &&
-              !renaming &&
-              !workspaceDeletion &&
-              !workspaceRenaming;
-            event.dataTransfer.dropEffect = allowed ? "copy" : "none";
-            setDragTarget(allowed ? dropTarget(event) : null);
+            const path = allowedTarget(event);
+            event.dataTransfer.dropEffect =
+              path === null ? "none" : internalDrag(event) ? "move" : "copy";
+            setDragTarget(path);
           }
         }}
         onDragLeave={() => {
@@ -602,10 +674,7 @@ export function WorkspaceTransfers({
           if (!dragDepth.current) setDragTarget(null);
         }}
         onDrop={drop}
-        onDragEnd={() => {
-          dragDepth.current = 0;
-          setDragTarget(null);
-        }}
+        onDragEnd={resetDrag}
       >
         {children}
         {dragTarget !== null && (
@@ -616,7 +685,7 @@ export function WorkspaceTransfers({
             >
               <FolderUp className="size-4 shrink-0 text-primary" />
               <span className="min-w-0 break-words">
-                Drop to upload into{" "}
+                {movingEntry ? "Drop to move into" : "Drop to upload into"}{" "}
                 <span className="font-medium [overflow-wrap:anywhere]">
                   {dragTarget ? `/${dragTarget}` : "workspace root /"}
                 </span>
@@ -800,7 +869,7 @@ export function WorkspaceTransfers({
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Download couldn’t finish</DialogTitle>
+              <DialogTitle>Workspace action couldn’t finish</DialogTitle>
               <DialogDescription>{error}</DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -1039,6 +1108,15 @@ export function WorkspaceTransfers({
       </div>
     </Transfers.Provider>
   );
+}
+
+export function useWorkspaceEntryDrag() {
+  const transfers = useContext(Transfers);
+  return {
+    draggable: transfers?.canDrag ?? false,
+    onDragStart: (event: DragEvent, path: string) =>
+      transfers?.startDrag(event, path),
+  };
 }
 
 export function useWorkspaceDropTarget() {

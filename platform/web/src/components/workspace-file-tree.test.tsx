@@ -9,6 +9,7 @@ import { WorkspaceFileTree } from "./workspace-file-tree";
 const menuClick = vi.hoisted(() => vi.fn());
 vi.mock("./workspace-transfers", () => ({
   useWorkspaceDropTarget: () => null,
+  useWorkspaceEntryDrag: () => ({ draggable: false, onDragStart: () => {} }),
   WorkspaceActionsMenu: ({
     path,
     tabIndex,

@@ -142,3 +142,37 @@ it("round-trips uploaded folders and binary files through the demo routes", asyn
   expect(tree.manifest.root.entries).toEqual({});
   expect(tree.manifest.totals).toEqual({ files: 0, bytes: 0 });
 });
+
+it("moves demo entries atomically and rejects stale, conflicting and recursive moves", async () => {
+  const app = createDemoRouter(createDemoStore());
+  const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}/workspaces`;
+  const post = (path: string, body: unknown) => app.request(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  expect((await post(base, { workspaceId: "move-test" })).status).toBe(201);
+  const workspace = `${base}/move-test`;
+  expect((await post(`${workspace}/upload`, {
+    expectedRevision: 0,
+    entries: [
+      { kind: "directory", path: "folder/empty" },
+      { kind: "directory", path: "archive" },
+      { kind: "file", path: "folder/binary.dat", contentBase64: "AP8=" },
+    ],
+  })).status).toBe(200);
+  const move = (path: string, destination: string, expectedRevision = 1) =>
+    post(`${workspace}/move`, { path, destination, expectedRevision });
+  expect((await move("folder", "archive/folder", 0)).status).toBe(409);
+  expect((await move("folder", "folder/empty/folder")).status).toBe(400);
+  expect((await move("folder", "archive")).status).toBe(409);
+  expect((await move("folder", "archive/folder")).status).toBe(200);
+  expect((await move("archive/folder/binary.dat", "binary.dat", 2)).status).toBe(200);
+  const tree = await (await app.request(`${workspace}/tree`)).json();
+  expect(tree.workspace.revision).toBe(3);
+  expect(tree.manifest.root.entries.folder).toBeUndefined();
+  expect(tree.manifest.root.entries.archive.entries.folder.entries.empty).toEqual({ kind: "directory", entries: {} });
+  expect(tree.manifest.totals).toEqual({ files: 1, bytes: 2 });
+  const response = await app.request(`${workspace}/download?path=binary.dat`);
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([0, 255]));
+});

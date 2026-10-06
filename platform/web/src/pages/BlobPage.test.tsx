@@ -90,7 +90,29 @@ it("hands images to the browser and names unnamed blobs by digest", async () => 
   await open(`/u/acme/blobs/${digest}`);
   expect(container.querySelector("img")!.getAttribute("src")).toBe("blob:local");
   expect(container.querySelector("h1")!.textContent).toBe(`sha256:${digest.slice(0, 12)}…`);
+  expect(container.querySelector('[aria-label="Markdown view"]')).toBeNull();
 });
+
+it.each(["", "?type=text/markdown", "?name=notes.md"])(
+  "previews Markdown with the session renderer and preserves the source (%s)", async (query) => {
+    stored = "# Notes\n\n**Bold** and ~~removed~~\n\n| Name | Value |\n| --- | --- |\n| A | B |\n\n<script>alert(1)</script>\n\n[unsafe](javascript:alert)";
+    await open(`/u/acme/blobs/${digest}${query}`);
+    const button = (label: string) => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === label)!;
+    expect(button("Source").getAttribute("aria-pressed")).toBe("true");
+    await act(async () => button("Preview").click());
+    expect(button("Preview").getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector("div h1:not(header h1)")?.textContent).toBe("Notes");
+    expect(container.querySelector("strong")?.textContent).toBe("Bold");
+    expect(container.querySelector("del")?.textContent).toBe("removed");
+    expect(container.querySelector("td")?.textContent).toBe("A");
+    expect(container.querySelector("script")).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(container.querySelector("textarea, [contenteditable=true]")).toBeNull();
+    await act(async () => button("Source").click());
+    expect(container.querySelector("pre")!.textContent).toBe(stored);
+    expect(mocks.api.mock.calls.filter(([, path]) => String(path).includes("/blobs/"))).toHaveLength(1);
+  },
+);
 
 it("names a source session the viewer cannot read by its id, without a link", async () => {
   await open(`/u/acme/blobs/${digest}?session=private`);

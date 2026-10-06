@@ -1125,10 +1125,11 @@ it.each(["", "docs"])(
   },
 );
 
-it.each(["file", "folder"])(
-  "keeps an open file and unsaved edits when renaming its %s",
+it.each(["file", "folder", "move-file", "move-folder"])(
+  "keeps an open file and unsaved edits when relocating its %s",
   async (kind) => {
     entries["other.txt"] = file;
+    entries.archive = { kind: "directory", entries: {} };
     const workspace = {
       workspaceId: "ws",
       displayName: "Documents",
@@ -1137,12 +1138,21 @@ it.each(["file", "folder"])(
     };
     let currentWorkspace = workspace;
     const destination =
-      kind === "file" ? "docs/renamed #?.txt" : "renamed #?/a #?.txt";
+      kind === "move-file" ? "archive/a #?.txt" : kind === "move-folder" ? "archive/docs/a #?.txt" : kind === "file" ? "docs/renamed #?.txt" : "renamed #?/a #?.txt";
     mocks.api.mockImplementation(
       async (method: string, path: string, body?: { name: string }) => {
         if (path.endsWith("/workspaces")) return [currentWorkspace];
         if (path.endsWith("/tree"))
           return { ...tree(), workspace: currentWorkspace };
+        if (path.endsWith("/move") && method === "POST") {
+          entries = {
+            "other.txt": file,
+            archive: { kind: "directory", entries: kind === "move-folder" ? { docs: entries.docs! } : { "a #?.txt": file } },
+            ...(kind === "move-file" ? { docs: { kind: "directory" as const, entries: {} } } : {}),
+          };
+          currentWorkspace = { ...workspace, revision: 4 };
+          return { workspace: currentWorkspace };
+        }
         if (path.endsWith("/rename") && method === "POST") {
           if (kind === "folder") {
             entries = { [body!.name]: entries.docs!, "other.txt": file };
@@ -1184,12 +1194,18 @@ it.each(["file", "folder"])(
       )!.set!.call(editor, "unsaved edit");
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    if (kind.startsWith("move-")) {
+      const transfer = internalTransfer();
+      await entryDrag("dragstart", treeEntry(kind === "move-file" ? "docs/a #?.txt" : "docs"), transfer);
+      await entryDrag("drop", treeEntry("archive"), transfer);
+    } else {
     await menu(
       kind === "file" ? "File actions: docs/a #?.txt" : "Folder actions: docs",
     );
     await click(item("Rename…"));
     await folderName(kind === "file" ? "renamed #?.txt" : "renamed #?");
     await click(button("Rename"));
+    }
     expect(container.querySelector("textarea")?.value).toBe("unsaved edit");
     expect(
       container
@@ -1487,3 +1503,101 @@ it.each([
     ).toBe(!keepTyping);
   },
 );
+
+function internalTransfer() {
+  const data = new Map<string, string>();
+  return {
+    get types() { return [...data.keys()]; },
+    setData: (type: string, value: string) => { data.set(type, value); },
+    getData: (type: string) => data.get(type) ?? "",
+    effectAllowed: "uninitialized",
+    dropEffect: "none",
+  };
+}
+async function entryDrag(type: string, target: Element, transfer: ReturnType<typeof internalTransfer>) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: transfer });
+  await act(async () => { target.dispatchEvent(event); });
+  return event;
+}
+function treeEntry(path: string) {
+  const entry = [...container.querySelectorAll<HTMLElement>("[data-tree-path]")]
+    .find((entry) => entry.dataset.treePath === path)?.querySelector("[data-tree-entry]");
+  if (!entry) throw new Error(`Missing tree entry: ${path}`);
+  return entry;
+}
+
+it.each([
+  ["docs/a #?.txt", "", "a #?.txt"],
+  ["docs", "archive", "archive/docs"],
+  ["docs/a #?.txt", "archive", "archive/a #?.txt"],
+])("drags %s into %s using the revision at drag start", async (path, parent, destination) => {
+  entries.archive = { kind: "directory", entries: {} };
+  await render(true);
+  const transfer = internalTransfer();
+  expect(treeEntry(path).getAttribute("draggable")).toBe("true");
+  await entryDrag("dragstart", treeEntry(path), transfer);
+  expect(transfer.effectAllowed).toBe("move");
+  // A later refresh must not silently change the revision the user moved from.
+  await act(async () => { transferClient.setQueryData(["workspace-tree", "u", "ws"], tree(4)); });
+  const target = parent ? treeEntry(parent) : container.querySelector("[data-workspace-root]")!;
+  await entryDrag("dragover", target, transfer);
+  expect(transfer.dropEffect).toBe("move");
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("Drop to move into");
+  await entryDrag("drop", target, transfer);
+  expect(writes()).toEqual([[
+    "POST", "/api/v1/universes/u/workspaces/ws/move",
+    { path, destination, expectedRevision: 3 },
+  ]]);
+  expect(mocks.renamed).toHaveBeenCalledWith(path, destination);
+  expect(container.querySelector('[data-workspace-drop-target="true"]')).toBeNull();
+});
+
+it("blocks self, descendant, same-parent and foreign workspace drops", async () => {
+  entries = { docs: { kind: "directory", entries: { nested: { kind: "directory", entries: {} } } } };
+  await render(true);
+  for (const target of [treeEntry("docs"), treeEntry("docs/nested"), container.querySelector("[data-workspace-root]")!]) {
+    const transfer = internalTransfer();
+    await entryDrag("dragstart", treeEntry("docs"), transfer);
+    await entryDrag("dragover", target, transfer);
+    expect(transfer.dropEffect).toBe("none");
+    await entryDrag("drop", target, transfer);
+  }
+  const foreign = internalTransfer();
+  foreign.setData("application/x-lightspeed-workspace-entry", "foreign.txt");
+  await entryDrag("dragover", treeEntry("docs"), foreign);
+  expect(foreign.dropEffect).toBe("none");
+  await entryDrag("drop", treeEntry("docs"), foreign);
+  expect(writes()).toEqual([]);
+});
+
+it("disables entry drags for viewers", async () => {
+  mocks.editable = false;
+  await render(true);
+  expect(treeEntry("docs").getAttribute("draggable")).toBe("false");
+  expect(treeEntry("docs/a #?.txt").getAttribute("draggable")).toBe("false");
+  const transfer = internalTransfer();
+  expect((await entryDrag("dragstart", treeEntry("docs"), transfer)).defaultPrevented).toBe(true);
+  expect(transfer.types).toEqual([]);
+});
+
+it("reports move collisions and server conflicts without relocating the editor", async () => {
+  entries["a #?.txt"] = file;
+  await render(true);
+  const target = container.querySelector("[data-workspace-root]")!;
+  const transfer = internalTransfer();
+  await entryDrag("dragstart", treeEntry("docs/a #?.txt"), transfer);
+  await entryDrag("drop", target, transfer);
+  expect(writes()).toEqual([]);
+  expect(document.body.textContent).toContain("already exists");
+  await click(button("Close"));
+  delete entries["a #?.txt"];
+  mocks.api.mockImplementation(async (method: string) => {
+    if (method === "POST") throw new ApiError(409, { error: "Workspace changed. Reload and try the move again." });
+    return tree();
+  });
+  await entryDrag("dragstart", treeEntry("docs/a #?.txt"), transfer);
+  await entryDrag("drop", target, transfer);
+  expect(document.body.textContent).toContain("Workspace changed");
+  expect(mocks.renamed).not.toHaveBeenCalled();
+});

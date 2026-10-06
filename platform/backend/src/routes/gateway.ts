@@ -49,6 +49,8 @@ import {
   workspaceEntryDeleteSchema,
   workspaceEntryRenameSchema,
   renameWorkspaceEntry,
+  workspaceEntryMoveSchema,
+  moveWorkspaceEntry,
   removeWorkspaceEntry,
 } from "@lightspeed-ai/platform-shared";
 import type { AppContext, ApiVariables } from "../context.js";
@@ -2057,6 +2059,36 @@ export function gatewayRoutes(ctx: AppContext) {
       });
       const manifest = renameWorkspaceEntry(
         asManifest(snapshot.result.manifest), body.data.path, body.data.name,
+      );
+      return c.json(
+        await commitHead(client, workspaceId, manifest, body.data.expectedRevision),
+      );
+    }),
+  );
+
+  app.post("/:id/workspaces/:workspaceId/move", (c) =>
+    withGateway(c, async () => {
+      const access = await universeForSession(ctx, c, c.req.param("id"));
+      if (!access) return c.json({ error: "not found" }, 404);
+      if (!roleAtLeast(access.role, "contributor"))
+        throw new GateRefusal(403, "contributor role required");
+      const body = await parseBody(c, workspaceEntryMoveSchema);
+      if (!body.ok) return body.response;
+      const client = engineClientFor(ctx, access);
+      const workspaceId = c.req.param("workspaceId");
+      const { workspace } = (
+        await client.call("vfs/workspaces/read", { workspaceId })
+      ).result;
+      if (workspace.revision !== body.data.expectedRevision)
+        return c.json(
+          { error: "Workspace changed. Reload and try the move again." },
+          409,
+        );
+      const snapshot = await client.call("vfs/snapshots/read", {
+        snapshotRef: workspace.headSnapshotRef,
+      });
+      const manifest = moveWorkspaceEntry(
+        asManifest(snapshot.result.manifest), body.data.path, body.data.destination,
       );
       return c.json(
         await commitHead(client, workspaceId, manifest, body.data.expectedRevision),

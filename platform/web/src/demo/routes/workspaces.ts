@@ -6,7 +6,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { MAX_WORKSPACE_UPLOAD_BODY_BYTES, workspaceUploadSchema, prepareWorkspaceUpload, workspaceDownload, WorkspaceTransferError, workspaceEntryDeleteSchema, removeWorkspaceEntry } from "@lightspeed-ai/platform-shared";
-import { workspaceEntryRenameSchema, renameWorkspaceEntry, workspaceRenameSchema } from "@lightspeed-ai/platform-shared";
+import { workspaceEntryRenameSchema, renameWorkspaceEntry, workspaceEntryMoveSchema, moveWorkspaceEntry, workspaceRenameSchema } from "@lightspeed-ai/platform-shared";
 import type { VfsDirEntry, VfsFileEntry, VfsTreeEntry, WorkspaceRow, WorkspaceTree } from "@/api";
 import { base64ToBytes, type DemoStore, type WorkspaceRecord } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
@@ -138,6 +138,21 @@ export function workspaceRoutes(store: DemoStore): Hono {
       return conflict(c, "Workspace changed. Close this dialog and try again.");
     try {
       return c.json({ workspace: commitHead(store, record, renameWorkspaceEntry(record.manifest, parsed.data.path, parsed.data.name)) });
+    } catch (error) {
+      if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
+
+  app.post("/:id/workspaces/:workspaceId/move", async (c) => {
+    const record = universeFor(store, c)?.workspaces.get(c.req.param("workspaceId"));
+    if (!record) return notFound(c);
+    const parsed = workspaceEntryMoveSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return badRequest(c, "Enter a valid path, destination and expectedRevision");
+    if (record.row.revision !== parsed.data.expectedRevision)
+      return conflict(c, "Workspace changed. Reload and try the move again.");
+    try {
+      return c.json({ workspace: commitHead(store, record, moveWorkspaceEntry(record.manifest, parsed.data.path, parsed.data.destination)) });
     } catch (error) {
       if (error instanceof WorkspaceTransferError) return c.json({ error: error.message }, error.status);
       throw error;
