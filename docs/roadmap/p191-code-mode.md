@@ -1,4 +1,4 @@
-# Later — Code mode
+# Code mode
 
 **Status:** Proposed direction, updated 2026-10-07. No implementation started.
 Add code mode as a session feature, accepting JavaScript in native QuickJS
@@ -48,8 +48,8 @@ The agreed first-version boundaries are:
 - Reject approval-requiring calls before executing the protected effect.
   Durable approval suspension and script resumption are outside v1.
 
-This builds on the existing [architecture](../../documentation/how-it-works/architecture.md)
-and [workflow-tool protocol](../../documentation/how-it-works/tools-and-controller-workflows.md).
+This builds on the existing [architecture](../documentation/how-it-works/architecture.md)
+and [workflow-tool protocol](../documentation/how-it-works/tools-and-controller-workflows.md).
 It does not introduce another general workflow engine.
 
 ## Execution architecture
@@ -125,7 +125,7 @@ and [task-queue routing](https://docs.temporal.io/task-queue).
 Reuse the actual scheduled activity boundary, not just the Rust function
 behind an activity. Ordinary effects should use the admitted
 `ToolExecutionSpec` and
-[`tool_call_activity_options`](../../../crates/temporal-workflow/src/config.rs).
+[`tool_call_activity_options`](../../crates/temporal-workflow/src/config.rs).
 Calling the same implementation directly from `RunCode` would lose independent
 Temporal scheduling, history, retry, and timeout behavior.
 
@@ -226,7 +226,7 @@ modules rather than adding a feature-specific transport package.
 ### Worker roles and deployment
 
 Add a `code` role to the existing
-[role wiring](../../../crates/temporal-runtime/src/roles.rs). It polls its own
+[role wiring](../../crates/temporal-runtime/src/roles.rs). It polls its own
 task queue for `CodeExecutionWorkflow` and `RunCode`. The sessions role continues
 to own nested tool admission, activities, effects, and durable promises.
 The planned deployment choices use the same executable:
@@ -380,11 +380,11 @@ implemented after the first code-mode release; a code-only `models.*` API is
 not the direction.
 
 Transcription already has a runtime admission and workflow path in
-[`transcriptions.rs`](../../../crates/temporal-runtime/src/gateway/service/transcriptions.rs).
+[`transcriptions.rs`](../../crates/temporal-runtime/src/gateway/service/transcriptions.rs).
 Reuse that service boundary rather than create a second provider integration.
 Adding its tool surface is still separate work. Image generation and decision
 models also need their own adapters and tools. See the separate
-[typed decision models proposal](pNNN-typed-decision-models.md).
+[typed decision models proposal](later/pNNN-typed-decision-models.md).
 
 Keep execution utilities small: text/media output, catalog discovery, waits
 over authorized durable promises, bounded local values, and scoped blob/artifact
@@ -564,7 +564,7 @@ unspecified; do not invent fields or promise a shape inferred from one observed
 result. Missing schemas do not prevent tool execution. Preserve descriptions
 and error semantics alongside schemas.
 
-[`ToolInvocationOutput`](../../../crates/tools/src/runtime/mod.rs) already
+[`ToolInvocationOutput`](../../crates/tools/src/runtime/mod.rs) already
 separates structured `output_json`, `model_visible_text`, session effects, and
 attachments. Bind a script-visible result projection and describe that exact
 shape. The session applies effects; the guest gets structured data and scoped
@@ -881,22 +881,22 @@ Temporal and session machinery rather than import another workflow engine.
 The new `codemode` crate provides the interpreter boundary described above.
 The main existing seams are:
 
-- [Session preparation](../../../crates/temporal-runtime/src/gateway/service/session_preparation.rs):
+- [Session preparation](../../crates/temporal-runtime/src/gateway/service/session_preparation.rs):
   feature admission, toolset assembly, and trusted workflow-tool recipes.
-- [Tool catalog](../../../crates/llm-runtime/src/tool_catalog.rs): logical
+- [Tool catalog](../../crates/llm-runtime/src/tool_catalog.rs): logical
   identities and resolved model presentation; bind the shown specification to
   execution without requiring full schemas in the runner.
-- [Runtime definitions/results](../../../crates/tools/src/runtime/mod.rs),
-  [function declarations](../../../crates/harness/src/core/components/tooling.rs),
-  and [MCP discovery](../../../crates/temporal-runtime/src/gateway/service/mcp_discovery.rs):
+- [Runtime definitions/results](../../crates/tools/src/runtime/mod.rs),
+  [function declarations](../../crates/harness/src/core/components/tooling.rs),
+  and [MCP discovery](../../crates/temporal-runtime/src/gateway/service/mcp_discovery.rs):
   carry output schemas through metadata and preserve structured result projections.
-- [Session tools](../../../crates/temporal-runtime/src/worker/session_tools.rs)
-  and [tool activities](../../../crates/temporal-runtime/src/worker/activities/tools.rs):
+- [Session tools](../../crates/temporal-runtime/src/worker/session_tools.rs)
+  and [tool activities](../../crates/temporal-runtime/src/worker/activities/tools.rs):
   execution bindings, argument validation, effect results, and native MCP policy.
-- [Tool-batch orchestration](../../../crates/temporal-workflow/src/workflows/session/tool_batches.rs):
+- [Tool-batch orchestration](../../crates/temporal-workflow/src/workflows/session/tool_batches.rs):
   existing per-call scheduling versus workflow-tool/await batch execution.
-- [Workflow-tool state](../../../crates/harness/src/core/components/workflow_tool.rs)
-  and [promises](../../../crates/harness/src/core/components/promise.rs):
+- [Workflow-tool state](../../crates/harness/src/core/components/workflow_tool.rs)
+  and [promises](../../crates/harness/src/core/components/promise.rs):
   durable ownership and correlation. Add only deterministic generic admission
   facts here; keep interpreter execution and infrastructure I/O outside the harness.
 
