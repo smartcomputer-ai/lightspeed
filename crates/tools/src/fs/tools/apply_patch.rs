@@ -17,7 +17,7 @@ pub struct ApplyPatchArgs {
     pub patch: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ApplyPatchResult {
     pub added: Vec<FsPath>,
     pub modified: Vec<FsPath>,

@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -34,6 +34,14 @@ use super::{
         optional_boolean, optional_enum, process_visible_output, string, visible_with_search_stop,
     },
 };
+
+/// Claude's Edit also creates a file when `old_string` is empty.
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub(super) enum EditResult {
+    Write(crate::fs::tools::WriteFileResult),
+    Edit(crate::fs::tools::EditFileResult),
+}
 
 /// How long `KillShell` waits for the killed group's final output: the
 /// environment daemon's output drain grace.
@@ -336,7 +344,7 @@ pub(super) async fn invoke_json(
                     "Wrote {} bytes to {}",
                     result.bytes_written, result.resolved_path
                 );
-                return encode_output(&result, visible);
+                return encode_output(&EditResult::Write(result), visible);
             }
 
             let result = invoke_edit_file(fs_ctx, args.try_into_edit_file_args()?).await?;
@@ -344,7 +352,7 @@ pub(super) async fn invoke_json(
                 "Replaced {} match(es) in {}",
                 result.replacements, result.resolved_path
             );
-            encode_output(&result, visible)
+            encode_output(&EditResult::Edit(result), visible)
         }
         (BuiltinToolOperation::Grep, _) => {
             let args: ClaudeCodeGrepArgs = decode_args(arguments)?;

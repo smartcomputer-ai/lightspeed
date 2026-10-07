@@ -24,6 +24,16 @@ use crate::{
     },
 };
 
+/// Describe the value actually serialized by an owned result DTO, including
+/// output-only required fields and omitted optional values.
+pub(crate) fn output_schema_for<T: schemars::JsonSchema>() -> Value {
+    schemars::generate::SchemaSettings::draft2020_12()
+        .for_serialize()
+        .into_generator()
+        .into_root_schema_for::<T>()
+        .to_value()
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BuiltinSettings {

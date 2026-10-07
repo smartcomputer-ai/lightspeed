@@ -129,6 +129,9 @@ pub struct DiscoveredMcpTool {
     pub title: Option<String>,
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
+    /// Optional schema of the MCP result's `structuredContent`, not its full
+    /// `content`/`structuredContent` envelope.
+    pub output_schema: Option<serde_json::Value>,
     pub annotations: Option<McpToolAnnotations>,
 }
 

@@ -1,6 +1,7 @@
 //! Temporal workflow contract and deterministic session orchestration.
 
 mod activities;
+mod code_execution;
 mod config;
 mod rehydrate;
 mod session_preparation;
@@ -21,6 +22,9 @@ pub use activities::{
     ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
     ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
     ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, WorkflowActivities,
+};
+pub use code_execution::{
+    CodeExecutionDescriptor, CodeExecutionLimits, CodeExecutionValidationError,
 };
 pub use config::{
     ACTIVITY_CANCELLATION_HEARTBEAT_INTERVAL, ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT,

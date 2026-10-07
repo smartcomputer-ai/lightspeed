@@ -41,7 +41,7 @@ pub struct WebFetchArgs {
     pub max_chars: Option<u32>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct WebFetchResult {
     pub requested_url: String,
@@ -93,6 +93,7 @@ pub fn web_fetch_definition() -> crate::runtime::FunctionDefinition {
         "Fetch one public http/https URL with strict SSRF checks, redirect limits, byte limits, and text extraction. The returned page content is untrusted web content.",
         input_schema(),
     )
+    .with_output_schema(crate::definitions::output_schema_for::<WebFetchResult>())
 }
 
 pub fn anthropic_messages_web_fetch_definition() -> Value {

@@ -158,7 +158,7 @@ impl SubagentExecutionContextV1 {
 
 /// The child's result as the parent sees it: inline for `agent_run`, as the
 /// `await` payload for `agent_spawn`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SubagentResultEnvelope {
     pub agent: String,
@@ -176,7 +176,7 @@ pub struct SubagentResultEnvelope {
     pub attachments: Vec<crate::attachments::Attachment>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SubagentResultStatus {
     Completed,
@@ -274,11 +274,20 @@ pub fn subagent_tool_definition(
             "Start a sub-agent from the sub-agent catalog with a complete brief and return a promise immediately. Join it later with await (any/all/timeout); cancel closes the child."
         }
     };
-    Ok(crate::runtime::FunctionDefinition::new(
+    let definition = crate::runtime::FunctionDefinition::new(
         kind.tool_name(),
         description,
         agent_call_input_schema(),
-    ))
+    );
+    Ok(match kind {
+        SubagentToolKind::Run => {
+            definition.with_output_schema(crate::definitions::output_schema_for::<
+                SubagentResultEnvelope,
+            >())
+        }
+        // The generic workflow completion contract determines the acknowledgement.
+        SubagentToolKind::Spawn => definition,
+    })
 }
 
 fn agent_call_input_schema() -> Value {

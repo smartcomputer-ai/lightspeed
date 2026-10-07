@@ -18,7 +18,7 @@ pub struct EditFileArgs {
     pub replace_all: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EditFileResult {
     pub path: FsPath,
     pub resolved_path: FsPath,

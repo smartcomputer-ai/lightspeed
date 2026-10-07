@@ -5,7 +5,8 @@ use std::{fmt, path::PathBuf, str::FromStr};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as SerdeError};
 use thiserror::Error;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct FsPath {
     normalized: String,
 }

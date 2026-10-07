@@ -15,7 +15,7 @@ pub struct WriteFileArgs {
     pub content: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WriteFileResult {
     pub path: FsPath,
     pub resolved_path: FsPath,

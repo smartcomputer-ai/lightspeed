@@ -432,6 +432,23 @@ struct CaptureArgs {
     on_existing: TransferOnExisting,
 }
 
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MaterializeResult {
+    pub operation_id: String,
+    pub destination: EnvironmentPath,
+    pub receipt: TransferStatus,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct CaptureResult {
+    pub operation_id: String,
+    pub snapshot_ref: BlobRef,
+    pub snapshot_path: String,
+    pub destination: crate::fs::FsPath,
+    pub published: bool,
+    pub receipt: TransferStatus,
+}
+
 fn resolve_environment_path(
     ctx: &crate::environment::EnvironmentToolContext,
     path: &EnvironmentPath,
@@ -478,12 +495,17 @@ pub async fn invoke_materialize(
     )
     .await?;
     guard.complete = true;
+    let message = format!(
+        "Materialized {} entries ({} bytes); transferred {} bytes, reused {} bytes.",
+        receipt.entries, receipt.bytes, receipt.transferred_bytes, receipt.reused_bytes
+    );
     crate::runtime::encode_output(
-        &serde_json::json!({"operation_id":id,"destination":args.destination_environment_path,"receipt":receipt}),
-        format!(
-            "Materialized {} entries ({} bytes); transferred {} bytes, reused {} bytes.",
-            receipt.entries, receipt.bytes, receipt.transferred_bytes, receipt.reused_bytes
-        ),
+        &MaterializeResult {
+            operation_id: id,
+            destination: args.destination_environment_path,
+            receipt,
+        },
+        message,
     )
 }
 pub async fn invoke_capture(
@@ -542,7 +564,14 @@ pub async fn invoke_capture(
         ),
     };
     let output = crate::runtime::encode_output(
-        &serde_json::json!({"operation_id":id,"snapshot_ref":captured.snapshot_ref,"snapshot_path":"/selection","destination":args.destination_vfs_path,"published":published,"receipt":captured.status}),
+        &CaptureResult {
+            operation_id: id,
+            snapshot_ref: captured.snapshot_ref,
+            snapshot_path: "/selection".into(),
+            destination: args.destination_vfs_path,
+            published,
+            receipt: captured.status,
+        },
         message,
     )?;
     persist_capture_result(vfs.blobs.as_ref(), graph.as_deref(), &output).await?;

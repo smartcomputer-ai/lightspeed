@@ -2091,6 +2091,7 @@ mod tests {
                 remote_name: "read".to_owned(),
                 description: Some("Read".to_owned()),
                 input_schema: json!({"type": "object"}),
+                output_schema: None,
                 annotations: None,
             }])
         }

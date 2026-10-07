@@ -26,14 +26,14 @@ pub struct GrepArgs {
     pub limit: Option<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GrepMatch {
     pub path: FsPath,
     pub line_number: usize,
     pub line: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GrepResult {
     pub path: FsPath,
     pub pattern: String,

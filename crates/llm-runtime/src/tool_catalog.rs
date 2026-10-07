@@ -3,40 +3,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use harness::{
-    LlmGenerationResult, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpToolSpec,
-    ToolChoice, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    LlmGenerationResult, ProviderNativeToolExecution, ToolChoice, ToolName, ToolSpec,
+    storage::BlobStore,
 };
-use serde_json::Value;
-use tools::{
-    definitions,
-    runtime::{FunctionDefinition, ToolTarget},
-};
+use tools::{callable, runtime::ToolTarget};
 
-use crate::{
-    blob_io::{read_json, read_text},
-    error::{LlmAdapterError, LlmAdapterResult},
+pub(crate) use tools::callable::{
+    NativeDefinition, ResolvedTool, ResolvedToolKind, valid_exposed_name,
 };
 
-#[derive(Clone, Debug)]
-pub(crate) struct ResolvedTool {
-    pub id: ToolName,
-    pub name: ToolName,
-    pub kind: ResolvedToolKind,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum ResolvedToolKind {
-    Function(FunctionDefinition),
-    ProviderNative(NativeDefinition),
-    RemoteMcp(RemoteMcpToolSpec),
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct NativeDefinition {
-    pub api_kind: ProviderApiKind,
-    pub definition: Value,
-    pub execution: ProviderNativeToolExecution,
-}
+use crate::error::{LlmAdapterError, LlmAdapterResult};
 
 pub(crate) struct ToolCatalog {
     pub tools: Vec<ResolvedTool>,
@@ -55,97 +31,11 @@ impl ToolCatalog {
             names: AdvertisedNames::default(),
             primary_names: BTreeMap::new(),
         };
-        let mut ids = BTreeSet::new();
-        for tool in tools {
-            if !ids.insert(&tool.name) {
-                return Err(LlmAdapterError::InvalidProviderRequest {
-                    message: format!("duplicate tool registration {}", tool.name),
-                });
-            }
-            match &tool.kind {
-                ToolKind::Builtin(spec) => {
-                    for resolved in
-                        definitions::resolve(&tool.name, spec, target).map_err(|error| {
-                            LlmAdapterError::InvalidProviderRequest {
-                                message: error.to_string(),
-                            }
-                        })?
-                    {
-                        let kind = match resolved.definition {
-                            definitions::Definition::Function(function) => {
-                                ResolvedToolKind::Function(function)
-                            }
-                            definitions::Definition::Native(definition) => {
-                                ResolvedToolKind::ProviderNative(NativeDefinition {
-                                    api_kind: target.api_kind.clone(),
-                                    definition,
-                                    execution: ProviderNativeToolExecution::ProviderHosted,
-                                })
-                            }
-                        };
-                        catalog.push(ResolvedTool {
-                            id: tool.name.clone(),
-                            name: resolved.name,
-                            kind,
-                        })?;
-                    }
-                }
-                ToolKind::Function(function) => {
-                    let definition = FunctionDefinition {
-                        name: tool.name.clone(),
-                        description: match &function.description_ref {
-                            Some(reference) => Some(read_text(blobs, reference).await?),
-                            None => None,
-                        },
-                        input_schema: read_json(blobs, &function.input_schema_ref).await?,
-                        strict: function.strict,
-                        provider_options: match &function.provider_options_ref {
-                            Some(reference) => Some(read_json(blobs, reference).await?),
-                            None => None,
-                        },
-                    };
-                    catalog.push(ResolvedTool {
-                        id: tool.name.clone(),
-                        name: tool.name.clone(),
-                        kind: ResolvedToolKind::Function(definition),
-                    })?;
-                }
-                ToolKind::ProviderNative(native) => {
-                    let definition = read_json(blobs, &native.native_tool_ref).await?;
-                    let name = match definition.get("name").and_then(Value::as_str) {
-                        Some(name) => ToolName::try_new(name).map_err(|error| {
-                            LlmAdapterError::InvalidProviderRequest {
-                                message: error.to_string(),
-                            }
-                        })?,
-                        None => tool.name.clone(),
-                    };
-                    catalog.push(ResolvedTool {
-                        id: tool.name.clone(),
-                        name,
-                        kind: ResolvedToolKind::ProviderNative(NativeDefinition {
-                            api_kind: native.api_kind.clone(),
-                            definition,
-                            execution: native.execution.clone(),
-                        }),
-                    })?;
-                }
-                ToolKind::RemoteMcp(remote) => catalog.push(ResolvedTool {
-                    id: tool.name.clone(),
-                    name: tool.name.clone(),
-                    kind: ResolvedToolKind::RemoteMcp(remote.clone()),
-                })?,
-            }
-        }
-        // Preserve the previous provider-visible BTreeMap ordering, even though
-        // the admitted registry is now ordered by logical identity.
-        if tools
-            .iter()
-            .any(|tool| matches!(tool.kind, ToolKind::Builtin(_)))
+        for tool in callable::resolve(blobs, target, tools)
+            .await
+            .map_err(catalog_error)?
         {
-            catalog
-                .tools
-                .sort_by(|left, right| left.name.cmp(&right.name));
+            catalog.push(tool)?;
         }
         Ok(catalog)
     }
@@ -218,12 +108,22 @@ impl AdvertisedNames {
     }
 }
 
-pub(crate) fn valid_exposed_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+fn catalog_error(error: callable::CatalogError) -> LlmAdapterError {
+    match error {
+        callable::CatalogError::BlobStore(error) => error.into(),
+        callable::CatalogError::InvalidUtf8 { blob_ref, message } => {
+            LlmAdapterError::InvalidUtf8 { blob_ref, message }
+        }
+        callable::CatalogError::InvalidJson { blob_ref, message } => {
+            LlmAdapterError::InvalidJson { blob_ref, message }
+        }
+        callable::CatalogError::Tool(error) => LlmAdapterError::InvalidProviderRequest {
+            message: error.to_string(),
+        },
+        callable::CatalogError::InvalidCatalog { message } => {
+            LlmAdapterError::InvalidProviderRequest { message }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -234,7 +134,9 @@ mod tests {
         LlmGenerationStatus, ObservedToolCall, RunId, ToolCallId, ToolParallelism, TurnId,
         storage::InMemoryBlobStore,
     };
+    use harness::{ProviderApiKind, ToolKind};
     use serde_json::json;
+    use tools::definitions;
 
     fn builtin(id: &str) -> ToolSpec {
         definitions::register(

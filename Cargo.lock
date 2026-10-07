@@ -1349,6 +1349,7 @@ name = "environment-protocol"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -5887,6 +5888,7 @@ dependencies = [
  "jsonschema",
  "regex",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",

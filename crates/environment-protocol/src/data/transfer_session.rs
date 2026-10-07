@@ -95,6 +95,7 @@ impl TransferRequest {
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum TransferPhase {
     Scanning,
@@ -106,6 +107,7 @@ pub enum TransferPhase {
     Aborted,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TransferStatus {
     pub operation_id: String,

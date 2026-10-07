@@ -22,6 +22,9 @@ mod claude;
 mod codex;
 mod shared;
 
+#[cfg(test)]
+mod output_schema_tests;
+
 pub use crate::environment::tools::{
     ContinueProcessArgs, RunProcessArgs, invoke_continue_process, invoke_job_read,
     invoke_job_submit, invoke_run_process,
@@ -736,7 +739,42 @@ impl BuiltinTool {
             self.name_str(),
             self.description(scoped_paths)?,
             self.input_schema(target)?,
-        ))
+        )
+        .with_output_schema(self.output_schema()))
+    }
+
+    /// The structured `output_json` projection, independent of the text rendered
+    /// for a provider. Adapter-specific result variants remain explicit.
+    pub fn output_schema(self) -> Value {
+        use crate::definitions::output_schema_for;
+        use crate::environment::{jobs, process::ProcessOutput};
+        use crate::fs::tools::ListDirResult;
+
+        match self.operation {
+            BuiltinToolOperation::Reference => output_schema_for::<harness::FileAttachment>(),
+            BuiltinToolOperation::ReadFile => output_schema_for::<ReadFileResult>(),
+            BuiltinToolOperation::WriteFile => output_schema_for::<WriteFileResult>(),
+            BuiltinToolOperation::EditFile
+                if self.surface == BuiltinToolSurface::ClaudeCodeLike =>
+            {
+                output_schema_for::<claude::EditResult>()
+            }
+            BuiltinToolOperation::EditFile => output_schema_for::<EditFileResult>(),
+            BuiltinToolOperation::ApplyPatch => output_schema_for::<ApplyPatchResult>(),
+            BuiltinToolOperation::Grep => output_schema_for::<GrepResult>(),
+            BuiltinToolOperation::Glob => output_schema_for::<GlobResult>(),
+            BuiltinToolOperation::ListDir => output_schema_for::<ListDirResult>(),
+            BuiltinToolOperation::RunProcess | BuiltinToolOperation::ContinueProcess => {
+                output_schema_for::<ProcessOutput>()
+            }
+            BuiltinToolOperation::JobSubmit => output_schema_for::<jobs::JobSubmitResult>(),
+            BuiltinToolOperation::JobRun => output_schema_for::<jobs::ModelJobResult>(),
+            BuiltinToolOperation::JobRead => output_schema_for::<jobs::ModelJobResultSet>(),
+            BuiltinToolOperation::Materialize => {
+                output_schema_for::<crate::transfer::MaterializeResult>()
+            }
+            BuiltinToolOperation::Capture => output_schema_for::<crate::transfer::CaptureResult>(),
+        }
     }
 
     fn description(self, scoped_paths: bool) -> ToolResult<String> {

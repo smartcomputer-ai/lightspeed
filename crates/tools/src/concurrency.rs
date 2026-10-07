@@ -124,28 +124,28 @@ pub struct SleepArgs {
     pub ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CancelOutput {
     #[serde(default)]
     pub promises: Vec<CancelPromiseOutput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CancelPromiseOutput {
     pub promise_id: String,
     pub status: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DetachOutput {
     #[serde(default)]
     pub promises: Vec<DetachPromiseOutput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DetachPromiseOutput {
     pub promise_id: String,
@@ -304,7 +304,7 @@ pub fn promise_status_name(status: PromiseStatus) -> &'static str {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SleepOutput {
     pub promise: String,
@@ -425,11 +425,16 @@ fn function_definition(
     description: &'static str,
     input_schema: Value,
 ) -> ToolResult<crate::runtime::FunctionDefinition> {
-    Ok(crate::runtime::FunctionDefinition::new(
-        tool_name,
-        description,
-        input_schema,
-    ))
+    let definition = crate::runtime::FunctionDefinition::new(tool_name, description, input_schema);
+    let schema = match tool_name {
+        CANCEL_TOOL_NAME => crate::definitions::output_schema_for::<CancelOutput>(),
+        DETACH_TOOL_NAME => crate::definitions::output_schema_for::<DetachOutput>(),
+        SLEEP_TOOL_NAME => crate::definitions::output_schema_for::<SleepOutput>(),
+        // Await materialization is owned by the workflow adapter. Do not infer
+        // a payload shape from the promises seen by one invocation.
+        _ => return Ok(definition),
+    };
+    Ok(definition.with_output_schema(schema))
 }
 
 fn await_input_schema() -> Value {

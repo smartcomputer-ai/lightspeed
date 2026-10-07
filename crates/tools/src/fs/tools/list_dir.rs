@@ -15,14 +15,14 @@ pub struct ListDirArgs {
     pub path: FsPath,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListDirEntry {
     pub file_name: String,
     pub is_directory: bool,
     pub is_file: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListDirResult {
     pub path: FsPath,
     pub resolved_path: FsPath,

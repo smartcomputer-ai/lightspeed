@@ -1,6 +1,7 @@
 # Code mode
 
-**Status:** Proposed direction, updated 2026-10-07. No implementation started.
+**Status:** First implementation slice completed: callable contracts and execution
+metadata, updated 2026-10-07. Script execution and session integration remain planned.
 Add code mode as a session feature, accepting JavaScript in native QuickJS
 through a new `codemode` library crate and a `code` worker role in the existing
 `lightspeed-runtime` binary. V1 targets Lightspeed's current trusted
@@ -9,6 +10,51 @@ A separate code workflow owns script execution; the parent session owns all
 nested tool admission, scheduling, and durable outcomes. The first version
 runs each script once, without JS checkpointing or replay. Names and schemas
 below are illustrative, not public API commitments.
+
+## Implementation progress
+
+The first slice provides the contracts needed before adding nested execution:
+
+- `tools::callable` resolves the common model catalog and retains matching
+  function specifications and argument adapters. `llm-runtime` consumes this
+  resolver while keeping provider wire formatting and response normalization.
+  Callable snapshots omit provider transport options. Provider options cannot
+  override the function name, argument schema, or other reserved contract fields.
+- Workflow callable resolution starts from the admitted workflow definition,
+  pins its binding fingerprint, and distinguishes acknowledgements from joined
+  replies. It cannot pair an old argument adapter with a newer same-name binding.
+- `FunctionDefinition` carries optional output JSON Schema. Owned result schemas
+  derive from the actual serialized filesystem, process, job, subagent, web-fetch,
+  promise-control, attachment-reference, and transfer results. Claude Edit's
+  creation/editing variants and workflow acknowledgement shapes are explicit.
+- MCP discovery retains optional `outputSchema` through cached/native metadata
+  and deferred full definitions. Search results retain it when it fits their
+  existing bounds; truncated results direct callers to full definitions. This
+  schema continues to describe `structuredContent`, not the response envelope.
+- `ScriptToolResult` defines successful structured values and failed calls with
+  optional structured error output. Session effects and attachment admission
+  stay with the host; formatted provider text is not the script return value.
+- `temporal-workflow` owns a validated `CodeExecutionDescriptor` with source and
+  catalog CAS references, parent identity, and explicit positive execution limits.
+  It introduces no interpreter dependency or deployment defaults. Exporting an
+  integration-contract entry point waits until the code workflow exists.
+
+Runtime-owned `await` and environment-control return schemas remain unknown.
+Generic joined workflow bindings need a declared reply schema (or an authored
+function's declared result); an arbitrary workflow does not inherit the result
+schema of its underlying built-in operation. Missing schemas remain callable.
+
+This slice does not enable code mode or append schemas to ordinary model tool
+descriptions. Nested session admission, QuickJS, the code workflow/worker role,
+feature configuration, and hybrid/code-only presentation remain to be implemented.
+The next main slice is the generic session-owned nested execution path in step 2.
+
+Validation passed: unit suites for `tools`, `llm-runtime`, `mcp`,
+`environment-protocol`, and `temporal-workflow`; the runtime MCP test subset;
+workspace formatting; and `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+Coverage checks actual serialized results across presentation adapters,
+workflow acknowledgement/reply distinctions, schema gaps, bounded MCP metadata,
+and execution-descriptor validation. No live or credentialed tests were run.
 
 ## Purpose and scope
 
@@ -551,11 +597,11 @@ the same admitted binding, including deferred tools not in the initial prompt.
 ### Structured results and schema gaps
 
 Ordinary tool descriptions may explain returns in prose, but Lightspeed's
-normal declaration pipeline currently does not automatically show a structured
-output schema. `FunctionToolSpec` has `output_schema_ref`; the model-facing
-resolver does not load it into `FunctionDefinition`. Built-ins serialize typed
-results without consistently publishing output schemas, and MCP discovery
-currently drops the server's optional `outputSchema`.
+normal declaration pipeline does not yet automatically show a structured
+output schema. The shared resolver now loads `FunctionToolSpec.output_schema_ref`
+into `FunctionDefinition`, owned result DTOs publish serialization schemas,
+and MCP discovery preserves the server's optional `outputSchema`. Unknown
+runtime-owned or external return shapes remain explicitly unspecified.
 
 Add output schemas for owned tool results and carry available schemas through
 metadata to model-facing descriptions and discovery. Where absent, document
@@ -902,7 +948,7 @@ The main existing seams are:
 
 Implementation should proceed in these steps:
 
-1. Define the execution descriptor, matched specification/binding metadata,
+1. **Implemented — contract foundation.** Define the execution descriptor, matched specification/binding metadata,
    and script-visible result contract. Refactor shared callable specifications
    into `tools`, add output schemas for owned results, and carry available
    schemas through the common catalog and MCP discovery.
@@ -957,8 +1003,8 @@ and integration cases with both colocated and separate code/session workers.
 Verify that the workflow crate does not acquire an interpreter dependency.
 
 Remaining v1 implementation decisions are the native embedding/driver details,
-generic nested-admission and scope-lifecycle DTOs, result/error
-contracts, configuration defaults, cleanup and durable-submission scope
+generic nested-admission and scope-lifecycle DTOs, mapping the result/error
+contract into guest promises, configuration defaults, cleanup and durable-submission scope
 mapping, rollover policy, and role capacity defaults. Session ownership,
 direct bridge requests, specification/binding correspondence, and ordinary-tool
 capability parity are the proposed direction. Wasm package/ABI choices and the
