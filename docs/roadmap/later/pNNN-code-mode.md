@@ -2,7 +2,8 @@
 
 **Status:** Proposed direction, updated 2026-10-07. No implementation started.
 Add code mode as a session feature, accepting JavaScript in native QuickJS
-inside a dedicated code worker. V1 targets Lightspeed's current trusted
+through a new `codemode` library crate and a `code` worker role in the existing
+`lightspeed-runtime` binary. V1 targets Lightspeed's current trusted
 deployments. Wasm isolation and TypeScript source support are later phases.
 A separate code workflow owns script execution; the parent session owns all
 nested tool admission, scheduling, and durable outcomes. The first version
@@ -28,8 +29,9 @@ The agreed first-version boundaries are:
 
 - Normal asynchronous JavaScript: top-level `await`, loops, branching,
   dependent effects, `Promise.all`, and `Promise.allSettled`.
-- Native QuickJS in the code-worker process, with a fresh runtime per execution
-  and a restricted host API. This does not provide Wasm memory containment.
+- Native QuickJS in the process hosting the `code` role, with a fresh runtime
+  per execution and a restricted host API. This does not provide Wasm memory
+  containment. Roles may share one process or run separately from the same binary.
 - JavaScript source only. TypeScript transpilation is deferred independently
   of the later Wasm integration.
 - Tool contracts presented directly as JSON Schema. Generating TypeScript
@@ -157,9 +159,9 @@ Expected script exceptions and rejected calls should produce a report rather
 than become a reason to retry the whole activity.
 
 Workflow-task replay reconstructs each owner's recorded orchestration without
-re-entering the JavaScript heap. If the code-worker process dies or the activity
-times out, the code workflow closes its nested execution scope through the
-session, obtains known outcomes, and returns an interrupted report. The
+re-entering the JavaScript heap. If the process hosting the code role dies or
+the activity times out, the code workflow closes its nested execution scope
+through the session, obtains known outcomes, and returns an interrupted report. The
 session's nested-call records remain authoritative; do not create a competing
 effect ledger in the code workflow. Recreating the JS continuation is outside v1.
 
@@ -169,35 +171,89 @@ the ephemeral interpreter. Making generated source itself a replayable workflow
 would introduce determinism, versioning,
 and continuation semantics that this design deliberately leaves for later.
 
-### Worker and dependency boundary
+### Planned crate structure
 
-Prefer an optional separate code-worker binary containing the code workflow
-and `RunCode`, with its own task queue. V1 embeds native QuickJS in this
-process. Keep that dependency out of the core runtime's mandatory dependency
-graph; add Wasmtime and TypeScript transformation to the code worker only in
-later phases. Suggested boundaries, with crate names still provisional:
+Add one library crate, `crates/codemode`, and extend the existing crates below.
+Ship everything in the existing `lightspeed-runtime` binary. A library boundary
+keeps the interpreter independently testable and makes its later Wasm migration
+local without requiring a separate executable or a general runtime plugin framework.
 
-| Package | Contents |
+| Crate | Planned responsibility |
 | --- | --- |
-| `code-runtime` | Native QuickJS adapter, guest driver, JSON message boundary, and resource limits; later Wasm adapter and TS transformation. |
-| Shared workflow contract | Execution descriptors, nested invocation identities, results, and lifecycle messages. Reuse `temporal-workflow` where appropriate. |
-| `lightspeed-code-worker` | Code workflow and execution activity registration, Temporal client, and narrow artifact access. |
-| `temporal-runtime` sessions role | Existing tool implementations, session state, credentials, and effect scheduling. |
+| `codemode` — new | Native QuickJS adapter, JS helper prelude, promise-job driver, bounded JSON request/completion interface, execution limits, cancellation, and local script output. Later Wasm adapter and TS preprocessing. |
+| `temporal-runtime` | `code` role and task-queue configuration, worker/activity registration, `RunCode`, artifact loading/storage, and the bridge from interpreter requests to session Updates. Existing session adapters still execute tools. |
+| `temporal-workflow` | `CodeExecutionWorkflow`, durable execution/activity DTOs, and generic nested-tool Update and scope-lifecycle contracts and orchestration. |
+| `harness` | Deterministic nested invocation origins, admission facts, and outcome records needed to preserve session-owned effects and promises. No interpreter or infrastructure I/O. |
+| `tools` | Shared callable specifications/bindings, output-schema metadata and owned result schemas, and the ordinary `code_execute` definition used by its workflow-tool binding. |
+| `llm-runtime` | Model-facing presentation of the same resolved tool specifications, including return JSON Schema when code mode is enabled; provider-native wire formatting stays here. |
+| `mcp` | Preserve optional output schemas in discovered metadata, carried onward by runtime discovery and presentation. |
+| `api` | Public `code_mode` session feature and configuration knobs, with the normal generated contract/consumer updates when implemented. |
 
-Do not depend on all of `temporal-runtime` merely to reuse a helper. Its
-[manifest](../../../crates/temporal-runtime/Cargo.toml) includes gateway,
-database, provider, MCP, and environment dependencies that the runner does
-not need. Extract small shared types or interfaces where necessary. Keep the
-two artifacts on the same release train initially.
+`codemode` has no dependency on Temporal, the harness, session state, tool
+implementations, providers, or stores. Its caller supplies JavaScript source,
+opaque callable bindings, and execution limits, receives tool requests, and
+supplies results through the JSON bridge. Interpreter values, contexts,
+functions, and promise handles remain private to this crate. The engine treats
+artifact handles as opaque data; the host resolves authorized artifacts.
 
-This is a proposed exception to the current single hosted binary convention;
-the [role ownership boundary](../../../crates/temporal-runtime/src/roles.rs)
-still holds because each worker runs its own workflows and activities.
-An all-in-one, feature-enabled build remains possible if deployment simplicity
-later warrants it. The separate worker is a deployment/dependency boundary;
-native QuickJS still shares its memory and privileges. It is not a per-script
-process sandbox. Disabling a role at runtime does not remove linked interpreter
-dependencies, including Wasmtime if added later.
+`temporal-runtime` depends on both `codemode` and `temporal-workflow` and adapts
+between them. `temporal-workflow` must not depend on `codemode`: durable workflow
+inputs contain execution identities and source/catalog references, while the
+interpreter accepts materialized source and plain values. Keep durable DTOs in
+the existing workflow contract and engine-local types in `codemode`; the runtime
+loads artifacts and translates results back into durable references. QuickJS
+therefore does not enter the workflow dependency graph.
+
+Two focused refactors support this structure:
+
+- **Nested invocation admission:** separate call origin from the assumption
+  that every call belongs to the active model tool batch. Give nested requests
+  an explicit execution scope and identity. Reuse validation, scheduling
+  policies, and effect application while keeping nested waiting/completion
+  state separate from the outer parked batch. The deterministic facts belong
+  in the harness; Temporal admission/waiting and effectful adapters remain in
+  their existing crates.
+- **Shared callable specifications:** factor the common host-callable metadata
+  and binding projection into `tools`. Direct model tools and code mode must
+  consume the same resolved specification, including provider presentation
+  adapters. Keep provider wire materialization in `llm-runtime`; do not build
+  another tool catalog or implement tool dispatch inside `codemode`.
+
+No new protocol, scheduler, registry, store, or worker-framework crate is
+required for v1. Keep generic nested-tool contracts in the existing workflow
+modules rather than adding a feature-specific transport package.
+
+### Worker roles and deployment
+
+Add a `code` role to the existing
+[role wiring](../../../crates/temporal-runtime/src/roles.rs). It polls its own
+task queue for `CodeExecutionWorkflow` and `RunCode`. The sessions role continues
+to own nested tool admission, activities, effects, and durable promises.
+The planned deployment choices use the same executable:
+
+```sh
+# All roles in one process, after the code role is implemented.
+lightspeed-runtime --roles all
+
+# Or run these worker roles in separate processes.
+lightspeed-runtime --roles sessions
+lightspeed-runtime --roles code
+```
+
+Other roles are selected as required by the deployment. Running the code role
+does not grant code-mode access to a session; session feature admission still
+controls that. Preserve the same Temporal start/Update/completion path when
+roles share a process. Do not introduce a direct in-memory session shortcut:
+moving a role to a separate process should change deployment configuration,
+not execution semantics.
+
+Native QuickJS is linked into the runtime binary; disabling a role does not
+remove its code from the executable. Measure the stripped release-size delta
+with the selected embedding features. Native execution shares the hosting
+process's memory and privileges, including any colocated roles; worker-role
+separation is not a per-script process sandbox. Revisit build features or
+separate binary packaging when Wasmtime is introduced, without changing the
+session protocol.
 
 ## Workflow tools and durable promises
 
@@ -519,7 +575,7 @@ See the [MCP tool-result contract](https://modelcontextprotocol.io/specification
 
 ## Runtime implementation
 
-V1 embeds native QuickJS through a Rust adapter such as
+The `codemode` crate embeds native QuickJS through a Rust adapter such as
 [`rquickjs`](https://docs.rs/rquickjs/latest/rquickjs/). QuickJS owns parsing,
 JS bytecode execution, objects, promises, and microtasks. A Rust driver manages
 entry, requests, completions, limits, and cleanup. Keep all library-specific
@@ -542,8 +598,9 @@ engine-managed limits, not OS process limits. See the
 
 This phase deliberately accepts native in-process execution for current
 trusted deployments. Restricting the JS API does not contain interpreter or
-FFI memory-safety faults: they can affect the code worker, including other
-executions. Stronger containment is later work, not a v1 guarantee.
+FFI memory-safety faults; these can affect the hosting process, including other
+executions and colocated roles. Stronger containment is later work, not a v1
+guarantee.
 
 ### Async guest-to-host bridge
 
@@ -562,8 +619,8 @@ Keep the engine boundary small and explicit:
 
 Transport JSON-compatible values and scoped artifact handles. Define how
 unsupported JS values are rejected; do not expose native Rust objects, borrowed
-buffers, or interpreter handles outside the adapter. One private adapter is
-enough for v1; no general runtime plugin framework is needed.
+buffers, or interpreter handles outside `codemode`. One private engine adapter
+inside the crate is enough for v1; no general runtime plugin framework is needed.
 
 On completion, an event goes to the driver owning that runtime. The driver
 delivers it to the prelude to settle the matching promise, then pumps QuickJS's
@@ -585,9 +642,9 @@ but the live heap and execution activity slot remain allocated.
 
 ### Later phase: Wasm isolation
 
-Replace the native interpreter adapter with QuickJS compiled to Wasm, hosted
-by Wasmtime. Keep the JS prelude, JSON message boundary, tool catalog, session
-Update bridge, and code workflow intact. This is a localized backend migration,
+Replace the native interpreter adapter inside `codemode` with QuickJS compiled
+to Wasm, hosted by Wasmtime. Keep the JS prelude, JSON message boundary, tool
+catalog, session Update bridge, and code workflow intact. This is a localized backend migration,
 not a dependency switch: it requires guest artifact packaging, imports/exports,
 linear-memory copying and ownership, job pumping, and limit/trap handling.
 Use a compatible QuickJS version and feature set and verify script behavior
@@ -754,11 +811,12 @@ from work already handed off under an admitted run/session scope. Specify the
 scope and cancellation mapping for each wrapper before shipping. Cancellation
 is best effort and never means that completed remote side effects were undone.
 
-Separate code execution activity capacity from session tool activity capacity. A
-separate code worker supplies that separation; any all-in-one build must also
-reserve capacity so waiting `RunCode` activities cannot starve their effects.
-Load-test both queues. Bound call counts, payloads, and execution duration so
-nested calls cannot exhaust session or code-workflow history.
+Separate code execution activity capacity from session tool activity capacity.
+Configure independent worker limits and interpreter threads even when the
+roles share a process, so waiting `RunCode` activities cannot starve their
+effects. Load-test both combined-role and separate-process deployments. Bound
+call counts, payloads, and execution duration so nested calls cannot exhaust
+session or code-workflow history.
 Honor existing workflow-tool and promise limits as well; larger code-mode
 loops do not implicitly bypass per-run admission limits.
 
@@ -774,7 +832,7 @@ not delivered behavior.
 
 | Dimension | Pi built-in code mode | Cloudflare Agents code mode | Proposed Lightspeed v1 |
 | --- | --- | --- | --- |
-| Execution boundary | Fresh QuickJS Wasm VM. | Fresh Dynamic Worker using Workers' V8 isolates. | Fresh native QuickJS runtime in the code-worker process for trusted deployments; JavaScript only. Wasm and TS are later phases. |
+| Execution boundary | Fresh QuickJS Wasm VM. | Fresh Dynamic Worker using Workers' V8 isolates. | Fresh native QuickJS runtime through `codemode` in the `code` role of the shared binary; roles may run together or separately. Trusted deployments, JavaScript only; Wasm and TS later. |
 | Effects | Injected tool/model functions route through the host. | Host tool functions or connectors exposed through Workers RPC. | Ordinary admitted tools only; the session owns scheduling and results. |
 | Discovery | Typed declarations and search/describe helpers. | Generated typed definitions; durable runtime also offers connector discovery. | JSON Schema in direct descriptions, code-tool description, and discovery results, matched to execution bindings. |
 | Script recovery | Built-in VM execution is ephemeral; small explicit stored values are separate. | Simple executor is stateless; optional durable runtime supports recorded-call replay around approval pauses. | Script is ephemeral; lifecycle workflow and session-owned effects are durable. |
@@ -820,6 +878,7 @@ Temporal and session machinery rather than import another workflow engine.
 
 ## Implementation seams and acceptance criteria
 
+The new `codemode` crate provides the interpreter boundary described above.
 The main existing seams are:
 
 - [Session preparation](../../../crates/temporal-runtime/src/gateway/service/session_preparation.rs):
@@ -844,17 +903,21 @@ The main existing seams are:
 Implementation should proceed in these steps:
 
 1. Define the execution descriptor, matched specification/binding metadata,
-   and script-visible result contract. Add output schemas for owned tool results
-   and carry available output schemas through the common catalog and MCP discovery.
+   and script-visible result contract. Refactor shared callable specifications
+   into `tools`, add output schemas for owned results, and carry available
+   schemas through the common catalog and MCP discovery.
 2. Add generic session-owned nested admission/completion for ordinary calls,
    workflow tools, and promise waits while the outer joined call is parked.
    Reuse activity policies and the session's effect-application path.
-3. Embed native QuickJS behind the JSON message boundary and connect the direct
-   session Update bridge. Demonstrate JavaScript dependent/parallel effects,
-   guest job pumping, interruption, and engine-managed resource limits.
-4. Add feature admission, the trusted joined code workflow, and separate worker
-   packaging. Implement single-attempt lifecycle, scope closure, outcome
-   reporting after runner loss, and the session rollover policy.
+3. Add `crates/codemode` with native QuickJS behind the JSON message boundary.
+   Connect the session Update bridge in `temporal-runtime`. Demonstrate JavaScript
+   dependent/parallel effects, guest job pumping, interruption, and engine-managed
+   resource limits.
+4. Add feature admission, the trusted joined code workflow in `temporal-workflow`,
+   and the `code` role/queue in `temporal-runtime`. Implement single-attempt
+   lifecycle, scope closure, outcome reporting after runner loss, and the
+   session rollover policy. Ship the existing runtime binary for both combined
+   and separate-role deployments.
 5. Add hybrid/code-only JSON Schema presentation, existing MCP discovery/call
    integration, scoped artifacts, compact model output, and execution tracing.
    TypeScript declaration rendering remains optional later work.
@@ -889,11 +952,14 @@ runner capacity cannot starve tool execution. The final model output should
 stay compact while every nested effect remains attributable and inspectable.
 Exercise parent rollover, lost Update responses, scope closure, and late
 requests/results without duplicating effects or requiring JS replay.
+Run interpreter contract cases directly against `codemode` without Temporal,
+and integration cases with both colocated and separate code/session workers.
+Verify that the workflow crate does not acquire an interpreter dependency.
 
 Remaining v1 implementation decisions are the native embedding/driver details,
 generic nested-admission and scope-lifecycle DTOs, result/error
 contracts, configuration defaults, cleanup and durable-submission scope
-mapping, rollover policy, and exact crate/release packaging. Session ownership,
+mapping, rollover policy, and role capacity defaults. Session ownership,
 direct bridge requests, specification/binding correspondence, and ordinary-tool
 capability parity are the proposed direction. Wasm package/ABI choices and the
 TS syntax subset belong to later phases. Wasm isolation, TS source support,
