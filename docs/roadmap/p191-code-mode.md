@@ -21,9 +21,10 @@ broader live integration coverage and operational validation:
 
 1. **Broaden integration and failure coverage.** The real OpenAI Responses path
    works. Provider request tests cover schema presentation on all three adapters,
-   including injected native MCP metadata. Add live code-mode tests for other
-   providers, native/deferred MCP discovery and calls, and real environment jobs/sub-agents; current joined
-   job/sub-agent tests use fixture workflows. Exercise safe individual-effect
+   including injected native MCP metadata and selected image/PDF lowering.
+   Native/deferred MCP discovery and calls, registered environment jobs, and
+   real sub-agent sessions now have code-mode live coverage. Add actual-model
+   tests for other providers. Exercise safe individual-effect
    activity retries, parent Continue-As-New, and approval-required MCP calls.
    Add delayed-preparation cancellation and exhausted-finalization-retry cases.
    Lifecycle retries, worker-process loss, cancellation, and workflow replay are
@@ -232,8 +233,8 @@ code-mode presentation tests; three workflow-contract checks; and the exact
 workspace Clippy gate. All 19 targeted live tests passed serially: one
 schema-driven real-model run, nine code-workflow cases, and nine ordinary
 sub-agent lifecycle/media cases. The sub-agent cases validate the new reply
-schemas against existing behavior; code-mode job/sub-agent integration still
-uses fixture workflows.
+schemas against existing behavior. Code-mode coverage now also runs actual
+environment-job and sub-agent workflows, as described below.
 
 The `CodeTool` naming pass is complete across harness commands/events/state,
 Temporal Updates, queries and activities, runtime adapters, public progress
@@ -296,6 +297,21 @@ and one durable wait, selects a compact result, and consumes it in its next turn
 The prompt supplies the task; the provider gets return-contract details from
 the rendered tool descriptions.
 It requires provider credentials and does not silently skip missing prerequisites.
+
+`code_capabilities_live` adds two serialized integration tests. A local native
+MCP HTTP server exercises injected calls, search and full-definition retrieval,
+input/output schema preservation, structured results, a catchable remote error,
+and a dependent recovery call. Search-only tools remain absent from the direct
+script catalog; explicitly emitted definitions reach the outer model result.
+The second test registers a real environment daemon and runs `job_run` alongside
+`agent_run`, then `job_submit` alongside `agent_spawn` and one durable `await`.
+It checks exact filesystem effects, results correlated to their promise handles,
+the admitted environment, owned child sessions with completed runs, and child
+closure. Each test uses a fresh universe and separate code/session queues and
+cleans up its daemon/server, database records, and stored objects. Model responses
+are scripted; job and child completions come from production workflows.
+Both live cases pass serially against local Temporal/PostgreSQL/MinIO, with
+loopback MCP explicitly allowed. Workspace Clippy and formatting checks pass.
 
 Eight additional live tests in `crates/codemode/tests/` pass directly against the
 public interpreter boundary with real asynchronous filesystem I/O. They cover
@@ -696,7 +712,7 @@ Configuration status is:
 | Capability selection | Logical `allowedTools` narrows admitted host-callable capabilities. | Complete for v1. |
 | Execution limits | Attempt deadline, memory, stack, source/catalog/request/result/output bytes, and call count. | Additional compute metering if later isolation requires it. |
 | Effect limits | Outstanding calls plus existing per-tool retry, timeout, and concurrency policies. | Optional service budgets or narrower per-call settings. |
-| Discovery | Existing MCP search/call tools, schema metadata, and bounds. | Verify model-facing contracts through code-mode integration tests. |
+| Discovery | Existing MCP search/call tools, schema metadata, and bounds; live code-mode discovery/call integration. | Broader actual-model/provider coverage. |
 
 The implemented configuration uses flat camelCase fields:
 
@@ -1323,8 +1339,9 @@ Implementation sequence and current status:
    prompt-supplied return hints. Ordinary tools remain alongside `code_execute`.
    TypeScript declaration rendering remains optional.
 6. **Remaining — integration coverage and operational validation.** Extend the
-   existing OpenAI Responses case to other provider presentations, native/deferred
-   MCP, and real job/sub-agent runtimes. Cover effect retries, parent rollover,
+   existing OpenAI Responses cases to other actual model providers. Native/deferred
+   MCP and real job/sub-agent runtimes have scripted-model live coverage.
+   Cover effect retries, parent rollover,
    remaining lifecycle failure races, and saturation; improve execution inspection
    and measure release footprint and complete lifecycle latency. Worker-process
    loss, bounded cleanup, lifecycle retries, and offline code-workflow replay
