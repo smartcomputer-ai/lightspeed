@@ -26,7 +26,7 @@ use crate::{
 
 /// Describe the value actually serialized by an owned result DTO, including
 /// output-only required fields and omitted optional values.
-pub(crate) fn output_schema_for<T: schemars::JsonSchema>() -> Value {
+pub fn output_schema_for<T: schemars::JsonSchema>() -> Value {
     schemars::generate::SchemaSettings::draft2020_12()
         .for_serialize()
         .into_generator()

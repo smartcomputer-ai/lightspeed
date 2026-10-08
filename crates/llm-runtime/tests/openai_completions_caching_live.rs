@@ -105,6 +105,7 @@ fn retained_context_entry(id: u64, item: &ContextEntryInput) -> ContextEntry {
 
 fn intent_request(entries: Vec<ContextEntry>) -> LlmRequest {
     LlmRequest {
+        code_mode: None,
         model: ModelSelection {
             api_kind: ProviderApiKind::OpenAiCompletions,
             provider_id: "openai".to_owned(),

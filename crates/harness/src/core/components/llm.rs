@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -69,6 +71,10 @@ pub struct LlmRequest {
     pub request_fingerprint: String,
     pub context: ContextSnapshot,
     pub tools: Vec<ToolSpec>,
+    /// Neutral admission and completion facts used to describe script calls.
+    /// Schemas are loaded and descriptions rendered by the runtime adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_mode: Option<CodeModePresentation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,6 +101,28 @@ pub struct LlmRequest {
     pub compaction: Option<CompactionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<ProviderParams>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeModePresentation {
+    pub allowed_tools: BTreeSet<crate::ToolName>,
+    pub workflow_results: BTreeMap<crate::ToolName, WorkflowToolResultContract>,
+}
+
+/// Completion semantics without workflow destinations, recipes, or authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowToolResultContract {
+    pub completion: crate::WorkflowToolCompletion,
+    pub starts_workflow: bool,
+}
+
+impl From<&crate::WorkflowToolBinding> for WorkflowToolResultContract {
+    fn from(binding: &crate::WorkflowToolBinding) -> Self {
+        Self {
+            completion: binding.completion.clone(),
+            starts_workflow: matches!(binding.target, crate::WorkflowToolTarget::Start { .. }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +197,7 @@ pub(crate) fn build_llm_request(
         .into());
     }
     let compaction = config.context.compaction.clone();
+    let code_mode = code_mode_presentation(state, &tools);
     let request_fingerprint = request_fingerprint(
         &model,
         &context,
@@ -178,11 +207,23 @@ pub(crate) fn build_llm_request(
         active_run.run_id,
         turn_id,
     )?;
+    let request_fingerprint = match &code_mode {
+        Some(presentation) => {
+            let bytes = serde_json::to_vec(&(&request_fingerprint, presentation))
+                .map_err(|error| PlanningError::Rejected(error.to_string()))?;
+            format!(
+                "{LLM_REQUEST_FINGERPRINT_PREFIX}{}",
+                hex::encode(Sha256::digest(bytes))
+            )
+        }
+        None => request_fingerprint,
+    };
     Ok(LlmRequest {
         model,
         request_fingerprint,
         context,
         tools,
+        code_mode,
         tool_choice: generation.tool_choice,
         output_limit: generation.max_output_tokens,
         reasoning_effort: generation.reasoning_effort,
@@ -192,6 +233,35 @@ pub(crate) fn build_llm_request(
         compaction,
         params,
     })
+}
+
+fn code_mode_presentation(
+    state: &CoreAgentState,
+    tools: &[ToolSpec],
+) -> Option<CodeModePresentation> {
+    let feature = state
+        .lifecycle
+        .config
+        .as_ref()?
+        .features
+        .code_mode
+        .as_ref()?;
+    let mut presentation = CodeModePresentation::default();
+    for tool in tools {
+        if feature
+            .allowed_tools
+            .as_ref()
+            .is_none_or(|allowed| allowed.iter().any(|id| id == tool.name.as_str()))
+        {
+            presentation.allowed_tools.insert(tool.name.clone());
+        }
+        if let Some(binding) = state.workflow_tools.binding_for_tool_name(&tool.name) {
+            presentation
+                .workflow_results
+                .insert(tool.name.clone(), binding.into());
+        }
+    }
+    Some(presentation)
 }
 
 pub(crate) fn build_planned_llm_request(
@@ -450,6 +520,84 @@ fn compaction_request_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_presentation_keeps_completion_facts_without_workflow_routing() {
+        let mut state = CoreAgentState::new();
+        state.lifecycle.config = Some(crate::SessionConfig {
+            model: ModelSelection {
+                api_kind: ProviderApiKind::OpenAiResponses,
+                provider_id: "test".into(),
+                model: "test".into(),
+            },
+            generation: Default::default(),
+            limits: Default::default(),
+            context: Default::default(),
+            features: crate::FeaturesConfig {
+                code_mode: Some(crate::CodeModeFeature {
+                    allowed_tools: Some(vec![]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        });
+        let tool = ToolSpec {
+            name: crate::ToolName::new("env.job_run"),
+            kind: ToolKind::Builtin(crate::BuiltinToolSpec {
+                settings: serde_json::json!({}),
+            }),
+            parallelism: crate::ToolParallelism::ParallelSafe,
+            execution: Default::default(),
+        };
+        let schema_ref = crate::BlobRef::from_bytes(b"reply schema");
+        let binding = crate::WorkflowToolBinding::admit(
+            uuid::Uuid::nil(),
+            crate::WorkflowToolDefinition {
+                tool_id: crate::WorkflowToolId::new("job"),
+                revision: 1,
+                semantic_type: "test.job.v1".into(),
+                tool: tool.clone(),
+            },
+            crate::WorkflowToolTarget::Start {
+                start: crate::WorkflowStartRef {
+                    recipe_format: 1,
+                    revision: 1,
+                    recipe_ref: crate::BlobRef::from_bytes(b"private recipe"),
+                    recipe_fingerprint: "private-recipe-fingerprint".into(),
+                },
+            },
+            crate::WorkflowToolCompletion::Joined {
+                reply_schema_ref: Some(schema_ref.clone()),
+                deadline_after_ms: 1000,
+            },
+        )
+        .unwrap();
+        state
+            .workflow_tools
+            .bindings
+            .insert(binding.definition.tool_id.clone(), binding);
+        let presentation = code_mode_presentation(&state, std::slice::from_ref(&tool)).unwrap();
+        assert!(presentation.allowed_tools.is_empty());
+        assert_eq!(
+            presentation.workflow_results[&tool.name],
+            WorkflowToolResultContract {
+                completion: crate::WorkflowToolCompletion::Joined {
+                    reply_schema_ref: Some(schema_ref),
+                    deadline_after_ms: 1000
+                },
+                starts_workflow: true,
+            }
+        );
+        let encoded = serde_json::to_value(&presentation).unwrap();
+        assert!(
+            encoded["workflow_results"][tool.name.as_str()]
+                .get("target")
+                .is_none()
+        );
+        assert!(!encoded.to_string().contains("private-recipe"));
+        state.lifecycle.config.as_mut().unwrap().features.code_mode = None;
+        assert!(code_mode_presentation(&state, &[tool]).is_none());
+    }
 
     #[test]
     fn effective_generation_applies_run_overrides() {

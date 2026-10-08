@@ -335,6 +335,7 @@ mod tests {
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
             request: LlmRequest {
+                code_mode: None,
                 model: ModelSelection {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     provider_id: "openai".to_owned(),

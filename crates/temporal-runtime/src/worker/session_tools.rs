@@ -26,8 +26,10 @@ use tools::{
         detach_promises_model_visible_text, is_concurrency_tool, sleep_model_visible_text,
     },
     environment::control::{
-        EnvironmentActivateArgs, EnvironmentDeactivateArgs, EnvironmentListArgs,
-        EnvironmentReadArgs, is_environment_control_tool, is_environment_selection_tool,
+        EnvironmentActivateArgs, EnvironmentActivateOutput, EnvironmentDeactivateArgs,
+        EnvironmentDeactivateOutput, EnvironmentListArgs, EnvironmentListOutput,
+        EnvironmentModelView, EnvironmentReadArgs, is_environment_control_tool,
+        is_environment_selection_tool,
     },
     environment::jobs::{
         JOB_RUN_WORKFLOW_SEMANTIC_TYPE, JOB_RUN_WORKFLOW_TOOL_ID,
@@ -1013,7 +1015,7 @@ impl SessionTools {
                         policy,
                     ));
                 }
-                let output = serde_json::json!({ "environments": environments });
+                let output = EnvironmentListOutput { environments };
                 self.succeeded_tool_result(
                     call,
                     &output,
@@ -1061,7 +1063,7 @@ impl SessionTools {
                 let mut output =
                     environment_model_view(attachment, Some(&environment), active, policy);
                 if crate::environments::resolver::wake_on_use_applies(&environment) {
-                    output["status_message"] = serde_json::json!(format!(
+                    output.status_message = Some(format!(
                         "Environment is {}. Tools that use this environment will automatically wake it and wait until it is ready. You can proceed normally.",
                         format!("{:?}", environment.status).to_lowercase(),
                     ));
@@ -1114,14 +1116,14 @@ impl SessionTools {
                         .iter()
                         .map(|attachment| attachment.environment_id.as_str()),
                 );
-                let output = serde_json::json!({
-                    "environment_id": reference,
-                    "active": true,
-                    "ready": ready,
-                    "status": format!("{:?}", environment.status).to_lowercase(),
-                    "access": attachment.access.describe(),
-                    "working_directory": attachment.working_directory,
-                });
+                let output = EnvironmentActivateOutput {
+                    environment_id: reference.clone(),
+                    active: true,
+                    ready,
+                    status: format!("{:?}", environment.status).to_lowercase(),
+                    access: attachment.access.describe().to_owned(),
+                    working_directory: attachment.working_directory.clone(),
+                };
                 let summary = if ready {
                     format!(
                         "Active environment set to {} (access: {}).",
@@ -1144,7 +1146,7 @@ impl SessionTools {
             }
             Some("environment.deactivate") => {
                 let _: EnvironmentDeactivateArgs = self.read_tool_args(call).await?;
-                let output = serde_json::json!({ "active": false });
+                let output = EnvironmentDeactivateOutput { active: false };
                 let mut result = self
                     .succeeded_tool_result(call, &output, "Active environment cleared.")
                     .await?;
@@ -1391,18 +1393,26 @@ fn environment_model_view(
     environment: Option<&EnvironmentRecord>,
     active: Option<&EnvironmentId>,
     policy: &harness::EnvironmentsFeature,
-) -> serde_json::Value {
-    serde_json::json!({
-        "environment_id": tools::environment::handles::environment_reference(&attachment.environment_id, policy.environments.iter().map(|attachment| attachment.environment_id.as_str())),
-        "provider_id": environment.and_then(|environment| environment.provider_id().map(|id| id.as_str())),
-        "display_name": environment.and_then(|environment| environment.display_name.clone()),
-        "status": environment.map(|environment| format!("{:?}", environment.status).to_lowercase()),
-        "access": attachment.access.describe(),
-        "default": attachment.default,
-        "working_directory": attachment.working_directory,
-        "active": active.is_some_and(|active| active.as_str() == attachment.environment_id),
-        "observed_at_ms": environment.map(|environment| environment.observed_at_ms()),
-    })
+) -> EnvironmentModelView {
+    EnvironmentModelView {
+        environment_id: tools::environment::handles::environment_reference(
+            &attachment.environment_id,
+            policy
+                .environments
+                .iter()
+                .map(|attachment| attachment.environment_id.as_str()),
+        ),
+        provider_id: environment
+            .and_then(|environment| environment.provider_id().map(|id| id.as_str().to_owned())),
+        display_name: environment.and_then(|environment| environment.display_name.clone()),
+        status: environment.map(|environment| format!("{:?}", environment.status).to_lowercase()),
+        access: attachment.access.describe().to_owned(),
+        default: attachment.default,
+        working_directory: attachment.working_directory.clone(),
+        active: active.is_some_and(|active| active.as_str() == attachment.environment_id),
+        observed_at_ms: environment.map(|environment| environment.observed_at_ms()),
+        status_message: None,
+    }
 }
 
 fn unattached_message(
@@ -4438,6 +4448,16 @@ mod tests {
                         .expect("model-visible output"),
                 )
                 .expect("decode output");
+                let definition =
+                    tools::environment::control::environment_control_tool_definitions(true)
+                        .unwrap()
+                        .into_iter()
+                        .find(|definition| definition.name.as_str() == tool_name)
+                        .unwrap();
+                jsonschema::validator_for(&definition.output_schema.unwrap())
+                    .unwrap()
+                    .validate(&output)
+                    .expect("actual environment output matches its advertised schema");
                 let view = if tool_name == "environment_read" {
                     &output
                 } else {

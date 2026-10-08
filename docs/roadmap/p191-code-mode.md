@@ -1,47 +1,39 @@
 # Code mode
 
 **Status:** Native QuickJS execution, session-owned effects, the code workflow,
-worker role, opt-in session admission, and the `CodeTool` naming pass are
-implemented end to end, updated 2026-10-08.
+worker role, opt-in session admission, the `CodeTool` naming pass, and model-facing
+output JSON Schemas are implemented end to end, updated 2026-10-08.
 The existing `lightspeed-runtime` binary includes the `code` role, which can run
 alongside other roles or in its own process. V1 targets trusted deployments;
 Wasm isolation and TypeScript source support remain later phases.
 A separate code workflow owns one script attempt and its cleanup; the parent
 session owns tool admission, scheduling, and durable outcomes. JavaScript is
-never checkpointed or replayed. Model presentation currently adds an ordinary
-`code_execute` tool alongside the existing tools. Code-only presentation and
-appending available output JSON Schemas to descriptions remain next steps.
+never checkpointed or replayed. Code mode adds an ordinary `code_execute` tool
+alongside the existing tools. The model chooses direct calls or JavaScript
+composition; code-only exposure is not planned. When code mode is enabled,
+ordinary function descriptions include their available return JSON Schemas and
+script-call guidance. Provider-native input schema fields are unchanged.
 
 ## Remaining work
 
 The execution path is usable in trusted deployments. The remaining work is
-model presentation, broader integration coverage, and operational validation:
+broader live integration coverage and operational validation:
 
-1. **Expose return contracts to the model.** Append available output JSON Schemas
-   and script invocation/error guidance to ordinary tool descriptions. Fill owned
-   schema gaps for runtime `await` and environment controls, and declare the core
-   joined job/sub-agent reply schemas. Keep genuinely unknown external results
-   unspecified. The real-model test currently supplies return-contract hints in
-   its prompt; replace those hints with the actual rendered contracts.
-2. **Add code-only presentation and bounded discovery.** Keep the implemented
-   hybrid exposure, add a presentation setting, and put a bounded catalog in
-   `code_execute` when direct tool declarations are hidden. Reuse MCP search/call
-   tools for deferred definitions and preserve the specification/binding match.
-   Inline-schema and discovery-budget settings are not implemented yet.
-3. **Broaden integration and failure coverage.** The real OpenAI Responses path
-   works. Add code-mode tests for other provider presentations, native/deferred
-   MCP discovery and calls, and real environment jobs/sub-agents; current joined
+1. **Broaden integration and failure coverage.** The real OpenAI Responses path
+   works. Provider request tests cover schema presentation on all three adapters,
+   including injected native MCP metadata. Add live code-mode tests for other
+   providers, native/deferred MCP discovery and calls, and real environment jobs/sub-agents; current joined
    job/sub-agent tests use fixture workflows. Exercise safe individual-effect
    activity retries, parent Continue-As-New, and approval-required MCP calls.
    Add delayed-preparation cancellation and exhausted-finalization-retry cases.
    Lifecycle retries, worker-process loss, cancellation, and workflow replay are
    already covered.
-4. **Improve execution inspection.** Compact reports, detailed CAS reports, and
+2. **Improve execution inspection.** Compact reports, detailed CAS reports, and
    bounded `CodeToolProgress` events exist. Add useful per-execution/per-call
    inspection and usage/attribution to tracing or existing client surfaces.
    Web and CLI currently preserve progress cursors without displaying these
    internal calls as conversational turns.
-5. **Measure production sizing.** Benchmark release binary size, memory, complete
+3. **Measure production sizing.** Benchmark release binary size, memory, complete
    outer-tool latency, history growth, and saturated combined/separate-role
    workers. Verify waiting interpreters cannot starve session effects under load.
    Local interpreter and bridge timings are diagnostic samples, not production
@@ -82,9 +74,9 @@ The first slice established callable contracts and execution metadata:
   It introduces no interpreter dependency. The workflow integration contract now
   exports the descriptor, lifecycle DTOs, signals, queries, and activity names.
 
-Runtime-owned `await` and environment-control return schemas remain unknown.
-The core joined `job_run` and `agent_run` declarations also currently omit a
-reply schema, even though owned result DTOs have schema support.
+Runtime-owned `await` and environment-control schemas now derive from their
+serialized result DTOs. Core job/sub-agent declarations publish their owned
+reply schemas; submission acknowledgements remain distinct from later replies.
 Generic joined workflow bindings need a declared reply schema (or an authored
 function's declared result); an arbitrary workflow does not inherit the result
 schema of its underlying built-in operation. Missing schemas remain callable.
@@ -186,6 +178,45 @@ The fourth slice implements the durable lifecycle and session admission:
   Completed script failures resolve with a report, allowing the model to decide
   what to do next. Completed external effects remain committed after script failure.
 
+The fifth slice implements model-facing JSON Schema presentation:
+
+- With `features.codeMode` enabled, OpenAI Responses, OpenAI Completions, and
+  Anthropic Messages append compact return JSON Schemas and script-call/error
+  guidance to ordinary function descriptions. Names, input schemas, strictness,
+  provider options, and existing usage instructions are preserved. Disabled code
+  mode keeps ordinary descriptions unchanged. Tools excluded by `allowedTools`
+  are explicitly unavailable inside scripts; recursive code execution stays denied.
+- The harness supplies the admitted logical selection and workflow completion
+  facts with the generation request, including them in its fingerprint. It adds
+  no schema-loading I/O or provider formatting. Workflow routing, recipes, and
+  authority stay out of this presentation metadata. Pending generation reconstructs
+  the same metadata after replay.
+- The model adapter and script callable resolver share workflow-result projection:
+  joined calls use their declared reply schema, while submissions describe their
+  acknowledgement and promise handles. An arbitrary joined workflow with no
+  declared result does not inherit its underlying built-in's result schema.
+- Await materialization uses `tools::concurrency::AwaitOutput`; environment
+  controls serialize the DTOs in `tools::environment::control`. Their schemas
+  describe nullable/omitted fields and generic producer payloads. Core job and
+  sub-agent workflow declarations persist their reply schemas at admission.
+- Native injected MCP descriptions distinguish the result envelope from the
+  server's optional `structuredContent` schema and explain remote errors and
+  binary-to-`blobRef` conversion. Search/call helpers explain the same contract
+  for deferred tools and how to emit discovery results for a subsequent script.
+  Unknown schemas stay unspecified and do not block execution.
+- The real-model test now relies on the rendered tool contracts to create timers,
+  await their handles, and count resolved results; its prompt no longer supplies
+  return-field names or shapes.
+
+Validation for the model-facing slice passed: 260 harness, 266 tools, 194
+LLM-runtime, 395 runtime, and 153 workflow library tests; provider baseline and
+code-mode presentation tests; three workflow-contract checks; and the exact
+workspace Clippy gate. All 19 targeted live tests passed serially: one
+schema-driven real-model run, nine code-workflow cases, and nine ordinary
+sub-agent lifecycle/media cases. The sub-agent cases validate the new reply
+schemas against existing behavior; code-mode job/sub-agent integration still
+uses fixture workflows.
+
 The `CodeTool` naming pass is complete across harness commands/events/state,
 Temporal Updates, queries and activities, runtime adapters, public progress
 events, generated contracts/TypeScript consumers, tests, and this roadmap.
@@ -244,7 +275,8 @@ history also passes offline replay.
 `code_model_live` passes with the configured real OpenAI model and production
 session/code workers. The model writes async JavaScript, runs two timer effects
 and one durable wait, selects a compact result, and consumes it in its next turn.
-The prompt supplies the return-contract details pending schema presentation.
+The prompt supplies the task; the provider gets return-contract details from
+the rendered tool descriptions.
 It requires provider credentials and does not silently skip missing prerequisites.
 
 Eight additional live tests in `crates/codemode/tests/` pass directly against the
@@ -466,7 +498,7 @@ local without requiring a separate executable or a general runtime plugin framew
 | `temporal-workflow` | Code tool DTOs, `CodeToolClient`, session orchestration, and `CodeExecutionWorkflow` with a single-attempt activity lifecycle are implemented. |
 | `harness` | Implemented deterministic code tool invocation origins, admission facts, waits, and outcome records preserving session-owned effects and promises. No interpreter or infrastructure I/O. |
 | `tools` | Shared callable specifications/bindings, output-schema metadata, and owned result schemas are implemented. The ordinary `code_execute` definition and trusted admission context are implemented. |
-| `llm-runtime` | Model-facing presentation of the same resolved tool specifications; provider-native wire formatting stays here. Appending return JSON Schema for code mode remains planned. |
+| `llm-runtime` | Model-facing presentation of the same resolved tool specifications; provider-native wire formatting stays here. Code-mode descriptions include available return JSON Schema and matching script guidance. |
 | `mcp` | Optional output schemas are preserved in discovered metadata and carried onward by runtime discovery and presentation. |
 | `api` | Code tool progress telemetry and the public `codeMode` session feature, limits, and generated consumers are implemented. |
 
@@ -630,22 +662,23 @@ task queue, credential, authority reference, or alternate session identity.
 Keep runtime checks and existing revocation semantics at the actual effect
 boundary.
 
-Separate the callable capability catalog from the tools advertised directly
-to the language model. A code-only presentation may hide direct declarations
-while retaining authorized callable bindings. Conversely, guessing a function
-name must never make an unadmitted operation available. Use stable logical
-identities internally, while preserving the exact argument adapter and result
-contract associated with the function specification shown to the model.
+Derive the callable catalog from the session's authorized ordinary tools and
+their presented specifications. Code-mode capability selection may narrow that
+catalog. Ordinary tool declarations remain available to the model alongside
+`code_execute`; deferred tools retain the existing discovery/call path. Guessing
+a function name must never make an unadmitted operation available. Use stable
+logical identities internally, while preserving the exact argument adapter and
+result contract associated with the function specification shown to the model.
 
 Configuration status is:
 
 | Setting | Implemented | Remaining |
 | --- | --- | --- |
-| Enablement and presentation | Opt-in `codeMode`, hybrid exposure. | Code-only/hybrid presentation setting. |
+| Enablement | Opt-in `codeMode` adds `code_execute` alongside ordinary tools. | Complete for v1. |
 | Capability selection | Logical `allowedTools` narrows admitted host-callable capabilities. | Complete for v1. |
 | Execution limits | Attempt deadline, memory, stack, source/catalog/request/result/output bytes, and call count. | Additional compute metering if later isolation requires it. |
 | Effect limits | Outstanding calls plus existing per-tool retry, timeout, and concurrency policies. | Optional service budgets or narrower per-call settings. |
-| Discovery budget | Existing MCP search/call tools and their bounds. | Code-mode inline specification/discovery budget. |
+| Discovery | Existing MCP search/call tools, schema metadata, and bounds. | Verify model-facing contracts through code-mode integration tests. |
 
 The implemented configuration uses flat camelCase fields:
 
@@ -671,8 +704,7 @@ outstanding calls. Positive hard ceilings are 10 minutes, 512 MiB memory, 8 MiB
 stack, 1 MiB source, 8 MiB for the other byte limits, 1,024 calls, and 64
 outstanding calls. `timeout_ms` in a tool call can only narrow the feature's
 budget. The joined promise reserves additional time for preparation, cleanup,
-and delivery. Presentation/discovery and service-specific budgets in the table
-remain later settings.
+and delivery. Additional service-specific budgets remain optional later settings.
 
 Not every currently advertised tool is locally callable. Provider-hosted
 search, fetch, or MCP execution requires a provider turn and may lack a host
@@ -789,26 +821,25 @@ Use JSON Schema as both the machine-readable contract and the initial
 model-facing representation. Serialize available schemas directly into tool
 descriptions or discovery results; do not build a schema-to-TypeScript
 converter in v1. TypeScript source support is a separate, also deferred feature.
-Schema metadata and MCP discovery propagation are implemented. The description
-augmentation, bounded inline catalog, and code-only presentation below are the
-next implementation slice:
+Schema metadata, MCP discovery propagation, and description augmentation are
+implemented. The placement policy is:
 
-1. **Hybrid mode, directly declared tools:** preserve their ordinary argument
+1. **Directly declared tools:** preserve their ordinary argument
    schemas in the provider's native input-schema field. For code-callable tools,
    append script invocation guidance and the available return JSON Schema to
-   their descriptions. Avoid repeating those inputs in the code-mode catalog.
+   their descriptions. Keep these tools directly callable and avoid repeating
+   their specifications in the `code_execute` description.
 2. **The `code_execute` description:** include execution/helper instructions
-   and a bounded set of other tool specifications, including names, descriptions,
-   input schemas, and available output schemas. In code-only mode this is the
-   main specification surface because ordinary direct declarations are hidden.
-   Group by namespace and preserve tool usage guidance.
+   and explain how scripts call the ordinary tools using their existing contracts.
+   Names, argument schemas, and tool-specific guidance come from the ordinary
+   declarations or discovery results.
 3. **Discovery results:** return omitted descriptions and JSON schemas on demand,
    retaining optional `outputSchema` metadata. A script must output the discovery
    result if the model needs to read it and author a subsequent script; merely
    loading it into guest memory does not place it in model context.
 
-For example, the description string of `code_execute` could include this
-illustrative specification for an otherwise unexposed tool. Its `outputSchema`
+For example, a discovery result could include this illustrative specification
+for a deferred tool. Its `outputSchema`
 describes the value obtained by awaiting `tools.find_users(args)`:
 
 ```json
@@ -841,36 +872,34 @@ describes the value obtained by awaiting `tools.find_users(args)`:
 ```
 
 The outer tool's own input schema still describes JavaScript `code` and
-execution options. The embedded specifications describe functions available
-inside that code; output schemas in descriptions are text, not additional
+execution options. Ordinary declarations and discovery results describe functions
+available inside that code; output schemas in descriptions are text, not additional
 provider-native return-schema fields. Prefer compact JSON in model requests
-and bound the inline catalog. Consider TypeScript rendering later if measured
+and retain existing discovery bounds. Consider TypeScript rendering later if measured
 context savings or model reliability justify the converter.
 
-Pi uses similar placement but renders TypeScript declarations. It uses a
-default inline budget of 3,000 estimated tokens, excludes deferred tools, and
-offers `searchTools`, `describeTool`, and `describeNamespace`. Its hybrid mode
-augments direct descriptions; code-only mode moves their declarations into
-the code-mode description. See Pi's
+Pi's hybrid presentation also augments direct tool descriptions, using
+TypeScript declarations. It offers `searchTools`, `describeTool`, and
+`describeNamespace` for discovery. See Pi's
 [loadout/declaration implementation](https://github.com/earendil-works/pi/blob/eb326d265ae0b88489a6d10319307780df827cdf/packages/coding-agent/src/extensions/codemode/tool.ts)
 and [code-mode documentation](https://pi.dev/docs/latest/codemode#call-tools).
 
-Lightspeed can use the same presentation policy while retaining its existing
-MCP search/call tools. Choose its inline budget from measurements rather than
-treating Pi's default as a requirement. Discovery and execution must refer to
+Lightspeed adds output JSON Schema to ordinary tool descriptions when code mode
+is enabled, using its existing MCP search/call tools for discovery.
+Discovery and execution must refer to
 the same admitted binding, including deferred tools not in the initial prompt.
 
 ### Structured results and schema gaps
 
-Ordinary tool descriptions may explain returns in prose, but Lightspeed's
-normal declaration pipeline does not yet automatically show a structured
-output schema. The shared resolver now loads `FunctionToolSpec.output_schema_ref`
-into `FunctionDefinition`, owned result DTOs publish serialization schemas,
-and MCP discovery preserves the server's optional `outputSchema`. Unknown
-runtime-owned or external return shapes remain explicitly unspecified.
+With code mode enabled, the declaration pipeline appends structured return
+schemas to function descriptions. The shared resolver loads
+`FunctionToolSpec.output_schema_ref` into `FunctionDefinition`, owned result DTOs
+publish serialization schemas, and MCP discovery preserves the server's optional
+`outputSchema`. Arbitrary workflow replies without a declared schema and unknown
+external result shapes remain explicitly unspecified.
 
-Extend owned result-schema coverage and render available schemas from shared
-metadata in model-facing descriptions and discovery. Where absent, document
+When extending owned result-schema coverage, use the same metadata for model
+descriptions and execution bindings. Where absent, document
 the known result envelope and explicitly leave its tool-specific payload
 unspecified; do not invent fields or promise a shape inferred from one observed
 result. Missing schemas do not prevent tool execution. Preserve descriptions
@@ -882,7 +911,12 @@ attachments. Bind a script-visible result projection and describe that exact
 shape. The session applies effects; the guest gets structured data and scoped
 artifacts, rather than having to parse provider-formatted prose. Preserve MCP
 `content`, optional `structuredContent`, and error semantics. Its optional
-output schema describes structured content, not the entire response envelope.
+output schema describes server-side structured content, not the entire response
+envelope. Native MCP normalization replaces inline image/audio `data` and
+embedded resource `blob` fields with `blobRef` in both `content` and
+`structuredContent`; descriptions explain this transformation alongside the
+server-declared schema. Remote `isError` becomes a rejected guest promise rather
+than an `isError` field in the normalized result.
 See the [MCP tool-result contract](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#structured-content).
 
 ## Runtime implementation
@@ -1016,7 +1050,8 @@ declare function code_execute(args: {
 ```
 
 Existing ordinary tool specifications accompany this tool in the model request.
-Appending available return JSON Schema to descriptions remains planned.
+Available return JSON Schemas and script-call guidance are appended to their
+descriptions when code mode is enabled.
 V1 always interprets `code` as JavaScript; add a language selector in the later
 TS phase.
 Provider-native freeform source input can be added later as another
@@ -1171,7 +1206,7 @@ not delivered behavior.
 | --- | --- | --- | --- |
 | Execution boundary | Fresh QuickJS Wasm VM. | Fresh Dynamic Worker using Workers' V8 isolates. | Fresh native QuickJS runtime through `codemode` in the `code` role of the shared binary; roles may run together or separately. Trusted deployments, JavaScript only; Wasm and TS later. |
 | Effects | Injected tool/model functions route through the host. | Host tool functions or connectors exposed through Workers RPC. | Ordinary admitted tools only; the session owns scheduling and results. |
-| Discovery | Typed declarations and search/describe helpers. | Generated typed definitions; durable runtime also offers connector discovery. | JSON Schema in direct descriptions, code tool description, and discovery results, matched to execution bindings. |
+| Discovery | Typed declarations and search/describe helpers. | Generated typed definitions; durable runtime also offers connector discovery. | JSON Schema in ordinary tool descriptions and discovery results, matched to execution bindings; `code_execute` explains composition. |
 | Script recovery | Built-in VM execution is ephemeral; small explicit stored values are separate. | Simple executor is stateless; optional durable runtime supports recorded-call replay around approval pauses. | Script is ephemeral; lifecycle workflow and session-owned effects are durable. |
 | Retry boundary | Tool-specific host behavior. | Connector/backend behavior; durable call recording is distinct from an activity scheduler. | Existing per-effect Temporal policies, with no whole-script retry. |
 | Approvals | Follow host tool integration. | Simple `createCodeTool` excludes approval tools; durable runtime supports approval and resume. | Reject approval-requiring effects in v1. |
@@ -1261,11 +1296,12 @@ Implementation sequence and current status:
    lifecycle, scope closure, outcome reporting after runner loss, and bounded
    cleanup under the implemented session rollover policy. Ship the existing
    runtime binary for both combined and separate-role deployments.
-5. **Next — model presentation.** Append available output JSON Schemas, fill
-   owned reply-schema gaps, add a bounded inline catalog and code-only exposure,
-   and exercise them through the real-model test without prompt-supplied return
-   hints. Hybrid tool exposure, scoped CAS inputs/reports, and compact model
-   output are implemented. TypeScript declaration rendering remains optional.
+5. **Implemented — model presentation.** Available output JSON Schemas and
+   invocation/error guidance appear in ordinary descriptions on all three
+   provider adapters. Owned await/environment schemas and core workflow reply
+   schemas are filled in; the real-model test uses these contracts without
+   prompt-supplied return hints. Ordinary tools remain alongside `code_execute`.
+   TypeScript declaration rendering remains optional.
 6. **Remaining — integration coverage and operational validation.** Extend the
    existing OpenAI Responses case to other provider presentations, native/deferred
    MCP, and real job/sub-agent runtimes. Cover effect retries, parent rollover,

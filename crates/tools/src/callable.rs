@@ -116,29 +116,44 @@ pub async fn resolve_workflow(
         let mut callable = tool.into_callable().ok_or_else(|| {
             invalid("workflow binding requires a host-callable function".to_owned())
         })?;
-        callable.definition.output_schema = match &workflow.completion {
-            harness::WorkflowToolCompletion::Joined {
-                reply_schema_ref, ..
-            } => {
-                match reply_schema_ref {
-                    Some(reference) => Some(read_json(blobs, reference).await?),
-                    // An authored function may declare its final result. A
-                    // substrate's schema does not describe an arbitrary
-                    // workflow bound to the same built-in operation.
-                    None if matches!(workflow.definition.tool.kind, ToolKind::Function(_)) => {
-                        callable.definition.output_schema
-                    }
-                    None => None,
-                }
-            }
-            completion => {
-                crate::workflow_tool::acknowledgement_output_schema(completion, &workflow.target)
-            }
-        };
+        callable.definition.output_schema = workflow_result_schema(
+            blobs,
+            &workflow.into(),
+            matches!(workflow.definition.tool.kind, ToolKind::Function(_)),
+            callable.definition.output_schema,
+        )
+        .await?;
         callable.workflow_binding_fingerprint = Some(workflow.binding_fingerprint.clone());
         callables.push(callable);
     }
     Ok(callables)
+}
+
+/// Share the exact result contract between model presentation and script binding.
+pub async fn workflow_result_schema(
+    blobs: &dyn BlobStore,
+    contract: &harness::WorkflowToolResultContract,
+    authored_function: bool,
+    declared_schema: Option<Value>,
+) -> Result<Option<Value>, CatalogError> {
+    Ok(match &contract.completion {
+        harness::WorkflowToolCompletion::Joined {
+            reply_schema_ref, ..
+        } => {
+            match reply_schema_ref {
+                Some(reference) => Some(read_json(blobs, reference).await?),
+                // An authored function may declare its final result. A
+                // substrate's schema does not describe an arbitrary
+                // workflow bound to the same built-in operation.
+                None if authored_function => declared_schema,
+                None => None,
+            }
+        }
+        completion => crate::workflow_tool::acknowledgement_result_schema(
+            completion,
+            contract.starts_workflow,
+        ),
+    })
 }
 
 impl ResolvedTool {

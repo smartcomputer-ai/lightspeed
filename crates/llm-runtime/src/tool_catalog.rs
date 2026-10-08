@@ -18,6 +18,7 @@ pub(crate) struct ToolCatalog {
     pub tools: Vec<ResolvedTool>,
     pub names: AdvertisedNames,
     primary_names: BTreeMap<ToolName, ToolName>,
+    code_mode: Option<harness::CodeModePresentation>,
 }
 
 impl ToolCatalog {
@@ -30,6 +31,7 @@ impl ToolCatalog {
             tools: Vec::new(),
             names: AdvertisedNames::default(),
             primary_names: BTreeMap::new(),
+            code_mode: None,
         };
         for tool in callable::resolve(blobs, target, tools)
             .await
@@ -38,6 +40,76 @@ impl ToolCatalog {
             catalog.push(tool)?;
         }
         Ok(catalog)
+    }
+
+    pub async fn resolve_for_request(
+        blobs: &dyn BlobStore,
+        request: &harness::LlmRequest,
+    ) -> LlmAdapterResult<Self> {
+        let mut catalog =
+            Self::resolve(blobs, &ToolTarget::from(&request.model), &request.tools).await?;
+        let Some(presentation) = &request.code_mode else {
+            return Ok(catalog);
+        };
+        for tool in &mut catalog.tools {
+            let ResolvedToolKind::Function(definition) = &mut tool.kind else {
+                continue;
+            };
+            if let Some(contract) = presentation.workflow_results.get(&tool.id) {
+                let authored = request.tools.iter().any(|spec| {
+                    spec.name == tool.id && matches!(spec.kind, harness::ToolKind::Function(_))
+                });
+                definition.output_schema = callable::workflow_result_schema(
+                    blobs,
+                    contract,
+                    authored,
+                    definition.output_schema.take(),
+                )
+                .await
+                .map_err(catalog_error)?;
+            }
+            let outer = tool.id.as_str() == "code.execute";
+            let callable = !outer
+                && tool.callable_binding.is_some()
+                && presentation.allowed_tools.contains(&tool.id);
+            let mut description = code_description(
+                definition.description.as_deref(),
+                tool.name.as_str(),
+                definition.output_schema.as_ref(),
+                callable,
+                outer,
+                tool.id.as_str() == "mcp.call",
+            );
+            match tool.id.as_str() {
+                "mcp.call" => description.push_str(" Obtain the selected remote tool's inputSchema and optional outputSchema with mcp_find_tools; that outputSchema describes the server's structuredContent."),
+                "mcp.find_tools" => description.push_str(" Discovery results carry inputSchema and optional outputSchema. Remote outputSchema describes structuredContent within the MCP result envelope. Emit discovery results with text(value) if the model needs them to write a subsequent script."),
+                _ => {},
+            }
+            definition.description = Some(description);
+        }
+        catalog.code_mode = Some(presentation.clone());
+        Ok(catalog)
+    }
+
+    pub fn native_mcp_description(
+        &self,
+        id: &ToolName,
+        name: &str,
+        tool: &crate::mcp::NativeMcpTool,
+    ) -> Option<String> {
+        self.code_mode.as_ref().map_or_else(
+            || tool.description.clone(),
+            |presentation| {
+                Some(code_description(
+                    tool.description.as_deref(),
+                    name,
+                    tool.output_schema.as_ref(),
+                    presentation.allowed_tools.contains(id),
+                    false,
+                    true,
+                ))
+            },
+        )
     }
 
     fn push(&mut self, tool: ResolvedTool) -> LlmAdapterResult<()> {
@@ -78,6 +150,43 @@ impl ToolCatalog {
             call.tool_id = self.names.call_ids.get(&call.tool_name).cloned();
         }
     }
+}
+
+fn code_description(
+    original: Option<&str>,
+    name: &str,
+    output_schema: Option<&serde_json::Value>,
+    callable: bool,
+    outer: bool,
+    mcp: bool,
+) -> String {
+    let mut description = original.unwrap_or_default().to_owned();
+    description.push_str("\n\nCode mode: ");
+    if outer {
+        description.push_str(
+            "Call this tool directly to execute a script; recursive script calls are unavailable.",
+        );
+    } else if callable {
+        let name = serde_json::to_string(name).expect("tool names serialize");
+        description.push_str(&format!("Invoke as await tools[{name}](args), using the input schema above. Successful calls resolve to JSON; failures reject with kind, message, and optional value. "));
+    } else {
+        description.push_str("This tool is not available inside this session's scripts. ");
+    }
+    if mcp {
+        description.push_str("MCP calls return an object with content and optional structuredContent. Remote tool errors reject with that envelope in error.value. The server's output schema describes only result.structuredContent, not the envelope. In content and structuredContent, inline image/audio data and resource blobs are replaced by blobRef artifact references. ");
+    }
+    if let Some(schema) = output_schema {
+        description.push_str(if mcp {
+            "\nMCP structuredContent JSON Schema: "
+        } else {
+            "\nReturn JSON Schema: "
+        });
+        description.push_str(&schema.to_string());
+    } else {
+        description
+            .push_str("No output schema is declared; do not assume tool-specific return fields.");
+    }
+    description
 }
 
 /// The exact function namespace advertised in this request, including expanded

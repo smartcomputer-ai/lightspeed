@@ -73,6 +73,29 @@ pub struct AwaitArgs {
     pub timeout_ms: Option<u64>,
 }
 
+/// Canonical model-visible value written by the await materializer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AwaitOutput {
+    pub outcome: harness::AwaitOutcome,
+    #[serde(default)]
+    pub results: Vec<AwaitPromiseOutput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AwaitPromiseOutput {
+    pub promise_id: String,
+    /// pending, resolved, failed, cancelled, or unknown. A timeout may leave
+    /// pending promises that can be awaited again.
+    pub status: String,
+    /// Resolved producer payload as JSON, text, or an opaque artifact reference.
+    /// Its tool-specific shape is determined by the promise's producer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<serde_json::Value>,
+    /// Failed producer payload, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<serde_json::Value>,
+}
+
 impl AwaitArgs {
     /// Validate and dedupe the promise id list: 1..=32 well-formed
     /// `promise_<n>` ids, duplicates collapsed in first-occurrence order.
@@ -430,8 +453,7 @@ fn function_definition(
         CANCEL_TOOL_NAME => crate::definitions::output_schema_for::<CancelOutput>(),
         DETACH_TOOL_NAME => crate::definitions::output_schema_for::<DetachOutput>(),
         SLEEP_TOOL_NAME => crate::definitions::output_schema_for::<SleepOutput>(),
-        // Await materialization is owned by the workflow adapter. Do not infer
-        // a payload shape from the promises seen by one invocation.
+        AWAIT_TOOL_NAME => crate::definitions::output_schema_for::<AwaitOutput>(),
         _ => return Ok(definition),
     };
     Ok(definition.with_output_schema(schema))

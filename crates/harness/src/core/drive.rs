@@ -2812,6 +2812,53 @@ mod tests {
     }
 
     #[test]
+    fn code_mode_model_presentation_rebuilds_from_replayed_admission() {
+        let session_id = SessionId::new("code-presentation");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut session_config = config();
+        session_config.features.code_mode = Some(crate::CodeModeFeature {
+            allowed_tools: Some(vec!["concurrency.await".into()]),
+            ..Default::default()
+        });
+        open_session_with_config(&mut drive, session_config);
+        install_test_tool(&mut drive, "await");
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let checkpoint = drive.state().clone();
+        let mut entries = Vec::new();
+        let mut original = None;
+        for now in 21..80 {
+            match drive.next_action(now, 64).unwrap() {
+                CoreAgentAction::GenerateLlm { request } => {
+                    original = Some(request);
+                    break;
+                }
+                action => entries.extend(commit_action(&mut drive, action)),
+            }
+        }
+        let original = original.expect("generation");
+        assert_eq!(
+            original.request.code_mode.as_ref().unwrap().allowed_tools,
+            [ToolName::new("concurrency.await")].into_iter().collect()
+        );
+        let mut replayed = checkpoint;
+        for entry in entries {
+            let stored = CoreAgentCodec.encode_entry(&entry).unwrap();
+            crate::apply_event(
+                &mut replayed,
+                &CoreAgentCodec.decode_entry(&stored).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut restored =
+            CoreAgentDrive::from_replayed(session_id, replayed, drive.head().cloned());
+        let CoreAgentAction::GenerateLlm { request } = restored.next_action(81, 64).unwrap() else {
+            panic!("replayed pending generation");
+        };
+        assert_eq!(request, original);
+    }
+
+    #[test]
     fn configuring_a_new_default_activates_an_unselected_session_and_replays() {
         for initially_attached in [false, true] {
             let mut drive = CoreAgentDrive::from_replayed(

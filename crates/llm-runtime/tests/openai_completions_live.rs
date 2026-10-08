@@ -64,6 +64,7 @@ fn generation_request(entries: Vec<ContextEntry>) -> LlmGenerationRequest {
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: model(),
             request_fingerprint: "openai-completions-live".to_owned(),
             context: ContextSnapshot {

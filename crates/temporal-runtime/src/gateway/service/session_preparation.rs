@@ -90,13 +90,23 @@ impl SessionPreparationService {
             .await
             .map_err(map_blob_store_error)?;
 
+        let reply_schema_ref = self
+            .store
+            .put_bytes(
+                serde_json::to_vec(&tools::definitions::output_schema_for::<
+                    tools::environment::jobs::ModelJobResult,
+                >())
+                .map_err(|error| AgentApiError::internal(error.to_string()))?,
+            )
+            .await
+            .map_err(map_blob_store_error)?;
         let definitions = [
             (
                 BuiltinToolOperation::JobSubmit,
                 JOB_SUBMIT_WORKFLOW_TOOL_ID,
                 JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE,
                 WorkflowToolCompletion::Promises {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: None,
                     max_promises: harness::MAX_COMPLETION_PROMISES,
                     key_source: WorkflowToolCompletionKeySource::ArrayItemField {
@@ -110,7 +120,7 @@ impl SessionPreparationService {
                 JOB_RUN_WORKFLOW_TOOL_ID,
                 JOB_RUN_WORKFLOW_SEMANTIC_TYPE,
                 WorkflowToolCompletion::Joined {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: JOB_RUN_DEADLINE_AFTER_MS,
                 },
             ),
@@ -165,6 +175,16 @@ impl SessionPreparationService {
             .put_bytes(recipe_bytes)
             .await
             .map_err(map_blob_store_error)?;
+        let reply_schema_ref = self
+            .store
+            .put_bytes(
+                serde_json::to_vec(&tools::definitions::output_schema_for::<
+                    tools::subagents::SubagentResultEnvelope,
+                >())
+                .map_err(|error| AgentApiError::internal(error.to_string()))?,
+            )
+            .await
+            .map_err(map_blob_store_error)?;
         // The binding carries the hard ceiling; the grant's `deadlineMs` is
         // pinned per call and enforced inside the execution, so the
         // immutable binding never has to change with the grant.
@@ -172,14 +192,14 @@ impl SessionPreparationService {
             (
                 tools::subagents::SubagentToolKind::Run,
                 WorkflowToolCompletion::Joined {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: harness::SUBAGENT_DEADLINE_CEILING_MS,
                 },
             ),
             (
                 tools::subagents::SubagentToolKind::Spawn,
                 WorkflowToolCompletion::Promises {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: Some(harness::SUBAGENT_DEADLINE_CEILING_MS),
                     max_promises: 1,
                     key_source: WorkflowToolCompletionKeySource::Reply,

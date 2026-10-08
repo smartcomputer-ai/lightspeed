@@ -38,6 +38,16 @@ pub fn acknowledgement_output_schema(
     completion: &WorkflowToolCompletion,
     target: &WorkflowToolTarget,
 ) -> Option<Value> {
+    acknowledgement_result_schema(
+        completion,
+        matches!(target, WorkflowToolTarget::Start { .. }),
+    )
+}
+
+pub fn acknowledgement_result_schema(
+    completion: &WorkflowToolCompletion,
+    starts_workflow: bool,
+) -> Option<Value> {
     if matches!(completion, WorkflowToolCompletion::Joined { .. }) {
         return None;
     }
@@ -45,7 +55,7 @@ pub fn acknowledgement_output_schema(
     let properties = schema["properties"].as_object_mut().expect("object schema");
     properties.insert("accepted".into(), json!({"const": true}));
     let mut required = vec!["accepted", "invocationId"];
-    if matches!(target, WorkflowToolTarget::Start { .. }) {
+    if starts_workflow {
         required.push("executionId");
     } else {
         properties.remove("executionId");

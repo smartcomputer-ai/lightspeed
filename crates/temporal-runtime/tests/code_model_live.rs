@@ -131,17 +131,15 @@ async fn run_model_scenario(
     })
     .await?;
 
-    // Describe the task and the currently unrendered return contracts, rather
-    // than handing the provider a prewritten script to copy.
+    // The provider must infer arguments and return shapes from the rendered tool
+    // contracts; the prompt supplies only the task and the desired result.
     let run = start_text_run(
         api,
         session_id,
         "Use code_execute exactly once. Write JavaScript that creates two timer promises, \
          with delays 10 and 20 milliseconds, by calling tools.sleep concurrently through \
          Promise.all. Then call tools.await once, in all mode with a 5000 ms timeout, \
-         to wait for both returned promise handles. sleep returns an object whose promise \
-         field is the handle; await returns an object whose results array has a status \
-         field on each item. Compute how many statuses equal 'resolved'. Emit only \
+         to wait for both returned promise handles. Count how many timers resolved. Emit only \
          {resolved: count} with text and return the same object. Do not call tools directly \
          outside code_execute. After inspecting the code execution result, reply with \
          exactly CODE_MODE_RESOLVED=<the actual count>. Do not claim a count without \
@@ -167,7 +165,10 @@ async fn run_model_scenario(
             _ => None,
         })
         .collect();
-    assert_eq!(model_calls, vec![tools::code::CODE_EXECUTE_TOOL_NAME]);
+    anyhow::ensure!(
+        model_calls == vec![tools::code::CODE_EXECUTE_TOOL_NAME],
+        "expected one code_execute model call, got {model_calls:?}"
+    );
     let invocations: Vec<_> = state
         .workflow_tools
         .start_requests

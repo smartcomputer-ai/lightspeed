@@ -55,6 +55,7 @@ pub use ids::*;
 pub use lifecycle::{CoreAgentLifecycleEvent, CoreAgentStatus, LifecycleState};
 pub use llm::*;
 pub use log::*;
+pub use promise::AwaitOutcome;
 pub use promise::{
     PROMISE_CANCEL_EFFECT_KIND, PROMISE_CREATE_EFFECT_KIND, PROMISE_DETACH_EFFECT_KIND,
     PROMISE_ID_PREFIX, Promise, PromiseComponentState, PromiseEvent, PromiseId, PromiseIdAllocator,

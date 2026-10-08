@@ -32,6 +32,41 @@ pub struct EnvironmentActivateArgs {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentDeactivateArgs {}
 
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EnvironmentModelView {
+    pub environment_id: String,
+    pub provider_id: Option<String>,
+    pub display_name: Option<String>,
+    pub status: Option<String>,
+    pub access: String,
+    pub default: bool,
+    pub working_directory: Option<String>,
+    pub active: bool,
+    pub observed_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EnvironmentListOutput {
+    pub environments: Vec<EnvironmentModelView>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EnvironmentActivateOutput {
+    pub environment_id: String,
+    pub active: bool,
+    pub ready: bool,
+    pub status: String,
+    pub access: String,
+    pub working_directory: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct EnvironmentDeactivateOutput {
+    pub active: bool,
+}
+
 pub fn is_environment_control_tool(tool_id: &ToolName) -> bool {
     matches!(
         tool_id.as_str(),
@@ -84,11 +119,25 @@ fn function_definition(
     description: &'static str,
     schema: Value,
 ) -> ToolResult<crate::runtime::FunctionDefinition> {
-    Ok(crate::runtime::FunctionDefinition::new(
-        name,
-        description,
-        schema,
-    ))
+    let output_schema = match name {
+        ENVIRONMENT_READ_TOOL_NAME => {
+            crate::definitions::output_schema_for::<EnvironmentModelView>()
+        }
+        ENVIRONMENT_LIST_TOOL_NAME => {
+            crate::definitions::output_schema_for::<EnvironmentListOutput>()
+        }
+        ENVIRONMENT_ACTIVATE_TOOL_NAME => {
+            crate::definitions::output_schema_for::<EnvironmentActivateOutput>()
+        }
+        ENVIRONMENT_DEACTIVATE_TOOL_NAME => {
+            crate::definitions::output_schema_for::<EnvironmentDeactivateOutput>()
+        }
+        _ => unreachable!("owned environment control tool"),
+    };
+    Ok(
+        crate::runtime::FunctionDefinition::new(name, description, schema)
+            .with_output_schema(output_schema),
+    )
 }
 
 fn optional_environment_id_schema() -> Value {

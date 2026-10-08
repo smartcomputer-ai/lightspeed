@@ -210,7 +210,7 @@ pub(super) async fn materialize_await_result(
             Some(("error", value)) => (None, Some(value)),
             _ => (None, None),
         };
-        results.push(temporal_workflow::MaterializedAwaitPromiseResult {
+        results.push(tools::concurrency::AwaitPromiseOutput {
             promise_id: result.promise_id,
             status: result.status,
             output,
@@ -218,7 +218,7 @@ pub(super) async fn materialize_await_result(
         });
     }
 
-    let aggregate = temporal_workflow::MaterializedAwaitResult {
+    let aggregate = tools::concurrency::AwaitOutput {
         outcome: request.outcome,
         results,
     };
@@ -1395,6 +1395,21 @@ mod tests {
                 .expect("aggregate bytes"),
         )
         .expect("aggregate JSON");
+
+        let definition = tools::concurrency::concurrency_tool_definitions(
+            &tools::concurrency::ConcurrencyToolsetConfig::timer(),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|definition| definition.name.as_str() == "await")
+        .unwrap();
+        let schema = jsonschema::validator_for(&definition.output_schema.unwrap()).unwrap();
+        schema
+            .validate(&value)
+            .expect("actual materialized await matches its advertised schema");
+        let mut invalid = value.clone();
+        invalid["results"] = json!("not an array");
+        assert!(!schema.is_valid(&invalid));
 
         assert_eq!(value["outcome"], "timeout");
         assert_eq!(value["results"][0]["output"], json!({"answer": 42}));
