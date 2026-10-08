@@ -41,9 +41,11 @@ broader live integration coverage and operational validation:
 
 Wasm isolation, TypeScript source support, optional TypeScript declaration
 rendering, and ordinary transcription/image/decision-model tools remain later
-phases. Extra media/blob/store helpers are optional future utilities; the current
-guest surface is `tools`, `text(value)`, and a JSON return value. Durable waits
-already work through the ordinary `tools["await"]` call. Approval suspension,
+phases. [Shared content references and code output](p192-content-references-and-code-output.md)
+plans ordinary blob tools, file integration, and then `media()`/`file()` helpers;
+no separate named store is planned. The current guest surface is `tools`,
+`text(value)`, and a JSON return value. Durable waits already work through the
+ordinary `tools["await"]` call. Approval suspension,
 persistent JS heaps, and durable JavaScript replay remain outside v1.
 
 ## Implementation progress
@@ -1096,11 +1098,12 @@ apply even when the script requests several calls concurrently. They do not
 promise isolation from other sessions using the same resource.
 
 `text(value)` and a bounded JSON return value are implemented. Dedicated media
-output and scoped blob/store conveniences are not part of the current prelude.
+output and blob tools are planned in
+[shared content references and code output](p192-content-references-and-code-output.md).
 Only selected output and the compact execution report enter the model's tool
-result. The complete code tool call report is stored separately. A small
-cross-execution JSON store could be added later, but neither persistent globals
-nor live-heap continuation is required for v1.
+result. The complete code tool call report is stored separately. No separate
+named store is planned; persistence uses existing VFS files and retained
+blobs. Neither persistent globals nor live-heap continuation is required for v1.
 The joined payload is a compact envelope with selected output, diagnostics,
 outcome counts, and `report_ref`. `output_available` distinguishes retained JS
 output from a missing runner receipt; an empty array alone cannot make that
