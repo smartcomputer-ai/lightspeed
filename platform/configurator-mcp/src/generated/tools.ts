@@ -210,7 +210,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "integer"
             },
             "timeoutMs": {
-              "default": 30000,
+              "default": 60000,
               "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
               "format": "uint64",
               "minimum": 0,
@@ -1456,7 +1456,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "integer"
             },
             "timeoutMs": {
-              "default": 30000,
+              "default": 60000,
               "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
               "format": "uint64",
               "minimum": 0,
@@ -3867,7 +3867,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "integer"
             },
             "timeoutMs": {
-              "default": 30000,
+              "default": 60000,
               "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
               "format": "uint64",
               "minimum": 0,
@@ -6018,7 +6018,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "integer"
             },
             "timeoutMs": {
-              "default": 30000,
+              "default": 60000,
               "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
               "format": "uint64",
               "minimum": 0,
@@ -7151,7 +7151,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "integer"
             },
             "timeoutMs": {
-              "default": 30000,
+              "default": 60000,
               "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
               "format": "uint64",
               "minimum": 0,

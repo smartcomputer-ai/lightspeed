@@ -541,7 +541,7 @@ impl Default for CodeModeFeature {
         Self {
             version: default_feature_version(),
             allowed_tools: None,
-            timeout_ms: 30_000,
+            timeout_ms: 60_000,
             max_memory_bytes: 64 * 1024 * 1024,
             max_stack_bytes: 1024 * 1024,
             max_source_bytes: 256 * 1024,

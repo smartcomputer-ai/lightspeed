@@ -720,7 +720,7 @@ The implemented configuration uses flat camelCase fields:
 {
   "features": {
     "codeMode": {
-      "timeoutMs": 30000,
+      "timeoutMs": 60000,
       "allowedTools": ["concurrency.sleep", "concurrency.await"]
     }
   }
@@ -732,7 +732,7 @@ function names. Omit it to allow all granted host-callable tools except the
 parent code tool; `[]` permits only local computation. Recursive code execution
 is unavailable. Omit `codeMode` to disable the feature.
 
-Defaults are 30 seconds per attempt, 64 MiB memory, 1 MiB stack, 256 KiB source,
+Defaults are 60 seconds per attempt, 64 MiB memory, 1 MiB stack, 256 KiB source,
 1 MiB each for catalog, request, result, and selected output, 128 calls, and 16
 outstanding calls. Positive hard ceilings are 10 minutes, 512 MiB memory, 8 MiB
 stack, 1 MiB source, 8 MiB for the other byte limits, 1,024 calls, and 64

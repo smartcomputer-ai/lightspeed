@@ -3789,6 +3789,8 @@ fn test_access_summary() -> ResourceAccessSummary {
 
 #[test]
 fn code_mode_feature_defaults_and_public_field_names_are_stable() {
+    let defaults: CodeModeFeature = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(defaults.timeout_ms, 60_000);
     let feature: CodeModeFeature =
         serde_json::from_value(json!({"timeoutMs":1000,"allowedTools":[]})).unwrap();
     assert_eq!(feature.timeout_ms, 1000);

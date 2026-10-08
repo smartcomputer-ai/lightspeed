@@ -65,7 +65,7 @@ it("enables all granted tools by default and reveals only three optional limits"
 
   await click(limitsToggle);
   const fields = [...container.querySelectorAll<HTMLInputElement>('input[type="number"]')];
-  expect(fields.map((field) => field.placeholder)).toEqual(["30000", "128", "16"]);
+  expect(fields.map((field) => field.placeholder)).toEqual(["60000", "128", "16"]);
   expect(fields.every((field) => field.value === "")).toBe(true);
   expect(container.textContent).not.toMatch(/Allowed tools|Memory|Stack|Catalog|Source size|Result size|Output size/);
   expect(current).toEqual({ features: { codeMode: {} } });

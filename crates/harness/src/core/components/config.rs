@@ -346,7 +346,7 @@ pub struct CodeModeLimits {
 impl Default for CodeModeLimits {
     fn default() -> Self {
         Self {
-            timeout_ms: 30_000,
+            timeout_ms: 60_000,
             max_memory_bytes: 64 * 1024 * 1024,
             max_stack_bytes: 1024 * 1024,
             max_source_bytes: 256 * 1024,
@@ -1862,6 +1862,7 @@ mod tests {
     fn code_mode_defaults_are_pinned_and_partial_limits_retain_defaults() {
         let feature: CodeModeFeature = serde_json::from_str("{}").unwrap();
         assert_eq!(feature, CodeModeFeature::default());
+        assert_eq!(feature.limits.timeout_ms, 60_000);
         feature.validate().unwrap();
         let partial: CodeModeFeature =
             serde_json::from_str(r#"{"timeout_ms":45,"allowed_tools":[]}"#).unwrap();

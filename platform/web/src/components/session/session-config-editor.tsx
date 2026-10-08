@@ -176,7 +176,7 @@ const featureDisplayOrder: FeatureName[] = [
 ];
 
 const codeModeLimits = [
-  { key: "timeoutMs", label: "Timeout (ms)", defaultValue: 30_000, max: 600_000, hint: "Total time per script, including tool calls and waits." },
+  { key: "timeoutMs", label: "Timeout (ms)", defaultValue: 60_000, max: 600_000, hint: "Total time per script, including tool calls and waits." },
   { key: "maxToolCalls", label: "Max tool calls", defaultValue: 128, max: 1_024, hint: "Total tool calls allowed per script." },
   { key: "maxOutstandingToolCalls", label: "Max outstanding calls", defaultValue: 16, max: 64, hint: "Pending tool calls allowed at once, up to the total call limit." },
 ] as const;
