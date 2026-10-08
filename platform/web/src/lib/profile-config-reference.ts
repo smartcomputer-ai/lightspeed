@@ -16,6 +16,32 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
   },
   // Capability grants. An absent feature is not granted; \`{}\` grants it with defaults. Every block carries a behavior \`version\` that pins semantics.
   "features": {
+    // Grants JavaScript composition through \`code_execute\`. Available script tools are the session's ordinary callable tools, optionally narrowed by allowedTools. TypeScript, ambient filesystem/network access, and recursive code execution are unavailable. An empty allowedTools list grants pure computation only.
+    "codeMode": {
+      // Logical tool ids (for example vfs.read_file), not provider wire names. Absent permits every currently callable grant; an empty list permits none.
+      "allowedTools": ["string"],
+      // Pinned callable catalog bytes, at most 8 MiB.
+      "maxCatalogBytes": 0,
+      // Interpreter heap, at most 512 MiB.
+      "maxMemoryBytes": 0,
+      // Combined text() output and return value, at most 8 MiB.
+      "maxOutputBytes": 0,
+      // Concurrent pending calls, at most 64 and no greater than maxToolCalls.
+      "maxOutstandingToolCalls": 0,
+      // Serialized arguments per tool request, at most 8 MiB.
+      "maxRequestBytes": 0,
+      // Serialized completion per tool request, at most 8 MiB.
+      "maxResultBytes": 0,
+      // UTF-8 source bytes, at most 1 MiB.
+      "maxSourceBytes": 0,
+      // Interpreter native stack, at most 8 MiB.
+      "maxStackBytes": 0,
+      // Calls per script, at most 1,024.
+      "maxToolCalls": 0,
+      // Total attempt time including input loading, interpreter capacity waits, JavaScript evaluation, and tool waits; at most 600,000 milliseconds.
+      "timeoutMs": 0,
+      "version": 0,
+    },
     // Grants session environments. The \`environments\` list is the allowed set: the session can select, read, and run work only on a listed machine, each with its own access grant and working directory. The installed tool surface is the union of every attachment's grant; a call the active machine's grant does not cover fails at execution, so switching machines never changes the toolset. \`{}\` grants the feature with no reachable machine.
     "environments": {
       // The environments this session may use; unique ids, at most one default, at most one \`inherit\` (profiles only).

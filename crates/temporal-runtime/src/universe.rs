@@ -385,6 +385,7 @@ impl UniverseRuntime {
             .with_task_queue(self.task_queues.sessions.clone())
             .with_bot_task_queue(self.task_queues.bots.clone())
             .with_channel_task_queue(self.task_queues.channels.clone())
+            .with_code_task_queue(self.task_queues.code.clone())
             .with_oauth_token_client(self.clients.oauth_token.clone())
             .with_oauth_metadata_client(self.clients.oauth_metadata.clone())
             .with_github_api_client(self.clients.github.clone())
@@ -398,13 +399,16 @@ impl UniverseRuntime {
         }
         let api = Arc::new(api.build());
         let subagent_runtime = Arc::new(AgentApiSubagentRuntime::new(api.clone()));
-        let activities = Arc::new(ActivityState::from_pg_store_with_shared_clients(
-            store.clone(),
-            Some(subagent_runtime),
-            &self.clients,
-            self.client.clone(),
-            self.environment_gateway.clone(),
-        )?);
+        let activities = Arc::new(
+            ActivityState::from_pg_store_with_shared_clients(
+                store.clone(),
+                Some(subagent_runtime),
+                &self.clients,
+                self.client.clone(),
+                self.environment_gateway.clone(),
+            )?
+            .with_code_task_queue(self.task_queues.code.clone()),
+        );
         Ok(UniverseState {
             universe_id,
             store,

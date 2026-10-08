@@ -17,6 +17,22 @@
     "stateQuery": "chat_state",
     "workflowKind": "ChannelConversationWorkflow"
   },
+  "codeExecution": {
+    "activities": {
+      "finalize": "WorkflowActivities::code_finalize",
+      "prepare": "WorkflowActivities::code_prepare",
+      "run": "WorkflowActivities::code_run"
+    },
+    "runMaximumAttempts": 1,
+    "snapshotQuery": "snapshot",
+    "workflowType": "CodeExecutionWorkflow"
+  },
+  "codeTools": {
+    "identity": "execution_id + request_id; identical retries join or return the same result, conflicting reuse is rejected",
+    "invocationResult": "Result<CodeToolCallOutcome, CodeToolRejection>",
+    "report": "Fresh snapshot query; cancellation of a client waiter does not cancel admitted work",
+    "scopeResult": "Result<CodeToolScopeReport, CodeToolRejection>"
+  },
   "contractVersion": 2,
   "emissionIds": {
     "framing": "sha256 over the hash domain, then the kind, then each part in order; every piece is prefixed by its byte length as an unsigned 64-bit big-endian integer. Universe ids are hashed as hyphenated lowercase UUID strings; run ids as 8-byte big-endian unsigned integers.",
@@ -54,6 +70,7 @@
     "prefix": "emission:sha256:"
   },
   "queries": {
+    "codeToolScopeReport": "code_tool_scope_report",
     "workflowToolRecovery": "workflow_tool_recovery"
   },
   "roots": [
@@ -68,10 +85,25 @@
     "PrepareChannelMediaResult",
     "TranscriptionWorkflowArgs",
     "TranscriptionSnapshot",
-    "TranscriptionActivityResult"
+    "TranscriptionActivityResult",
+    "OpenCodeToolScopeRequest",
+    "InvokeCodeToolRequest",
+    "CloseCodeToolScopeRequest",
+    "CodeToolScopeReportRequest",
+    "CodeToolScopeReport",
+    "CodeToolCallOutcome",
+    "CodeToolRejection",
+    "CodeExecutionDescriptor",
+    "CodeExecutionSnapshot",
+    "CodeRunActivityResult"
   ],
   "signals": {
     "deliverEmission": "deliver_emission"
+  },
+  "updates": {
+    "closeCodeToolScope": "close_code_tool_scope",
+    "invokeCodeTool": "invoke_code_tool",
+    "openCodeToolScope": "open_code_tool_scope"
   },
   "vectors": {
     "channels": {
@@ -84,6 +116,112 @@
         "provider": "telegram",
         "threadId": "7",
         "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f"
+      }
+    },
+    "codeExecution": {
+      "descriptor": {
+        "catalog_ref": "sha256:37205a7f23ed067993395414b26457d7eb603bf78e181254ac6d2a74ea2918d9",
+        "execution_id": "wte:code-vector",
+        "limits": {
+          "max_catalog_bytes": 262144,
+          "max_memory_bytes": 16777216,
+          "max_output_bytes": 65536,
+          "max_outstanding_tool_calls": 8,
+          "max_request_bytes": 65536,
+          "max_result_bytes": 262144,
+          "max_source_bytes": 65536,
+          "max_stack_bytes": 262144,
+          "max_tool_calls": 100,
+          "timeout_ms": 30000
+        },
+        "session_workflow_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/bot:v1:triage",
+        "source_ref": "sha256:6a98d35093f15c84a9ccc34b0265e824ea49910551c181a250b362448204a253"
+      },
+      "result": {
+        "report_ref": "sha256:825bada798e50a4ea4f128bfcd6ff0371f292bcf43e7ef700eac8ba1a54a3db8",
+        "succeeded": true
+      },
+      "snapshot": {
+        "descriptor": {
+          "catalog_ref": "sha256:37205a7f23ed067993395414b26457d7eb603bf78e181254ac6d2a74ea2918d9",
+          "execution_id": "wte:code-vector",
+          "limits": {
+            "max_catalog_bytes": 262144,
+            "max_memory_bytes": 16777216,
+            "max_output_bytes": 65536,
+            "max_outstanding_tool_calls": 8,
+            "max_request_bytes": 65536,
+            "max_result_bytes": 262144,
+            "max_source_bytes": 65536,
+            "max_stack_bytes": 262144,
+            "max_tool_calls": 100,
+            "timeout_ms": 30000
+          },
+          "session_workflow_id": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/bot:v1:triage",
+          "source_ref": "sha256:6a98d35093f15c84a9ccc34b0265e824ea49910551c181a250b362448204a253"
+        },
+        "phase": "resolved",
+        "resolution": {
+          "kind": "resolved",
+          "payload_ref": "sha256:f03a9de709e439c62f5d0c0eed41f9972197ac5af6bd88b60add479443245f7f"
+        },
+        "terminal": {
+          "kind": "completed",
+          "result": {
+            "report_ref": "sha256:825bada798e50a4ea4f128bfcd6ff0371f292bcf43e7ef700eac8ba1a54a3db8",
+            "succeeded": true
+          }
+        }
+      }
+    },
+    "codeTools": {
+      "closeRequest": {
+        "cancel_pending": true,
+        "execution_id": "execution:vector"
+      },
+      "invokeRequest": {
+        "arguments_ref": "sha256:76cd2a0d9aa2ce03442a30b892eda947093dd0fdf8ee727690fa464ad6850ac8",
+        "binding_id": "binding:vector",
+        "execution_id": "execution:vector",
+        "request_id": "request:vector"
+      },
+      "openRequest": {
+        "allowed_tools": [
+          "vfs.read_file"
+        ],
+        "execution_id": "execution:vector",
+        "max_calls": 8,
+        "max_in_flight": 2,
+        "parent_invocation_id": "wti:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "outcome": {
+        "call_id": "code-tool:vector",
+        "output_ref": "sha256:23fb5c3482a5315f33eba760b84f175d7fb0ad91a527e5578baa1038a06482dd",
+        "request_id": "request:vector",
+        "status": "succeeded"
+      },
+      "rejection": {
+        "kind": "scope_closed",
+        "message": "scope is closed"
+      },
+      "report": {
+        "bindings": {
+          "binding:vector": "read_file"
+        },
+        "calls": {
+          "request:vector": {
+            "call_id": "code-tool:vector",
+            "output_ref": "sha256:23fb5c3482a5315f33eba760b84f175d7fb0ad91a527e5578baa1038a06482dd",
+            "request_id": "request:vector",
+            "status": "succeeded"
+          }
+        },
+        "cancel_requested": true,
+        "closed": true,
+        "execution_id": "execution:vector"
+      },
+      "reportRequest": {
+        "execution_id": "execution:vector"
       }
     },
     "emissionIds": {

@@ -158,6 +158,7 @@ pub fn resolve(
             }]);
         }
         "web.fetch" => web_fetch_definition(),
+        "code.execute" => crate::code::code_execute_tool_definition()?,
         "subagent.run" => subagent_tool_definition(SubagentToolKind::Run)?,
         "subagent.spawn" => subagent_tool_definition(SubagentToolKind::Spawn)?,
         "mcp.find_tools" => FunctionDefinition::new(

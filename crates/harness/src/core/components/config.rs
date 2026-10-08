@@ -154,6 +154,8 @@ pub struct FeaturesConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents: Option<SubagentsFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_mode: Option<CodeModeFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timers: Option<TimersFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environments: Option<EnvironmentsFeature>,
@@ -295,6 +297,118 @@ pub struct WebSearchFeature {
     pub allowed_domains: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_domains: Vec<String>,
+}
+
+/// Grants JavaScript composition of the session's ordinary callable tools.
+/// An optional allowlist only narrows those grants; it never adds authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodeModeFeature {
+    pub version: u32,
+    /// Logical tool ids (for example vfs.read_file), not provider wire names.
+    /// Absent permits every currently callable grant; an empty list permits none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub limits: CodeModeLimits,
+}
+
+impl Default for CodeModeFeature {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_FEATURE_VERSION,
+            allowed_tools: None,
+            limits: CodeModeLimits::default(),
+        }
+    }
+}
+
+pub const CODE_MODE_TIMEOUT_CEILING_MS: u64 = 600_000;
+
+/// Per-execution budgets. Script options may narrow, but never widen them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodeModeLimits {
+    /// Total attempt time, including input loading, interpreter capacity waits,
+    /// script evaluation, calls, and promise waits.
+    pub timeout_ms: u64,
+    pub max_memory_bytes: u64,
+    pub max_stack_bytes: u64,
+    pub max_source_bytes: u64,
+    pub max_catalog_bytes: u64,
+    pub max_request_bytes: u64,
+    pub max_result_bytes: u64,
+    pub max_output_bytes: u64,
+    pub max_tool_calls: u32,
+    pub max_outstanding_tool_calls: u32,
+}
+
+impl Default for CodeModeLimits {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 30_000,
+            max_memory_bytes: 64 * 1024 * 1024,
+            max_stack_bytes: 1024 * 1024,
+            max_source_bytes: 256 * 1024,
+            max_catalog_bytes: 1024 * 1024,
+            max_request_bytes: 1024 * 1024,
+            max_result_bytes: 1024 * 1024,
+            max_output_bytes: 1024 * 1024,
+            max_tool_calls: 128,
+            max_outstanding_tool_calls: 16,
+        }
+    }
+}
+
+impl CodeModeLimits {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        for (name, value, ceiling) in [
+            ("timeout_ms", self.timeout_ms, CODE_MODE_TIMEOUT_CEILING_MS),
+            ("max_memory_bytes", self.max_memory_bytes, 512 * 1024 * 1024),
+            ("max_stack_bytes", self.max_stack_bytes, 8 * 1024 * 1024),
+            ("max_source_bytes", self.max_source_bytes, 1024 * 1024),
+            ("max_catalog_bytes", self.max_catalog_bytes, 8 * 1024 * 1024),
+            ("max_request_bytes", self.max_request_bytes, 8 * 1024 * 1024),
+            ("max_result_bytes", self.max_result_bytes, 8 * 1024 * 1024),
+            ("max_output_bytes", self.max_output_bytes, 8 * 1024 * 1024),
+            ("max_tool_calls", u64::from(self.max_tool_calls), 1024),
+            (
+                "max_outstanding_tool_calls",
+                u64::from(self.max_outstanding_tool_calls),
+                64,
+            ),
+        ] {
+            if value == 0 || value > ceiling {
+                return Err(DomainError::InvariantViolation(format!(
+                    "code mode {name} must be between 1 and {ceiling}"
+                )));
+            }
+        }
+        if self.max_outstanding_tool_calls > self.max_tool_calls {
+            return Err(DomainError::InvariantViolation(
+                "code mode outstanding calls cannot exceed total calls".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl CodeModeFeature {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        validate_feature_version("code_mode", self.version)?;
+        self.limits.validate()?;
+        if let Some(allowed) = &self.allowed_tools {
+            let mut seen = std::collections::BTreeSet::new();
+            if allowed.len() > 4096
+                || allowed.iter().any(|name| {
+                    crate::ToolName::try_new(name.clone()).is_err() || !seen.insert(name)
+                })
+            {
+                return Err(DomainError::InvariantViolation("code mode allowed tools must contain at most 4096 unique valid logical tool ids".to_owned()));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Grants sub-agent delegation: `agent_run` (joined) and `agent_spawn`
@@ -767,6 +881,9 @@ fn validate_features(
     if let Some(subagents) = &features.subagents {
         validate_feature_version("subagents", subagents.version)?;
         validate_subagents_feature(subagents)?;
+    }
+    if let Some(code_mode) = &features.code_mode {
+        code_mode.validate()?;
     }
     if let Some(timers) = &features.timers {
         validate_feature_version("timers", timers.version)?;
@@ -1739,6 +1856,78 @@ mod tests {
             .expect_err("unknown feature version must fail validation");
 
         assert!(matches!(error, DomainError::InvariantViolation(_)));
+    }
+
+    #[test]
+    fn code_mode_defaults_are_pinned_and_partial_limits_retain_defaults() {
+        let feature: CodeModeFeature = serde_json::from_str("{}").unwrap();
+        assert_eq!(feature, CodeModeFeature::default());
+        feature.validate().unwrap();
+        let partial: CodeModeFeature =
+            serde_json::from_str(r#"{"timeout_ms":45,"allowed_tools":[]}"#).unwrap();
+        assert_eq!(partial.limits.timeout_ms, 45);
+        assert_eq!(
+            partial.limits.max_memory_bytes,
+            CodeModeLimits::default().max_memory_bytes
+        );
+        assert_eq!(partial.allowed_tools, Some(vec![]));
+        partial.validate().unwrap();
+        let persisted = serde_json::to_value(partial).unwrap();
+        assert_eq!(persisted["version"], CURRENT_FEATURE_VERSION);
+        assert_eq!(persisted["max_tool_calls"], 128);
+    }
+
+    #[test]
+    fn code_mode_rejects_unsupported_versions_and_unbounded_execution() {
+        let mut config = config(ProviderApiKind::OpenAiResponses, None);
+        let mut feature = CodeModeFeature::default();
+        for invalid in [
+            CodeModeLimits {
+                timeout_ms: 0,
+                ..Default::default()
+            },
+            CodeModeLimits {
+                timeout_ms: CODE_MODE_TIMEOUT_CEILING_MS + 1,
+                ..Default::default()
+            },
+            CodeModeLimits {
+                max_memory_bytes: u64::MAX,
+                ..Default::default()
+            },
+            CodeModeLimits {
+                max_tool_calls: 1025,
+                ..Default::default()
+            },
+            CodeModeLimits {
+                max_outstanding_tool_calls: 65,
+                ..Default::default()
+            },
+            CodeModeLimits {
+                max_tool_calls: 1,
+                max_outstanding_tool_calls: 2,
+                ..Default::default()
+            },
+        ] {
+            feature.limits = invalid;
+            config.features.code_mode = Some(feature.clone());
+            assert!(matches!(
+                config.validate(),
+                Err(DomainError::InvariantViolation(_))
+            ));
+        }
+        feature = CodeModeFeature::default();
+        feature.version = CURRENT_FEATURE_VERSION + 1;
+        assert!(feature.validate().is_err());
+        feature.version = CURRENT_FEATURE_VERSION;
+        feature.allowed_tools = Some(vec!["read_file".into(), "read_file".into()]);
+        assert!(feature.validate().is_err());
+        for invalid in ["x".repeat(65), "tool with spaces".into(), "".into()] {
+            feature.allowed_tools = Some(vec![invalid]);
+            assert!(matches!(
+                feature.validate(),
+                Err(DomainError::InvariantViolation(_))
+            ));
+        }
     }
 
     #[test]

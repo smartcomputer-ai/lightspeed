@@ -700,6 +700,116 @@ impl SessionTools {
                     .await
                     .map_err(map_blob_error)?,
             )
+        } else if tools::code::is_code_execution_binding(
+            binding.definition.tool_id.as_str(),
+            binding.definition.semantic_type.as_str(),
+        ) {
+            let Some(policy) = request.code_mode_policy.as_ref() else {
+                return failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    "code_execute requires the code mode grant".to_owned(),
+                )
+                .await;
+            };
+            if let Err(error) = policy.validate() {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await;
+            }
+            // Bound encoded arguments before materializing source. A JSON string
+            // can use six bytes per source byte when every character is escaped.
+            let argument_size = self
+                .blobs
+                .stat_blob(&call.arguments_ref)
+                .await
+                .map_err(map_blob_error)?
+                .byte_len;
+            if argument_size
+                > policy
+                    .limits
+                    .max_source_bytes
+                    .saturating_mul(6)
+                    .saturating_add(1024)
+            {
+                return failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    "code_execute arguments exceed the admitted source budget".to_owned(),
+                )
+                .await;
+            }
+            let args: tools::code::CodeExecuteArgs = match self.read_tool_args(call).await {
+                Ok(args) => args,
+                Err(error) => {
+                    return failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        error.to_string(),
+                    )
+                    .await;
+                }
+            };
+            let limits = match args.effective_limits(policy.limits) {
+                Ok(limits) => limits,
+                Err(error) => {
+                    return failed_result(
+                        self.blobs.as_ref(),
+                        call.call_id.clone(),
+                        error.to_string(),
+                    )
+                    .await;
+                }
+            };
+            if !matches!(binding.completion, harness::WorkflowToolCompletion::Joined { deadline_after_ms, .. }
+                if limits.timeout_ms + tools::code::CODE_EXECUTION_OVERHEAD_MS <= deadline_after_ms)
+            {
+                return failed_result(self.blobs.as_ref(), call.call_id.clone(),
+                    "code execution budget exceeds the session's immutable workflow binding deadline".to_owned()).await;
+            }
+            let source_ref = self
+                .blobs
+                .put_bytes(args.code.into_bytes())
+                .await
+                .map_err(map_blob_error)?;
+            let context = tools::code::CodeExecutionContextV1 {
+                version: tools::code::CodeExecutionContextV1::VERSION,
+                parent_session_id: request.session_id.as_str().to_owned(),
+                parent_run_id: request.run_id.as_u64(),
+                source_ref,
+                limits,
+                allowed_tools: policy
+                    .allowed_tools
+                    .as_ref()
+                    .map(|names| {
+                        names
+                            .iter()
+                            .filter(|name| {
+                                !matches!(
+                                    name.as_str(),
+                                    tools::code::CODE_EXECUTE_TOOL_NAME | "code.execute"
+                                )
+                            })
+                            .cloned()
+                            .map(harness::ToolName::try_new)
+                            .collect::<Result<std::collections::BTreeSet<_>, _>>()
+                    })
+                    .transpose()
+                    .map_err(io_error)?,
+            };
+            context.validate().map_err(io_error)?;
+            let context_ref = self
+                .blobs
+                .put_bytes(serde_json::to_vec(&context).map_err(io_error)?)
+                .await
+                .map_err(map_blob_error)?;
+            harness::storage::record_contains_edges(
+                self.blob_graph.as_deref(),
+                &context_ref,
+                [context.source_ref],
+            )
+            .await
+            .map_err(map_blob_error)?;
+            Some(context_ref)
         } else {
             None
         };
@@ -1730,7 +1840,73 @@ pub enum ToolCallExecution {
     },
 }
 
+/// A session-owned code tool call can prepare a wait without parking the model's
+/// outer tool batch. The owning workflow retains this wait on its code tool call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodeToolCallExecution {
+    Completed(ToolInvocationResult),
+    Deferred(harness::AwaitSpec),
+    EnvironmentNotReady { environment_id: String },
+}
+
 impl SessionTools {
+    /// Execute a separately admitted call using the same policy and argument
+    /// preparation as model calls. Parent run/turn/batch IDs are provenance;
+    /// the canonical code tool call ID identifies this invocation independently.
+    pub async fn invoke_code_tool_call_execution(
+        &self,
+        request: harness::ToolInvocationCallRequest,
+    ) -> Result<CodeToolCallExecution, CoreAgentIoError> {
+        let call = &request.call;
+        if let Some(message) = environment_tool_denial(
+            request.environment_policy.as_ref(),
+            request.active_environment_id.as_ref(),
+            call,
+        ) {
+            return failed_result(self.blobs.as_ref(), call.call_id.clone(), message)
+                .await
+                .map(CodeToolCallExecution::Completed);
+        }
+        if call.workflow_tool.is_some() {
+            let promise_ids = PromiseIdAllocator::new(request.promise_id_base);
+            let batch = request.into_batch_request();
+            return self
+                .invoke_supplied_workflow_tool_call(
+                    &batch,
+                    &batch.calls[0],
+                    &mut BTreeMap::new(),
+                    &promise_ids,
+                )
+                .await
+                .map(CodeToolCallExecution::Completed);
+        }
+        if call
+            .tool_id
+            .as_ref()
+            .is_some_and(|id| id.as_str() == "concurrency.await")
+        {
+            let prepared = async {
+                let args: AwaitArgs = self.read_tool_args(call).await?;
+                await_spec_from_args(args, now_unix_ms()?).map_err(io_error)
+            }
+            .await;
+            return match prepared {
+                Ok(spec) => Ok(CodeToolCallExecution::Deferred(spec)),
+                Err(error) => {
+                    failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                        .await
+                        .map(CodeToolCallExecution::Completed)
+                }
+            };
+        }
+        Ok(match self.invoke_call_execution(request).await? {
+            ToolCallExecution::Completed(result) => CodeToolCallExecution::Completed(result),
+            ToolCallExecution::EnvironmentNotReady { environment_id, .. } => {
+                CodeToolCallExecution::EnvironmentNotReady { environment_id }
+            }
+        })
+    }
+
     /// Per-call execution that distinguishes "did not run because the active
     /// environment is not ready yet" from ordinary results, so the workflow
     /// can wait outside the tool activity's tight class deadline.
@@ -2323,6 +2499,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             call: harness::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
                 call_id: ToolCallId::new("call_self"),
@@ -2637,6 +2814,7 @@ mod tests {
                     active_environment_id: None,
                     environment_policy: Some(test_environment_policy(&[])),
                     subagents_policy: None,
+                    code_mode_policy: None,
                     calls,
                 })
                 .await
@@ -2800,6 +2978,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             workspace_attachments: Vec::new(),
             calls,
         };
@@ -2968,6 +3147,7 @@ mod tests {
             active_environment_id: Some(EnvironmentId::new("environment-original")),
             environment_policy: Some(test_environment_policy(&["environment-original"])),
             subagents_policy: None,
+            code_mode_policy: None,
             workspace_attachments: Vec::new(),
             calls: vec![call.clone()],
         };
@@ -3004,6 +3184,24 @@ mod tests {
         .expect("decode execution context");
         assert_eq!(context.environment_id, "environment-original");
         assert_eq!(context.working_directory.as_deref(), Some("/project"));
+        let mut code_call = request.call_request(0, Default::default()).unwrap();
+        code_call.call.call_id = ToolCallId::new("code-tool:job-submit");
+        code_call.promise_id_base = 65;
+        let CodeToolCallExecution::Completed(code_call) = tools
+            .invoke_code_tool_call_execution(code_call)
+            .await
+            .expect("prepare code tool job")
+        else {
+            panic!("code tool job effects")
+        };
+        assert_eq!(code_call.status, ToolCallStatus::Succeeded);
+        assert_eq!(
+            code_call.effects[0].data["execution_context_ref"],
+            context_ref.as_str()
+        );
+        let promises: BTreeMap<String, String> =
+            serde_json::from_str(&code_call.effects[0].data["completion_promises"]).unwrap();
+        assert_eq!(promises["build"], "promise_65");
         let retried = tools
             .invoke_batch(request)
             .await
@@ -3023,6 +3221,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: Some(test_environment_policy(&[])),
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![call.clone()],
             })
@@ -3047,9 +3246,18 @@ mod tests {
     /// The `agent_run` system binding as the gateway admits it: a
     /// start-on-call recipe with joined completion.
     async fn agent_run_binding(blobs: &InMemoryBlobStore) -> harness::WorkflowToolBinding {
-        let kind = tools::subagents::SubagentToolKind::Run;
+        subagent_binding(blobs, tools::subagents::SubagentToolKind::Run).await
+    }
+
+    async fn subagent_binding(
+        blobs: &InMemoryBlobStore,
+        kind: SubagentToolKind,
+    ) -> harness::WorkflowToolBinding {
         let tool = tools::definitions::register(
-            "subagent.run",
+            match kind {
+                SubagentToolKind::Run => "subagent.run",
+                SubagentToolKind::Spawn => "subagent.spawn",
+            },
             Default::default(),
             harness::ToolParallelism::ParallelSafe,
             Default::default(),
@@ -3073,9 +3281,17 @@ mod tests {
                     recipe_fingerprint,
                 },
             },
-            harness::WorkflowToolCompletion::Joined {
-                reply_schema_ref: None,
-                deadline_after_ms: harness::SUBAGENT_DEADLINE_CEILING_MS,
+            match kind {
+                SubagentToolKind::Run => harness::WorkflowToolCompletion::Joined {
+                    reply_schema_ref: None,
+                    deadline_after_ms: harness::SUBAGENT_DEADLINE_CEILING_MS,
+                },
+                SubagentToolKind::Spawn => harness::WorkflowToolCompletion::Promises {
+                    reply_schema_ref: None,
+                    deadline_after_ms: Some(harness::SUBAGENT_DEADLINE_CEILING_MS),
+                    max_promises: 1,
+                    key_source: harness::WorkflowToolCompletionKeySource::Reply,
+                },
             },
         )
         .expect("admit agent_run binding")
@@ -3117,6 +3333,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: policy,
+            code_mode_policy: None,
             workspace_attachments: Vec::new(),
             calls: vec![harness::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
@@ -3161,6 +3378,213 @@ mod tests {
             .expect("completed batch");
         let error = failure_text(&blobs, &outcome.results[0]).await;
         assert!(error.contains("requires the subagents grant"), "{error}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_workflow_calls_preserve_parent_identity_and_reserved_promise_ranges() {
+        for kind in [SubagentToolKind::Run, SubagentToolKind::Spawn] {
+            let blobs = Arc::new(InMemoryBlobStore::new());
+            let binding = subagent_binding(&blobs, kind).await;
+            let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+            let mut request = agent_run_batch(
+                &blobs,
+                &binding,
+                br#"{"agent":"reviewer","input":"review this change"}"#,
+                Some(subagents_policy(&["reviewer"], Default::default())),
+            )
+            .await;
+            request.calls[0].tool_name = ToolName::new(kind.tool_name());
+            request.calls[0].call_id = ToolCallId::new("code-tool:execution-a:request-a");
+            request.promise_id_base = 65;
+            let call = request.call_request(0, Default::default()).unwrap();
+            let CodeToolCallExecution::Completed(first) = tools
+                .invoke_code_tool_call_execution(call)
+                .await
+                .expect("code tool workflow preparation")
+            else {
+                panic!("workflow preparation must return effects");
+            };
+            assert_eq!(first.status, ToolCallStatus::Succeeded);
+            let invocation = &first.effects[0].data;
+            assert_eq!(invocation["run_id"], request.run_id.to_string());
+            assert_eq!(invocation["turn_id"], request.turn_id.to_string());
+            assert_eq!(invocation["tool_batch_id"], request.batch_id.to_string());
+            assert_eq!(
+                invocation["tool_call_id"],
+                request.calls[0].call_id.as_str()
+            );
+            let promises: BTreeMap<String, String> =
+                serde_json::from_str(&invocation["completion_promises"]).unwrap();
+            assert_eq!(promises[harness::REPLY_COMPLETION_KEY], "promise_65");
+            let context_ref = BlobRef::parse(invocation["execution_context_ref"].clone()).unwrap();
+            let context: SubagentExecutionContextV1 =
+                serde_json::from_slice(&blobs.read_bytes(&context_ref).await.unwrap()).unwrap();
+            assert_eq!(
+                context,
+                SubagentExecutionContextV1::new(
+                    "session-parent".to_owned(),
+                    7,
+                    "reviewer".to_owned(),
+                    Default::default(),
+                    None
+                )
+            );
+            request.calls[0].call_id = ToolCallId::new("code-tool:execution-a:request-b");
+            request.promise_id_base = 97;
+            let CodeToolCallExecution::Completed(second) = tools
+                .invoke_code_tool_call_execution(
+                    request.call_request(0, Default::default()).unwrap(),
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("workflow result")
+            };
+            let second_invocation = &second.effects[0].data;
+            assert_ne!(
+                invocation["invocation_id"],
+                second_invocation["invocation_id"]
+            );
+            let promises: BTreeMap<String, String> =
+                serde_json::from_str(&second_invocation["completion_promises"]).unwrap();
+            assert_eq!(promises[harness::REPLY_COMPLETION_KEY], "promise_97");
+
+            request.subagents_policy = None;
+            let CodeToolCallExecution::Completed(denied) = tools
+                .invoke_code_tool_call_execution(
+                    request.call_request(0, Default::default()).unwrap(),
+                )
+                .await
+                .unwrap()
+            else {
+                panic!("denied result")
+            };
+            assert!(
+                failure_text(&blobs, &denied)
+                    .await
+                    .contains("requires the subagents grant")
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_job_run_pins_active_environment_before_emitting_joined_work() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+        let recipe = b"code tool job recipe";
+        let binding = harness::WorkflowToolBinding::admit(
+            uuid::Uuid::from_u128(1),
+            WorkflowToolDefinition {
+                tool_id: WorkflowToolId::new(JOB_RUN_WORKFLOW_TOOL_ID),
+                revision: 1,
+                semantic_type: JOB_RUN_WORKFLOW_SEMANTIC_TYPE.to_owned(),
+                tool: tools::definitions::register(
+                    "env.job_run",
+                    Default::default(),
+                    ToolParallelism::ParallelSafe,
+                    Default::default(),
+                ),
+            },
+            harness::WorkflowToolTarget::Start {
+                start: harness::WorkflowStartRef {
+                    recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
+                    revision: 1,
+                    recipe_ref: blobs.put_bytes(recipe.to_vec()).await.unwrap(),
+                    recipe_fingerprint: temporal_workflow::workflow_tool_recipe_fingerprint(recipe),
+                },
+            },
+            harness::WorkflowToolCompletion::Joined {
+                reply_schema_ref: None,
+                deadline_after_ms: tools::environment::jobs::JOB_RUN_DEADLINE_AFTER_MS,
+            },
+        )
+        .unwrap();
+        let arguments = br#"{"argv":["make"]}"#;
+        let mut request = per_call_request("job_run", arguments, &[]);
+        request.call.tool_id = Some(ToolName::new("env.job_run"));
+        request.call.call_id = ToolCallId::new("code-tool:job-run");
+        request.call.arguments_ref = blobs.put_bytes(arguments.to_vec()).await.unwrap();
+        request.call.workflow_tool = Some(harness::WorkflowToolCallRuntime::v1(binding, 0));
+        request.active_environment_id = Some(EnvironmentId::new("environment-original"));
+        request.environment_policy = Some(test_environment_policy(&["environment-original"]));
+        request.promise_id_base = 129;
+        let CodeToolCallExecution::Completed(result) = tools
+            .invoke_code_tool_call_execution(request.clone())
+            .await
+            .unwrap()
+        else {
+            panic!("code tool job_run preparation")
+        };
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        let context_ref =
+            BlobRef::parse(result.effects[0].data["execution_context_ref"].clone()).unwrap();
+        let context: JobSubmitExecutionContextV1 =
+            serde_json::from_slice(&blobs.read_bytes(&context_ref).await.unwrap()).unwrap();
+        assert_eq!(context.environment_id, "environment-original");
+        let promises: BTreeMap<String, String> =
+            serde_json::from_str(&result.effects[0].data["completion_promises"]).unwrap();
+        assert_eq!(promises[harness::REPLY_COMPLETION_KEY], "promise_129");
+        request.active_environment_id = None;
+        let CodeToolCallExecution::Completed(denied) = tools
+            .invoke_code_tool_call_execution(request)
+            .await
+            .unwrap()
+        else {
+            panic!("job requires active environment")
+        };
+        assert!(
+            failure_text(&blobs, &denied)
+                .await
+                .contains("requires an active environment")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_await_returns_wait_facts_and_rejects_invalid_arguments() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+        let mut request = per_call_request(
+            "await",
+            br#"{"promises":["promise_4","promise_5"],"mode":"any","timeout_ms":1000}"#,
+            &[],
+        );
+        request.call.call_id = ToolCallId::new("code-tool:await");
+        request.call.arguments_ref = blobs
+            .put_bytes(
+                br#"{"promises":["promise_4","promise_5"],"mode":"any","timeout_ms":1000}"#
+                    .to_vec(),
+            )
+            .await
+            .unwrap();
+        let CodeToolCallExecution::Deferred(spec) = tools
+            .invoke_code_tool_call_execution(request.clone())
+            .await
+            .expect("prepare code tool wait")
+        else {
+            panic!("code tool wait facts")
+        };
+        assert_eq!(
+            spec.promise_ids,
+            vec![
+                harness::PromiseId::new("promise_4"),
+                harness::PromiseId::new("promise_5")
+            ]
+        );
+        assert_eq!(spec.mode, harness::AwaitMode::Any);
+        assert!(spec.deadline_at_ms.is_some());
+        request.call.arguments_ref = blobs
+            .put_bytes(br#"{"promises":[]}"#.to_vec())
+            .await
+            .unwrap();
+        let CodeToolCallExecution::Completed(failed) = tools
+            .invoke_code_tool_call_execution(request)
+            .await
+            .expect("invalid code tool wait")
+        else {
+            panic!("invalid wait fails")
+        };
+        assert_eq!(failed.status, ToolCallStatus::Failed);
+        assert!(failed.effects.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3283,6 +3707,165 @@ mod tests {
             }
         }
         assert_eq!(retried, first);
+    }
+
+    async fn code_binding(
+        blobs: &InMemoryBlobStore,
+        deadline_after_ms: u64,
+    ) -> harness::WorkflowToolBinding {
+        let recipe = b"test code recipe".to_vec();
+        let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(&recipe);
+        let recipe_ref = blobs.put_bytes(recipe).await.unwrap();
+        harness::WorkflowToolBinding::admit(
+            uuid::Uuid::from_u128(1),
+            WorkflowToolDefinition {
+                tool_id: WorkflowToolId::new(tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID),
+                revision: 1,
+                semantic_type: tools::code::CODE_EXECUTE_WORKFLOW_SEMANTIC_TYPE.into(),
+                tool: tools::definitions::register(
+                    "code.execute",
+                    Default::default(),
+                    harness::ToolParallelism::ParallelSafe,
+                    Default::default(),
+                ),
+            },
+            harness::WorkflowToolTarget::Start {
+                start: harness::WorkflowStartRef {
+                    recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
+                    revision: 1,
+                    recipe_ref,
+                    recipe_fingerprint,
+                },
+            },
+            harness::WorkflowToolCompletion::Joined {
+                reply_schema_ref: None,
+                deadline_after_ms,
+            },
+        )
+        .unwrap()
+    }
+
+    async fn code_batch(
+        blobs: &InMemoryBlobStore,
+        binding: &harness::WorkflowToolBinding,
+        args: &[u8],
+        policy: Option<harness::CodeModeFeature>,
+    ) -> ToolInvocationBatchRequest {
+        let mut request = agent_run_batch(blobs, binding, args, None).await;
+        request.calls[0].tool_name = ToolName::new(tools::code::CODE_EXECUTE_TOOL_NAME);
+        request.code_mode_policy = policy;
+        request
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_execute_pins_source_narrowed_grant_and_identity() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .with_blob_graph(blobs.clone());
+        let binding = code_binding(&blobs, tools::code::CODE_EXECUTION_DEADLINE_CEILING_MS).await;
+        let policy = harness::CodeModeFeature {
+            allowed_tools: Some(vec!["read_file".into(), "code_execute".into()]),
+            ..Default::default()
+        };
+        let request = code_batch(
+            &blobs,
+            &binding,
+            br#"{"code":"return 7;","timeout_ms":50}"#,
+            Some(policy),
+        )
+        .await;
+        let first = tools
+            .invoke_batch(request.clone())
+            .await
+            .unwrap()
+            .completed_result()
+            .unwrap();
+        assert_eq!(first.results[0].status, ToolCallStatus::Succeeded);
+        let reference =
+            BlobRef::parse(&first.results[0].effects[0].data["execution_context_ref"]).unwrap();
+        let context: tools::code::CodeExecutionContextV1 =
+            serde_json::from_slice(&blobs.read_bytes(&reference).await.unwrap()).unwrap();
+        assert_eq!(context.parent_session_id, "session-parent");
+        assert_eq!(context.parent_run_id, 7);
+        assert_eq!(context.limits.timeout_ms, 50);
+        assert_eq!(
+            context.allowed_tools,
+            Some(std::collections::BTreeSet::from([ToolName::new(
+                "read_file"
+            )]))
+        );
+        assert_eq!(
+            blobs.read_text(&context.source_ref).await.unwrap(),
+            "return 7;"
+        );
+        let retried = tools
+            .invoke_batch(request)
+            .await
+            .unwrap()
+            .completed_result()
+            .unwrap();
+        assert_eq!(
+            retried.results[0].effects[0].data["execution_context_ref"],
+            reference.as_str()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_execute_rejects_missing_grant_budget_expansion_and_forged_context() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+        let binding = code_binding(&blobs, tools::code::CODE_EXECUTION_DEADLINE_CEILING_MS).await;
+        for (args, policy) in [
+            (br#"{"code":"return 7;"}"#.as_slice(), None),
+            (
+                br#"{"code":"return 7;","timeout_ms":30001}"#.as_slice(),
+                Some(harness::CodeModeFeature::default()),
+            ),
+            (
+                br#"{"code":"return 7;","timeout_ms":0}"#.as_slice(),
+                Some(harness::CodeModeFeature::default()),
+            ),
+            (
+                br#"{"code":"return 7;","source_ref":"forged"}"#.as_slice(),
+                Some(harness::CodeModeFeature::default()),
+            ),
+            (
+                br#"{"code":"return 7;"}"#.as_slice(),
+                Some(harness::CodeModeFeature {
+                    limits: harness::CodeModeLimits {
+                        max_source_bytes: 3,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            ),
+        ] {
+            let request = code_batch(&blobs, &binding, args, policy).await;
+            let result = tools
+                .invoke_batch(request)
+                .await
+                .unwrap()
+                .completed_result()
+                .unwrap();
+            assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+            assert!(result.results[0].effects.is_empty());
+        }
+        let binding = code_binding(&blobs, tools::code::CODE_EXECUTION_OVERHEAD_MS + 10).await;
+        let request = code_batch(
+            &blobs,
+            &binding,
+            br#"{"code":"return 7;"}"#,
+            Some(Default::default()),
+        )
+        .await;
+        let result = tools
+            .invoke_batch(request)
+            .await
+            .unwrap()
+            .completed_result()
+            .unwrap();
+        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        assert!(result.results[0].effects.is_empty());
     }
 
     #[derive(Default)]
@@ -3978,6 +4561,7 @@ mod tests {
                 "environment-allowed-2",
             ])),
             subagents_policy: None,
+            code_mode_policy: None,
             call: harness::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
                 call_id: ToolCallId::new("call-environment-list"),
@@ -4050,6 +4634,7 @@ mod tests {
             active_environment_id: Some(EnvironmentId::new("environment-pending")),
             environment_policy: Some(test_environment_policy(&["environment-pending"])),
             subagents_policy: None,
+            code_mode_policy: None,
             call: harness::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
                 call_id: ToolCallId::new("call-read-file"),
@@ -4179,6 +4764,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             call: harness::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
                 call_id: ToolCallId::new("call-await"),
@@ -4234,6 +4820,7 @@ mod tests {
                 "environment-allowed-2",
             ])),
             subagents_policy: None,
+            code_mode_policy: None,
             workspace_attachments: Vec::new(),
             calls: vec![harness::ToolInvocationRequest {
                 builtin: Some(test_builtin_runtime()),
@@ -4357,6 +4944,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments,
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
@@ -4402,6 +4990,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments,
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(harness::BuiltinToolCallRuntime {
@@ -4460,6 +5049,7 @@ mod tests {
                 active_environment_id: Some(EnvironmentId::new("test")),
                 environment_policy: Some(test_environment_policy(&["test"])),
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments,
                 calls: vec![
                     harness::ToolInvocationRequest {
@@ -4596,6 +5186,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![
                     harness::ToolInvocationRequest {
@@ -4705,6 +5296,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
@@ -4756,6 +5348,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
@@ -4812,6 +5405,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
@@ -4886,6 +5480,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![sleep_call("call_sleep_a"), sleep_call("call_sleep_b")],
             })
@@ -4980,6 +5575,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),
@@ -5026,6 +5622,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![harness::ToolInvocationRequest {
                     builtin: Some(test_builtin_runtime()),

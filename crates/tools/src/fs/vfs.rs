@@ -1890,6 +1890,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![ToolInvocationRequest {
                     builtin: Some(harness::BuiltinToolCallRuntime {

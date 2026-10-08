@@ -4,6 +4,26 @@
  */
 
 /**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "Attachment".
+ */
+export type Attachment =
+  | {
+      data: MediaDescriptor;
+      kind: "media";
+    }
+  | {
+      data: FileAttachment;
+      kind: "file";
+    };
+/**
+ * What a media entry is to the providers: an image block or a document block.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "MediaKind".
+ */
+export type MediaKind = "image" | "document";
+/**
  * Who created a resource or authored bytes. An actor is whatever a key
  * allowed to assert one said; core compares it and never resolves it.
  *
@@ -95,6 +115,90 @@ export type ChatGroupActivation = "mention" | "always";
  */
 export type ChatScope = "direct" | "group";
 /**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeExecutionInterruption".
+ */
+export type CodeExecutionInterruption =
+  | "holder_cancelled"
+  | "workflow_cancelled"
+  | "preparation_failed"
+  | "activity_failed"
+  | "activity_timed_out";
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeExecutionPhase".
+ */
+export type CodeExecutionPhase =
+  "starting" | "preparing" | "running" | "finalizing" | "resolved" | "cancelled";
+/**
+ * How a promise reached a terminal state. Used by `ResolvePromise`
+ * admission; all transports (push notifications, poll results, timers,
+ * cancellation) converge on this one funnel.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "PromiseResolution".
+ */
+export type PromiseResolution =
+  | {
+      kind: "resolved";
+      payload_ref?: string | null;
+    }
+  | {
+      error_ref?: string | null;
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    };
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeExecutionTerminal".
+ */
+export type CodeExecutionTerminal =
+  | {
+      kind: "completed";
+      result: CodeRunActivityResult;
+    }
+  | {
+      error_ref: string;
+      kind: "rejected";
+    }
+  | {
+      kind: "interrupted";
+      reason: CodeExecutionInterruption;
+      result?: CodeRunActivityResult | null;
+    };
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "ToolCallId".
+ */
+export type ToolCallId = string;
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeToolCallStatus".
+ */
+export type CodeToolCallStatus =
+  "pending" | "waiting" | "succeeded" | "failed" | "cancelled" | "unavailable";
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeToolRejectionKind".
+ */
+export type CodeToolRejectionKind =
+  | "invalid_request"
+  | "unknown_scope"
+  | "scope_closed"
+  | "conflict"
+  | "unavailable"
+  | "permission_denied"
+  | "limit_exceeded"
+  | "session_not_ready"
+  | "internal";
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "ToolName".
+ */
+export type ToolName = string;
+/**
  * Closed internal vocabulary carried by the shared delivery signal.
  *
  * Workflow-tool invocation bodies join this enum when the durable tool
@@ -153,26 +257,6 @@ export type RunStatus = "active" | "parked" | "cancelling" | "completed" | "fail
  */
 export type PromiseId = string;
 /**
- * How a promise reached a terminal state. Used by `ResolvePromise`
- * admission; all transports (push notifications, poll results, timers,
- * cancellation) converge on this one funnel.
- *
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "PromiseResolution".
- */
-export type PromiseResolution =
-  | {
-      kind: "resolved";
-      payload_ref?: string | null;
-    }
-  | {
-      error_ref?: string | null;
-      kind: "failed";
-    }
-  | {
-      kind: "cancelled";
-    };
-/**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "WorkflowToolInvocationId".
  */
@@ -182,11 +266,6 @@ export type WorkflowToolInvocationId = string;
  * via the `definition` "SessionId".
  */
 export type SessionId = string;
-/**
- * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
- * via the `definition` "ToolCallId".
- */
-export type ToolCallId = string;
 /**
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "WorkflowToolId".
@@ -248,10 +327,50 @@ export type TranscriptionStatus =
   "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
 
 /**
- * Envelope and start-on-call types of the fixed deliver_emission transport between sessions and receiver workflows.
+ * Session emission, workflow-tool, and code tool invocation protocol types.
  */
 export interface LightspeedWorkflowContract {
   [k: string]: unknown;
+}
+/**
+ * A media asset named for a consumer that did not see it enter context: the
+ * parent of a sub-agent, an awaited promise's holder. Carries everything
+ * needed to append a media entry without reading the bytes.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "MediaDescriptor".
+ */
+export interface MediaDescriptor {
+  content_ref: string;
+  /**
+   * `media:` plus the first twelve hex characters of `content_ref`.
+   */
+  handle: string;
+  kind: MediaKind;
+  media_type: string;
+  name?: string | null;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "FileAttachment".
+ */
+export interface FileAttachment {
+  content_ref: string;
+  handle: string;
+  media_type?: string | null;
+  name: string;
+  source?: AttachmentSource | null;
+}
+/**
+ * Descriptive origin only; never an authority for resolving attachment bytes.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "AttachmentSource".
+ */
+export interface AttachmentSource {
+  id: string;
+  kind: string;
+  path: string;
 }
 /**
  * One connector activity call. `idempotency_key` is the invocation id, or
@@ -349,6 +468,174 @@ export interface ChatActivation {
   group?: ChatGroupActivation | null;
   mentionNames?: string[];
   triggerPrefixes?: string[];
+}
+/**
+ * Close admission immediately. Cancellation additionally requests cleanup of
+ * admitted work; closing a scope does not roll back any completed effects.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CloseCodeToolScopeRequest".
+ */
+export interface CloseCodeToolScopeRequest {
+  cancel_pending: boolean;
+  execution_id: string;
+}
+/**
+ * Small, immutable input shared by code-execution orchestration and its runner.
+ *
+ * The parent session owns the execution scope and its bindings. Possessing this
+ * descriptor does not authorize tool calls. Validate it before loading artifacts
+ * or admitting an execution; deserialization alone is not validation.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeExecutionDescriptor".
+ */
+export interface CodeExecutionDescriptor {
+  /**
+   * Immutable matched callable specifications and bindings in the same CAS.
+   * This catalog is metadata, not an independent authorization database.
+   */
+  catalog_ref: string;
+  /**
+   * Stable identity of the session-owned execution scope.
+   */
+  execution_id: string;
+  limits: CodeExecutionLimits;
+  /**
+   * Parent session's composed workflow id, without a Temporal run id so the
+   * identity remains stable across the parent's Continue-as-New transitions.
+   */
+  session_workflow_id: string;
+  /**
+   * UTF-8 JavaScript source in the parent session's universe-scoped CAS.
+   */
+  source_ref: string;
+}
+/**
+ * Explicit, positive budgets admitted for a single execution attempt.
+ *
+ * No deployment defaults are implied. User-requested options may only narrow
+ * these budgets. Engine limits must be enforced by the runner; call and payload
+ * limits must also be enforced at the trusted session/bridge boundary. These
+ * bounds are not containment of native interpreter memory faults.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeExecutionLimits".
+ */
+export interface CodeExecutionLimits {
+  max_catalog_bytes: number;
+  /**
+   * Interpreter-managed heap allocation budget.
+   */
+  max_memory_bytes: number;
+  /**
+   * Total serialized output bytes retained for the final script report.
+   */
+  max_output_bytes: number;
+  /**
+   * Outstanding bridge requests, including durable-promise waits. This does
+   * not change the ordinary tool's own scheduling or concurrency policies.
+   */
+  max_outstanding_tool_calls: number;
+  /**
+   * Serialized JSON bytes in one guest tool request, before dispatch.
+   */
+  max_request_bytes: number;
+  /**
+   * Serialized JSON bytes in one host completion, before entering the guest.
+   * Larger tool outputs require authorized artifact handles.
+   */
+  max_result_bytes: number;
+  max_source_bytes: number;
+  /**
+   * Interpreter-managed native stack budget, separate from its heap budget.
+   */
+  max_stack_bytes: number;
+  max_tool_calls: number;
+  /**
+   * Total attempt time, including input loading, interpreter capacity waits,
+   * JavaScript evaluation, and time awaiting host calls.
+   */
+  timeout_ms: number;
+}
+/**
+ * Queryable durable orchestration state; no JavaScript heap or raw outputs.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeExecutionSnapshot".
+ */
+export interface CodeExecutionSnapshot {
+  descriptor?: CodeExecutionDescriptor | null;
+  phase: CodeExecutionPhase;
+  resolution?: PromiseResolution | null;
+  terminal?: CodeExecutionTerminal | null;
+}
+/**
+ * Only the reference crosses the activity boundary. Script output and the
+ * complete code tool call report remain in the parent universe's CAS.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeRunActivityResult".
+ */
+export interface CodeRunActivityResult {
+  report_ref: string;
+  succeeded: boolean;
+}
+/**
+ * Script-facing completion metadata. Session effects, model context, and
+ * activity configuration remain private to the owning session.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeToolCallOutcome".
+ */
+export interface CodeToolCallOutcome {
+  attachments?: Attachment[];
+  call_id: ToolCallId;
+  error_ref?: string | null;
+  output_ref?: string | null;
+  request_id: string;
+  status: CodeToolCallStatus;
+}
+/**
+ * Admission failures are successful protocol replies, distinct from transport
+ * failures and the tool's own failed result. They never imply tool execution.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeToolRejection".
+ */
+export interface CodeToolRejection {
+  kind: CodeToolRejectionKind;
+  message: string;
+}
+/**
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeToolScopeReport".
+ */
+export interface CodeToolScopeReport {
+  /**
+   * Exposed names keyed by the opaque handles accepted by invoke requests.
+   */
+  bindings: {
+    [k: string]: ToolName;
+  };
+  /**
+   * Requests are keyed by execution-local request id, never arrival order.
+   */
+  calls: {
+    [k: string]: CodeToolCallOutcome;
+  };
+  cancel_requested: boolean;
+  closed: boolean;
+  execution_id: string;
+}
+/**
+ * Read an authoritative snapshot, including after a runner loses its waiters.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "CodeToolScopeReportRequest".
+ */
+export interface CodeToolScopeReportRequest {
+  execution_id: string;
 }
 /**
  * Durable content identity and encoding. The payload stays in CAS; consumers
@@ -453,6 +740,20 @@ export interface EmissionEnvelope {
   producer: EmissionProducer;
 }
 /**
+ * Small request forwarded by a trusted host after serializing guest arguments.
+ * Identity is execution-local. Reusing it with different arguments or a
+ * different binding is rejected by the session, including across RPC retries.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "InvokeCodeToolRequest".
+ */
+export interface InvokeCodeToolRequest {
+  arguments_ref: string;
+  binding_id: string;
+  execution_id: string;
+  request_id: string;
+}
+/**
  * `maintain_channel_typing`: keep the provider's typing indicator up for
  * the conversation until the activity is cancelled.
  *
@@ -470,6 +771,25 @@ export interface ModelConfig {
   apiKind: string;
   model: string;
   providerId: string;
+}
+/**
+ * Trusted host request to open a scope beneath an admitted joined invocation.
+ * The session resolves bindings itself; this allowlist can only narrow grants.
+ *
+ * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
+ * via the `definition` "OpenCodeToolScopeRequest".
+ */
+export interface OpenCodeToolScopeRequest {
+  /**
+   * A supplied set narrows logical tool identities; an empty set grants no
+   * tools. None selects all currently host-callable tools except the parent
+   * operation. Reopening an existing scope retains its original bindings.
+   */
+  allowed_tools?: ToolName[] | null;
+  execution_id: string;
+  max_calls: number;
+  max_in_flight: number;
+  parent_invocation_id: WorkflowToolInvocationId;
 }
 /**
  * `prepare_channel_media`: the connector downloads the provider file and

@@ -8,6 +8,7 @@ pub mod attachments;
 pub mod builtin;
 pub mod callable;
 pub mod catalog;
+pub mod code;
 pub mod concurrency;
 pub mod definitions;
 pub mod environment;

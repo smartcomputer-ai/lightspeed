@@ -553,6 +553,7 @@ pub struct GatewayAgentApiBuilder {
     task_queue: String,
     bot_task_queue: String,
     channel_task_queue: String,
+    code_task_queue: String,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
@@ -582,6 +583,12 @@ impl GatewayAgentApiBuilder {
     /// Task queue of the `channels` worker role (conversation workflows).
     pub fn with_channel_task_queue(mut self, task_queue: impl Into<String>) -> Self {
         self.channel_task_queue = task_queue.into();
+        self
+    }
+
+    /// Task queue of the code worker role.
+    pub fn with_code_task_queue(mut self, task_queue: impl Into<String>) -> Self {
+        self.code_task_queue = task_queue.into();
         self
     }
 
@@ -748,6 +755,7 @@ impl GatewayAgentApiBuilder {
             task_queue: self.task_queue,
             bot_task_queue: self.bot_task_queue,
             channel_task_queue: self.channel_task_queue,
+            code_task_queue: self.code_task_queue,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             poll_interval: self.poll_interval,
             operation_timeout: self.operation_timeout,
@@ -774,6 +782,7 @@ pub struct GatewayAgentApi {
     task_queue: String,
     pub(crate) bot_task_queue: String,
     pub(crate) channel_task_queue: String,
+    pub(crate) code_task_queue: String,
     continue_as_new_history_threshold: Option<u32>,
     poll_interval: Duration,
     operation_timeout: Duration,
@@ -810,6 +819,7 @@ impl GatewayAgentApi {
             task_queue: DEFAULT_TASK_QUEUE.to_owned(),
             bot_task_queue: temporal_workflow::bots::DEFAULT_BOTS_TASK_QUEUE.to_owned(),
             channel_task_queue: crate::config::DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
+            code_task_queue: crate::config::DEFAULT_CODE_TASK_QUEUE.to_owned(),
             continue_as_new_history_threshold: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
             operation_timeout: DEFAULT_OPERATION_TIMEOUT,
@@ -1515,6 +1525,25 @@ fn is_core_environment_job_binding(binding: &harness::WorkflowToolBinding) -> bo
 
 fn is_core_subagent_binding(binding: &harness::WorkflowToolBinding) -> bool {
     tools::subagents::is_subagent_workflow_tool_id(binding.definition.tool_id.as_str())
+}
+
+fn validate_code_deadline_for_existing_bindings(
+    state: &harness::CoreAgentState,
+    features: &harness::FeaturesConfig,
+) -> Result<(), AgentApiError> {
+    let Some(feature) = &features.code_mode else {
+        return Ok(());
+    };
+    if let Some(binding) = state.workflow_tools.bindings.get(&WorkflowToolId::new(
+        tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID,
+    )) && !matches!(binding.completion, WorkflowToolCompletion::Joined { deadline_after_ms, .. }
+            if feature.limits.timeout_ms.saturating_add(tools::code::CODE_EXECUTION_OVERHEAD_MS) <= deadline_after_ms)
+    {
+        return Err(AgentApiError::invalid_request(
+            "code mode timeout exceeds this session's immutable workflow binding deadline",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_subagent_deadline_for_existing_bindings(

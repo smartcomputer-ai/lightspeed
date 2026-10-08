@@ -3,6 +3,7 @@
 mod activities;
 mod bots;
 mod channels;
+mod code;
 mod fake;
 pub(crate) mod mcp;
 mod reaper;
@@ -26,13 +27,14 @@ pub use activities::{
 };
 pub use bots::BotWorkerActivities;
 pub use channels::ChannelWorkerActivities;
+pub use code::CodeWorkerActivities;
 pub use fake::{FAKE_TRANSIENT_RETRY_AFTER, FakeLlm, FakeRuntimeCounters, FakeTools};
 pub use reaper::{
     CasBlobSweeper, CasSweepStats, PromiseReaper, ReaperStats, SessionRetentionReaper,
     SessionRetentionReaperStats,
 };
 pub use secrets::{BrokerSecretResolver, StoredModelProviderResolver, StoredProviderKeyResolver};
-pub use session_tools::{SessionTools, ToolCallExecution};
+pub use session_tools::{CodeToolCallExecution, SessionTools, ToolCallExecution};
 pub use temporal_workflow::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_CANCEL_WORKFLOW_TOOL_EXECUTION,
     ACTIVITY_CHECK_WORKFLOW_TOOL_EXECUTION, ACTIVITY_CONTEXT_COMPACT,
@@ -108,6 +110,20 @@ pub fn channels_worker(
 ) -> anyhow::Result<Worker> {
     let worker_options = WorkerOptions::new(task_queue)
         .register_workflow::<ChannelConversationWorkflow>()?
+        .register_activities(activities)
+        .build();
+    Ok(Worker::new(runtime, client, worker_options)?)
+}
+
+/// The `code` role owns execution orchestration and interpreter activities.
+pub fn code_worker(
+    runtime: &Runtime,
+    client: Client,
+    task_queue: String,
+    activities: CodeWorkerActivities,
+) -> anyhow::Result<Worker> {
+    let worker_options = WorkerOptions::new(task_queue)
+        .register_workflow::<temporal_workflow::CodeExecutionWorkflow>()?
         .register_activities(activities)
         .build();
     Ok(Worker::new(runtime, client, worker_options)?)

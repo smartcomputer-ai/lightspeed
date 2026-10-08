@@ -10,8 +10,8 @@ cargo run -p temporal-workflow --bin export-workflow-contract
 
 ## Transport
 
-The Temporal signal `deliver_emission` carries every cross-workflow fact in both
-directions. Its sole argument is an `EmissionEnvelope`: a deterministic
+The Temporal signal `deliver_emission` carries emission facts in both directions.
+Its sole argument is an `EmissionEnvelope`: a deterministic
 `emission_id`, a `producer`, and a tagged `body`. `AgentSessionWorkflow` and
 `EnvironmentJobWorkflow` handle this signal; receivers register the same
 handler. Signal stable workflow ids, never run ids, so delivery survives
@@ -70,7 +70,32 @@ transport. On ambiguous start recovery, query `workflow_tool_recovery` and consu
 fingerprinted over their exact raw bytes; canonical fingerprints begin with
 `wtr:sha256:`. The execution producer kind is `workflow_tool.execution`.
 
+## Code tool invocation scopes
+
+A trusted execution host calls the session's `open_code_tool_scope` Update with
+`OpenCodeToolScopeRequest`. The parent must be an admitted, pending joined
+workflow-tool invocation. The request's allowlist and budgets only narrow the
+session's existing capabilities; the session resolves and pins callable bindings.
+
+`invoke_code_tool` accepts `InvokeCodeToolRequest`: the execution and request ids, an
+opaque admitted binding id, and a CAS reference to arguments. The Update waits
+for the session to commit the result and its effects. Calls can overlap while
+the outer joined invocation remains parked. Retrying an identical request joins
+the original call or retrieves its result; conflicting identity reuse is rejected.
+
+`close_code_tool_scope` accepts `CloseCodeToolScopeRequest` and closes new admission.
+`cancel_pending` requests cleanup of admitted operations, without undoing
+completed effects. Dropping an Update client wait does not cancel the operation.
+Read `code_tool_scope_report` with `CodeToolScopeReportRequest` for a fresh authoritative
+snapshot, including results that finish after scope closure. Reports contain
+result references and attachments, never raw session effects or model context.
+
+Scope operations return `Result<CodeToolScopeReport, CodeToolRejection>`;
+invocation returns `Result<CodeToolCallOutcome, CodeToolRejection>`. Serde
+encodes these as a single-key object containing `Ok` or `Err`. Admission rejection
+is distinct from a successfully admitted tool returning a failed outcome.
+
 ## Schema inventory
 
-The schema bundle contains 49 definitions. Its public roots
-are: EmissionEnvelope, WorkflowToolStartArgs, WorkflowToolRecoveryResult, WorkflowToolRecipeV1, ConversationStart, ChannelDeliveryCommand, ChannelDeliveryResult, PrepareChannelMediaInput, PrepareChannelMediaResult, TranscriptionWorkflowArgs, TranscriptionSnapshot, TranscriptionActivityResult.
+The schema bundle contains 71 definitions. Its public roots
+are: EmissionEnvelope, WorkflowToolStartArgs, WorkflowToolRecoveryResult, WorkflowToolRecipeV1, ConversationStart, ChannelDeliveryCommand, ChannelDeliveryResult, PrepareChannelMediaInput, PrepareChannelMediaResult, TranscriptionWorkflowArgs, TranscriptionSnapshot, TranscriptionActivityResult, OpenCodeToolScopeRequest, InvokeCodeToolRequest, CloseCodeToolScopeRequest, CodeToolScopeReportRequest, CodeToolScopeReport, CodeToolCallOutcome, CodeToolRejection, CodeExecutionDescriptor, CodeExecutionSnapshot, CodeRunActivityResult.

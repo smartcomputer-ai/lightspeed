@@ -22,15 +22,18 @@ pub enum Role {
     Bots,
     /// Conversation workflows with their activities.
     Channels,
+    /// JavaScript execution workflows and their isolated activity capacity.
+    Code,
 }
 
 impl Role {
-    pub const ALL: [Role; 5] = [
+    pub const ALL: [Role; 6] = [
         Role::Gateway,
         Role::EnvironmentGateway,
         Role::Sessions,
         Role::Bots,
         Role::Channels,
+        Role::Code,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -40,6 +43,7 @@ impl Role {
             Self::Sessions => "sessions",
             Self::Bots => "bots",
             Self::Channels => "channels",
+            Self::Code => "code",
         }
     }
 
@@ -64,8 +68,9 @@ impl FromStr for Role {
             "sessions" => Ok(Self::Sessions),
             "bots" => Ok(Self::Bots),
             "channels" => Ok(Self::Channels),
+            "code" => Ok(Self::Code),
             other => Err(format!(
-                "unknown role {other:?}; expected a comma-separated subset of gateway, environment-gateway, sessions, bots, channels"
+                "unknown role {other:?}; expected a comma-separated subset of gateway, environment-gateway, sessions, bots, channels, code"
             )),
         }
     }
@@ -138,6 +143,15 @@ mod tests {
         assert_eq!(set.worker_roles().collect::<Vec<_>>(), vec![Role::Bots]);
         assert!(set.serves_http());
         assert!(RoleSet::parse("worker").is_err());
+    }
+
+    #[test]
+    fn code_is_an_independent_worker_role_included_by_default() {
+        assert!(RoleSet::all().has(Role::Code));
+        let only = RoleSet::parse("code").unwrap();
+        assert!(!only.serves_http());
+        assert_eq!(only.worker_roles().collect::<Vec<_>>(), vec![Role::Code]);
+        assert!(!only.has(Role::Sessions));
     }
 
     #[test]

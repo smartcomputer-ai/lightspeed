@@ -1,19 +1,62 @@
 # Code mode
 
-**Status:** First implementation slice completed: callable contracts and execution
-metadata, updated 2026-10-07. Script execution and session integration remain planned.
-Add code mode as a session feature, accepting JavaScript in native QuickJS
-through a new `codemode` library crate and a `code` worker role in the existing
-`lightspeed-runtime` binary. V1 targets Lightspeed's current trusted
-deployments. Wasm isolation and TypeScript source support are later phases.
-A separate code workflow owns script execution; the parent session owns all
-nested tool admission, scheduling, and durable outcomes. The first version
-runs each script once, without JS checkpointing or replay. Names and schemas
-below are illustrative, not public API commitments.
+**Status:** Native QuickJS execution, session-owned effects, the code workflow,
+worker role, opt-in session admission, and the `CodeTool` naming pass are
+implemented end to end, updated 2026-10-08.
+The existing `lightspeed-runtime` binary includes the `code` role, which can run
+alongside other roles or in its own process. V1 targets trusted deployments;
+Wasm isolation and TypeScript source support remain later phases.
+A separate code workflow owns one script attempt and its cleanup; the parent
+session owns tool admission, scheduling, and durable outcomes. JavaScript is
+never checkpointed or replayed. Model presentation currently adds an ordinary
+`code_execute` tool alongside the existing tools. Code-only presentation and
+appending available output JSON Schemas to descriptions remain next steps.
+
+## Remaining work
+
+The execution path is usable in trusted deployments. The remaining work is
+model presentation, broader integration coverage, and operational validation:
+
+1. **Expose return contracts to the model.** Append available output JSON Schemas
+   and script invocation/error guidance to ordinary tool descriptions. Fill owned
+   schema gaps for runtime `await` and environment controls, and declare the core
+   joined job/sub-agent reply schemas. Keep genuinely unknown external results
+   unspecified. The real-model test currently supplies return-contract hints in
+   its prompt; replace those hints with the actual rendered contracts.
+2. **Add code-only presentation and bounded discovery.** Keep the implemented
+   hybrid exposure, add a presentation setting, and put a bounded catalog in
+   `code_execute` when direct tool declarations are hidden. Reuse MCP search/call
+   tools for deferred definitions and preserve the specification/binding match.
+   Inline-schema and discovery-budget settings are not implemented yet.
+3. **Broaden integration and failure coverage.** The real OpenAI Responses path
+   works. Add code-mode tests for other provider presentations, native/deferred
+   MCP discovery and calls, and real environment jobs/sub-agents; current joined
+   job/sub-agent tests use fixture workflows. Exercise safe individual-effect
+   activity retries, parent Continue-As-New, and approval-required MCP calls.
+   Add delayed-preparation cancellation and exhausted-finalization-retry cases.
+   Lifecycle retries, worker-process loss, cancellation, and workflow replay are
+   already covered.
+4. **Improve execution inspection.** Compact reports, detailed CAS reports, and
+   bounded `CodeToolProgress` events exist. Add useful per-execution/per-call
+   inspection and usage/attribution to tracing or existing client surfaces.
+   Web and CLI currently preserve progress cursors without displaying these
+   internal calls as conversational turns.
+5. **Measure production sizing.** Benchmark release binary size, memory, complete
+   outer-tool latency, history growth, and saturated combined/separate-role
+   workers. Verify waiting interpreters cannot starve session effects under load.
+   Local interpreter and bridge timings are diagnostic samples, not production
+   sizing or multi-universe fairness results.
+
+Wasm isolation, TypeScript source support, optional TypeScript declaration
+rendering, and ordinary transcription/image/decision-model tools remain later
+phases. Extra media/blob/store helpers are optional future utilities; the current
+guest surface is `tools`, `text(value)`, and a JSON return value. Durable waits
+already work through the ordinary `tools["await"]` call. Approval suspension,
+persistent JS heaps, and durable JavaScript replay remain outside v1.
 
 ## Implementation progress
 
-The first slice provides the contracts needed before adding nested execution:
+The first slice established callable contracts and execution metadata:
 
 - `tools::callable` resolves the common model catalog and retains matching
   function specifications and argument adapters. `llm-runtime` consumes this
@@ -36,25 +79,186 @@ The first slice provides the contracts needed before adding nested execution:
   stay with the host; formatted provider text is not the script return value.
 - `temporal-workflow` owns a validated `CodeExecutionDescriptor` with source and
   catalog CAS references, parent identity, and explicit positive execution limits.
-  It introduces no interpreter dependency or deployment defaults. Exporting an
-  integration-contract entry point waits until the code workflow exists.
+  It introduces no interpreter dependency. The workflow integration contract now
+  exports the descriptor, lifecycle DTOs, signals, queries, and activity names.
 
 Runtime-owned `await` and environment-control return schemas remain unknown.
+The core joined `job_run` and `agent_run` declarations also currently omit a
+reply schema, even though owned result DTOs have schema support.
 Generic joined workflow bindings need a declared reply schema (or an authored
 function's declared result); an arbitrary workflow does not inherit the result
 schema of its underlying built-in operation. Missing schemas remain callable.
 
-This slice does not enable code mode or append schemas to ordinary model tool
-descriptions. Nested session admission, QuickJS, the code workflow/worker role,
-feature configuration, and hybrid/code-only presentation remain to be implemented.
-The next main slice is the generic session-owned nested execution path in step 2.
+The second slice implements the session-owned execution path end to end:
 
-Validation passed: unit suites for `tools`, `llm-runtime`, `mcp`,
-`environment-protocol`, and `temporal-workflow`; the runtime MCP test subset;
-workspace formatting; and `cargo clippy --workspace --all-targets --locked -- -D warnings`.
-Coverage checks actual serialized results across presentation adapters,
-workflow acknowledgement/reply distinctions, schema gaps, bounded MCP metadata,
-and execution-descriptor validation. No live or credentialed tests were run.
+- The parent session exposes typed scope-open, invoke, and scope-close Updates
+  plus an authoritative report Query. `CodeToolClient`, Rust DTOs, and generated
+  TypeScript workflow contracts provide the trusted host boundary.
+- The session resolves opaque callable bindings from its existing grants and the
+  current model presentation, including native injected MCP tools. Searchable MCP
+  tools use the existing discovery/call tools. Changed catalogs reject new calls
+  through stale scopes instead of silently rebinding them.
+- The deterministic harness records scopes, request identities, arguments,
+  independent waits, and outcomes. Repeated delivery attaches to the admitted
+  request; reusing an identity with different arguments or a binding is rejected.
+  The outer model batch remains parked, and code tool results do not create turns.
+- The session schedules each code tool call as a Temporal activity using existing
+  execution implementations, retry/deadline policies, environment readiness,
+  promise controls, and effect application. Parallel-safe calls share a bounded
+  window; exclusive calls retain ordering. Workflow-backed calls and explicit
+  promise waits suspend independently. Approval-required calls fail before the
+  protected effect, without inheriting an earlier model-call approval.
+- Scope cancellation reconciles admitted work, including joined preparation
+  results arriving after closure. Completed outcomes remain authoritative;
+  acknowledged model-owned submissions retain their existing ownership rules.
+  Forced run/session termination records unfinished outcomes as unavailable,
+  explicitly allowing that an external effect may already have happened.
+- Pending Update handlers and in-flight dispatch prevent session rollover or
+  completion until reconciled. Durable identities and outcomes survive replay.
+  Public `CodeToolProgress` events preserve contiguous event cursors without
+  adding conversational tool calls or exposing internal bindings and payloads.
+
+The third slice implements native JavaScript execution and its host bridge:
+
+- `codemode` embeds `rquickjs` 0.14 with one fresh runtime/context and dedicated
+  native thread per execution. It compiles the complete async-function body
+  before effects, supports async loops, dependent calls, `Promise.all`, and
+  `Promise.allSettled`, and retains selected `text(value)` output and a return
+  value. There are no ambient I/O APIs or module loaders.
+- A private prelude captures its own intrinsics, creates immutable tool wrappers,
+  and exchanges JSON arguments/results through bounded queues. Opaque handles
+  remain pinned to their wrappers. Unsupported values, including undefined
+  fields, functions, accessors, cycles, non-finite numbers, and sparse arrays,
+  fail serialization instead of silently changing the payload.
+- Positive limits bound source/catalog size, requests, completions, retained
+  output, heap, stack, total calls, and outstanding calls. Native interrupts and
+  checks between microtasks enforce cancellation and elapsed time, including
+  host waits. Limits remain terminal if guest code catches an interrupt error.
+- `temporal_runtime::code::CodeRunner` loads and verifies bounded source/catalog
+  blobs, checks the catalog against an existing unused session scope, and routes
+  each request through `CodeToolClient`. It does not restore session state,
+  schedule tool activities itself, or retry JavaScript. A minimal versioned
+  execution manifest carries names and handles; execution does not need schemas.
+- Successful calls resolve to JSON values; failures reject with `kind`,
+  `message`, and optional structured `value`. Native MCP envelopes remain intact.
+  An oversized result becomes a guest error while the session still records the
+  actual successful effect and its content reference. Transport failures report
+  unknown outcomes. Neither model context nor effect carriers enter JavaScript.
+- Normal completion, script errors, cancellation, and preparation failures after
+  scope verification close admission and reconcile pending calls within a cleanup
+  budget. A supervised task retains runner capacity through cleanup when its
+  caller is dropped. The report keeps selected output, interpreter diagnostics,
+  authoritative per-call outcomes, and any cleanup failure separately.
+- Code tool durable completion records now omit model context and effect carriers.
+  A digest of the full incoming result preserves exact retry checks. Legacy full
+  results migrate on decode; replay tests verify that effects still apply and
+  changed retries are rejected without retaining the discarded payload.
+
+The fourth slice implements the durable lifecycle and session admission:
+
+- `features.codeMode` grants an ordinary joined `code_execute` tool with a pinned
+  source/context reference, optional logical tool selection, and bounded limits.
+  Generated arguments cannot supply routing identities, authority, or CAS inputs.
+  The parent session resolves the actual callable catalog; an omitted selection
+  uses its host-callable tools except the outer code tool, while an empty list
+  permits only local computation. Each call still passes session admission.
+- `CodeExecutionWorkflow` uses the generic start/reply/cancellation/recovery
+  protocol. Retryable preparation opens the scope and persists a minimal catalog;
+  `code_run` has exactly one activity attempt. Retryable finalization closes the
+  scope, reads known outcomes, persists a report, and replies to the waiting parent.
+  Generic workflow starts reject reuse of a completed execution identity so a lost
+  start acknowledgement cannot start the same invocation again.
+- The `code` role polls its own queue, with independent activity slots and a
+  process-wide interpreter semaphore shared across universes. The default limit
+  is four interpreters. Capacity wait, bounded input loading, and JS share one
+  attempt deadline. Heartbeats continue through cancellation, cleanup, and report
+  persistence. Waiting scripts cannot consume the sessions role's activity slots.
+- A missing runner receipt yields an interruption report from the session's
+  authoritative outcomes without replaying source. Cancellation allows a bounded
+  runner grace period before finalization. Cancellation observed during
+  finalization updates the report once while preserving the runner receipt.
+  If preparation lost its receipt,
+  finalization fences the same scope using idempotent open/close operations,
+  preventing a delayed preparation from leaving admission open.
+- The model receives selected `text` output, the return value, diagnostics,
+  outcome counts, and a detailed-report CAS reference. Reports link source,
+  catalog, outputs, errors, and attachments without inlining every code tool result.
+  Completed script failures resolve with a report, allowing the model to decide
+  what to do next. Completed external effects remain committed after script failure.
+
+The `CodeTool` naming pass is complete across harness commands/events/state,
+Temporal Updates, queries and activities, runtime adapters, public progress
+events, generated contracts/TypeScript consumers, tests, and this roadmap.
+`CodeExecution` names the outer script/workflow; `CodeToolCall` and
+`CodeToolScope` name the ordinary effects and their session-owned admission scope.
+
+Validation for the lifecycle slice passed: 98 API, 40 API projection, 258
+harness, 266 tools, 153 workflow, and 395 runtime library tests (one runtime test
+intentionally ignored), plus five runtime CLI tests. All nine API artifact tests
+and three workflow contract tests passed after regeneration. Full TypeScript
+checking, 1,296 consumer tests, production/demo builds, workspace formatting,
+whitespace checks, and
+`cargo clippy --workspace --all-targets --locked -- -D warnings` passed.
+Existing HTTP-server tests require localhost access. No provider credentials
+are needed for these checks.
+
+After the naming pass, the scoped Rust unit suites, all 12 API/workflow artifact
+checks, full TypeScript checking, 14 SDK tests, 87 transcript/tail tests, docs
+checks, formatting, whitespace checks, and the exact workspace Clippy gate
+passed again. All 21 runtime code-mode live checks passed serially, including
+the real-model and separate-process recovery tests. The real-model test needed
+one rerun after its exact model-tool-call assertion failed; its repeatability
+remains to be checked when extending presentation coverage.
+
+Three serialized `code_tools_live` protocol tests passed against local Temporal
+and PostgreSQL using a simulated runner and production session activities.
+They cover parallel/dependent
+calls, joined workflow replies, submit-then-wait, duplicate/conflicting requests,
+denied bindings, sibling failure, abandoned client waiters, scope cancellation,
+and forced session shutdown. Harness tests also cover replay and late-completion
+races. All seven checks in the new `codemode_live` suite passed: six behavioral
+tests through the production session path and a fresh-runtime timing diagnostic.
+They cover actual JavaScript loops, ordinary and joined parallel/dependent calls,
+submit-then-wait, caught errors, sibling failure, cancellation, large results,
+preparation errors, and cleanup after dropping the caller. The suite uses fixture
+workflows for job/sub-agent replies, without provider credentials. All nine tests
+in `code_workflow_live` pass through public feature admission and production
+code/session workers on separate queues. They cover looped parallel effects,
+submit-then-wait, selected output, partial script failure, deadlines, empty
+capability selection, lost runner receipts without source replay, and parent
+cancellation with preserved output and closed scopes. They also inject lost
+preparation/finalization receipts to verify activity retries without another JS
+attempt, supply an unavailable runner report to verify cleanup still happens,
+and hold finalization to exercise late cancellation deterministically. Every
+completed code-workflow history is replayed offline with no activities registered;
+authoritative outcomes and execution counts must remain unchanged. Model responses
+are scripted; these cases need no provider credentials.
+
+`code_worker_process_live` passes an actual process-loss scenario: kill only the
+code worker launched by the test after its first effect, start a replacement on
+the same queue, and recover through the production heartbeat timeout. Temporal
+history must contain one scheduled/started JS attempt; the report preserves the
+known effect, marks the missing JS output, and closes the scope. The recovered
+history also passes offline replay.
+
+`code_model_live` passes with the configured real OpenAI model and production
+session/code workers. The model writes async JavaScript, runs two timer effects
+and one durable wait, selects a compact result, and consumes it in its next turn.
+The prompt supplies the return-contract details pending schema presentation.
+It requires provider credentials and does not silently skip missing prerequisites.
+
+Eight additional live tests in `crates/codemode/tests/` pass directly against the
+public interpreter boundary with real asynchronous filesystem I/O. They cover
+parallel reads and dependent writes across loop iterations; committed and
+unfinished effects surviving script failure, cancellation, and deadlines;
+rejection of late completions; concurrent-runtime isolation; and completion
+delivery during continuous microtasks. Real filesystem rejection recovery proves
+that an error frees outstanding-call capacity; a fan-out quota case proves caught
+guest errors cannot admit excess writes and that admitted effects may still finish.
+These fixtures keep I/O in the host and
+need no Temporal server or provider credentials. Run them together with the 17
+unit tests using
+`cargo test -p codemode --locked -- --include-ignored --test-threads=1`.
 
 ## Purpose and scope
 
@@ -112,7 +316,7 @@ Keep script lifecycle and session authority separate:
 | --- | --- |
 | `CodeExecutionWorkflow` | Own one `RunCode` attempt, its deadline and cancellation, scope closure, and the final report. |
 | `RunCode` activity | Host the interpreter, guest promises, local computation, and a narrow trusted effect bridge. |
-| Parent session workflow | Admit every nested tool call, schedule existing activities/workflow tools, apply session effects, and retain authoritative outcomes. |
+| Parent session workflow | Admit every code tool call, schedule existing activities/workflow tools, apply session effects, and retain authoritative outcomes. |
 
 The trusted Rust bridge sends each tool request directly to the parent session.
 The code workflow does not relay every request and result. Guest functions do
@@ -127,36 +331,66 @@ sequenceDiagram
   participant W as Bound job or sub-agent workflow
   S->>C: Generic workflow-tool start, joined completion
   C->>V: Run admitted source once
-  V->>S: invoke_nested_tool Update
+  V->>S: invoke_code_tool Update
   S->>A: Schedule admitted ordinary activity
   A-->>S: Structured result and effects
   Note over S: Commit outcome and session effects
   S-->>V: Complete Update / settle JS promise
-  V->>S: invoke_nested_tool Update for workflow tool
+  V->>S: invoke_code_tool Update for workflow tool
   S->>W: Existing workflow-tool start / emission
   W-->>S: Correlated completion
   S-->>V: Complete Update with durable promise outcome
   V-->>C: Selected output or script error
-  C->>S: Close nested scope / obtain outcome report
-  S-->>C: Authoritative nested outcomes
+  C->>S: Close code tool scope / obtain outcome report
+  S-->>C: Authoritative code tool outcomes
   C-->>S: Final report through normal tool reply
 ```
 
-### One generic session-owned execution path
+### One session-owned code tool path
 
-The preferred bridge uses an asynchronous Temporal Workflow Update such as
-`invoke_nested_tool(execution_id, request_id, binding_id, arguments_ref)`.
+The implemented bridge uses the asynchronous Temporal Workflow Update
+`invoke_code_tool(execution_id, request_id, binding_id, arguments_ref)`.
 Its handler enqueues admission through the parent session's serialized state
-path and awaits the nested outcome without blocking that path. The session
+path and awaits the code tool outcome without blocking that path. The session
 uses the admitted binding, schedules the existing activity or workflow-tool
 operation, and commits the result and effects before completing the Update.
 Several requests may be outstanding; state transitions are serialized while
 eligible activities can run concurrently.
 
-This is a generic nested-tool operation, not a code-specific copy of each
-tool implementation. Temporal supplies transport, task routing, and the
-request/response mechanism. Lightspeed supplies admission, correlation,
-deduplication, and lifecycle semantics. All tools use this path in v1; do not
+The protocol lives in
+[`temporal-workflow::code_tools`](../../crates/temporal-workflow/src/code_tools.rs):
+
+| Operation | Behavior |
+| --- | --- |
+| `open_code_tool_scope` Update | Bind an execution identity to a pending joined parent invocation, a narrowed tool allowlist, and call limits. The session resolves opaque binding handles. |
+| `invoke_code_tool` Update | Admit or reattach to an execution-local request and await its durable outcome. Arguments travel by CAS reference. |
+| `close_code_tool_scope` Update | Stop new admission and optionally request cancellation; return the current scope report. Closing does not itself wait for every call to become terminal. |
+| `code_tool_scope_report` Query | Read current bindings and per-request status/output references, including completions occurring after closure. |
+
+Current hard bounds are 32 scopes per run, 1,024 calls per scope, 64 outstanding
+calls per scope, 4,096 bindings per scope, and 256 simultaneous Update waiters.
+Ordinary activity concurrency and workflow-tool limits still apply. These are
+host safeguards; the code-mode feature adds narrower configurable budgets. The
+code workflow closes admission, reconciles remaining outcomes under its cleanup
+budget, and produces the final report.
+
+`CodeToolCall` names an ordinary tool call issued by a code-mode script while
+the model's outer `code_execute` call remains pending. A `CodeToolScope` governs
+those calls under one execution identity. The outer script/workflow is the
+`CodeExecution`; its calls have a code tool origin instead of belonging to
+another model-produced batch.
+
+The [harness records](../../crates/harness/src/core/components/code_tool.rs)
+provide deterministic scope admission, deduplication, effect validation, waits,
+and cancellation. Commands request transitions; events record accepted facts for
+replay. The interpreter and all I/O remain outside the harness. Temporal supplies
+activity scheduling and retries; this bookkeeping retains the session's domain
+authority while its outer call is parked.
+
+This session-owned code tool operation reuses the ordinary tool implementations.
+Temporal supplies transport, task routing, and the request/response mechanism.
+Lightspeed supplies admission, correlation, deduplication, and lifecycle
+semantics. All script tool calls use this path in v1; do not
 split ordinary calls into a second executor-owned path based on a copied
 session snapshot.
 
@@ -169,7 +403,8 @@ require that session to own the `RunCode` activity. See Temporal's
 and [task-queue routing](https://docs.temporal.io/task-queue).
 
 Reuse the actual scheduled activity boundary, not just the Rust function
-behind an activity. Ordinary effects should use the admitted
+behind an activity. The implemented `code_tool_invoke` activity delegates to
+the existing execution paths and uses the admitted
 `ToolExecutionSpec` and
 [`tool_call_activity_options`](../../crates/temporal-workflow/src/config.rs).
 Calling the same implementation directly from `RunCode` would lose independent
@@ -189,7 +424,7 @@ custom transport. Scope closure, cancellation, and report retrieval must also
 use admitted generic lifecycle operations, with workflow I/O performed through
 Temporal workflow messaging or client activities, never arbitrary workflow I/O.
 
-Each nested request needs an execution-local stable identity, bound to its
+Each code tool request needs an execution-local stable identity, bound to its
 operation and arguments reference. Retrying transport with the same identity
 must attach to the original request or return its outcome; it must not start
 another effect. This deduplication concerns bridge delivery, not replaying the
@@ -206,9 +441,9 @@ than become a reason to retry the whole activity.
 
 Workflow-task replay reconstructs each owner's recorded orchestration without
 re-entering the JavaScript heap. If the process hosting the code role dies or
-the activity times out, the code workflow closes its nested execution scope
+the activity times out, the code workflow closes its code tool scope
 through the session, obtains known outcomes, and returns an interrupted report. The
-session's nested-call records remain authoritative; do not create a competing
+session's code tool call records remain authoritative; do not create a competing
 effect ledger in the code workflow. Recreating the JS continuation is outside v1.
 
 There is no need to dynamically register a new Temporal workflow definition
@@ -217,23 +452,23 @@ the ephemeral interpreter. Making generated source itself a replayable workflow
 would introduce determinism, versioning,
 and continuation semantics that this design deliberately leaves for later.
 
-### Planned crate structure
+### Crate structure
 
-Add one library crate, `crates/codemode`, and extend the existing crates below.
+The new library crate is `crates/codemode`; extend the existing crates below.
 Ship everything in the existing `lightspeed-runtime` binary. A library boundary
 keeps the interpreter independently testable and makes its later Wasm migration
 local without requiring a separate executable or a general runtime plugin framework.
 
-| Crate | Planned responsibility |
+| Crate | Responsibility and implementation status |
 | --- | --- |
-| `codemode` — new | Native QuickJS adapter, JS helper prelude, promise-job driver, bounded JSON request/completion interface, execution limits, cancellation, and local script output. Later Wasm adapter and TS preprocessing. |
-| `temporal-runtime` | `code` role and task-queue configuration, worker/activity registration, `RunCode`, artifact loading/storage, and the bridge from interpreter requests to session Updates. Existing session adapters still execute tools. |
-| `temporal-workflow` | `CodeExecutionWorkflow`, durable execution/activity DTOs, and generic nested-tool Update and scope-lifecycle contracts and orchestration. |
-| `harness` | Deterministic nested invocation origins, admission facts, and outcome records needed to preserve session-owned effects and promises. No interpreter or infrastructure I/O. |
-| `tools` | Shared callable specifications/bindings, output-schema metadata and owned result schemas, and the ordinary `code_execute` definition used by its workflow-tool binding. |
-| `llm-runtime` | Model-facing presentation of the same resolved tool specifications, including return JSON Schema when code mode is enabled; provider-native wire formatting stays here. |
-| `mcp` | Preserve optional output schemas in discovered metadata, carried onward by runtime discovery and presentation. |
-| `api` | Public `code_mode` session feature and configuration knobs, with the normal generated contract/consumer updates when implemented. |
+| `codemode` | Implemented native QuickJS adapter, private JS prelude, promise-job driver, bounded JSON bridge, execution limits, cancellation, and selected output. Later Wasm adapter and TS preprocessing. |
+| `temporal-runtime` | Session activities, `CodeRunner`, the `code` role/queue, preparation/run/finalization activities, and CAS report storage are implemented. |
+| `temporal-workflow` | Code tool DTOs, `CodeToolClient`, session orchestration, and `CodeExecutionWorkflow` with a single-attempt activity lifecycle are implemented. |
+| `harness` | Implemented deterministic code tool invocation origins, admission facts, waits, and outcome records preserving session-owned effects and promises. No interpreter or infrastructure I/O. |
+| `tools` | Shared callable specifications/bindings, output-schema metadata, and owned result schemas are implemented. The ordinary `code_execute` definition and trusted admission context are implemented. |
+| `llm-runtime` | Model-facing presentation of the same resolved tool specifications; provider-native wire formatting stays here. Appending return JSON Schema for code mode remains planned. |
+| `mcp` | Optional output schemas are preserved in discovered metadata and carried onward by runtime discovery and presentation. |
+| `api` | Code tool progress telemetry and the public `codeMode` session feature, limits, and generated consumers are implemented. |
 
 `codemode` has no dependency on Temporal, the harness, session state, tool
 implementations, providers, or stores. Its caller supplies JavaScript source,
@@ -250,41 +485,47 @@ the existing workflow contract and engine-local types in `codemode`; the runtime
 loads artifacts and translates results back into durable references. QuickJS
 therefore does not enter the workflow dependency graph.
 
-Two focused refactors support this structure:
+Two implemented refactors support this structure:
 
-- **Nested invocation admission:** separate call origin from the assumption
-  that every call belongs to the active model tool batch. Give nested requests
-  an explicit execution scope and identity. Reuse validation, scheduling
-  policies, and effect application while keeping nested waiting/completion
+- **Code tool invocation admission:** separates call origin from the assumption
+  that every call belongs to the active model tool batch. Code tool requests have
+  an explicit execution scope and identity, reusing validation, scheduling
+  policies, and effect application while keeping code tool waiting/completion
   state separate from the outer parked batch. The deterministic facts belong
   in the harness; Temporal admission/waiting and effectful adapters remain in
   their existing crates.
-- **Shared callable specifications:** factor the common host-callable metadata
-  and binding projection into `tools`. Direct model tools and code mode must
-  consume the same resolved specification, including provider presentation
-  adapters. Keep provider wire materialization in `llm-runtime`; do not build
-  another tool catalog or implement tool dispatch inside `codemode`.
+- **Shared callable specifications:** common host-callable metadata and binding
+  projection now live in `tools`. Direct model tools and code mode consume
+  the same resolver, including provider presentation adapters. Provider wire
+  materialization stays in `llm-runtime`; `codemode` has no tool registry or
+  tool implementation dispatch.
 
 No new protocol, scheduler, registry, store, or worker-framework crate is
-required for v1. Keep generic nested-tool contracts in the existing workflow
+required for v1. Keep code tool contracts in the existing workflow
 modules rather than adding a feature-specific transport package.
 
 ### Worker roles and deployment
 
-Add a `code` role to the existing
+The `code` role is part of the existing
 [role wiring](../../crates/temporal-runtime/src/roles.rs). It polls its own
-task queue for `CodeExecutionWorkflow` and `RunCode`. The sessions role continues
-to own nested tool admission, activities, effects, and durable promises.
-The planned deployment choices use the same executable:
+task queue for `CodeExecutionWorkflow` and its prepare/run/finalize activities. The sessions role continues
+to own code tool admission, activities, effects, and durable promises.
+Both deployment choices use the same executable:
 
 ```sh
-# All roles in one process, after the code role is implemented.
+# All roles in one process (also the default).
 lightspeed-runtime --roles all
 
 # Or run these worker roles in separate processes.
 lightspeed-runtime --roles sessions
 lightspeed-runtime --roles code
 ```
+
+The default queue is `lightspeed-code`. Set `--code-task-queue` or
+`LIGHTSPEED_TASK_QUEUE_CODE` consistently on gateway, sessions, and code
+processes when using a custom queue. `--code-max-concurrent-executions` or
+`LIGHTSPEED_CODE_MAX_CONCURRENT_EXECUTIONS` sets the interpreter limit per code
+process (default four). The code queue must differ from other role queues.
 
 Other roles are selected as required by the deployment. Running the code role
 does not grant code-mode access to a session; session feature admission still
@@ -309,58 +550,57 @@ records a durable result relationship with ownership, scope, deadlines, and
 cancellation. A host wrapper can connect them without making the JS heap
 durable.
 
-The proposed behavior is:
+The implemented behavior follows the ordinary tool contracts:
 
 | Script operation | What its JavaScript promise resolves to |
 | --- | --- |
 | `tools.agent_run(...)` | The joined sub-agent result. |
 | `tools.job_run(...)` | The joined job result. |
-| `tools.agent_spawn(...)` | A plain durable promise handle. |
-| `tools.job_submit(...)` | The operation's keyed durable promise handles. |
-| `promises.wait(handle, options)` | A result or wait outcome under the existing promise rules. |
+| `tools.agent_spawn(...)` | The ordinary submission acknowledgement containing a durable promise handle. |
+| `tools.job_submit(...)` | The ordinary submission acknowledgement containing keyed durable promise handles. |
+| `tools["await"](...)` | A result or wait outcome under the existing promise rules. |
 
 Handles must be non-thenable data: awaiting a submission should not
 accidentally await its completion through JavaScript promise assimilation.
-The proposed `promises` helper names are a presentation choice over existing
-operations, not a second promise subsystem. Wait timeouts remain distinct
-from the underlying promise's hard deadline.
+There is no separate `promises` helper in the current guest prelude. A future
+convenience helper could wrap the ordinary wait tool without adding a second
+promise subsystem. Wait timeouts remain distinct from the underlying promise's
+hard deadline.
 
 Keep the **parent session as the durable holder** in v1. The parent allocates
 real promise identities, records admitted invocations, delivers emissions,
 validates replies, and resolves promises. The runner bridge receives that
-outcome through the nested-call Update and settles the JS wait. Existing
+outcome through the code tool call Update and settles the JS wait. Existing
 sub-agent preparation and cancellation assume session ownership; moving
 ownership to the code workflow would require a broader protocol change.
 
-This requires a generic nested-call admission and completion path correlated
-with the outer invocation and nested request ID. It cannot simply send every
-call through today's per-call activity: that path rejects workflow-backed
-tools and `await`, whose current execution uses batch-unit machinery. Nor
-should the runner fabricate tool batches, session events, or promise IDs.
-Current workflow-tool validation ties an invocation to a recorded model call
-and, for joined completion, the single parked batch. Add explicit durable
-nested invocation records and waits; a nested joined call must not create a
-second parked conversational batch or replace the outer suspension.
+The implemented code tool call admission and completion path correlates each call
+with the outer invocation and its own request ID. The ordinary per-call activity
+rejects workflow-backed tools and `await`, so the code tool adapter reuses their
+preparation paths and returns effects or a wait specification to the session.
+Workflow-tool validation now accepts a durable code tool origin as well as a model
+call. Independent code tool waits preserve the outer suspension; the runner never
+fabricates model batches, session events, or promise IDs.
 
 The parent session must process these admissions, emissions, cancellations,
 and resolutions while its outer joined call is parked. This is control-plane
 progress, not another model turn. Do not recursively drive the parked model
 batch or start a run on the waiting parent. A dependency on another model
-turn from that same parent would deadlock. The generic extension must be
-implemented and tested before claiming nested workflow tools work.
-Process requests through the session's serialized admission path without
-blocking that loop until the nested effect completes. Preserve receipts and
-deduplication across session continue-as-new. Do not roll over blindly while
-long-running Update handlers are pending: bound/defer rollover or provide
-reconnect/result retrieval by stable identity. Choose and test that policy
-before shipping.
+turn from that same parent would deadlock. This path is implemented and covered
+by live Temporal tests with joined workflow bindings and independent waits.
+Requests pass through the session's serialized admission path while the
+dispatcher and Update waiters progress independently. Continue-as-new is deferred
+while Update handlers, queued work, or in-flight dispatch remain. Rehydration
+retains scope/request identities and durable results, and the client addresses
+the stable session workflow ID. The code workflow now has bounded activity, cancellation, and cleanup budgets
+so a stuck interpreter cannot wait indefinitely before attempting scope closure.
 
 Allocate durable promise identities atomically at the session owner. Keep
 runtime-owned joined promises out of model-facing wait/cancel/detach helpers;
-script-local joined waiters only observe their own admitted nested calls.
+script-local joined waiters only observe their own admitted code tool calls.
 In particular, a script must not wait on its own outer completion promise.
 
-Ordinary nested tools can also return session effects and attachments in
+Ordinary code tools can also return session effects and attachments in
 addition to output. Their completions must pass through the appropriate
 admitted effect-application path, preserving validation and durable state;
 returning only their JSON to the runner is insufficient. Commit trusted
@@ -372,18 +612,19 @@ context while retaining their artifact references for the execution trace.
 
 ## Capabilities and configuration
 
-Add `code_mode` to the existing session feature configuration. Its settings
+Enable code mode using `features.codeMode` in the public session configuration.
+Internally this is the `code_mode` feature. Its settings
 can narrow available capabilities and set execution budgets. They do not
 expand environment grants, MCP access, VFS attachments, sub-agent authority,
 or workflow bindings. Every substantive effect must correspond to an ordinary
 Lightspeed tool capability admitted to the session. Code mode adds composition
 and result processing, not a second privileged service API.
 
-Resolve an immutable execution context at admission: session/run identity,
-configuration revision, capability bindings, initial resource selection,
-grants, and limits. Pass it by a host-generated reference, as existing workflow
-tools do. Resolve mutable execution facts through the session owner at each
-call admission; a stale copy of session state must not overwrite later effects.
+Admission pins session/run identity, source, limits, and optional tool selection
+in an immutable host-generated CAS context. The session-owned scope binds the
+actual callable handles and registry revision. Mutable execution facts, including
+resource selection, remain with the session owner at each call admission; a
+stale copy of session state must not overwrite later effects.
 The script supplies business arguments; it cannot choose a holder workflow,
 task queue, credential, authority reference, or alternate session identity.
 Keep runtime checks and existing revocation semantics at the actual effect
@@ -396,19 +637,42 @@ name must never make an unadmitted operation available. Use stable logical
 identities internally, while preserving the exact argument adapter and result
 contract associated with the function specification shown to the model.
 
-Useful configuration dimensions are:
+Configuration status is:
 
-| Setting | Purpose |
-| --- | --- |
-| Enablement and presentation | Enable code mode; choose hybrid or code-only exposure where supported. |
-| Capability selection | Select a subset of admitted ordinary tool capabilities, including discoverable tools. |
-| Execution limits | Wall time, guest compute, memory, source size, output size, and call count. |
-| Effect limits | Maximum outstanding calls, service budgets, and stricter per-call deadlines where allowed. |
-| Discovery budget | Decide which declarations are inline and which are discoverable on demand. |
+| Setting | Implemented | Remaining |
+| --- | --- | --- |
+| Enablement and presentation | Opt-in `codeMode`, hybrid exposure. | Code-only/hybrid presentation setting. |
+| Capability selection | Logical `allowedTools` narrows admitted host-callable capabilities. | Complete for v1. |
+| Execution limits | Attempt deadline, memory, stack, source/catalog/request/result/output bytes, and call count. | Additional compute metering if later isolation requires it. |
+| Effect limits | Outstanding calls plus existing per-tool retry, timeout, and concurrency policies. | Optional service budgets or narrower per-call settings. |
+| Discovery budget | Existing MCP search/call tools and their bounds. | Code-mode inline specification/discovery budget. |
 
-The exact schema and defaults need implementation design. Limit recursive
-code-mode invocation in v1; code execution should not be able to bypass its
-budget by launching more code executions.
+The implemented configuration uses flat camelCase fields:
+
+```json
+{
+  "features": {
+    "codeMode": {
+      "timeoutMs": 30000,
+      "allowedTools": ["concurrency.sleep", "concurrency.await"]
+    }
+  }
+}
+```
+
+`allowedTools` contains logical tool IDs, not provider-presented JavaScript
+function names. Omit it to allow all granted host-callable tools except the
+parent code tool; `[]` permits only local computation. Recursive code execution
+is unavailable. Omit `codeMode` to disable the feature.
+
+Defaults are 30 seconds per attempt, 64 MiB memory, 1 MiB stack, 256 KiB source,
+1 MiB each for catalog, request, result, and selected output, 128 calls, and 16
+outstanding calls. Positive hard ceilings are 10 minutes, 512 MiB memory, 8 MiB
+stack, 1 MiB source, 8 MiB for the other byte limits, 1,024 calls, and 64
+outstanding calls. `timeout_ms` in a tool call can only narrow the feature's
+budget. The joined promise reserves additional time for preparation, cleanup,
+and delivery. Presentation/discovery and service-specific budgets in the table
+remain later settings.
 
 Not every currently advertised tool is locally callable. Provider-hosted
 search, fetch, or MCP execution requires a provider turn and may lack a host
@@ -464,7 +728,7 @@ is metadata for the execution, not an independent authorization database.
 Its manifest can contain function names and opaque binding handles,
 description/schema references, and a compact authorized MCP server index.
 Retain the referenced artifacts and cache immutable content by digest. Do not
-repeat the catalog or source in each nested request.
+repeat the catalog or source in each code tool request.
 
 Different consumers need different parts:
 
@@ -525,7 +789,9 @@ Use JSON Schema as both the machine-readable contract and the initial
 model-facing representation. Serialize available schemas directly into tool
 descriptions or discovery results; do not build a schema-to-TypeScript
 converter in v1. TypeScript source support is a separate, also deferred feature.
-Use the following placement policy:
+Schema metadata and MCP discovery propagation are implemented. The description
+augmentation, bounded inline catalog, and code-only presentation below are the
+next implementation slice:
 
 1. **Hybrid mode, directly declared tools:** preserve their ordinary argument
    schemas in the provider's native input-schema field. For code-callable tools,
@@ -603,8 +869,8 @@ into `FunctionDefinition`, owned result DTOs publish serialization schemas,
 and MCP discovery preserves the server's optional `outputSchema`. Unknown
 runtime-owned or external return shapes remain explicitly unspecified.
 
-Add output schemas for owned tool results and carry available schemas through
-metadata to model-facing descriptions and discovery. Where absent, document
+Extend owned result-schema coverage and render available schemas from shared
+metadata in model-facing descriptions and discovery. Where absent, document
 the known result envelope and explicitly leave its tool-specific payload
 unspecified; do not invent fields or promise a shape inferred from one observed
 result. Missing schemas do not prevent tool execution. Preserve descriptions
@@ -621,8 +887,8 @@ See the [MCP tool-result contract](https://modelcontextprotocol.io/specification
 
 ## Runtime implementation
 
-The `codemode` crate embeds native QuickJS through a Rust adapter such as
-[`rquickjs`](https://docs.rs/rquickjs/latest/rquickjs/). QuickJS owns parsing,
+The `codemode` crate embeds native QuickJS through
+[`rquickjs` 0.14](https://docs.rs/rquickjs/0.14.0/rquickjs/). QuickJS owns parsing,
 JS bytecode execution, objects, promises, and microtasks. A Rust driver manages
 entry, requests, completions, limits, and cleanup. Keep all library-specific
 values, contexts, functions, and promise handles inside that adapter.
@@ -631,8 +897,9 @@ Create a fresh QuickJS runtime and context for each execution. Evaluate the
 trusted helper prelude and parse the submitted async-function body before
 executing it. Accept JavaScript only; reject unsupported syntax before effects.
 No Wasm artifact, TS compiler, subprocess, or attached environment is needed
-in this phase. Run synchronous interpreter work on a dedicated driver thread
-or bounded pool so it cannot block the Temporal worker's async executor.
+in this phase. Synchronous interpreter work runs on a dedicated driver thread
+so it cannot block the Temporal worker's async executor. Cloned `CodeRunner`
+instances share an explicit semaphore capacity and cleanup budget.
 
 Expose no ambient filesystem, process, network, credentials, Node APIs, or
 unrestricted module loading. Effects go through the bridge. Configure QuickJS
@@ -744,12 +1011,12 @@ for this design document; the provider receives an input JSON Schema:
 ```typescript
 declare function code_execute(args: {
   code: string,                 // body of an async function
-  timeout_ms?: number,          // may only narrow admitted limits
-  max_output_tokens?: number   // may only narrow admitted limits
+  timeout_ms?: number          // may only narrow admitted limits
 }): Promise<CodeExecutionReport>;
 ```
 
-The JSON specifications described above accompany this tool in the model request.
+Existing ordinary tool specifications accompany this tool in the model request.
+Appending available return JSON Schema to descriptions remains planned.
 V1 always interprets `code` as JavaScript; add a language selector in the later
 TS phase.
 Provider-native freeform source input can be added later as another
@@ -759,12 +1026,12 @@ For example, with helper names and business schemas still to be finalized:
 
 ```javascript
 const results = await Promise.allSettled(
-  briefs.map(brief => tools.agent_run({ profile: "researcher", brief }))
+  briefs.map(brief => tools.agent_run({ agent: "researcher", input: brief }))
 );
 
 for (const [index, result] of results.entries()) {
   if (result.status === "fulfilled") {
-    text({ index, summary: result.value.summary });
+    text({ index, result: result.value });
   } else {
     text({ index, error: String(result.reason) });
   }
@@ -778,33 +1045,41 @@ boundary. `ParallelSafe` and `Exclusive` policies still
 apply even when the script requests several calls concurrently. They do not
 promise isolation from other sessions using the same resource.
 
-Provide explicit text/media output helpers and a bounded final return value.
+`text(value)` and a bounded JSON return value are implemented. Dedicated media
+output and scoped blob/store conveniences are not part of the current prelude.
 Only selected output and the compact execution report enter the model's tool
-result. Keep the complete nested-call trace inspectable separately. A small
+result. The complete code tool call report is stored separately. A small
 cross-execution JSON store could be added later, but neither persistent globals
 nor live-heap continuation is required for v1.
-The current joined-result projection does not automatically separate a full
-report from model-visible output. Return a compact envelope with trace/artifact
-references, or extend the generic projection deliberately; do not return the
-entire nested-call journal as the joined payload.
+The joined payload is a compact envelope with selected output, diagnostics,
+outcome counts, and `report_ref`. `output_available` distinguishes retained JS
+output from a missing runner receipt; an empty array alone cannot make that
+distinction. The detailed code tool call report lives in CAS.
 
 ### Latency expectations to validate
 
-No Lightspeed prototype measurements exist yet. Keep interpreter cost separate
-from durable scheduling and actual tool execution:
+Latest local development-profile measurements on 2026-10-08 used 32 fresh
+pure-JavaScript executions: init/prelude/compile p50 **0.563 ms**, p95 **0.707 ms**;
+thread startup through final report p50 **0.671 ms**, p95 **0.853 ms**. Two ordinary
+tool calls in the live suite took **370 ms** and **398 ms**, including session
+Updates, CAS, and activities. Its ten-call mixed workflow took **4.84 s** including
+preparation and cleanup. These are diagnostic samples, not production benchmarks;
+they exclude outer code-workflow startup and activity scheduling.
+
+Keep interpreter cost separate from durable scheduling and actual tool execution:
 
 | Part | Provisional expectation |
 | --- | --- |
 | Native interpreter | Linked into the code worker; no per-script Wasm compilation or module loading. |
-| Fresh VM, prelude, and a small script | A 1–10 ms engineering target, not a measured guarantee. |
+| Fresh VM, prelude, and a small script | Initial local observations around 1 ms; validate production builds and load. |
 | JS loops/filtering and bridge serialization | Local workload-dependent computation; no Temporal operation per JS statement. |
-| Nested Update plus activity | Plan for tens to hundreds of milliseconds of coordination depending on deployment/load, plus the actual tool runtime; measure before committing a budget. |
+| Code tool Update plus activity | Plan for tens to hundreds of milliseconds of coordination depending on deployment/load, plus the actual tool runtime; measure before committing a budget. |
 
 Pi reports approximately 20 ms for worker-thread startup and VM creation in
 its implementation, which is not a Lightspeed/native QuickJS benchmark.
 Temporal gives an illustrative approximately 50 ms activity-scheduling round
 trip, not a complete
-Lightspeed nested-call estimate. See [Pi's executor](https://github.com/earendil-works/pi/blob/eb326d265ae0b88489a6d10319307780df827cdf/packages/codemode/README.md#how-it-works)
+Lightspeed code tool call estimate. See [Pi's executor](https://github.com/earendil-works/pi/blob/eb326d265ae0b88489a6d10319307780df827cdf/packages/codemode/README.md#how-it-works)
 and [Temporal latency guidance](https://docs.temporal.io/design-patterns/performance-latency-patterns).
 
 Measure fresh-VM `return 1`, realistic specifications/source, JSON processing,
@@ -819,24 +1094,29 @@ retries can substantially increase either.
 ## Failure, cancellation, and observability
 
 Every execution needs a report with its terminal status, selected output,
-script error if any, and a reference to per-call outcomes. Distinguish completed,
-failed, rejected-before-dispatch, and unresolved effects. Exact wire states
-remain to be defined. Where dispatch may have succeeded but a durable receipt
-is missing, say that the outcome is unknown; do not imply that nothing happened
-or that retrying is safe.
+script error if any, and a reference to per-call outcomes. The session protocol
+now distinguishes admission rejection from per-call `pending`, `waiting`,
+`succeeded`, `failed`, `cancelled`, and `unavailable` outcomes. `CodeRunReport`
+separates script output/errors from the authoritative scope snapshot and cleanup
+errors; the code finalizer now stores its durable report and compact outer-tool reply. Where dispatch may have
+succeeded but a durable receipt is missing, say that the outcome is unknown;
+do not imply that nothing happened or that retrying is safe.
 
 Build this report from the code workflow's lifecycle result and the session's
-authoritative nested-call outcomes, with large material in CAS. It is not a
+authoritative code tool call outcomes, with large material in CAS. It is not a
 new replay log for JavaScript. Temporal history alone is not the user-facing
-audit interface: project useful execution and nested-call metadata into
-existing tracing/result surfaces, including usage and attribution.
+audit interface: project useful execution and code tool call metadata into
+existing tracing/result surfaces, including usage and attribution. The current
+public event projection emits bounded `CodeToolProgress` lifecycle records so
+clients retain contiguous cursors; web and CLI consumers keep these out of the
+conversation. Detailed code-workflow reports now live in CAS; richer execution tracing remains planned.
 
 | Event | Required behavior |
 | --- | --- |
 | One effect fails and the script catches it | Settle that JS promise according to the wrapper contract; allow further authorized work within budget. |
 | Uncaught script error | Stop accepting new effects; settle or reconcile outstanding calls; return the error and known outcomes. |
-| Runtime/worker loss or activity timeout | Do not rerun source. Close the nested scope, retrieve the session's known outcomes, and report interruption. |
-| Approval required | Return a typed unsupported-approval error before dispatching the protected effect. No durable approval wait. |
+| Runtime/worker loss or activity timeout | Do not rerun source. Close the code tool scope, retrieve the session's known outcomes, and report interruption. |
+| Approval required | Return a failed outcome before dispatching the protected effect. The guest receives a rejected tool promise carrying the error. No durable approval wait. |
 | Execution cancellation or deadline | Stop dispatch, interrupt the guest, propagate cancellation according to ownership, and perform bounded cleanup. |
 | Remote success without confirmed receipt | Preserve uncertainty and any known remote handle; do not claim exactly-once execution. |
 
@@ -844,11 +1124,22 @@ existing tracing/result surfaces, including usage and attribution.
 dispatched request independently, including work whose promise the script
 never awaits. Once the script ends, stop new dispatch and drain or request
 cancellation under the execution's cleanup deadline. The code workflow closes
-the nested scope through the session's generic lifecycle operation. Session
-Update handlers must finish or explicitly end their waits with an unresolved
-outcome at the cleanup cutoff before final reporting. The session rejects late
+the code tool scope through the session's generic lifecycle operation. Session
+Update handlers may remain pending after the cleanup cutoff. The report then
+retains the last known outcomes and a cleanup diagnostic; session reconciliation
+continues until the calls settle or the session is forcibly terminated. The session rejects late
 requests and keeps late external outcomes attributable without reviving the
-script. Transport disconnection alone does not close the scope.
+script. Transport disconnection alone does not close the scope. Scope closure,
+owned-promise cancellation, report retrieval, and code-workflow finalization
+are implemented. Runner cleanup has a separate 10-second budget; cancellation
+waits up to 20 seconds for a receipt before the finalizer takes over.
+A finalizer that exhausts its activity retries fails the workflow; ordinary
+workflow-tool recovery then reports that failure to the parent.
+
+Completed replies root their report graph through the session promise payload.
+After parent cancellation, an unaccepted final report may be referenced only by
+Temporal's snapshot and is subject to the existing uncommitted-blob grace period
+(default seven days). Queryability of a workflow does not pin its blobs forever.
 
 Keep existing ownership rules for durable submissions. A failed JS waiter
 does not erase a session-owned promise or cancel unrelated work. Preserve
@@ -861,7 +1152,7 @@ Separate code execution activity capacity from session tool activity capacity.
 Configure independent worker limits and interpreter threads even when the
 roles share a process, so waiting `RunCode` activities cannot starve their
 effects. Load-test both combined-role and separate-process deployments. Bound
-call counts, payloads, and execution duration so nested calls cannot exhaust
+call counts, payloads, and execution duration so code tool calls cannot exhaust
 session or code-workflow history.
 Honor existing workflow-tool and promise limits as well; larger code-mode
 loops do not implicitly bypass per-run admission limits.
@@ -880,7 +1171,7 @@ not delivered behavior.
 | --- | --- | --- | --- |
 | Execution boundary | Fresh QuickJS Wasm VM. | Fresh Dynamic Worker using Workers' V8 isolates. | Fresh native QuickJS runtime through `codemode` in the `code` role of the shared binary; roles may run together or separately. Trusted deployments, JavaScript only; Wasm and TS later. |
 | Effects | Injected tool/model functions route through the host. | Host tool functions or connectors exposed through Workers RPC. | Ordinary admitted tools only; the session owns scheduling and results. |
-| Discovery | Typed declarations and search/describe helpers. | Generated typed definitions; durable runtime also offers connector discovery. | JSON Schema in direct descriptions, code-tool description, and discovery results, matched to execution bindings. |
+| Discovery | Typed declarations and search/describe helpers. | Generated typed definitions; durable runtime also offers connector discovery. | JSON Schema in direct descriptions, code tool description, and discovery results, matched to execution bindings. |
 | Script recovery | Built-in VM execution is ephemeral; small explicit stored values are separate. | Simple executor is stateless; optional durable runtime supports recorded-call replay around approval pauses. | Script is ephemeral; lifecycle workflow and session-owned effects are durable. |
 | Retry boundary | Tool-specific host behavior. | Connector/backend behavior; durable call recording is distinct from an activity scheduler. | Existing per-effect Temporal policies, with no whole-script retry. |
 | Approvals | Follow host tool integration. | Simple `createCodeTool` excludes approval tools; durable runtime supports approval and resume. | Reject approval-requiring effects in v1. |
@@ -939,37 +1230,50 @@ The main existing seams are:
 - [Session tools](../../crates/temporal-runtime/src/worker/session_tools.rs)
   and [tool activities](../../crates/temporal-runtime/src/worker/activities/tools.rs):
   execution bindings, argument validation, effect results, and native MCP policy.
+- [Code tool execution protocol](../../crates/temporal-workflow/src/code_tools.rs)
+  and [session dispatcher](../../crates/temporal-workflow/src/workflows/session/code_tools.rs):
+  typed Temporal Updates, independent activity scheduling, and outcome recovery.
 - [Tool-batch orchestration](../../crates/temporal-workflow/src/workflows/session/tool_batches.rs):
-  existing per-call scheduling versus workflow-tool/await batch execution.
+  ordinary model-batch execution, retained alongside the scoped call path.
 - [Workflow-tool state](../../crates/harness/src/core/components/workflow_tool.rs)
   and [promises](../../crates/harness/src/core/components/promise.rs):
   durable ownership and correlation. Add only deterministic generic admission
   facts here; keep interpreter execution and infrastructure I/O outside the harness.
 
-Implementation should proceed in these steps:
+Implementation sequence and current status:
 
-1. **Implemented — contract foundation.** Define the execution descriptor, matched specification/binding metadata,
-   and script-visible result contract. Refactor shared callable specifications
-   into `tools`, add output schemas for owned results, and carry available
-   schemas through the common catalog and MCP discovery.
-2. Add generic session-owned nested admission/completion for ordinary calls,
-   workflow tools, and promise waits while the outer joined call is parked.
+1. **Implemented — contract foundation.** Define the execution descriptor,
+   matched specification/binding metadata, and script-visible result contract.
+   Refactor shared callable specifications into `tools`, add output schemas for
+   owned results, and carry available schemas through the common catalog and
+   MCP discovery.
+2. **Implemented — session-owned execution.** Add code tool admission and
+   completion for ordinary calls, workflow tools, and promise waits while the
+   outer joined call is parked.
    Reuse activity policies and the session's effect-application path.
-3. Add `crates/codemode` with native QuickJS behind the JSON message boundary.
-   Connect the session Update bridge in `temporal-runtime`. Demonstrate JavaScript
+3. **Implemented — interpreter and host bridge.** Add `crates/codemode` with native QuickJS
+   behind the JSON message boundary. Connect guest tool requests to the existing
+   session Update client in `temporal-runtime`. Demonstrate JavaScript
    dependent/parallel effects, guest job pumping, interruption, and engine-managed
    resource limits.
-4. Add feature admission, the trusted joined code workflow in `temporal-workflow`,
+4. **Implemented — durable lifecycle and admission.** Add feature admission, the trusted joined code workflow in `temporal-workflow`,
    and the `code` role/queue in `temporal-runtime`. Implement single-attempt
-   lifecycle, scope closure, outcome reporting after runner loss, and the
-   session rollover policy. Ship the existing runtime binary for both combined
-   and separate-role deployments.
-5. Add hybrid/code-only JSON Schema presentation, existing MCP discovery/call
-   integration, scoped artifacts, compact model output, and execution tracing.
-   TypeScript declaration rendering remains optional later work.
-6. Validate failure behavior, release footprint, and latency before choosing
-   defaults for trusted deployments. Wasm isolation and TS source support are
-   separate later phases, as are new transcription/image/decision-model tools.
+   lifecycle, scope closure, outcome reporting after runner loss, and bounded
+   cleanup under the implemented session rollover policy. Ship the existing
+   runtime binary for both combined and separate-role deployments.
+5. **Next — model presentation.** Append available output JSON Schemas, fill
+   owned reply-schema gaps, add a bounded inline catalog and code-only exposure,
+   and exercise them through the real-model test without prompt-supplied return
+   hints. Hybrid tool exposure, scoped CAS inputs/reports, and compact model
+   output are implemented. TypeScript declaration rendering remains optional.
+6. **Remaining — integration coverage and operational validation.** Extend the
+   existing OpenAI Responses case to other provider presentations, native/deferred
+   MCP, and real job/sub-agent runtimes. Cover effect retries, parent rollover,
+   remaining lifecycle failure races, and saturation; improve execution inspection
+   and measure release footprint and complete lifecycle latency. Worker-process
+   loss, bounded cleanup, lifecycle retries, and offline code-workflow replay
+   are already tested. Wasm, TS source support, and new model-service tools are
+   separate later phases.
 
 Acceptance coverage must include a loop with multiple effects per iteration,
 parallel ordinary calls, dependent calls, joined jobs/sub-agents, and durable
@@ -977,7 +1281,7 @@ submit-then-wait. Exercise sibling failure, unawaited calls, duplicate bridge
 delivery, approval rejection, denied/guessed capabilities, cancellation, and
 worker loss after some effects complete. Verify that safe individual activity
 retries do not restart the script or repeat completed siblings. Replay tests
-must cover any new deterministic nested admission and completion behavior.
+must cover any new deterministic code tool admission and completion behavior.
 
 Verify that the model-visible argument and return specification matches the
 actual wrapper and session binding for each provider presentation and deferred
@@ -992,23 +1296,20 @@ These checks do not claim containment of native interpreter faults. Add Wasm
 containment/ABI coverage and TS transformation/diagnostics with their respective
 later phases, reusing the execution and tool-contract cases.
 
-Also verify that a parked parent handles nested completion without a model
+Also verify that a parked parent handles code tool completion without a model
 turn, that sub-agent ownership/cancellation remains valid, and that saturated
 runner capacity cannot starve tool execution. The final model output should
-stay compact while every nested effect remains attributable and inspectable.
+stay compact while every code tool effect remains attributable and inspectable.
 Exercise parent rollover, lost Update responses, scope closure, and late
 requests/results without duplicating effects or requiring JS replay.
 Run interpreter contract cases directly against `codemode` without Temporal,
 and integration cases with both colocated and separate code/session workers.
 Verify that the workflow crate does not acquire an interpreter dependency.
 
-Remaining v1 implementation decisions are the native embedding/driver details,
-generic nested-admission and scope-lifecycle DTOs, mapping the result/error
-contract into guest promises, configuration defaults, cleanup and durable-submission scope
-mapping, rollover policy, and role capacity defaults. Session ownership,
-direct bridge requests, specification/binding correspondence, and ordinary-tool
-capability parity are the proposed direction. Wasm package/ABI choices and the
-TS syntax subset belong to later phases. Wasm isolation, TS source support,
-TypeScript declaration generation, approval replay, persistent JS heaps,
-code-only model services, and a general program/workflow deployment system
-remain outside the first version.
+The concrete gaps are tracked in [Remaining work](#remaining-work). Keep these
+acceptance criteria as regression requirements while presentation and coverage
+expand, including specification/binding correspondence and ordinary-tool
+capability parity. Wasm package/ABI choices, TS syntax
+support, and TypeScript declaration rendering belong to later phases. Approval
+replay, persistent JS heaps, code-only model services, and a general
+program/workflow deployment system remain outside the first version.

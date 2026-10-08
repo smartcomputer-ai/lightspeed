@@ -1600,35 +1600,46 @@ pub(crate) fn validate_emit_effect(
             "workflow tool emit effect requires an active run".to_owned(),
         )
     })?;
-    let batch = active_run
-        .tool_batches
-        .get(&expected_batch_id)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation(format!(
-                "workflow tool emit effect references missing tool batch {expected_batch_id}"
-            ))
-        })?;
-    let call = batch
-        .calls
-        .iter()
-        .find(|call| &call.call.call_id == expected_call_id)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation(format!(
-                "workflow tool emit effect references missing tool call {expected_call_id}"
-            ))
-        })?;
     let binding = state
         .workflow_tools
         .bindings
         .get(&invocation.tool_id)
         .expect("binding was validated above");
-    if call.call.tool_id.as_ref() != Some(&binding.definition.tool.name)
-        || call.call.arguments_ref != invocation.arguments_ref
+    if let Some((scope, call)) =
+        crate::core::components::code_tool::code_tool_call_for_id(state, expected_call_id)
     {
-        return Err(DomainError::InvariantViolation(
-            "workflow tool emit effect does not match its admitted tool identity and arguments"
-                .to_owned(),
-        ));
+        validate_code_tool_invocation(state, scope, call, invocation)?;
+        if !matches!(call.status, crate::CodeToolCallStatus::Pending) {
+            return Err(DomainError::InvariantViolation(
+                "code tool effect requires a pending call".to_owned(),
+            ));
+        }
+    } else {
+        let batch = active_run
+            .tool_batches
+            .get(&expected_batch_id)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation(format!(
+                    "workflow tool emit effect references missing tool batch {expected_batch_id}"
+                ))
+            })?;
+        let call = batch
+            .calls
+            .iter()
+            .find(|call| &call.call.call_id == expected_call_id)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation(format!(
+                    "workflow tool emit effect references missing tool call {expected_call_id}"
+                ))
+            })?;
+        if call.call.tool_id.as_ref() != Some(&binding.definition.tool.name)
+            || call.call.arguments_ref != invocation.arguments_ref
+        {
+            return Err(DomainError::InvariantViolation(
+                "workflow tool emit effect does not match its admitted tool identity and arguments"
+                    .to_owned(),
+            ));
+        }
     }
     let expected_id = WorkflowToolInvocationId::for_call(
         invocation.session_universe_id,
@@ -1812,85 +1823,118 @@ fn validate_invocation_against_state(
             "workflow tool invocation does not match the active run".to_owned(),
         ));
     }
-    let batch = active_run
-        .tool_batches
-        .get(&invocation.tool_batch_id)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation(format!(
-                "workflow tool invocation references missing tool batch {}",
-                invocation.tool_batch_id
-            ))
-        })?;
-    if batch.turn_id != invocation.turn_id {
-        return Err(DomainError::InvariantViolation(
-            "workflow tool invocation does not match its tool batch turn".to_owned(),
-        ));
-    }
-    let call = batch
-        .calls
-        .iter()
-        .find(|call| call.call.call_id == invocation.tool_call_id)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation(format!(
-                "workflow tool invocation references missing tool call {}",
-                invocation.tool_call_id
-            ))
-        })?;
     let binding = state
         .workflow_tools
         .bindings
         .get(&invocation.tool_id)
         .expect("binding was validated above");
-    if call.call.tool_id.as_ref() != Some(&binding.definition.tool.name)
-        || call.call.arguments_ref != invocation.arguments_ref
+    if let Some((scope, call)) =
+        crate::core::components::code_tool::code_tool_call_for_id(state, &invocation.tool_call_id)
     {
-        return Err(DomainError::InvariantViolation(
-            "workflow tool invocation does not match its durable tool call".to_owned(),
-        ));
-    }
-    match &binding.completion {
-        WorkflowToolCompletion::Joined { .. } => {
-            if call.status != crate::ToolCallStatus::Pending {
+        validate_code_tool_invocation(state, scope, call, invocation)?;
+        match (&binding.completion, &call.status) {
+            (
+                WorkflowToolCompletion::Joined { .. },
+                crate::CodeToolCallStatus::Waiting {
+                    suspension: crate::ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
+                },
+            ) if calls.iter().any(|joined| {
+                joined.call_id == invocation.tool_call_id
+                    && joined.invocation_id == invocation.invocation_id
+                    && invocation
+                        .completion_promises
+                        .as_ref()
+                        .and_then(|promises| promises.get(REPLY_COMPLETION_KEY))
+                        == Some(&joined.promise_id)
+            }) => {}
+            (
+                WorkflowToolCompletion::Accepted | WorkflowToolCompletion::Promises { .. },
+                crate::CodeToolCallStatus::Completed { result },
+            ) if result.status == crate::ToolCallStatus::Succeeded => {}
+            _ => {
                 return Err(DomainError::InvariantViolation(
-                    "joined workflow tool invocation requires its original call to remain pending"
-                        .to_owned(),
-                ));
-            }
-            let Some(parked) = active_run.parked_tool_batch.as_ref() else {
-                return Err(DomainError::InvariantViolation(
-                    "joined workflow tool invocation requires a parked tool batch".to_owned(),
-                ));
-            };
-            let crate::ToolBatchSuspension::JoinedWorkflowCalls { calls, .. } = &parked.suspension
-            else {
-                return Err(DomainError::InvariantViolation(
-                    "joined workflow tool invocation requires a joined-workflow suspension"
-                        .to_owned(),
-                ));
-            };
-            if parked.batch_id != invocation.tool_batch_id
-                || !calls.iter().any(|joined| {
-                    joined.call_id == invocation.tool_call_id
-                        && joined.invocation_id == invocation.invocation_id
-                        && invocation
-                            .completion_promises
-                            .as_ref()
-                            .and_then(|promises| promises.get(REPLY_COMPLETION_KEY))
-                            == Some(&joined.promise_id)
-                })
-            {
-                return Err(DomainError::InvariantViolation(
-                    "joined workflow tool invocation is missing its durable parked mapping"
+                    "code tool workflow invocation does not match its durable completion or wait"
                         .to_owned(),
                 ));
             }
         }
-        WorkflowToolCompletion::Accepted | WorkflowToolCompletion::Promises { .. } => {
-            if call.status != crate::ToolCallStatus::Succeeded {
-                return Err(DomainError::InvariantViolation(
-                    "workflow tool invocation does not match a successful durable tool call"
+    } else {
+        let batch = active_run
+            .tool_batches
+            .get(&invocation.tool_batch_id)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation(format!(
+                    "workflow tool invocation references missing tool batch {}",
+                    invocation.tool_batch_id
+                ))
+            })?;
+        if batch.turn_id != invocation.turn_id {
+            return Err(DomainError::InvariantViolation(
+                "workflow tool invocation does not match its tool batch turn".to_owned(),
+            ));
+        }
+        let call = batch
+            .calls
+            .iter()
+            .find(|call| call.call.call_id == invocation.tool_call_id)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation(format!(
+                    "workflow tool invocation references missing tool call {}",
+                    invocation.tool_call_id
+                ))
+            })?;
+        if call.call.tool_id.as_ref() != Some(&binding.definition.tool.name)
+            || call.call.arguments_ref != invocation.arguments_ref
+        {
+            return Err(DomainError::InvariantViolation(
+                "workflow tool invocation does not match its durable tool call".to_owned(),
+            ));
+        }
+        match &binding.completion {
+            WorkflowToolCompletion::Joined { .. } => {
+                if call.status != crate::ToolCallStatus::Pending {
+                    return Err(DomainError::InvariantViolation(
+                    "joined workflow tool invocation requires its original call to remain pending"
                         .to_owned(),
                 ));
+                }
+                let Some(parked) = active_run.parked_tool_batch.as_ref() else {
+                    return Err(DomainError::InvariantViolation(
+                        "joined workflow tool invocation requires a parked tool batch".to_owned(),
+                    ));
+                };
+                let crate::ToolBatchSuspension::JoinedWorkflowCalls { calls, .. } =
+                    &parked.suspension
+                else {
+                    return Err(DomainError::InvariantViolation(
+                        "joined workflow tool invocation requires a joined-workflow suspension"
+                            .to_owned(),
+                    ));
+                };
+                if parked.batch_id != invocation.tool_batch_id
+                    || !calls.iter().any(|joined| {
+                        joined.call_id == invocation.tool_call_id
+                            && joined.invocation_id == invocation.invocation_id
+                            && invocation
+                                .completion_promises
+                                .as_ref()
+                                .and_then(|promises| promises.get(REPLY_COMPLETION_KEY))
+                                == Some(&joined.promise_id)
+                    })
+                {
+                    return Err(DomainError::InvariantViolation(
+                        "joined workflow tool invocation is missing its durable parked mapping"
+                            .to_owned(),
+                    ));
+                }
+            }
+            WorkflowToolCompletion::Accepted | WorkflowToolCompletion::Promises { .. } => {
+                if call.status != crate::ToolCallStatus::Succeeded {
+                    return Err(DomainError::InvariantViolation(
+                        "workflow tool invocation does not match a successful durable tool call"
+                            .to_owned(),
+                    ));
+                }
             }
         }
     }
@@ -1917,6 +1961,33 @@ fn validate_invocation_against_state(
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_code_tool_invocation(
+    state: &crate::CoreAgentState,
+    scope: &crate::CodeToolScope,
+    call: &crate::CodeToolCall,
+    invocation: &WorkflowToolInvocation,
+) -> Result<(), DomainError> {
+    let parent = crate::code_tool_parent(state, &scope.spec)?;
+    let binding = state
+        .workflow_tools
+        .bindings
+        .get(&invocation.tool_id)
+        .expect("binding was validated above");
+    if invocation.run_id != parent.run_id
+        || invocation.turn_id != parent.turn_id
+        || invocation.tool_batch_id != parent.tool_batch_id
+        || invocation.session_id != parent.session_id
+        || invocation.session_universe_id != parent.session_universe_id
+        || call.spec.tool_id != binding.definition.tool.name
+        || call.spec.arguments_ref != invocation.arguments_ref
+    {
+        return Err(DomainError::InvariantViolation(
+            "code tool workflow invocation does not match its admitted scope and call".to_owned(),
+        ));
     }
     Ok(())
 }

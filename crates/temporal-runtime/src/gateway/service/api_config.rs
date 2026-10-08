@@ -216,6 +216,22 @@ fn features_from_api(
                     deadline_ms: subagents.deadline_ms,
                 },
             }),
+        code_mode: features.code_mode.map(|code| harness::CodeModeFeature {
+            version: code.version,
+            allowed_tools: code.allowed_tools,
+            limits: harness::CodeModeLimits {
+                timeout_ms: code.timeout_ms,
+                max_memory_bytes: code.max_memory_bytes,
+                max_stack_bytes: code.max_stack_bytes,
+                max_source_bytes: code.max_source_bytes,
+                max_catalog_bytes: code.max_catalog_bytes,
+                max_request_bytes: code.max_request_bytes,
+                max_result_bytes: code.max_result_bytes,
+                max_output_bytes: code.max_output_bytes,
+                max_tool_calls: code.max_tool_calls,
+                max_outstanding_tool_calls: code.max_outstanding_tool_calls,
+            },
+        }),
         timers: features.timers.map(|timers| harness::TimersFeature {
             version: timers.version,
         }),

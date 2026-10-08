@@ -1200,7 +1200,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::ToolsPatched { .. }
             | SessionEventKindView::ToolBatchDeferred { .. }
             | SessionEventKindView::ToolBatchResumed { .. }
-            | SessionEventKindView::ActiveEnvironmentChanged { .. } => {}
+            | SessionEventKindView::ActiveEnvironmentChanged { .. }
+            | SessionEventKindView::CodeToolProgress { .. } => {}
         }
         events
     }

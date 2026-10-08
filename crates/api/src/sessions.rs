@@ -392,6 +392,8 @@ pub struct FeaturesConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents: Option<SubagentsFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_mode: Option<CodeModeFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timers: Option<TimersFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environments: Option<EnvironmentsFeature>,
@@ -497,6 +499,60 @@ pub struct WebSearchFeature {
     pub allowed_domains: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_domains: Vec<String>,
+}
+
+/// Grants JavaScript composition through `code_execute`. Available script tools
+/// are the session's ordinary callable tools, optionally narrowed by allowedTools.
+/// TypeScript, ambient filesystem/network access, and recursive code execution
+/// are unavailable. An empty allowedTools list grants pure computation only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct CodeModeFeature {
+    pub version: u32,
+    /// Logical tool ids (for example vfs.read_file), not provider wire names.
+    /// Absent permits every currently callable grant; an empty list permits none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    /// Total attempt time including input loading, interpreter capacity waits,
+    /// JavaScript evaluation, and tool waits; at most 600,000 milliseconds.
+    pub timeout_ms: u64,
+    /// Interpreter heap, at most 512 MiB.
+    pub max_memory_bytes: u64,
+    /// Interpreter native stack, at most 8 MiB.
+    pub max_stack_bytes: u64,
+    /// UTF-8 source bytes, at most 1 MiB.
+    pub max_source_bytes: u64,
+    /// Pinned callable catalog bytes, at most 8 MiB.
+    pub max_catalog_bytes: u64,
+    /// Serialized arguments per tool request, at most 8 MiB.
+    pub max_request_bytes: u64,
+    /// Serialized completion per tool request, at most 8 MiB.
+    pub max_result_bytes: u64,
+    /// Combined text() output and return value, at most 8 MiB.
+    pub max_output_bytes: u64,
+    /// Calls per script, at most 1,024.
+    pub max_tool_calls: u32,
+    /// Concurrent pending calls, at most 64 and no greater than maxToolCalls.
+    pub max_outstanding_tool_calls: u32,
+}
+
+impl Default for CodeModeFeature {
+    fn default() -> Self {
+        Self {
+            version: default_feature_version(),
+            allowed_tools: None,
+            timeout_ms: 30_000,
+            max_memory_bytes: 64 * 1024 * 1024,
+            max_stack_bytes: 1024 * 1024,
+            max_source_bytes: 256 * 1024,
+            max_catalog_bytes: 1024 * 1024,
+            max_request_bytes: 1024 * 1024,
+            max_result_bytes: 1024 * 1024,
+            max_output_bytes: 1024 * 1024,
+            max_tool_calls: 128,
+            max_outstanding_tool_calls: 16,
+        }
+    }
 }
 
 /// Grants sub-agent delegation: `agent_run` (joined, result inline) and
@@ -1339,6 +1395,17 @@ pub struct EventJoinsView {
     pub correlation_id: Option<String>,
 }
 
+/// Bounded lifecycle telemetry for a session-owned code tool execution.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum CodeToolProgressPhase {
+    ScopeOpened,
+    CallAdmitted,
+    CallDeferred,
+    CallCompleted,
+    ScopeClosed,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "type",
@@ -1637,6 +1704,17 @@ pub enum SessionEventKindView {
         run_id: RunId,
         turn_id: String,
         batch_id: String,
+    },
+    /// Progress of a code tool execution. This preserves the contiguous session
+    /// event cursor without projecting internal scope bindings or payloads as
+    /// conversational tool calls.
+    CodeToolProgress {
+        execution_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        phase: CodeToolProgressPhase,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<ToolItemStatus>,
     },
 }
 

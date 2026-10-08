@@ -1,6 +1,7 @@
 //! Machine-readable export of the workflow-side contract — what a receiver
 //! workflow (a lifecycle controller or a workflow-tool plugin) needs to speak
-//! the fixed `deliver_emission` transport with a session.
+//! the fixed `deliver_emission` transport or code tool invocation protocol with a
+//! session.
 //!
 //! Renders three artifacts: a draft-07 JSON Schema bundle of every envelope
 //! and start-on-call type, a manifest of protocol constants plus known-answer
@@ -42,7 +43,7 @@ pub const WORKFLOW_CONTRACT_VERSION: u32 = 2;
 pub const DELIVER_EMISSION_SIGNAL: &str = "deliver_emission";
 
 /// Root types of the schema bundle; everything else is reachable from them.
-pub const WORKFLOW_CONTRACT_ROOTS: [&str; 12] = [
+pub const WORKFLOW_CONTRACT_ROOTS: [&str; 22] = [
     "EmissionEnvelope",
     "WorkflowToolStartArgs",
     "WorkflowToolRecoveryResult",
@@ -55,6 +56,16 @@ pub const WORKFLOW_CONTRACT_ROOTS: [&str; 12] = [
     "TranscriptionWorkflowArgs",
     "TranscriptionSnapshot",
     "TranscriptionActivityResult",
+    "OpenCodeToolScopeRequest",
+    "InvokeCodeToolRequest",
+    "CloseCodeToolScopeRequest",
+    "CodeToolScopeReportRequest",
+    "CodeToolScopeReport",
+    "CodeToolCallOutcome",
+    "CodeToolRejection",
+    "CodeExecutionDescriptor",
+    "CodeExecutionSnapshot",
+    "CodeRunActivityResult",
 ];
 
 pub struct ExportedWorkflowContract {
@@ -81,6 +92,16 @@ pub fn export() -> ExportedWorkflowContract {
     let _ = generator.subschema_for::<crate::TranscriptionWorkflowArgs>();
     let _ = generator.subschema_for::<crate::TranscriptionSnapshot>();
     let _ = generator.subschema_for::<crate::TranscriptionActivityResult>();
+    let _ = generator.subschema_for::<crate::OpenCodeToolScopeRequest>();
+    let _ = generator.subschema_for::<crate::InvokeCodeToolRequest>();
+    let _ = generator.subschema_for::<crate::CloseCodeToolScopeRequest>();
+    let _ = generator.subschema_for::<crate::CodeToolScopeReportRequest>();
+    let _ = generator.subschema_for::<crate::CodeToolScopeReport>();
+    let _ = generator.subschema_for::<crate::CodeToolCallOutcome>();
+    let _ = generator.subschema_for::<crate::CodeToolRejection>();
+    let _ = generator.subschema_for::<crate::CodeExecutionDescriptor>();
+    let _ = generator.subschema_for::<crate::CodeExecutionSnapshot>();
+    let _ = generator.subschema_for::<crate::CodeRunActivityResult>();
     let definitions: BTreeMap<String, Value> =
         generator.take_definitions(true).into_iter().collect();
     for root in WORKFLOW_CONTRACT_ROOTS {
@@ -93,7 +114,7 @@ pub fn export() -> ExportedWorkflowContract {
     let schema_bundle = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "Lightspeed Workflow Contract",
-        "description": "Envelope and start-on-call types of the fixed deliver_emission transport between sessions and receiver workflows.",
+        "description": "Session emission, workflow-tool, and code tool invocation protocol types.",
         "definitions": definitions,
     });
     ExportedWorkflowContract {
@@ -116,7 +137,15 @@ fn manifest() -> Value {
     json!({
         "contractVersion": WORKFLOW_CONTRACT_VERSION,
         "signals": { "deliverEmission": DELIVER_EMISSION_SIGNAL },
-        "queries": { "workflowToolRecovery": WORKFLOW_TOOL_RECOVERY_QUERY },
+        "queries": {
+            "workflowToolRecovery": WORKFLOW_TOOL_RECOVERY_QUERY,
+            "codeToolScopeReport": crate::CODE_TOOL_SCOPE_REPORT_QUERY,
+        },
+        "updates": {
+            "openCodeToolScope": crate::OPEN_CODE_TOOL_SCOPE_UPDATE,
+            "invokeCodeTool": crate::INVOKE_CODE_TOOL_UPDATE,
+            "closeCodeToolScope": crate::CLOSE_CODE_TOOL_SCOPE_UPDATE,
+        },
         "workflowTools": {
             "executionKind": WORKFLOW_TOOL_EXECUTION_KIND,
             "replyCompletionKey": REPLY_COMPLETION_KEY,
@@ -161,6 +190,22 @@ fn manifest() -> Value {
             },
         },
         "roots": WORKFLOW_CONTRACT_ROOTS,
+        "codeTools": {
+            "scopeResult": "Result<CodeToolScopeReport, CodeToolRejection>",
+            "invocationResult": "Result<CodeToolCallOutcome, CodeToolRejection>",
+            "identity": "execution_id + request_id; identical retries join or return the same result, conflicting reuse is rejected",
+            "report": "Fresh snapshot query; cancellation of a client waiter does not cancel admitted work",
+        },
+        "codeExecution": {
+            "workflowType": crate::CODE_EXECUTION_WORKFLOW_TYPE,
+            "runMaximumAttempts": 1,
+            "snapshotQuery": "snapshot",
+            "activities": {
+                "prepare": crate::ACTIVITY_CODE_PREPARE,
+                "run": crate::ACTIVITY_CODE_RUN,
+                "finalize": crate::ACTIVITY_CODE_FINALIZE,
+            },
+        },
         "vectors": vectors(),
     })
 }
@@ -278,6 +323,95 @@ fn vectors() -> Value {
         "startArgs": serde_json::to_value(&start_args).expect("start args serialize"),
         "recoveryResult": serde_json::to_value(&recovery).expect("recovery result serializes"),
         "recipe": serde_json::to_value(&recipe).expect("recipe serializes"),
+        "codeTools": code_tool_vectors(),
+        "codeExecution": code_execution_vectors(),
+    })
+}
+
+fn code_execution_vectors() -> Value {
+    let descriptor = crate::CodeExecutionDescriptor {
+        execution_id: "wte:code-vector".to_owned(),
+        session_workflow_id: format!("{VECTOR_UNIVERSE}/{VECTOR_SESSION}"),
+        source_ref: BlobRef::from_bytes(b"return 42;"),
+        catalog_ref: BlobRef::from_bytes(b"{\"version\":1,\"bindings\":[]}"),
+        limits: crate::CodeExecutionLimits {
+            timeout_ms: 30_000,
+            max_memory_bytes: 16 * 1024 * 1024,
+            max_stack_bytes: 256 * 1024,
+            max_source_bytes: 64 * 1024,
+            max_catalog_bytes: 256 * 1024,
+            max_request_bytes: 64 * 1024,
+            max_result_bytes: 256 * 1024,
+            max_output_bytes: 64 * 1024,
+            max_tool_calls: 100,
+            max_outstanding_tool_calls: 8,
+        },
+    };
+    let result = crate::CodeRunActivityResult {
+        report_ref: BlobRef::from_bytes(b"full-code-report"),
+        succeeded: true,
+    };
+    let snapshot = crate::CodeExecutionSnapshot {
+        phase: crate::CodeExecutionPhase::Resolved,
+        descriptor: Some(descriptor.clone()),
+        terminal: Some(crate::CodeExecutionTerminal::Completed {
+            result: result.clone(),
+        }),
+        resolution: Some(PromiseResolution::Resolved {
+            payload_ref: Some(BlobRef::from_bytes(b"compact-code-report")),
+        }),
+    };
+    json!({ "descriptor": descriptor, "result": result, "snapshot": snapshot })
+}
+
+fn code_tool_vectors() -> Value {
+    use crate::{
+        CloseCodeToolScopeRequest, CodeToolCallOutcome, CodeToolCallStatus, CodeToolRejection,
+        CodeToolRejectionKind, CodeToolScopeReport, CodeToolScopeReportRequest,
+        InvokeCodeToolRequest, OpenCodeToolScopeRequest,
+    };
+
+    let invocation = WorkflowToolInvocationId::new(format!("wti:sha256:{}", "a".repeat(64)));
+    let execution_id = "execution:vector".to_owned();
+    let request_id = "request:vector".to_owned();
+    let binding_id = "binding:vector".to_owned();
+    let tool_name = harness::ToolName::new("read_file");
+    let outcome = CodeToolCallOutcome {
+        request_id: request_id.clone(),
+        call_id: ToolCallId::new("code-tool:vector"),
+        status: CodeToolCallStatus::Succeeded,
+        output_ref: Some(BlobRef::from_bytes(b"{\"text\":\"done\"}")),
+        error_ref: None,
+        attachments: Vec::new(),
+    };
+    json!({
+        "openRequest": OpenCodeToolScopeRequest {
+            execution_id: execution_id.clone(),
+            parent_invocation_id: invocation,
+            allowed_tools: Some([harness::ToolName::new("vfs.read_file")].into()),
+            max_calls: 8,
+            max_in_flight: 2,
+        },
+        "invokeRequest": InvokeCodeToolRequest {
+            execution_id: execution_id.clone(),
+            request_id: request_id.clone(),
+            binding_id: binding_id.clone(),
+            arguments_ref: BlobRef::from_bytes(b"{\"path\":\"note.txt\"}"),
+        },
+        "closeRequest": CloseCodeToolScopeRequest {
+            execution_id: execution_id.clone(),
+            cancel_pending: true,
+        },
+        "reportRequest": CodeToolScopeReportRequest { execution_id: execution_id.clone() },
+        "report": CodeToolScopeReport {
+            execution_id,
+            closed: true,
+            cancel_requested: true,
+            bindings: BTreeMap::from([(binding_id, tool_name)]),
+            calls: BTreeMap::from([(request_id, outcome.clone())]),
+        },
+        "outcome": outcome,
+        "rejection": CodeToolRejection::new(CodeToolRejectionKind::ScopeClosed, "scope is closed"),
     })
 }
 
@@ -320,8 +454,8 @@ cargo run -p temporal-workflow --bin export-workflow-contract
 
 ## Transport
 
-The Temporal signal `{signal}` carries every cross-workflow fact in both
-directions. Its sole argument is an `EmissionEnvelope`: a deterministic
+The Temporal signal `{signal}` carries emission facts in both directions.
+Its sole argument is an `EmissionEnvelope`: a deterministic
 `emission_id`, a `producer`, and a tagged `body`. `AgentSessionWorkflow` and
 `EnvironmentJobWorkflow` handle this signal; receivers register the same
 handler. Signal stable workflow ids, never run ids, so delivery survives
@@ -380,6 +514,31 @@ transport. On ambiguous start recovery, query `{recovery_query}` and consume a
 fingerprinted over their exact raw bytes; canonical fingerprints begin with
 `{recipe_prefix}`. The execution producer kind is `{execution_kind}`.
 
+## Code tool invocation scopes
+
+A trusted execution host calls the session's `{open_scope}` Update with
+`OpenCodeToolScopeRequest`. The parent must be an admitted, pending joined
+workflow-tool invocation. The request's allowlist and budgets only narrow the
+session's existing capabilities; the session resolves and pins callable bindings.
+
+`{invoke}` accepts `InvokeCodeToolRequest`: the execution and request ids, an
+opaque admitted binding id, and a CAS reference to arguments. The Update waits
+for the session to commit the result and its effects. Calls can overlap while
+the outer joined invocation remains parked. Retrying an identical request joins
+the original call or retrieves its result; conflicting identity reuse is rejected.
+
+`{close_scope}` accepts `CloseCodeToolScopeRequest` and closes new admission.
+`cancel_pending` requests cleanup of admitted operations, without undoing
+completed effects. Dropping an Update client wait does not cancel the operation.
+Read `{scope_report}` with `CodeToolScopeReportRequest` for a fresh authoritative
+snapshot, including results that finish after scope closure. Reports contain
+result references and attachments, never raw session effects or model context.
+
+Scope operations return `Result<CodeToolScopeReport, CodeToolRejection>`;
+invocation returns `Result<CodeToolCallOutcome, CodeToolRejection>`. Serde
+encodes these as a single-key object containing `Ok` or `Err`. Admission rejection
+is distinct from a successfully admitted tool returning a failed outcome.
+
 ## Schema inventory
 
 The schema bundle contains {definition_count} definitions. Its public roots
@@ -391,6 +550,10 @@ are: {roots}.
         recipe_format = WORKFLOW_TOOL_RECIPE_FORMAT_V1,
         recipe_prefix = WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX,
         execution_kind = WORKFLOW_TOOL_EXECUTION_KIND,
+        open_scope = crate::OPEN_CODE_TOOL_SCOPE_UPDATE,
+        invoke = crate::INVOKE_CODE_TOOL_UPDATE,
+        close_scope = crate::CLOSE_CODE_TOOL_SCOPE_UPDATE,
+        scope_report = crate::CODE_TOOL_SCOPE_REPORT_QUERY,
         definition_count = definitions.len(),
         roots = WORKFLOW_CONTRACT_ROOTS.join(", "),
     )

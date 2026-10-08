@@ -285,7 +285,7 @@ fn history_boundary_outcome(
     }
     history_boundary_outcome_for(
         wait_loop::history_rollover_due(ctx, args),
-        ctx.state(wait_loop::workflow_state_allows_continue_as_new),
+        ctx.all_handlers_finished() && ctx.state(wait_loop::workflow_state_allows_continue_as_new),
     )
 }
 

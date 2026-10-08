@@ -1038,6 +1038,7 @@ fn finish_active_run(
             run_id, active_run.run_id
         )));
     }
+    super::code_tool::interrupt_code_tools_for_run(state, run_id);
     let active_run = state
         .runs
         .active

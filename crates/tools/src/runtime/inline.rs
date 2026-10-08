@@ -657,6 +657,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             workspace_attachments: Vec::new(),
             calls: vec![call],
         }
@@ -975,6 +976,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![call(args_ref, "vfs_read_file")],
             },

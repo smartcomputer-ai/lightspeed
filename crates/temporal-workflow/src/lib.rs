@@ -2,19 +2,27 @@
 
 mod activities;
 mod code_execution;
+mod code_tools;
+pub use code_tools::*;
 mod config;
 mod rehydrate;
 mod session_preparation;
 mod temporal_helpers;
 mod types;
+pub use activities::{ACTIVITY_CODE_TOOL_INVOKE, ACTIVITY_CODE_TOOL_PREPARE_SCOPE};
 pub use session_preparation::*;
+pub use types::{
+    CodeToolInvokeActivityRequest, CodeToolInvokeActivityResult,
+    CodeToolPrepareScopeActivityRequest, CodeToolPrepareScopeActivityResult,
+};
 pub mod workflow_contract;
 mod workflows;
 
 pub use activities::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_AWAIT_ENVIRONMENT_READY,
     ACTIVITY_CANCEL_WORKFLOW_TOOL_EXECUTION, ACTIVITY_CHECK_WORKFLOW_TOOL_EXECUTION,
-    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
+    ACTIVITY_CODE_FINALIZE, ACTIVITY_CODE_PREPARE, ACTIVITY_CODE_RUN, ACTIVITY_CONTEXT_COMPACT,
+    ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
     ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL,
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
     ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
@@ -24,7 +32,10 @@ pub use activities::{
     ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, WorkflowActivities,
 };
 pub use code_execution::{
-    CodeExecutionDescriptor, CodeExecutionLimits, CodeExecutionValidationError,
+    CODE_EXECUTION_WORKFLOW_TYPE, CodeExecutionDescriptor, CodeExecutionInterruption,
+    CodeExecutionLimits, CodeExecutionPhase, CodeExecutionSnapshot, CodeExecutionTerminal,
+    CodeExecutionValidationError, CodeFinalizeActivityRequest, CodePrepareActivityRequest,
+    CodePrepareActivityResult, CodeRunActivityResult,
 };
 pub use config::{
     ACTIVITY_CANCELLATION_HEARTBEAT_INTERVAL, ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT,
@@ -78,7 +89,7 @@ pub use workflows::bots;
 pub use workflows::channels;
 pub use workflows::{
     AgentSessionWorkflow, BotControllerWorkflow, BotTriggerFireWorkflow,
-    ChannelConversationWorkflow, EnvironmentJobWorkflow, SubagentExecutionWorkflow,
-    TranscriptionActivityResult, TranscriptionSnapshot, TranscriptionWorkflow,
-    TranscriptionWorkflowArgs, transcription_id, transcription_workflow_id,
+    ChannelConversationWorkflow, CodeExecutionWorkflow, EnvironmentJobWorkflow,
+    SubagentExecutionWorkflow, TranscriptionActivityResult, TranscriptionSnapshot,
+    TranscriptionWorkflow, TranscriptionWorkflowArgs, transcription_id, transcription_workflow_id,
 };

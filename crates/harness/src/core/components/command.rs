@@ -130,6 +130,29 @@ pub enum CoreAgentCommand {
         invocation_id: WorkflowToolInvocationId,
         error_ref: BlobRef,
     },
+    OpenCodeToolScope {
+        scope: crate::CodeToolScopeSpec,
+    },
+    AdmitCodeToolCall {
+        call: crate::CodeToolCallSpec,
+    },
+    CompleteCodeToolCall {
+        origin: crate::CodeToolOrigin,
+        result: crate::ToolInvocationResult,
+    },
+    DeferCodeToolCall {
+        origin: crate::CodeToolOrigin,
+        spec: crate::AwaitSpec,
+    },
+    ResumeCodeToolCall {
+        origin: crate::CodeToolOrigin,
+        result: crate::ToolInvocationResult,
+        claim_observed_at_ms: u64,
+    },
+    CloseCodeToolScope {
+        execution_id: String,
+        cancel: bool,
+    },
     CloseSession {
         /// Force-cancel the active run and drop queued runs before closing
         /// instead of rejecting on active work.

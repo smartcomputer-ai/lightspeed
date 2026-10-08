@@ -186,6 +186,15 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
                 "lightspeed.core.workflow_tool_config.system_binding_admitted"
             }
         },
+        CoreAgentEvent::CodeTool(event) => match event {
+            crate::CodeToolEvent::ScopeOpened { .. } => "lightspeed.core.code_tool.scope_opened",
+            crate::CodeToolEvent::CallAdmitted { .. } => "lightspeed.core.code_tool.call_admitted",
+            crate::CodeToolEvent::CallCompleted { .. } => {
+                "lightspeed.core.code_tool.call_completed"
+            }
+            crate::CodeToolEvent::CallDeferred { .. } => "lightspeed.core.code_tool.call_deferred",
+            crate::CodeToolEvent::ScopeClosed { .. } => "lightspeed.core.code_tool.scope_closed",
+        },
         CoreAgentEvent::WorkflowTool(event) => match event {
             crate::WorkflowToolEvent::Emitted { .. } => "lightspeed.core.workflow_tool.emitted",
             crate::WorkflowToolEvent::DeliveryFailed { .. } => {

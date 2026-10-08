@@ -283,6 +283,23 @@ impl NativeMcpInventoryResolver {
 }
 
 impl NativeMcpRuntime {
+    /// Use the same injected inventory and naming rules as the model adapters
+    /// when preparing an execution-scoped callable namespace.
+    pub(crate) async fn injected_tools(
+        &self,
+        spec: &RemoteMcpToolSpec,
+        server_name: &harness::ToolName,
+        request_tool_count: &mut usize,
+    ) -> Result<Vec<(String, NativeMcpTool)>, llm_runtime::LlmAdapterError> {
+        llm_runtime::injected_native_tools(
+            self.inventory.as_ref(),
+            spec,
+            server_name,
+            request_tool_count,
+        )
+        .await
+    }
+
     pub(crate) fn new(
         servers: Arc<dyn mcp::McpRegistryStore>,
         secrets: Arc<dyn SecretResolver>,

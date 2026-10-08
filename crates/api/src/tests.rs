@@ -3786,3 +3786,16 @@ fn test_access_summary() -> ResourceAccessSummary {
         created_by: Some(Attribution::Local),
     }
 }
+
+#[test]
+fn code_mode_feature_defaults_and_public_field_names_are_stable() {
+    let feature: CodeModeFeature =
+        serde_json::from_value(json!({"timeoutMs":1000,"allowedTools":[]})).unwrap();
+    assert_eq!(feature.timeout_ms, 1000);
+    assert_eq!(feature.max_tool_calls, 128);
+    assert_eq!(feature.allowed_tools, Some(vec![]));
+    let value = serde_json::to_value(feature).unwrap();
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["maxOutstandingToolCalls"], 16);
+    assert!(serde_json::from_value::<CodeModeFeature>(json!({"maxToolCallz":4})).is_err());
+}

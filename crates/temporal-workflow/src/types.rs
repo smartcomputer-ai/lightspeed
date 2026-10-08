@@ -756,6 +756,38 @@ pub struct ToolInvokeCallActivityRequest {
     pub request: harness::ToolInvocationCallRequest,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeToolPrepareScopeActivityRequest {
+    pub tools: Vec<harness::ToolSpec>,
+    pub model: harness::ModelSelection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeToolPrepareScopeActivityResult {
+    pub bindings: BTreeMap<String, harness::CodeToolBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeToolInvokeActivityRequest {
+    pub request: harness::ToolInvocationCallRequest,
+}
+
+/// Code tool waits belong to their execution scope; they never suspend or replace
+/// the parent's conversational tool batch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodeToolInvokeActivityResult {
+    Completed {
+        result: harness::ToolInvocationResult,
+    },
+    Deferred {
+        spec: harness::AwaitSpec,
+    },
+    EnvironmentNotReady {
+        environment_id: String,
+    },
+}
+
 /// Outcome of one per-call tool activity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

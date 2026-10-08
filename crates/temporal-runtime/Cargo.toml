@@ -19,6 +19,7 @@ async-trait = "0.1"
 auth = { path = "../auth" }
 bots = { path = "../bots" }
 channels = { path = "../channels" }
+codemode = { path = "../codemode" }
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }

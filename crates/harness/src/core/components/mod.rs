@@ -5,6 +5,7 @@
 
 pub mod approval;
 pub mod attribution;
+pub mod code_tool;
 pub mod command;
 pub mod config;
 pub mod context;
@@ -24,6 +25,7 @@ pub mod workflow_tool;
 
 pub use approval::*;
 pub use attribution::Attribution;
+pub use code_tool::*;
 pub use command::*;
 pub use config::*;
 pub use context::{

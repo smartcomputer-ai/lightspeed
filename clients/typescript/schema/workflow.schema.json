@@ -1,6 +1,62 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "Attachment": {
+      "oneOf": [
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/definitions/MediaDescriptor"
+            },
+            "kind": {
+              "const": "media",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/definitions/FileAttachment"
+            },
+            "kind": {
+              "const": "file",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AttachmentSource": {
+      "description": "Descriptive origin only; never an authority for resolving attachment bytes.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "path"
+      ],
+      "type": "object"
+    },
     "Attribution": {
       "description": "Who created a resource or authored bytes. An actor is whatever a key\nallowed to assert one said; core compares it and never resolves it.",
       "oneOf": [
@@ -383,6 +439,400 @@
         }
       ]
     },
+    "CloseCodeToolScopeRequest": {
+      "additionalProperties": false,
+      "description": "Close admission immediately. Cancellation additionally requests cleanup of\nadmitted work; closing a scope does not roll back any completed effects.",
+      "properties": {
+        "cancel_pending": {
+          "type": "boolean"
+        },
+        "execution_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "cancel_pending"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionDescriptor": {
+      "additionalProperties": false,
+      "description": "Small, immutable input shared by code-execution orchestration and its runner.\n\nThe parent session owns the execution scope and its bindings. Possessing this\ndescriptor does not authorize tool calls. Validate it before loading artifacts\nor admitting an execution; deserialization alone is not validation.",
+      "properties": {
+        "catalog_ref": {
+          "description": "Immutable matched callable specifications and bindings in the same CAS.\nThis catalog is metadata, not an independent authorization database.",
+          "type": "string"
+        },
+        "execution_id": {
+          "description": "Stable identity of the session-owned execution scope.",
+          "type": "string"
+        },
+        "limits": {
+          "$ref": "#/definitions/CodeExecutionLimits"
+        },
+        "session_workflow_id": {
+          "description": "Parent session's composed workflow id, without a Temporal run id so the\nidentity remains stable across the parent's Continue-as-New transitions.",
+          "type": "string"
+        },
+        "source_ref": {
+          "description": "UTF-8 JavaScript source in the parent session's universe-scoped CAS.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "session_workflow_id",
+        "source_ref",
+        "catalog_ref",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionInterruption": {
+      "enum": [
+        "holder_cancelled",
+        "workflow_cancelled",
+        "preparation_failed",
+        "activity_failed",
+        "activity_timed_out"
+      ],
+      "type": "string"
+    },
+    "CodeExecutionLimits": {
+      "additionalProperties": false,
+      "description": "Explicit, positive budgets admitted for a single execution attempt.\n\nNo deployment defaults are implied. User-requested options may only narrow\nthese budgets. Engine limits must be enforced by the runner; call and payload\nlimits must also be enforced at the trusted session/bridge boundary. These\nbounds are not containment of native interpreter memory faults.",
+      "properties": {
+        "max_catalog_bytes": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_memory_bytes": {
+          "description": "Interpreter-managed heap allocation budget.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "description": "Total serialized output bytes retained for the final script report.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_outstanding_tool_calls": {
+          "description": "Outstanding bridge requests, including durable-promise waits. This does\nnot change the ordinary tool's own scheduling or concurrency policies.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_request_bytes": {
+          "description": "Serialized JSON bytes in one guest tool request, before dispatch.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_result_bytes": {
+          "description": "Serialized JSON bytes in one host completion, before entering the guest.\nLarger tool outputs require authorized artifact handles.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_source_bytes": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_stack_bytes": {
+          "description": "Interpreter-managed native stack budget, separate from its heap budget.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "description": "Total attempt time, including input loading, interpreter capacity waits,\nJavaScript evaluation, and time awaiting host calls.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "timeout_ms",
+        "max_memory_bytes",
+        "max_stack_bytes",
+        "max_source_bytes",
+        "max_catalog_bytes",
+        "max_request_bytes",
+        "max_result_bytes",
+        "max_output_bytes",
+        "max_tool_calls",
+        "max_outstanding_tool_calls"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionPhase": {
+      "enum": [
+        "starting",
+        "preparing",
+        "running",
+        "finalizing",
+        "resolved",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "CodeExecutionSnapshot": {
+      "description": "Queryable durable orchestration state; no JavaScript heap or raw outputs.",
+      "properties": {
+        "descriptor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CodeExecutionDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "$ref": "#/definitions/CodeExecutionPhase"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PromiseResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CodeExecutionTerminal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "type": "object"
+    },
+    "CodeExecutionTerminal": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "completed",
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/CodeRunActivityResult"
+            }
+          },
+          "required": [
+            "kind",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error_ref": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "rejected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "error_ref"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "interrupted",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/CodeExecutionInterruption"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CodeRunActivityResult"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CodeRunActivityResult": {
+      "description": "Only the reference crosses the activity boundary. Script output and the\ncomplete code tool call report remain in the parent universe's CAS.",
+      "properties": {
+        "report_ref": {
+          "type": "string"
+        },
+        "succeeded": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "report_ref",
+        "succeeded"
+      ],
+      "type": "object"
+    },
+    "CodeToolCallOutcome": {
+      "description": "Script-facing completion metadata. Session effects, model context, and\nactivity configuration remain private to the owning session.",
+      "properties": {
+        "attachments": {
+          "items": {
+            "$ref": "#/definitions/Attachment"
+          },
+          "type": "array"
+        },
+        "call_id": {
+          "$ref": "#/definitions/ToolCallId"
+        },
+        "error_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/CodeToolCallStatus"
+        }
+      },
+      "required": [
+        "request_id",
+        "call_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "CodeToolCallStatus": {
+      "enum": [
+        "pending",
+        "waiting",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "unavailable"
+      ],
+      "type": "string"
+    },
+    "CodeToolRejection": {
+      "description": "Admission failures are successful protocol replies, distinct from transport\nfailures and the tool's own failed result. They never imply tool execution.",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/CodeToolRejectionKind"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "type": "object"
+    },
+    "CodeToolRejectionKind": {
+      "enum": [
+        "invalid_request",
+        "unknown_scope",
+        "scope_closed",
+        "conflict",
+        "unavailable",
+        "permission_denied",
+        "limit_exceeded",
+        "session_not_ready",
+        "internal"
+      ],
+      "type": "string"
+    },
+    "CodeToolScopeReport": {
+      "properties": {
+        "bindings": {
+          "additionalProperties": {
+            "$ref": "#/definitions/ToolName"
+          },
+          "description": "Exposed names keyed by the opaque handles accepted by invoke requests.",
+          "type": "object"
+        },
+        "calls": {
+          "additionalProperties": {
+            "$ref": "#/definitions/CodeToolCallOutcome"
+          },
+          "description": "Requests are keyed by execution-local request id, never arrival order.",
+          "type": "object"
+        },
+        "cancel_requested": {
+          "type": "boolean"
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "execution_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "closed",
+        "cancel_requested",
+        "bindings",
+        "calls"
+      ],
+      "type": "object"
+    },
+    "CodeToolScopeReportRequest": {
+      "additionalProperties": false,
+      "description": "Read an authoritative snapshot, including after a runner loses its waiters.",
+      "properties": {
+        "execution_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id"
+      ],
+      "type": "object"
+    },
     "ContentRef": {
       "description": "Durable content identity and encoding. The payload stays in CAS; consumers\nproject it outside the harness rather than assuming every output is text.",
       "properties": {
@@ -675,6 +1125,66 @@
         }
       ]
     },
+    "FileAttachment": {
+      "properties": {
+        "content_ref": {
+          "type": "string"
+        },
+        "handle": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AttachmentSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "handle",
+        "content_ref",
+        "name"
+      ],
+      "type": "object"
+    },
+    "InvokeCodeToolRequest": {
+      "additionalProperties": false,
+      "description": "Small request forwarded by a trusted host after serializing guest arguments.\nIdentity is execution-local. Reusing it with different arguments or a\ndifferent binding is rejected by the session, including across RPC retries.",
+      "properties": {
+        "arguments_ref": {
+          "type": "string"
+        },
+        "binding_id": {
+          "type": "string"
+        },
+        "execution_id": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "request_id",
+        "binding_id",
+        "arguments_ref"
+      ],
+      "type": "object"
+    },
     "MaintainChannelTypingInput": {
       "description": "`maintain_channel_typing`: keep the provider's typing indicator up for\nthe conversation until the activity is cancelled.",
       "properties": {
@@ -686,6 +1196,45 @@
         "route"
       ],
       "type": "object"
+    },
+    "MediaDescriptor": {
+      "description": "A media asset named for a consumer that did not see it enter context: the\nparent of a sub-agent, an awaited promise's holder. Carries everything\nneeded to append a media entry without reading the bytes.",
+      "properties": {
+        "content_ref": {
+          "type": "string"
+        },
+        "handle": {
+          "description": "`media:` plus the first twelve hex characters of `content_ref`.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/MediaKind"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "handle",
+        "content_ref",
+        "media_type",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "MediaKind": {
+      "description": "What a media entry is to the providers: an image block or a document block.",
+      "enum": [
+        "image",
+        "document"
+      ],
+      "type": "string"
     },
     "ModelConfig": {
       "properties": {
@@ -703,6 +1252,47 @@
         "providerId",
         "apiKind",
         "model"
+      ],
+      "type": "object"
+    },
+    "OpenCodeToolScopeRequest": {
+      "additionalProperties": false,
+      "description": "Trusted host request to open a scope beneath an admitted joined invocation.\nThe session resolves bindings itself; this allowlist can only narrow grants.",
+      "properties": {
+        "allowed_tools": {
+          "default": null,
+          "description": "A supplied set narrows logical tool identities; an empty set grants no\ntools. None selects all currently host-callable tools except the parent\noperation. Reopening an existing scope retains its original bindings.",
+          "items": {
+            "$ref": "#/definitions/ToolName"
+          },
+          "type": [
+            "array",
+            "null"
+          ],
+          "uniqueItems": true
+        },
+        "execution_id": {
+          "type": "string"
+        },
+        "max_calls": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_in_flight": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "parent_invocation_id": {
+          "$ref": "#/definitions/WorkflowToolInvocationId"
+        }
+      },
+      "required": [
+        "execution_id",
+        "parent_invocation_id",
+        "max_calls",
+        "max_in_flight"
       ],
       "type": "object"
     },
@@ -851,6 +1441,9 @@
       "type": "string"
     },
     "ToolCallId": {
+      "type": "string"
+    },
+    "ToolName": {
       "type": "string"
     },
     "TranscriptionActivityResult": {
@@ -1232,6 +1825,6 @@
       "type": "object"
     }
   },
-  "description": "Envelope and start-on-call types of the fixed deliver_emission transport between sessions and receiver workflows.",
+  "description": "Session emission, workflow-tool, and code tool invocation protocol types.",
   "title": "Lightspeed Workflow Contract"
 }

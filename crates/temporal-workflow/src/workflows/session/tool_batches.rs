@@ -443,7 +443,7 @@ async fn await_environment_then_redispatch(
 
 /// Cancellation remains cancellation: a cancelled activity records a terminal
 /// cancelled call result instead of an ordinary failure.
-fn boundary_call_status(error: &ActivityExecutionError) -> ToolCallStatus {
+pub(super) fn boundary_call_status(error: &ActivityExecutionError) -> ToolCallStatus {
     match error {
         ActivityExecutionError::Cancelled(_) => ToolCallStatus::Cancelled,
         _ => ToolCallStatus::Failed,
@@ -468,7 +468,7 @@ fn call_parallelism(state: &CoreAgentState, tool_name: Option<&ToolName>) -> Too
 /// never reintroduce unlimited retries: when the bounded put fails, fall back
 /// to the harness's well-known boundary-failure blob, which every runtime
 /// guarantees exists.
-async fn put_boundary_error_blob(
+pub(super) async fn put_boundary_error_blob(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     error: &str,
 ) -> BlobRef {
@@ -491,7 +491,7 @@ async fn put_boundary_error_blob(
     .unwrap_or_else(|_| harness::tool_runtime_boundary_failure_ref())
 }
 
-fn boundary_call_result(
+pub(super) fn boundary_call_result(
     call_id: harness::ToolCallId,
     status: ToolCallStatus,
     error_ref: BlobRef,
@@ -549,6 +549,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             calls,
         }
     }

@@ -60,6 +60,53 @@ pub(super) async fn prepare_promise_controls(
     })
 }
 
+/// Resolve only host-callable presentations from the exact target seen by the
+/// model. The session intersects these handles with its current authority.
+pub(super) async fn prepare_code_tool_scope(
+    deps: &ToolActivityDeps,
+    request: temporal_workflow::CodeToolPrepareScopeActivityRequest,
+) -> Result<temporal_workflow::CodeToolPrepareScopeActivityResult, ActivityError> {
+    let target = tools::runtime::ToolTarget::from(&request.model);
+    let resolved = tools::callable::resolve(deps.blobs.as_ref(), &target, &request.tools)
+        .await
+        .map_err(activity_error)?;
+    let mut bindings = BTreeMap::new();
+    let mut names = std::collections::BTreeSet::new();
+    let mut native_count = 0;
+    let mut insert = |tool_id: harness::ToolName, tool_name: harness::ToolName| {
+        if !names.insert(tool_name.clone()) {
+            return Err(activity_error(anyhow::anyhow!(
+                "duplicate exposed code tool name {tool_name}"
+            )));
+        }
+        let input = serde_json::to_vec(&(&tool_id, &tool_name)).map_err(activity_error)?;
+        let handle = format!("binding:{}", harness::BlobRef::from_bytes(&input));
+        bindings.insert(handle, harness::CodeToolBinding { tool_id, tool_name });
+        Ok(())
+    };
+    for tool in resolved {
+        if let tools::callable::ResolvedToolKind::RemoteMcp(spec) = &tool.kind {
+            if spec.execution == harness::RemoteMcpExecution::Native
+                && spec.exposure == harness::RemoteMcpExposure::Inject
+            {
+                let native = deps.native_mcp.as_ref().ok_or_else(|| {
+                    activity_error(anyhow::anyhow!("native MCP inventory is unavailable"))
+                })?;
+                for (name, _) in native
+                    .injected_tools(spec, &tool.name, &mut native_count)
+                    .await
+                    .map_err(activity_error)?
+                {
+                    insert(tool.id.clone(), harness::ToolName::new(name))?;
+                }
+            }
+        } else if let Some(callable) = tool.into_callable() {
+            insert(callable.tool_id, callable.definition.name)?;
+        }
+    }
+    Ok(temporal_workflow::CodeToolPrepareScopeActivityResult { bindings })
+}
+
 /// Execute an admitted tool batch as one unit.
 ///
 /// Native MCP calls never reach the tool runtime behind `deps.tools`: this
@@ -488,6 +535,145 @@ pub(super) async fn invoke_call(
     }
 }
 
+/// Execute a call admitted in a code tool execution scope. Ordinary calls retain
+/// the same operation deadlines and backend path as model calls. Workflow
+/// preparation and promise waits return facts to the session owner instead of
+/// consuming or parking its outer batch.
+pub(super) async fn invoke_code_tool(
+    deps: &ToolActivityDeps,
+    request: temporal_workflow::CodeToolInvokeActivityRequest,
+) -> Result<temporal_workflow::CodeToolInvokeActivityResult, ActivityError> {
+    use temporal_workflow::CodeToolInvokeActivityResult as Outcome;
+
+    let mut request = request.request;
+    if let Err(message) = validate_code_tool_presentation(&request.call) {
+        return Ok(Outcome::Completed {
+            result: super::common::failed_tool_call_result(deps.blobs.as_ref(), &request, message)
+                .await
+                .map_err(activity_error)?,
+        });
+    }
+    // A prior model-call approval must never authorize a code tool invocation.
+    // The native adapter reports NeedsApproval before performing the call;
+    // below that becomes a terminal failed result, with no approval lifecycle.
+    if let Some(remote) = &mut request.call.remote_mcp {
+        match remote {
+            harness::RemoteMcpCallRuntime::Injected {
+                approval_decision, ..
+            }
+            | harness::RemoteMcpCallRuntime::Search {
+                approval_decision, ..
+            } => {
+                *approval_decision = None;
+            }
+        }
+    }
+    let special = request.call.workflow_tool.is_some()
+        || request
+            .call
+            .tool_id
+            .as_ref()
+            .is_some_and(|id| id.as_str() == "concurrency.await");
+    if !special || request.call.remote_mcp.is_some() {
+        return Ok(
+            match invoke_call(
+                deps,
+                crate::worker::ToolInvokeCallActivityRequest {
+                    request: request.clone(),
+                },
+            )
+            .await?
+            {
+                ToolInvokeCallActivityResult::Completed { result } => Outcome::Completed { result },
+                ToolInvokeCallActivityResult::EnvironmentNotReady { environment_id } => {
+                    Outcome::EnvironmentNotReady { environment_id }
+                }
+                ToolInvokeCallActivityResult::NeedsApproval { .. } => Outcome::Completed {
+                    result: super::common::failed_tool_call_result(
+                        deps.blobs.as_ref(),
+                        &request,
+                        "approval-required tools are unavailable in code tool executions"
+                            .to_owned(),
+                    )
+                    .await
+                    .map_err(activity_error)?,
+                },
+            },
+        );
+    }
+
+    let deadline = temporal_workflow::tool_call_operation_timeout(request.execution.class);
+    let started = std::time::Instant::now();
+    let execution = async {
+        let hosted = deps
+            .hosted
+            .as_ref()
+            .ok_or_else(|| harness::CoreAgentIoError::Failed {
+                message:
+                    "workflow tools and waits invoked from code require the hosted tool runtime"
+                        .to_owned(),
+            })?;
+        hosted
+            .invoke_code_tool_call_execution(request.clone())
+            .await
+    };
+    let result = match tokio::time::timeout(deadline, execution).await {
+        Ok(Ok(crate::worker::session_tools::CodeToolCallExecution::Completed(result))) => result,
+        Ok(Ok(crate::worker::session_tools::CodeToolCallExecution::Deferred(spec))) => {
+            return Ok(Outcome::Deferred { spec });
+        }
+        Ok(Ok(crate::worker::session_tools::CodeToolCallExecution::EnvironmentNotReady {
+            environment_id,
+        })) => return Ok(Outcome::EnvironmentNotReady { environment_id }),
+        outcome => {
+            let message = match outcome {
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => format!(
+                    "tool call exceeded its {}s operation deadline",
+                    deadline.as_secs()
+                ),
+                Ok(Ok(_)) => unreachable!("successful code tool outcomes handled above"),
+            };
+            super::common::failed_tool_call_result(deps.blobs.as_ref(), &request, message)
+                .await
+                .map_err(activity_error)?
+        }
+    };
+    let mut result = result;
+    result.duration_ms = Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
+    Ok(Outcome::Completed { result })
+}
+
+fn validate_code_tool_presentation(call: &harness::ToolInvocationRequest) -> Result<(), String> {
+    let id = call
+        .tool_id
+        .as_ref()
+        .ok_or_else(|| "code tool call has no admitted tool ID".to_owned())?;
+    if let Some(harness::RemoteMcpCallRuntime::Injected {
+        remote_tool_name, ..
+    }) = &call.remote_mcp
+    {
+        return (call.tool_name.as_str() == format!("{id}__{remote_tool_name}"))
+            .then_some(())
+            .ok_or_else(|| "code tool MCP name does not match its admitted binding".to_owned());
+    }
+    if let Some(builtin) = &call.builtin {
+        let resolved = tools::definitions::resolve(id, &builtin.spec, &(&builtin.model).into())
+            .map_err(|error| error.to_string())?;
+        return resolved
+            .into_iter()
+            .any(|tool| tool.name == call.tool_name && tool.binding.is_some())
+            .then_some(())
+            .ok_or_else(|| {
+                "code tool name is absent from its pinned callable presentation".to_owned()
+            });
+    }
+    if call.tool_name != *id {
+        return Err("code tool function name does not match its admitted binding".to_owned());
+    }
+    Ok(())
+}
+
 /// Wait, heartbeating on every poll, until the session's active environment
 /// is reachable, terminally unusable, or the bounded readiness window
 /// elapses. Runs as its own activity so tool classes keep their deadlines.
@@ -726,6 +912,7 @@ mod tests {
                 active_environment_id: None,
                 environment_policy: None,
                 subagents_policy: None,
+                code_mode_policy: None,
                 promise_id_base: 7,
                 calls,
             },
@@ -811,6 +998,153 @@ mod tests {
             )
             .await
             .expect("error text")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_calls_reject_approval_before_mcp_execution_even_with_an_old_decision() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, tools) = deps(
+            RuntimeScript::Complete,
+            blobs.clone(),
+            Some(native_runtime()),
+        );
+        for decision in [None, Some(true), Some(false)] {
+            let call = native_call(blobs.as_ref(), "code-tool:mcp", decision).await;
+            let request = batch(vec![call])
+                .request
+                .call_request(
+                    0,
+                    ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
+                )
+                .expect("single call");
+            let outcome = invoke_code_tool(
+                &deps,
+                temporal_workflow::CodeToolInvokeActivityRequest { request },
+            )
+            .await
+            .expect("code tool activity");
+            let temporal_workflow::CodeToolInvokeActivityResult::Completed { result } = outcome
+            else {
+                panic!("approval must produce a terminal code tool failure");
+            };
+            assert_eq!(result.status, ToolCallStatus::Failed);
+            assert!(result.effects.is_empty());
+            assert!(
+                error_text(blobs.as_ref(), &result)
+                    .await
+                    .contains("approval-required")
+            );
+        }
+        assert!(received_call_ids(&tools).is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_ordinary_call_preserves_pinned_runtime_facts() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, tools) = deps(RuntimeScript::Complete, blobs, None);
+        let mut call = runtime_call("code-tool:read", "Read");
+        call.tool_id = Some(ToolName::new("env.read_file"));
+        call.builtin = Some(harness::BuiltinToolCallRuntime {
+            spec: harness::BuiltinToolSpec::default(),
+            model: harness::ModelSelection {
+                api_kind: harness::ProviderApiKind::AnthropicMessages,
+                provider_id: "anthropic".to_owned(),
+                model: "claude-pinned".to_owned(),
+            },
+        });
+        let request = batch(vec![call.clone()])
+            .request
+            .call_request(0, ToolExecutionSpec::default())
+            .expect("single call");
+        let outcome = invoke_code_tool(
+            &deps,
+            temporal_workflow::CodeToolInvokeActivityRequest { request },
+        )
+        .await
+        .expect("code tool activity");
+        let temporal_workflow::CodeToolInvokeActivityResult::Completed { result } = outcome else {
+            panic!("ordinary call completes");
+        };
+        assert_eq!(result.status, ToolCallStatus::Succeeded);
+        let received = tools.received.lock().expect("recording lock");
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].calls, vec![call]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_scope_uses_exact_model_names_and_omits_provider_hosted_tools() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, _) = deps(RuntimeScript::Complete, blobs, None);
+        let request = temporal_workflow::CodeToolPrepareScopeActivityRequest {
+            tools: ["env.read_file", "web.search", "mcp.find_tools", "mcp.call"]
+                .into_iter()
+                .map(|id| {
+                    tools::definitions::register(
+                        id,
+                        Default::default(),
+                        harness::ToolParallelism::ParallelSafe,
+                        Default::default(),
+                    )
+                })
+                .collect(),
+            model: harness::ModelSelection {
+                api_kind: harness::ProviderApiKind::AnthropicMessages,
+                provider_id: "anthropic".to_owned(),
+                model: "claude".to_owned(),
+            },
+        };
+        let prepared = prepare_code_tool_scope(&deps, request.clone())
+            .await
+            .expect("prepare");
+        let replayed = prepare_code_tool_scope(&deps, request)
+            .await
+            .expect("repeat preparation");
+        assert_eq!(prepared, replayed);
+        let names: std::collections::BTreeSet<_> = prepared
+            .bindings
+            .values()
+            .map(|binding| binding.tool_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            std::collections::BTreeSet::from(["Read", "mcp_find_tools", "mcp_call"])
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_call_rejects_legacy_alias_before_the_backend() {
+        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
+        let (deps, tools) = deps(RuntimeScript::Complete, blobs.clone(), None);
+        let mut call = runtime_call("code-tool:wrong-name", "read_file");
+        call.tool_id = Some(ToolName::new("env.read_file"));
+        call.builtin = Some(harness::BuiltinToolCallRuntime {
+            spec: Default::default(),
+            model: harness::ModelSelection {
+                api_kind: harness::ProviderApiKind::AnthropicMessages,
+                provider_id: "anthropic".to_owned(),
+                model: "claude".to_owned(),
+            },
+        });
+        let request = batch(vec![call])
+            .request
+            .call_request(0, Default::default())
+            .unwrap();
+        let outcome = invoke_code_tool(
+            &deps,
+            temporal_workflow::CodeToolInvokeActivityRequest { request },
+        )
+        .await
+        .expect("code tool activity");
+        let temporal_workflow::CodeToolInvokeActivityResult::Completed { result } = outcome else {
+            panic!("invalid name must fail");
+        };
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert!(
+            error_text(blobs.as_ref(), &result)
+                .await
+                .contains("pinned callable presentation")
+        );
+        assert!(received_call_ids(&tools).is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]

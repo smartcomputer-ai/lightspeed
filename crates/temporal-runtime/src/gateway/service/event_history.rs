@@ -121,6 +121,70 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_progress_preserves_contiguous_pagination_without_becoming_model_calls() {
+        let (store, blobs, id) = setup(1).await;
+        let record = store.load_session(&id).await.unwrap().unwrap();
+        let event = CoreAgentCodec
+            .encode_uncommitted(&UncommittedCoreAgentEvent {
+                observed_at_ms: 2,
+                joins: CoreAgentJoins::default(),
+                event: CoreAgentEvent::CodeTool(harness::CodeToolEvent::ScopeClosed {
+                    execution_id: "execution-hidden".to_owned(),
+                    cancel: false,
+                }),
+            })
+            .unwrap();
+        store
+            .append(AppendSessionEvents {
+                session_id: id.clone(),
+                expected_head: record.head,
+                events: vec![event],
+            })
+            .await
+            .unwrap();
+        let params = SessionEventsReadParams {
+            direction: api::SessionEventDirection::Backward,
+            after: None,
+            wait_ms: None,
+            session_id: id.to_string(),
+            before: None,
+            limit: Some(1),
+        };
+        let recent = read(&store, &blobs, params.clone()).await.unwrap();
+        assert_eq!(recent.events.len(), 1);
+        assert_eq!(recent.events[0].cursor.seq, 2);
+        assert_eq!(
+            recent.events[0].kind,
+            api::SessionEventKindView::CodeToolProgress {
+                execution_id: "execution-hidden".to_owned(),
+                request_id: None,
+                phase: api::CodeToolProgressPhase::ScopeClosed,
+                status: None,
+            }
+        );
+        assert!(!recent.complete);
+        assert_eq!(recent.head_cursor, Some(EventCursor { seq: 2 }));
+        assert_eq!(recent.next_cursor, Some(EventCursor { seq: 2 }));
+        let prior = read(
+            &store,
+            &blobs,
+            SessionEventsReadParams {
+                before: recent.next_cursor,
+                ..params
+            },
+        )
+        .await
+        .unwrap();
+        assert!(prior.complete);
+        assert_eq!(prior.events.len(), 1);
+        assert_eq!(prior.events[0].cursor.seq, 1);
+        assert_eq!(
+            prior.events[0].kind,
+            api::SessionEventKindView::SessionClosed
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn recent_window_and_backward_pages_cover_large_log_during_appends() {
         // These independently projectable events intentionally do not form a
         // replayable reducer history: transcript reads must never replay it.

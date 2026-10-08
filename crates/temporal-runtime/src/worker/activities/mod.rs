@@ -237,6 +237,14 @@ mod tests {
             temporal_workflow::WorkflowActivities::tool_invoke_call.name()
         );
         assert_eq!(
+            WorkerActivities::code_tool_invoke.name(),
+            temporal_workflow::WorkflowActivities::code_tool_invoke.name()
+        );
+        assert_eq!(
+            WorkerActivities::code_tool_prepare_scope.name(),
+            temporal_workflow::WorkflowActivities::code_tool_prepare_scope.name()
+        );
+        assert_eq!(
             WorkerActivities::await_environment_ready.name(),
             temporal_workflow::WorkflowActivities::await_environment_ready.name()
         );
@@ -340,6 +348,7 @@ mod tests {
                     active_environment_id: None,
                     environment_policy: None,
                     subagents_policy: None,
+                    code_mode_policy: None,
                     workspace_attachments: Vec::new(),
                     calls: vec![ToolInvocationRequest {
                         builtin: None,
@@ -580,6 +589,26 @@ impl WorkerActivities {
         common::cancellable(&ctx, tools::invoke_call(state.tools(), request)).await
     }
 
+    #[activity(name = temporal_workflow::ACTIVITY_CODE_TOOL_INVOKE)]
+    pub async fn code_tool_invoke(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: temporal_workflow::CodeToolInvokeActivityRequest,
+    ) -> Result<temporal_workflow::CodeToolInvokeActivityResult, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        common::cancellable(&ctx, tools::invoke_code_tool(state.tools(), request)).await
+    }
+
+    #[activity(name = temporal_workflow::ACTIVITY_CODE_TOOL_PREPARE_SCOPE)]
+    pub async fn code_tool_prepare_scope(
+        self: Arc<Self>,
+        ctx: ActivityContext,
+        request: temporal_workflow::CodeToolPrepareScopeActivityRequest,
+    ) -> Result<temporal_workflow::CodeToolPrepareScopeActivityResult, ActivityError> {
+        let state = self.state_for(&ctx).await?;
+        common::cancellable(&ctx, tools::prepare_code_tool_scope(state.tools(), request)).await
+    }
+
     #[activity(name = ACTIVITY_AWAIT_ENVIRONMENT_READY)]
     pub async fn await_environment_ready(
         self: Arc<Self>,
@@ -781,6 +810,7 @@ fn preparation_service(
         crate::gateway::service::session_preparation::SessionPreparationService {
             store,
             task_queue: ctx.info().task_queue.clone(),
+            code_task_queue: state.code_task_queue.clone(),
         },
     )
 }

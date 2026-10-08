@@ -9,6 +9,90 @@ use std::fmt;
 use harness::{BlobRef, BlobRefError};
 use serde::{Deserialize, Serialize};
 
+/// The stable workflow type used by the ordinary start-on-call tool recipe.
+pub const CODE_EXECUTION_WORKFLOW_TYPE: &str = "CodeExecutionWorkflow";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodePrepareActivityRequest {
+    pub start: crate::WorkflowToolStartArgs,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodePrepareActivityResult {
+    Prepared { descriptor: CodeExecutionDescriptor },
+    Rejected { error_ref: BlobRef },
+}
+
+/// Only the reference crosses the activity boundary. Script output and the
+/// complete code tool call report remain in the parent universe's CAS.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CodeRunActivityResult {
+    pub report_ref: BlobRef,
+    pub succeeded: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeExecutionInterruption {
+    HolderCancelled,
+    WorkflowCancelled,
+    PreparationFailed,
+    ActivityFailed,
+    ActivityTimedOut,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodeExecutionTerminal {
+    Completed {
+        result: CodeRunActivityResult,
+    },
+    Rejected {
+        error_ref: BlobRef,
+    },
+    Interrupted {
+        reason: CodeExecutionInterruption,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<CodeRunActivityResult>,
+    },
+}
+
+/// Finalization is safe to repeat. It closes the stable scope even when a
+/// prepare or runner activity ended without delivering its receipt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeFinalizeActivityRequest {
+    pub start: crate::WorkflowToolStartArgs,
+    pub descriptor: Option<CodeExecutionDescriptor>,
+    pub terminal: CodeExecutionTerminal,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeExecutionPhase {
+    #[default]
+    Starting,
+    Preparing,
+    Running,
+    Finalizing,
+    Resolved,
+    Cancelled,
+}
+
+/// Queryable durable orchestration state; no JavaScript heap or raw outputs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CodeExecutionSnapshot {
+    pub phase: CodeExecutionPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<CodeExecutionDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<CodeExecutionTerminal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<harness::PromiseResolution>,
+}
+
 /// Small, immutable input shared by code-execution orchestration and its runner.
 ///
 /// The parent session owns the execution scope and its bindings. Possessing this
@@ -65,7 +149,8 @@ impl CodeExecutionDescriptor {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeExecutionLimits {
-    /// Elapsed time for the script, including time awaiting host calls.
+    /// Total attempt time, including input loading, interpreter capacity waits,
+    /// JavaScript evaluation, and time awaiting host calls.
     #[schemars(range(min = 1))]
     pub timeout_ms: u64,
     /// Interpreter-managed heap allocation budget.

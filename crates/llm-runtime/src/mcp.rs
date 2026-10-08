@@ -43,7 +43,7 @@ pub trait McpInventoryResolver: Send + Sync {
 
 /// Resolve the shared injection policy before adapters construct native wire tools.
 /// The counter belongs to the request, so all injected servers share the cap.
-pub(crate) async fn injected_native_tools(
+pub async fn injected_native_tools(
     inventory: &dyn McpInventoryResolver,
     spec: &RemoteMcpToolSpec,
     server_name: &ToolName,

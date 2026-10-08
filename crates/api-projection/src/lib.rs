@@ -672,6 +672,41 @@ impl<'a> CoreAgentProjector<'a> {
         kind: &CoreAgentEvent,
     ) -> Result<SessionEventKindView, AgentApiError> {
         match kind {
+            CoreAgentEvent::CodeTool(event) => {
+                use api::CodeToolProgressPhase as Phase;
+                let (execution_id, request_id, phase, status) = match event {
+                    harness::CodeToolEvent::ScopeOpened { scope } => {
+                        (scope.execution_id.clone(), None, Phase::ScopeOpened, None)
+                    }
+                    harness::CodeToolEvent::CallAdmitted { call, .. } => (
+                        call.origin.execution_id.clone(),
+                        Some(call.origin.request_id.clone()),
+                        Phase::CallAdmitted,
+                        None,
+                    ),
+                    harness::CodeToolEvent::CallDeferred { origin, .. } => (
+                        origin.execution_id.clone(),
+                        Some(origin.request_id.clone()),
+                        Phase::CallDeferred,
+                        None,
+                    ),
+                    harness::CodeToolEvent::CallCompleted { origin, result } => (
+                        origin.execution_id.clone(),
+                        Some(origin.request_id.clone()),
+                        Phase::CallCompleted,
+                        Some(core_tool_status_to_api_status(result.status)),
+                    ),
+                    harness::CodeToolEvent::ScopeClosed { execution_id, .. } => {
+                        (execution_id.clone(), None, Phase::ScopeClosed, None)
+                    }
+                };
+                Ok(SessionEventKindView::CodeToolProgress {
+                    execution_id,
+                    request_id,
+                    phase,
+                    status,
+                })
+            }
             CoreAgentEvent::Lifecycle(event) => match event {
                 CoreAgentLifecycleEvent::Opened { config } => {
                     Ok(SessionEventKindView::SessionOpened {
@@ -2250,6 +2285,23 @@ fn features_config_to_api(
             .as_ref()
             .map(subagents_feature_to_api)
             .transpose()?,
+        code_mode: features
+            .code_mode
+            .as_ref()
+            .map(|code| api::CodeModeFeature {
+                version: code.version,
+                allowed_tools: code.allowed_tools.clone(),
+                timeout_ms: code.limits.timeout_ms,
+                max_memory_bytes: code.limits.max_memory_bytes,
+                max_stack_bytes: code.limits.max_stack_bytes,
+                max_source_bytes: code.limits.max_source_bytes,
+                max_catalog_bytes: code.limits.max_catalog_bytes,
+                max_request_bytes: code.limits.max_request_bytes,
+                max_result_bytes: code.limits.max_result_bytes,
+                max_output_bytes: code.limits.max_output_bytes,
+                max_tool_calls: code.limits.max_tool_calls,
+                max_outstanding_tool_calls: code.limits.max_outstanding_tool_calls,
+            }),
         timers: features.timers.as_ref().map(|timers| api::TimersFeature {
             version: timers.version,
         }),
@@ -4119,6 +4171,45 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn code_tool_progress_preserves_identity_and_status_without_internal_payloads() {
+        let blobs = InMemoryBlobStore::new();
+        let projector = CoreAgentProjector::new(&blobs);
+        let event = CoreAgentEvent::CodeTool(harness::CodeToolEvent::CallCompleted {
+            origin: harness::CodeToolOrigin {
+                execution_id: "execution-1".to_owned(),
+                request_id: "request-2".to_owned(),
+            },
+            result: harness::ToolInvocationResult {
+                call_id: harness::ToolCallId::new("code-tool:opaque"),
+                status: harness::ToolCallStatus::Failed,
+                output_ref: Some(harness::BlobRef::from_bytes(b"private output")),
+                error_ref: Some(harness::BlobRef::from_bytes(b"private error")),
+                model_visible_context_entries: vec![],
+                effects: vec![harness::ToolEffect {
+                    kind: "private-effect".to_owned(),
+                    data: Default::default(),
+                }],
+                attachments: vec![],
+                duration_ms: None,
+                output_bytes: None,
+                truncated: false,
+            }
+            .into(),
+        });
+        let projected = projector.project_event_kind(&event).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(projected).unwrap(),
+            serde_json::json!({
+                "type": "codeToolProgress",
+                "executionId": "execution-1",
+                "requestId": "request-2",
+                "phase": "callCompleted",
+                "status": "failed"
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn provider_context_item_exposes_debug_metadata() {
         let blobs = InMemoryBlobStore::new();
         let projector = CoreAgentProjector::new(&blobs);
@@ -4653,6 +4744,7 @@ mod tests {
                         deadline_ms: 120_000,
                     },
                 }),
+                code_mode: Some(harness::CodeModeFeature::default()),
                 timers: Some(harness::TimersFeature::default()),
                 environments: Some(harness::EnvironmentsFeature {
                     environments: vec![harness::EnvironmentAttachment {
@@ -4739,6 +4831,7 @@ mod tests {
                         max_concurrent: 2,
                         deadline_ms: 120_000,
                     }),
+                    code_mode: Some(api::CodeModeFeature::default()),
                     timers: Some(api::TimersFeature {
                         version: api::CURRENT_FEATURE_VERSION,
                     }),

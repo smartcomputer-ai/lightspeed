@@ -282,6 +282,10 @@ export function applyEvents(
     next.seenEvents.add(event.cursor.seq);
     const kind = event.kind;
     switch (kind.type) {
+      case "codeToolProgress":
+        // Retain its event position without inventing a model tool call or
+        // transcript entry for work owned by the parked outer invocation.
+        break;
       case "contextEntriesApplied":
       case "contextKeyPrefixReplaced":
       case "contextStateReplaced":

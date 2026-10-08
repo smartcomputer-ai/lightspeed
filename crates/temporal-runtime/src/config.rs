@@ -184,14 +184,21 @@ pub fn task_queue_from_env() -> anyhow::Result<String> {
 /// Default task queue of the `channels` worker role.
 pub const DEFAULT_CHANNELS_TASK_QUEUE: &str = "lightspeed-channels";
 
+/// Default task queue of the `code` worker role.
+pub const DEFAULT_CODE_TASK_QUEUE: &str = "lightspeed-code";
+
+/// Independent interpreter capacity for a code worker process.
+pub const DEFAULT_CODE_MAX_CONCURRENT_EXECUTIONS: usize = 4;
+
 /// One Temporal task queue per worker role. The gateway knows all of them
-/// because it starts sessions, wakes bot controllers, and starts
-/// conversations; a worker role serves only its own.
+/// because it starts sessions, wakes bot controllers, starts conversations,
+/// and installs code workflow recipes; a worker role serves only its own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskQueues {
     pub sessions: String,
     pub bots: String,
     pub channels: String,
+    pub code: String,
 }
 
 impl TaskQueues {
@@ -200,6 +207,7 @@ impl TaskQueues {
             sessions: DEFAULT_TASK_QUEUE.to_owned(),
             bots: DEFAULT_BOTS_TASK_QUEUE.to_owned(),
             channels: DEFAULT_CHANNELS_TASK_QUEUE.to_owned(),
+            code: DEFAULT_CODE_TASK_QUEUE.to_owned(),
         }
     }
 
@@ -210,6 +218,7 @@ impl TaskQueues {
         Self {
             bots: format!("{sessions}-bots"),
             channels: format!("{sessions}-channels"),
+            code: format!("{sessions}-code"),
             sessions,
         }
     }
@@ -220,18 +229,21 @@ impl TaskQueues {
             crate::roles::Role::Sessions => Some(&self.sessions),
             crate::roles::Role::Bots => Some(&self.bots),
             crate::roles::Role::Channels => Some(&self.channels),
+            crate::roles::Role::Code => Some(&self.code),
         }
     }
 }
 
-/// `LIGHTSPEED_TASK_QUEUE` (sessions), `LIGHTSPEED_TASK_QUEUE_BOTS`, and
-/// `LIGHTSPEED_TASK_QUEUE_CHANNELS`, with the deployment defaults.
+/// `LIGHTSPEED_TASK_QUEUE` (sessions), `LIGHTSPEED_TASK_QUEUE_BOTS`,
+/// `LIGHTSPEED_TASK_QUEUE_CHANNELS`, and `LIGHTSPEED_TASK_QUEUE_CODE`, with
+/// the deployment defaults.
 pub fn task_queues_from_env() -> anyhow::Result<TaskQueues> {
     let defaults = TaskQueues::defaults();
     Ok(TaskQueues {
         sessions: task_queue_from_env()?,
         bots: optional_env("LIGHTSPEED_TASK_QUEUE_BOTS").unwrap_or(defaults.bots),
         channels: optional_env("LIGHTSPEED_TASK_QUEUE_CHANNELS").unwrap_or(defaults.channels),
+        code: optional_env("LIGHTSPEED_TASK_QUEUE_CODE").unwrap_or(defaults.code),
     })
 }
 
@@ -446,6 +458,20 @@ fn optional_env(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_queue_is_separate_in_default_and_derived_deployments() {
+        let defaults = TaskQueues::defaults();
+        assert_eq!(
+            defaults.for_role(crate::roles::Role::Code),
+            Some(DEFAULT_CODE_TASK_QUEUE)
+        );
+        assert_ne!(defaults.code, defaults.sessions);
+        let queues = TaskQueues::derived_from("deployment-session");
+        assert_eq!(queues.code, "deployment-session-code");
+        assert_ne!(queues.code, queues.bots);
+        assert_ne!(queues.code, queues.channels);
+    }
 
     #[test]
     fn thinking_prefix_mismatch_defaults_to_drop_block() {
