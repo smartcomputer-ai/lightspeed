@@ -154,6 +154,11 @@ The fourth slice implements the durable lifecycle and session admission:
   The parent session resolves the actual callable catalog; an omitted selection
   uses its host-callable tools except the outer code tool, while an empty list
   permits only local computation. Each call still passes session admission.
+- The shared web configuration editor exposes a Code mode toggle for profiles,
+  sessions, and bot setup. Its collapsed Customize limits link reveals only
+  timeout, maximum tool calls, and maximum outstanding calls. New grants use all
+  eligible session tools by default. Other settings have no controls; existing
+  API-authored values are preserved when editing the visible limits.
 - `CodeExecutionWorkflow` uses the generic start/reply/cancellation/recovery
   protocol. Retryable preparation opens the scope and persists a minimal catalog;
   `code_run` has exactly one activity attempt. Retryable finalization closes the
