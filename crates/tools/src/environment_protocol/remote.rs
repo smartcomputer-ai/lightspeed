@@ -1263,7 +1263,8 @@ mod tests {
             &fs_ctx,
             WriteFileArgs {
                 path: FsPath::new("nested/file.txt").expect("path"),
-                content: "hello\n".to_owned(),
+                content: Some("hello\n".to_owned()),
+                content_ref: None,
             },
         )
         .await

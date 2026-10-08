@@ -5,9 +5,13 @@
 //! independent from this crate.
 
 pub mod attachments;
+pub mod blobs;
 pub mod builtin;
+pub mod callable;
 pub mod catalog;
+pub mod code;
 pub mod concurrency;
+pub mod content;
 pub mod definitions;
 pub mod environment;
 pub mod environment_protocol;

@@ -18,6 +18,39 @@ pub fn admit_command(
     observed_at_ms: u64,
 ) -> Result<Vec<CoreAgentEventProposal>, CommandError> {
     match command {
+        CoreAgentCommand::OpenCodeToolScope { scope } => {
+            crate::open_code_tool_scope_proposals(state, scope)
+                .map_err(command_rejection_from_domain)
+        }
+        CoreAgentCommand::AdmitCodeToolCall { call } => {
+            crate::admit_code_tool_call_proposals(state, call)
+                .map_err(command_rejection_from_domain)
+        }
+        CoreAgentCommand::CompleteCodeToolCall { origin, result } => {
+            crate::complete_code_tool_call_proposals(state, origin, result)
+                .map_err(command_rejection_from_domain)
+        }
+        CoreAgentCommand::DeferCodeToolCall { origin, spec } => {
+            crate::defer_code_tool_call_proposals(state, origin, spec)
+                .map_err(command_rejection_from_domain)
+        }
+        CoreAgentCommand::ResumeCodeToolCall {
+            origin,
+            result,
+            claim_observed_at_ms,
+        } => crate::resume_code_tool_call_proposals(
+            state,
+            origin,
+            result,
+            claim_observed_at_ms,
+            observed_at_ms,
+        )
+        .map_err(command_rejection_from_domain),
+        CoreAgentCommand::CloseCodeToolScope {
+            execution_id,
+            cancel,
+        } => crate::close_code_tool_scope_proposals(state, execution_id, cancel)
+            .map_err(command_rejection_from_domain),
         CoreAgentCommand::OpenSession { mut config } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(

@@ -66,6 +66,7 @@ async fn openai_responses_live_fast_mode_reports_effective_service_tier() {
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_owned(),
@@ -209,6 +210,7 @@ async fn openai_responses_live_adapter_describes_image_input() {
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
@@ -365,6 +367,7 @@ async fn openai_responses_live_adapter_reads_pdf_document_input() {
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
@@ -459,6 +462,7 @@ async fn openai_responses_live_adapter_generates_result() {
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
@@ -586,6 +590,7 @@ async fn openai_responses_live_adapter_captures_provider_triggered_compaction() 
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
@@ -692,6 +697,7 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
         run_id: RunId::new(1),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),
@@ -866,6 +872,7 @@ async fn openai_responses_live_adapter_captures_web_search_call_and_citations() 
             run_id: RunId::new(2),
             turn_id: TurnId::new(2),
             request: LlmRequest {
+                code_mode: None,
                 model: ModelSelection {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     provider_id: "openai".to_string(),
@@ -943,6 +950,7 @@ async fn openai_responses_live_adapter_sees_tool_media() {
             run_id: RunId::new(1),
             turn_id: TurnId::new(turn),
             request: LlmRequest {
+                code_mode: None,
                 model: ModelSelection {
                     api_kind: ProviderApiKind::OpenAiResponses,
                     provider_id: "openai".to_string(),
@@ -1047,6 +1055,7 @@ fn media_request(
         run_id: RunId::new(1),
         turn_id: TurnId::new(turn),
         request: LlmRequest {
+            code_mode: None,
             model: ModelSelection {
                 api_kind: ProviderApiKind::OpenAiResponses,
                 provider_id: "openai".to_string(),

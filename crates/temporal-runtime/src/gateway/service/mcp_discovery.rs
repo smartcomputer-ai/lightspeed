@@ -924,18 +924,12 @@ fn project_tool(
             "MCP tool inputSchema must have object as its root type",
         ));
     }
-    let schema_bytes = serde_json::to_vec(&schema).map_err(|_| {
-        failure(
-            FailureKind::InvalidResponse,
-            "MCP tool inputSchema is invalid",
-        )
-    })?;
-    if schema_bytes.len() > limits.max_schema_bytes || json_depth(&schema) > limits.max_schema_depth
-    {
-        return Err(failure(
-            FailureKind::ResponseTooLarge,
-            "MCP tool inputSchema exceeded discovery limits",
-        ));
+    validate_schema_limits(&schema, "inputSchema", limits)?;
+    let output_schema = tool
+        .output_schema
+        .map(|schema| Value::Object(schema.as_ref().clone()));
+    if let Some(schema) = &output_schema {
+        validate_schema_limits(schema, "outputSchema", limits)?;
     }
 
     let (annotation_title, annotations) = match tool.annotations {
@@ -959,8 +953,30 @@ fn project_tool(
         title: direct_title.or(annotation_title),
         description,
         input_schema: schema,
+        output_schema,
         annotations,
     })
+}
+
+fn validate_schema_limits(
+    schema: &Value,
+    field: &str,
+    limits: McpToolDiscoveryLimits,
+) -> Result<(), McpToolDiscoveryFailure> {
+    let schema_bytes = serde_json::to_vec(schema).map_err(|_| {
+        failure(
+            FailureKind::InvalidResponse,
+            format!("MCP tool {field} is invalid"),
+        )
+    })?;
+    if schema_bytes.len() > limits.max_schema_bytes || json_depth(schema) > limits.max_schema_depth
+    {
+        return Err(failure(
+            FailureKind::ResponseTooLarge,
+            format!("MCP tool {field} exceeded discovery limits"),
+        ));
+    }
+    Ok(())
 }
 
 fn bounded_required_text(
@@ -1294,6 +1310,10 @@ mod tests {
                             "title": "Search",
                             "description": "Search the fixture",
                             "inputSchema": {"type": "object"},
+                            "outputSchema": {
+                                "type": "object",
+                                "properties": {"matches": {"type": "array", "items": {"type": "string"}}}
+                            },
                             "annotations": {"readOnlyHint": true}
                         }],
                         "nextCursor": "second",
@@ -1420,6 +1440,7 @@ mod tests {
         )
         .expect("valid tool");
         assert_eq!(tool.title.as_deref(), Some("Direct title"));
+        assert_eq!(tool.output_schema, None);
         let annotations = tool.annotations.expect("annotations");
         assert_eq!(annotations.read_only_hint, Some(true));
         assert_eq!(annotations.destructive_hint, Some(false));
@@ -1453,18 +1474,61 @@ mod tests {
 
     #[test]
     fn tool_projection_rejects_oversized_schema() {
-        let value = tool(json!({
-            "name": "search",
-            "inputSchema": {"type": "object", "description": "x".repeat(128)}
-        }));
+        for field in ["inputSchema", "outputSchema"] {
+            let mut value = json!({
+                "name": "search",
+                "inputSchema": {"type": "object"}
+            });
+            value[field] = json!({"type": "object", "description": "x".repeat(128)});
+            let error = project_tool(
+                tool(value),
+                McpToolDiscoveryLimits {
+                    max_schema_bytes: 64,
+                    ..McpToolDiscoveryLimits::default()
+                },
+            )
+            .expect_err("oversized schema");
+            assert_eq!(error.kind, FailureKind::ResponseTooLarge);
+        }
+    }
+
+    #[test]
+    fn tool_projection_preserves_the_structured_content_schema() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"matches": {"type": "array", "items": {"type": "string"}}},
+            "required": ["matches"],
+            "additionalProperties": false
+        });
+        let projected = project_tool(
+            tool(json!({
+                "name": "search",
+                "inputSchema": {"type": "object"},
+                "outputSchema": schema
+            })),
+            McpToolDiscoveryLimits::default(),
+        )
+        .expect("valid output schema");
+        assert_eq!(projected.output_schema, Some(schema));
+    }
+
+    #[test]
+    fn tool_projection_bounds_output_schema_depth() {
         let error = project_tool(
-            value,
+            tool(json!({
+                "name": "search",
+                "inputSchema": {"type": "object"},
+                "outputSchema": {
+                    "type": "object",
+                    "properties": {"matches": {"type": "array", "items": {"type": "string"}}}
+                }
+            })),
             McpToolDiscoveryLimits {
-                max_schema_bytes: 64,
+                max_schema_depth: 3,
                 ..McpToolDiscoveryLimits::default()
             },
         )
-        .expect_err("oversized schema");
+        .expect_err("overly deep output schema");
         assert_eq!(error.kind, FailureKind::ResponseTooLarge);
     }
 
@@ -1579,6 +1643,14 @@ mod tests {
                     .read_only_hint,
                 Some(true)
             );
+            assert_eq!(
+                inventory.tools[0].output_schema,
+                Some(json!({
+                    "type": "object",
+                    "properties": {"matches": {"type": "array", "items": {"type": "string"}}}
+                }))
+            );
+            assert_eq!(inventory.tools[1].output_schema, None);
         }
 
         let state = state.lock().await;

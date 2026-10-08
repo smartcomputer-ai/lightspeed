@@ -106,7 +106,9 @@ pub enum ProcessSignal {
     Kill,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct ProcessHandle(pub String);
 
 impl ProcessHandle {
@@ -125,7 +127,7 @@ impl std::fmt::Display for ProcessHandle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProcessOutput {
     pub status: ProcessStatus,
     /// Present while the process is still running.
@@ -151,13 +153,13 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LeftoverProcess {
     pub pid: u32,
     pub command: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProcessStatus {
     Running,
@@ -167,7 +169,7 @@ pub enum ProcessStatus {
     Killed,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StreamOutput {
     pub bytes: Vec<u8>,
     /// Byte offset in `bytes` before which `ProcessOutput::omitted_bytes`

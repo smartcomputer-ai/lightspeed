@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CalendarClock,
   Clock3,
+  Code2,
   FolderOpen,
   Globe2,
   Network,
@@ -48,7 +49,7 @@ import { McpToolPicker } from "@/components/mcp/tool-picker";
 import type { McpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 
 export type SessionConfig = Record<string, unknown>;
-type FeatureName = "vfs" | "web" | "subagents" | "timers" | "environments" | "mcp";
+type FeatureName = "vfs" | "web" | "subagents" | "codeMode" | "timers" | "environments" | "mcp";
 
 export type McpServerOption = {
   serverId: string;
@@ -142,6 +143,11 @@ const featureInfo: Record<
     description: "Let the agent run listed profiles as sub-agents (agent_run / agent_spawn) within root-scoped limits.",
     icon: Network,
   },
+  codeMode: {
+    title: "Code mode",
+    description: "Let the agent compose its available tools with JavaScript, including loops and parallel calls.",
+    icon: Code2,
+  },
   timers: {
     title: "Timers",
     description: "Allow delayed work and promise controls such as sleep and await.",
@@ -164,9 +170,28 @@ const featureDisplayOrder: FeatureName[] = [
   "vfs",
   "mcp",
   "subagents",
+  "codeMode",
   "web",
   "timers",
 ];
+
+const codeModeLimits = [
+  { key: "timeoutMs", label: "Timeout (ms)", defaultValue: 60_000, max: 600_000, hint: "Total time per script, including tool calls and waits." },
+  { key: "maxToolCalls", label: "Max tool calls", defaultValue: 128, max: 1_024, hint: "Total tool calls allowed per script." },
+  { key: "maxOutstandingToolCalls", label: "Max outstanding calls", defaultValue: 16, max: 64, hint: "Pending tool calls allowed at once, up to the total call limit." },
+] as const;
+
+function codeModeError(feature: RecordValue): string | null {
+  for (const limit of codeModeLimits) {
+    const value = feature[limit.key];
+    if (value !== undefined && (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > limit.max)) {
+      return `${limit.label} must be a whole number between 1 and ${limit.max.toLocaleString("en-US")}.`;
+    }
+  }
+  const maxCalls = (feature.maxToolCalls ?? 128) as number;
+  const maxOutstanding = (feature.maxOutstandingToolCalls ?? 16) as number;
+  return maxOutstanding > maxCalls ? "Max outstanding calls cannot exceed max tool calls." : null;
+}
 
 const environmentAccessDescriptions: Record<string, string> = {
   read: "Includes reading files.",
@@ -341,6 +366,11 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
         if (value !== undefined && value > 0) next[key] = value;
       }
     }
+    if (name === "codeMode") {
+      // Preserve API-authored settings outside the limited UI, especially tool
+      // restrictions. New grants stay empty and use the session's full tool set.
+      Object.assign(next, feature);
+    }
     if (name === "environments") {
       if (feature.selection === true) next.selection = true;
       next.environments = Array.isArray(feature.environments) ? feature.environments.map((item) => {
@@ -371,8 +401,7 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
       next.servers = servers;
     }
 
-    // Versions are supplied by admission; leaving the current version out
-    // keeps authored documents forward-compatible and minimal.
+    // Newly enabled features leave their behavior version to admission.
     features[name] = next;
   }
   if (omitEmptyRecord(features)) result.features = features;
@@ -434,6 +463,8 @@ export function configError(config: SessionConfig | undefined, pinnedApiKind?: s
   if ("subagents" in record(config.features) && !subagentProfileIds(subagents.agents).length) {
     return "Sub-agents require at least one agent profile.";
   }
+  const codeError = codeModeError(record(record(config.features).codeMode));
+  if (codeError) return codeError;
   const attachmentError = workspaceAttachmentsError(workspaceAttachmentsFromConfig(config));
   if (attachmentError) return attachmentError;
   const features = record(config.features);
@@ -669,6 +700,7 @@ export function SessionConfigEditor({
                     />
                   )}
                   {name === "subagents" && <SubagentFields feature={record(features.subagents)} profiles={profiles} patch={(fn) => patchFeature("subagents", fn)} />}
+                  {name === "codeMode" && <CodeModeFields feature={record(features.codeMode)} patch={(fn) => patchFeature("codeMode", fn)} />}
                   {name === "mcp" && <McpFields feature={record(features.mcp)} servers={mcpServers} discoverySource={mcpToolDiscovery} patch={(fn) => patchFeature("mcp", fn)} />}
                 </FeaturePanel>
               ))}
@@ -1599,6 +1631,48 @@ function WebFields({
         </SettingsDisclosure>
       )}
     </div>
+  );
+}
+
+function CodeModeFields({
+  feature,
+  patch,
+}: {
+  feature: RecordValue;
+  patch: (fn: (feature: RecordValue) => void) => void;
+}) {
+  const readOnly = useContext(ConfigReadOnlyContext);
+  const id = useId();
+  const customLimits = codeModeLimits.filter((limit) => feature[limit.key] != null).length;
+  return (
+    <SettingsDisclosure
+      contentClassName="sm:grid-cols-3"
+      summary={customLimits ? `${customLimits} custom ${customLimits === 1 ? "limit" : "limits"}` : "Default limits"}
+      action="Customize limits"
+      label="Customize code mode limits"
+      forceOpen={Boolean(codeModeError(feature))}
+    >
+      {codeModeLimits.map((limit) => (
+        <Field key={limit.key}>
+          <FieldLabel htmlFor={`${id}-${limit.key}`}>{limit.label}</FieldLabel>
+          <Input
+            readOnly={readOnly}
+            id={`${id}-${limit.key}`}
+            type="number"
+            min="1"
+            max={limit.max}
+            step="1"
+            placeholder={String(limit.defaultValue)}
+            value={numberString(feature[limit.key])}
+            onChange={(e) => patch((next) => {
+              if (e.target.value === "") delete next[limit.key];
+              else next[limit.key] = Number(e.target.value);
+            })}
+          />
+          <FieldDescription className="text-xs">{limit.hint} Leave blank for the default.</FieldDescription>
+        </Field>
+      ))}
+    </SettingsDisclosure>
   );
 }
 

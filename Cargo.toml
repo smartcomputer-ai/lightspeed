@@ -10,6 +10,7 @@ members = [
     "crates/auth",
     "crates/bots",
     "crates/channels",
+    "crates/codemode",
     "crates/environments",
     "crates/harness",
     "crates/mcp",

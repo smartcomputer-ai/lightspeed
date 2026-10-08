@@ -120,6 +120,7 @@ pub struct ActivityState {
     tools: ToolActivityDeps,
     runtime_projection: Option<RuntimeProjectionActivityDeps>,
     pub(super) preparation_store: Option<Arc<PgStore>>,
+    pub(super) code_task_queue: String,
     audio: AudioActivityDeps,
     environment_jobs: Option<EnvironmentJobActivityDeps>,
     workflow_tool_executions: Option<WorkflowToolExecutionDeps>,
@@ -152,6 +153,7 @@ impl ActivityState {
             },
             runtime_projection: None,
             preparation_store: None,
+            code_task_queue: crate::config::DEFAULT_CODE_TASK_QUEUE.to_owned(),
             audio: AudioActivityDeps {
                 blobs: blobs.clone(),
                 transcriber: Arc::new(UnavailableAudioTranscriber),
@@ -161,6 +163,11 @@ impl ActivityState {
             workflow_tool_executions: None,
             subagents: None,
         }
+    }
+
+    pub fn with_code_task_queue(mut self, task_queue: String) -> Self {
+        self.code_task_queue = task_queue;
+        self
     }
 
     pub fn with_runtime_projection_deps(

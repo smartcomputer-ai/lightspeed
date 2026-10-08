@@ -40,6 +40,7 @@ async fn text_with_provenance_is_unchanged_across_all_provider_apis() {
             };
             let anthropic = api_kind == ProviderApiKind::AnthropicMessages;
             let request = LlmRequest {
+                code_mode: None,
                 model: ModelSelection {
                     api_kind: api_kind.clone(),
                     provider_id: if anthropic { "anthropic" } else { "openai" }.into(),

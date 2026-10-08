@@ -73,6 +73,29 @@ pub struct AwaitArgs {
     pub timeout_ms: Option<u64>,
 }
 
+/// Canonical model-visible value written by the await materializer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AwaitOutput {
+    pub outcome: harness::AwaitOutcome,
+    #[serde(default)]
+    pub results: Vec<AwaitPromiseOutput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AwaitPromiseOutput {
+    pub promise_id: String,
+    /// pending, resolved, failed, cancelled, or unknown. A timeout may leave
+    /// pending promises that can be awaited again.
+    pub status: String,
+    /// Resolved producer payload as JSON, text, or an opaque artifact reference.
+    /// Its tool-specific shape is determined by the promise's producer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<serde_json::Value>,
+    /// Failed producer payload, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<serde_json::Value>,
+}
+
 impl AwaitArgs {
     /// Validate and dedupe the promise id list: 1..=32 well-formed
     /// `promise_<n>` ids, duplicates collapsed in first-occurrence order.
@@ -124,28 +147,28 @@ pub struct SleepArgs {
     pub ms: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CancelOutput {
     #[serde(default)]
     pub promises: Vec<CancelPromiseOutput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CancelPromiseOutput {
     pub promise_id: String,
     pub status: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DetachOutput {
     #[serde(default)]
     pub promises: Vec<DetachPromiseOutput>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DetachPromiseOutput {
     pub promise_id: String,
@@ -304,7 +327,7 @@ pub fn promise_status_name(status: PromiseStatus) -> &'static str {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SleepOutput {
     pub promise: String,
@@ -425,11 +448,15 @@ fn function_definition(
     description: &'static str,
     input_schema: Value,
 ) -> ToolResult<crate::runtime::FunctionDefinition> {
-    Ok(crate::runtime::FunctionDefinition::new(
-        tool_name,
-        description,
-        input_schema,
-    ))
+    let definition = crate::runtime::FunctionDefinition::new(tool_name, description, input_schema);
+    let schema = match tool_name {
+        CANCEL_TOOL_NAME => crate::definitions::output_schema_for::<CancelOutput>(),
+        DETACH_TOOL_NAME => crate::definitions::output_schema_for::<DetachOutput>(),
+        SLEEP_TOOL_NAME => crate::definitions::output_schema_for::<SleepOutput>(),
+        AWAIT_TOOL_NAME => crate::definitions::output_schema_for::<AwaitOutput>(),
+        _ => return Ok(definition),
+    };
+    Ok(definition.with_output_schema(schema))
 }
 
 fn await_input_schema() -> Value {

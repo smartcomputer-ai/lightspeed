@@ -25,6 +25,7 @@ The model-configuration editor groups capabilities by what the agent can do:
 | **Virtual File System: Files, Instructions, Skills** | Persistent workspace files and sourced instructions. See [Workspaces and skills](workspaces-and-skills.md). |
 | **Web** | Fetching public pages and, with a supported API kind, searching the web. |
 | **Sub-agents** | Delegating a task to an allowed profile. See [Sub-agents and federation](subagents-and-federation.md). |
+| **Code mode** | Composing available tools with JavaScript loops, parallel calls, and data processing. See [Code mode](code-mode.md). |
 | **Timers** | Waiting within agent work through durable timer operations. Use [bot schedules](bots-and-triggers.md) for recurring event production. |
 | **Environments** | Working with execution environments and their processes. See [Environments](../environments/overview.md). |
 | **MCP Servers** | Calling tools supplied by registered external MCP servers. |

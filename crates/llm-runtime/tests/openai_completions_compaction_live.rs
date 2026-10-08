@@ -250,6 +250,7 @@ async fn compacted_summary_continues_conversation(
         run_id: RunId::new(3),
         turn_id: TurnId::new(1),
         request: LlmRequest {
+            code_mode: None,
             model,
             request_fingerprint: "openai-completions-live-after-compact".to_owned(),
             context: ContextSnapshot {

@@ -22,6 +22,9 @@ pub struct FunctionDefinition {
     pub name: ToolName,
     pub description: Option<String>,
     pub input_schema: Value,
+    /// Schema of the structured value returned to a script, not the provider's
+    /// formatted text or the tool runtime's effects/attachment envelope.
+    pub output_schema: Option<Value>,
     pub strict: Option<bool>,
     pub provider_options: Option<Value>,
 }
@@ -36,9 +39,15 @@ impl FunctionDefinition {
             name: ToolName::new(name),
             description: Some(description.into()),
             input_schema,
+            output_schema: None,
             strict: Some(false),
             provider_options: None,
         }
+    }
+
+    pub fn with_output_schema(mut self, output_schema: Value) -> Self {
+        self.output_schema = Some(output_schema);
+        self
     }
 }
 
@@ -94,7 +103,7 @@ impl ToolCatalog {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolBinding {
     pub tool_name: ToolName,
     pub logical_id: String,

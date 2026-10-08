@@ -143,12 +143,20 @@ pub(crate) async fn invoke_reference(
             "reference requires a file, not a directory",
         ));
     };
+    let stored = ctx.blobs.stat_blob(&file.blob_ref).await?;
+    if stored.byte_len != file.size_bytes {
+        return Err(invalid_request(
+            "manifest file size differs from stored content",
+        ));
+    }
     let mut descriptor = FileAttachment::new(
         file.blob_ref,
         name.rsplit('/').next().unwrap_or(&name).into(),
         file.media_type,
     );
     descriptor.source = source;
+    ctx.content_resolver
+        .validate_attachment(&Attachment::File(descriptor.clone()))?;
     // Admission protects the result-to-event gap against collection of an old version.
     for blob in Attachment::File(descriptor.clone()).blob_refs() {
         ctx.blobs.retain_blob(&blob).await?;
@@ -157,7 +165,15 @@ pub(crate) async fn invoke_reference(
         "File attachment: {}\nReference: {}\nUse [label]({}) to link this file version, or ![description]({}) to display it inline if it is an image.",
         descriptor.name, descriptor.handle, descriptor.handle, descriptor.handle
     );
-    let mut result = crate::runtime::encode_output(&descriptor, visible)?;
+    let content = crate::content::ContentDescriptor {
+        content_ref: descriptor.content_ref.clone(),
+        byte_len: stored.byte_len,
+        name: Some(descriptor.name.clone()),
+        media_type: descriptor.media_type.clone(),
+        handle: Some(descriptor.handle.clone()),
+        source: descriptor.source.clone(),
+    };
+    let mut result = crate::runtime::encode_output(&content, visible)?;
     result.attachments.push(Attachment::File(descriptor));
     Ok(result)
 }

@@ -26,6 +26,7 @@ pub(super) struct RolloverBlockers {
     pub pending_promise_cancellations: usize,
     pub workflow_start_backoffs: usize,
     pub cancellation_watchdog: bool,
+    pub code_tool_execution: bool,
 }
 
 impl RolloverBlockers {
@@ -42,6 +43,7 @@ impl RolloverBlockers {
             pending_promise_cancellations: state.pending_promise_cancellations.len(),
             workflow_start_backoffs: state.workflow_start_backoffs.len(),
             cancellation_watchdog: state.cancelling_watchdog.is_some(),
+            code_tool_execution: !code_tools::is_quiescent(state),
         }
     }
 
@@ -55,6 +57,7 @@ impl RolloverBlockers {
             && self.pending_promise_cancellations == 0
             && self.workflow_start_backoffs == 0
             && !self.cancellation_watchdog
+            && !self.code_tool_execution
     }
 }
 
@@ -127,6 +130,7 @@ pub(super) fn observe_rollover_delay(
         pending_promise_cancellations = blockers.pending_promise_cancellations,
         workflow_start_backoffs = blockers.workflow_start_backoffs,
         cancellation_watchdog = blockers.cancellation_watchdog,
+        code_tool_execution = blockers.code_tool_execution,
         "session history rollover is delayed"
     );
 }

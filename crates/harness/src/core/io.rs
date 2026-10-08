@@ -112,6 +112,9 @@ pub struct ToolInvocationBatchRequest {
     /// session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents_policy: Option<crate::SubagentsFeature>,
+    /// Admitted code-mode grant, pinned before dispatching the script workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_mode_policy: Option<crate::CodeModeFeature>,
     /// First promise id the executors of this dispatch may mint (see
     /// `ActiveToolBatch::promise_id_base`). A batch-unit dispatch counts up
     /// from here across all its calls; a per-call dispatch gets its own
@@ -318,6 +321,9 @@ pub struct ToolInvocationCallRequest {
     pub environment_policy: Option<crate::EnvironmentsFeature>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagents_policy: Option<crate::SubagentsFeature>,
+    /// Admitted code-mode grant, pinned before dispatching the script workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_mode_policy: Option<crate::CodeModeFeature>,
     /// The one promise id this call may mint: the batch base plus the
     /// call's index, so sibling per-call dispatches never collide.
     pub promise_id_base: u64,
@@ -352,6 +358,7 @@ impl ToolInvocationCallRequest {
             active_environment_id: self.active_environment_id,
             environment_policy: self.environment_policy,
             subagents_policy: self.subagents_policy,
+            code_mode_policy: self.code_mode_policy,
             promise_id_base: self.promise_id_base,
             calls: vec![self.call],
         }
@@ -389,6 +396,7 @@ impl ToolInvocationBatchRequest {
             active_environment_id: self.active_environment_id.clone(),
             environment_policy: self.environment_policy.clone(),
             subagents_policy: self.subagents_policy.clone(),
+            code_mode_policy: self.code_mode_policy.clone(),
             promise_id_base: self.promise_id_base + index as u64,
             call,
             sibling_calls,
@@ -639,6 +647,7 @@ mod tests {
             active_environment_id: Some(EnvironmentId::new("environment-a")),
             environment_policy: Some(crate::EnvironmentsFeature::default()),
             subagents_policy: None,
+            code_mode_policy: None,
             calls: call_ids
                 .iter()
                 .map(|call_id| ToolInvocationRequest {
@@ -765,6 +774,7 @@ mod promise_base_tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             promise_id_base: 7,
             calls: vec![call("a"), call("b"), call("c")],
         };

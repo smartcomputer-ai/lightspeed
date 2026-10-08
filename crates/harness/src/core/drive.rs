@@ -880,10 +880,47 @@ pub fn next_tool_batch_request(
     let calls = batch
         .calls
         .iter()
-        .filter(|call_state| call_state.status == ToolCallStatus::Pending)
-        .map(|call_state| {
-            let workflow_tool = call_state
-                .call
+        .filter(|call| call.status == ToolCallStatus::Pending)
+        .map(|call| call.call.clone())
+        .collect::<Vec<_>>();
+    if calls.is_empty() {
+        return Ok(None);
+    }
+    tool_invocation_request(
+        state,
+        session_id,
+        batch.run_id,
+        batch.turn_id,
+        batch.batch_id,
+        batch.promise_id_base,
+        &calls,
+    )
+    .map(Some)
+}
+
+/// Shared materialization for model-origin and code-tool-origin tool calls.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn tool_invocation_request(
+    state: &CoreAgentState,
+    session_id: &SessionId,
+    run_id: crate::RunId,
+    turn_id: crate::TurnId,
+    batch_id: ToolBatchId,
+    promise_id_base: u64,
+    observed_calls: &[crate::ObservedToolCall],
+) -> Result<ToolInvocationBatchRequest, DomainError> {
+    let active_run = state
+        .runs
+        .active
+        .as_ref()
+        .filter(|run| run.run_id == run_id)
+        .ok_or_else(|| {
+            DomainError::InvariantViolation("tool invocation requires its active run".to_owned())
+        })?;
+    let calls = observed_calls
+        .iter()
+        .map(|call| {
+            let workflow_tool = call
                 .tool_id
                 .as_ref()
                 .and_then(|id| state.workflow_tools.binding_for_tool_name(id))
@@ -892,16 +929,15 @@ pub fn next_tool_batch_request(
                         binding.clone(),
                         state
                             .workflow_tools
-                            .emission_count(batch.run_id, &binding.definition.tool_id),
+                            .emission_count(run_id, &binding.definition.tool_id),
                     )
                 });
             // Native MCP routing is decided here, once per dispatch, so the
             // batch-unit and per-call execution paths see identical facts
             // (including the run-owned approval decision, if any).
-            let remote_mcp = crate::remote_mcp_call_runtime(state, &call_state.call);
+            let remote_mcp = crate::remote_mcp_call_runtime(state, call);
             ToolInvocationRequest {
-                builtin: call_state
-                    .call
+                builtin: call
                     .tool_id
                     .as_ref()
                     .and_then(|id| state.tooling.tools.get(id))
@@ -923,25 +959,22 @@ pub fn next_tool_batch_request(
                         }),
                         _ => None,
                     }),
-                call_id: call_state.call.call_id.clone(),
-                tool_id: call_state.call.tool_id.clone(),
-                tool_name: call_state.call.tool_name.clone(),
-                arguments_ref: call_state.call.arguments_ref.clone(),
+                call_id: call.call_id.clone(),
+                tool_id: call.tool_id.clone(),
+                tool_name: call.tool_name.clone(),
+                arguments_ref: call.arguments_ref.clone(),
                 workflow_tool,
                 promise_control: None,
                 remote_mcp,
             }
         })
         .collect::<Vec<_>>();
-    if calls.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(ToolInvocationBatchRequest {
+    Ok(ToolInvocationBatchRequest {
         session_id: session_id.clone(),
-        run_id: batch.run_id,
-        turn_id: batch.turn_id,
-        batch_id: batch.batch_id,
-        promise_id_base: batch.promise_id_base,
+        run_id,
+        turn_id,
+        batch_id,
+        promise_id_base,
         vfs_working_directory: state
             .lifecycle
             .config
@@ -966,8 +999,13 @@ pub fn next_tool_batch_request(
             .config
             .as_ref()
             .and_then(|config| config.features.subagents.clone()),
+        code_mode_policy: state
+            .lifecycle
+            .config
+            .as_ref()
+            .and_then(|config| config.features.code_mode.clone()),
         calls,
-    }))
+    })
 }
 
 pub fn attach_promise_control_runtime(
@@ -1289,6 +1327,15 @@ pub fn resume_tool_batch_proposals(
     if parked.batch_id != command.batch_id {
         return Ok(Vec::new());
     }
+    if state.code_tools.scopes.values().any(|scope| {
+        crate::code_tool_parent(state, &scope.spec).is_ok_and(|parent| {
+            parent.run_id == command.run_id && parent.tool_batch_id == command.batch_id
+        }) && scope.calls.values().any(|call| !call.status.is_terminal())
+    }) {
+        return Err(DomainError::InvariantViolation(
+            "outer tool batch cannot resume before its code tool calls are reconciled".to_owned(),
+        ));
+    }
     if command.claim_observed_at_ms > observed_at_ms {
         return Err(DomainError::InvariantViolation(
             "tool batch resume claim is observed in the future".to_owned(),
@@ -1399,7 +1446,7 @@ pub fn await_wake(state: &CoreAgentState, now_ms: u64) -> Option<WakeReason> {
     }
 }
 
-fn validate_await_spec_for_active_run(
+pub(crate) fn validate_await_spec_for_active_run(
     state: &CoreAgentState,
     run_id: crate::RunId,
     spec: &AwaitSpec,
@@ -1662,20 +1709,37 @@ fn validate_minted_promise_id(
     run_id: crate::RunId,
     batch_id: crate::ToolBatchId,
     promise_id: &crate::PromiseId,
+    origin: Option<&crate::CodeToolOrigin>,
     minted_in_result: &mut BTreeSet<crate::PromiseId>,
 ) -> Result<(), DomainError> {
-    let base = state
-        .runs
-        .active
-        .as_ref()
-        .filter(|active| active.run_id == run_id)
-        .and_then(|active| active.tool_batches.get(&batch_id))
-        .map(|batch| batch.promise_id_base)
-        .ok_or_else(|| {
-            DomainError::InvariantViolation(format!(
-                "tool batch {batch_id} of run {run_id} is not active"
-            ))
+    let base = if let Some(origin) = origin {
+        let call = crate::code_tool_call(state, origin).ok_or_else(|| {
+            DomainError::InvariantViolation("unknown code tool promise reservation".to_owned())
         })?;
+        if promise_id
+            .number()
+            .checked_sub(call.promise_id_base)
+            .is_some_and(|offset| offset >= crate::CODE_TOOL_PROMISE_SLOTS)
+        {
+            return Err(DomainError::InvariantViolation(
+                "code tool effect exceeded its reserved promise ids".to_owned(),
+            ));
+        }
+        call.promise_id_base
+    } else {
+        state
+            .runs
+            .active
+            .as_ref()
+            .filter(|active| active.run_id == run_id)
+            .and_then(|active| active.tool_batches.get(&batch_id))
+            .map(|batch| batch.promise_id_base)
+            .ok_or_else(|| {
+                DomainError::InvariantViolation(format!(
+                    "tool batch {batch_id} of run {run_id} is not active"
+                ))
+            })?
+    };
     if promise_id.number() < base {
         return Err(DomainError::InvariantViolation(format!(
             "promise {promise_id} was minted below tool batch {batch_id}'s promise base {base}"
@@ -1716,6 +1780,25 @@ fn tool_call_completed_proposals(
     session_id: Option<&SessionId>,
     result: ToolInvocationBatchResult,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    tool_call_completed_proposals_inner(state, session_id, result, None)
+}
+
+pub(crate) fn code_tool_result_proposals(
+    state: &CoreAgentState,
+    session_id: &SessionId,
+    origin: crate::CodeToolOrigin,
+    result: ToolInvocationBatchResult,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    validate_tool_batch_result(&result)?;
+    tool_call_completed_proposals_inner(state, Some(session_id), result, Some(origin))
+}
+
+fn tool_call_completed_proposals_inner(
+    state: &CoreAgentState,
+    session_id: Option<&SessionId>,
+    result: ToolInvocationBatchResult,
+    origin: Option<crate::CodeToolOrigin>,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let mut proposals = Vec::new();
     let mut resolved_promises = BTreeSet::new();
     let mut minted_promises = BTreeSet::new();
@@ -1748,7 +1831,8 @@ fn tool_call_completed_proposals(
                 // already have selected an environment; the exclusivity
                 // invariant spans the whole batch, not one result set.
                 if saw_environment_selection_effect
-                    || batch_has_terminal_environment_selection(state, result.batch_id)
+                    || (origin.is_none()
+                        && batch_has_terminal_environment_selection(state, result.batch_id))
                 {
                     return Err(DomainError::InvariantViolation(
                         "tool batch produced more than one environment selection effect".to_owned(),
@@ -1785,6 +1869,7 @@ fn tool_call_completed_proposals(
                     result.run_id,
                     result.batch_id,
                     &promise.promise_id,
+                    origin.as_ref(),
                     &mut minted_promises,
                 )?;
                 promise_proposals.push(CoreAgentEventProposal::new(
@@ -1922,6 +2007,7 @@ fn tool_call_completed_proposals(
                             result.run_id,
                             result.batch_id,
                             promise_id,
+                            origin.as_ref(),
                             &mut minted_promises,
                         )?;
                         let source =
@@ -1999,12 +2085,18 @@ fn tool_call_completed_proposals(
         if !is_joined_call {
             proposals.push(CoreAgentEventProposal::new(
                 joins,
-                CoreAgentEvent::Tool(ToolEvent::CallCompleted {
-                    run_id: result.run_id,
-                    turn_id: result.turn_id,
-                    batch_id: result.batch_id,
-                    result: invocation_result_to_call_result(result_item),
-                }),
+                match &origin {
+                    Some(origin) => CoreAgentEvent::CodeTool(crate::CodeToolEvent::CallCompleted {
+                        origin: origin.clone(),
+                        result: result_item.into(),
+                    }),
+                    None => CoreAgentEvent::Tool(ToolEvent::CallCompleted {
+                        run_id: result.run_id,
+                        turn_id: result.turn_id,
+                        batch_id: result.batch_id,
+                        result: invocation_result_to_call_result(result_item),
+                    }),
+                },
             ));
             proposals.extend(promise_proposals);
             proposals.extend(tool_proposals);
@@ -2030,22 +2122,28 @@ fn tool_call_completed_proposals(
             .iter()
             .map(|call| call.promise_id.clone())
             .collect();
-        proposals.push(CoreAgentEventProposal::new(
-            joins,
-            CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
-                run_id: result.run_id,
-                turn_id: result.turn_id,
-                batch_id: result.batch_id,
-                suspension: ToolBatchSuspension::JoinedWorkflowCalls {
-                    calls: joined_calls,
-                    spec: AwaitSpec {
-                        promise_ids,
-                        mode: AwaitMode::All,
-                        deadline_at_ms: None,
-                    },
+        proposals.push(CoreAgentEventProposal::new(joins, {
+            let suspension = ToolBatchSuspension::JoinedWorkflowCalls {
+                calls: joined_calls,
+                spec: AwaitSpec {
+                    promise_ids,
+                    mode: AwaitMode::All,
+                    deadline_at_ms: None,
                 },
-            }),
-        ));
+            };
+            match origin {
+                Some(origin) => CoreAgentEvent::CodeTool(crate::CodeToolEvent::CallDeferred {
+                    origin,
+                    suspension,
+                }),
+                None => CoreAgentEvent::Tool(ToolEvent::BatchDeferred {
+                    run_id: result.run_id,
+                    turn_id: result.turn_id,
+                    batch_id: result.batch_id,
+                    suspension,
+                }),
+            }
+        }));
         proposals.extend(joined_tool_proposals);
     }
     Ok(proposals)
@@ -2628,6 +2726,7 @@ mod tests {
         };
         session_config.features.environments = Some(environments.clone());
         session_config.features.subagents = Some(test_subagents_feature());
+        session_config.features.code_mode = Some(crate::CodeModeFeature::default());
         open_session_with_config(&mut drive, session_config);
         let set_active = drive
             .admit_command(
@@ -2649,6 +2748,114 @@ mod tests {
         );
         assert_eq!(request.environment_policy, Some(environments));
         assert_eq!(request.subagents_policy, Some(test_subagents_feature()));
+        assert_eq!(
+            request.code_mode_policy,
+            Some(crate::CodeModeFeature::default())
+        );
+    }
+
+    #[test]
+    fn code_mode_configuration_and_revocation_replay() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("code-config"),
+            CoreAgentState::new(),
+            None,
+        );
+        open_session(&mut drive);
+        let checkpoint = drive.state().clone();
+        let mut entries = Vec::new();
+        for feature in [
+            Some(crate::CodeModeFeature {
+                allowed_tools: Some(vec!["concurrency.sleep".into()]),
+                limits: crate::CodeModeLimits {
+                    timeout_ms: 500,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            None,
+        ] {
+            let mut config = drive.state().lifecycle.config.clone().unwrap();
+            config.features.code_mode = feature.clone();
+            let action = drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceSessionConfig {
+                        expected_revision: Some(drive.state().lifecycle.config_revision),
+                        config,
+                    },
+                    20,
+                )
+                .unwrap();
+            entries.extend(commit_action(&mut drive, action));
+            assert_eq!(
+                drive
+                    .state()
+                    .lifecycle
+                    .config
+                    .as_ref()
+                    .unwrap()
+                    .features
+                    .code_mode,
+                feature
+            );
+        }
+        let mut replayed = checkpoint;
+        for entry in entries {
+            let stored = CoreAgentCodec.encode_entry(&entry).unwrap();
+            crate::apply_event(
+                &mut replayed,
+                &CoreAgentCodec.decode_entry(&stored).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(&replayed, drive.state());
+    }
+
+    #[test]
+    fn code_mode_model_presentation_rebuilds_from_replayed_admission() {
+        let session_id = SessionId::new("code-presentation");
+        let mut drive =
+            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut session_config = config();
+        session_config.features.code_mode = Some(crate::CodeModeFeature {
+            allowed_tools: Some(vec!["concurrency.await".into()]),
+            ..Default::default()
+        });
+        open_session_with_config(&mut drive, session_config);
+        install_test_tool(&mut drive, "await");
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let checkpoint = drive.state().clone();
+        let mut entries = Vec::new();
+        let mut original = None;
+        for now in 21..80 {
+            match drive.next_action(now, 64).unwrap() {
+                CoreAgentAction::GenerateLlm { request } => {
+                    original = Some(request);
+                    break;
+                }
+                action => entries.extend(commit_action(&mut drive, action)),
+            }
+        }
+        let original = original.expect("generation");
+        assert_eq!(
+            original.request.code_mode.as_ref().unwrap().allowed_tools,
+            [ToolName::new("concurrency.await")].into_iter().collect()
+        );
+        let mut replayed = checkpoint;
+        for entry in entries {
+            let stored = CoreAgentCodec.encode_entry(&entry).unwrap();
+            crate::apply_event(
+                &mut replayed,
+                &CoreAgentCodec.decode_entry(&stored).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut restored =
+            CoreAgentDrive::from_replayed(session_id, replayed, drive.head().cloned());
+        let CoreAgentAction::GenerateLlm { request } = restored.next_action(81, 64).unwrap() else {
+            panic!("replayed pending generation");
+        };
+        assert_eq!(request, original);
     }
 
     #[test]
@@ -9214,6 +9421,7 @@ mod tests {
             active_environment_id: None,
             environment_policy: None,
             subagents_policy: None,
+            code_mode_policy: None,
             calls: vec![
                 ToolInvocationRequest {
                     builtin: None,
@@ -10011,5 +10219,1249 @@ mod tests {
         };
         assert_eq!(restored, request);
         assert!(replayed.state().context.entries.iter().any(|entry| entry.content.content_ref == native_call && matches!(&entry.kind, ContextEntryKind::ToolCall { name, .. } if name.as_str() == "Bash")));
+    }
+    fn code_tool_fixture() -> (CoreAgentDrive, crate::WorkflowToolInvocationId) {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("code-tool-session"),
+            CoreAgentState::new(),
+            None,
+        );
+        let declarations = [
+            (
+                "code_execute",
+                crate::WorkflowToolCompletion::Joined {
+                    reply_schema_ref: None,
+                    deadline_after_ms: 60_000,
+                },
+            ),
+            (
+                "agent_run",
+                crate::WorkflowToolCompletion::Joined {
+                    reply_schema_ref: None,
+                    deadline_after_ms: 60_000,
+                },
+            ),
+            (
+                "job_submit",
+                crate::WorkflowToolCompletion::Promises {
+                    reply_schema_ref: None,
+                    deadline_after_ms: Some(60_000),
+                    max_promises: 1,
+                    key_source: crate::WorkflowToolCompletionKeySource::Reply,
+                },
+            ),
+        ]
+        .into_iter()
+        .map(|(name, completion)| {
+            crate::WorkflowToolDeclaration::new(
+                WorkflowToolDefinition {
+                    tool_id: crate::WorkflowToolId::new(name),
+                    revision: 1,
+                    semantic_type: format!("test.{name}.v1"),
+                    tool: test_tool_spec(name),
+                },
+                if name == "job_submit" {
+                    crate::WorkflowToolTarget::Start {
+                        start: crate::WorkflowStartRef {
+                            recipe_format: 1,
+                            revision: 1,
+                            recipe_ref: BlobRef::from_bytes(b"recipe"),
+                            recipe_fingerprint: "test-job-recipe".into(),
+                        },
+                    }
+                } else {
+                    crate::WorkflowToolTarget::Bound {
+                        receiver: WorkflowEndpointRef {
+                            workflow_id: format!("receiver-{name}"),
+                            workflow_kind: "test.worker".into(),
+                        },
+                        dispatch: crate::BoundWorkflowToolDispatch::Push,
+                    }
+                },
+                completion,
+            )
+        })
+        .collect();
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::OpenManagedSession {
+                    config: config(),
+                    session_universe_id: uuid::Uuid::from_u128(7),
+                    workflow_tools: crate::ManagedSessionWorkflowTools::v1(None, declarations),
+                },
+                10,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        let tools = [
+            "code_execute",
+            "agent_run",
+            "job_submit",
+            "local_echo",
+            "timer",
+            "await",
+        ]
+        .into_iter()
+        .map(test_tool_spec)
+        .map(|tool| (tool.name.clone(), tool))
+        .collect();
+        let action = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceTools {
+                    expected_revision: None,
+                    tools,
+                },
+                15,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let generation = drive_until_generate(&mut drive);
+        let request = drive_until_tool_batch_request(&mut drive, generation, "code_execute");
+        let (result, parent_id) = code_tool_workflow_effect(&request);
+        let action = drive
+            .resume_tool_batch(
+                ToolInvocationBatchResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    results: vec![result],
+                },
+                90,
+            )
+            .unwrap();
+        commit_action(&mut drive, action);
+        (drive, parent_id)
+    }
+
+    fn code_tool_workflow_effect(
+        request: &ToolInvocationBatchRequest,
+    ) -> (ToolInvocationResult, crate::WorkflowToolInvocationId) {
+        let call = &request.calls[0];
+        let binding = &call.workflow_tool.as_ref().unwrap().binding;
+        let invocation_id = crate::WorkflowToolInvocationId::for_call(
+            binding.session_universe_id,
+            &request.session_id,
+            request.run_id,
+            request.turn_id,
+            request.batch_id,
+            &call.call_id,
+            &binding.binding_fingerprint,
+        );
+        let invocation = WorkflowToolInvocation {
+            invocation_id: invocation_id.clone(),
+            tool_id: binding.definition.tool_id.clone(),
+            semantic_type: binding.definition.semantic_type.clone(),
+            schema_revision: binding.definition.revision,
+            binding_fingerprint: binding.binding_fingerprint.clone(),
+            session_universe_id: binding.session_universe_id,
+            session_id: request.session_id.clone(),
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            tool_batch_id: request.batch_id,
+            tool_call_id: call.call_id.clone(),
+            arguments_ref: call.arguments_ref.clone(),
+            execution_context_ref: None,
+            completion_promises: Some(BTreeMap::from([(
+                crate::REPLY_COMPLETION_KEY.into(),
+                PromiseId::from_number(request.promise_id_base),
+            )])),
+        };
+        let mut result = completed_tool_result(request).results.remove(0);
+        result.effects = vec![crate::with_completion_deadline(
+            crate::workflow_tool_emit_effect(&invocation),
+            Some(60_090),
+        )];
+        (result, invocation_id)
+    }
+
+    fn code_tool_scope(
+        parent_invocation_id: crate::WorkflowToolInvocationId,
+    ) -> crate::CodeToolScopeSpec {
+        crate::CodeToolScopeSpec {
+            execution_id: "execution-1".into(),
+            parent_invocation_id,
+            bindings: ["agent_run", "job_submit", "local_echo", "timer", "await"]
+                .into_iter()
+                .map(|name| {
+                    (
+                        name.to_owned(),
+                        crate::CodeToolBinding {
+                            tool_id: test_tool_id(name),
+                            tool_name: ToolName::new(name),
+                        },
+                    )
+                })
+                .collect(),
+            max_calls: 16,
+            max_in_flight: 8,
+        }
+    }
+
+    fn code_tool_spec(request_id: &str, tool: &str) -> crate::CodeToolCallSpec {
+        crate::CodeToolCallSpec {
+            origin: crate::CodeToolOrigin {
+                execution_id: "execution-1".into(),
+                request_id: request_id.into(),
+            },
+            binding_id: tool.into(),
+            tool_id: test_tool_id(tool),
+            tool_name: ToolName::new(tool),
+            arguments_ref: BlobRef::from_bytes(b"{}"),
+        }
+    }
+
+    fn code_tool_commit(
+        drive: &mut CoreAgentDrive,
+        command: CoreAgentCommand,
+    ) -> Vec<CoreAgentEntry> {
+        let action = drive.admit_command(command, 100).unwrap();
+        commit_action(drive, action)
+    }
+
+    #[test]
+    fn code_tool_parallel_calls_reserve_promises_deduplicate_and_replay_without_touching_outer_batch()
+     {
+        let (mut drive, parent) = code_tool_fixture();
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
+        let outer = drive.state().runs.active.clone();
+        let context = drive.state().context.clone();
+        let mut log = code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::OpenCodeToolScope {
+                scope: code_tool_scope(parent),
+            },
+        );
+        let first = code_tool_spec("1", "timer");
+        let second = code_tool_spec("2", "local_echo");
+        for call in [&first, &second] {
+            log.extend(code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+            ));
+        }
+        let request =
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
+                .unwrap();
+        let other = crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "2")
+            .unwrap();
+        assert_eq!(
+            other.promise_id_base,
+            request.promise_id_base + crate::CODE_TOOL_PROMISE_SLOTS
+        );
+        assert_ne!(other.calls[0].call_id, request.calls[0].call_id);
+        assert!(matches!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::AdmitCodeToolCall {
+                        call: first.clone()
+                    },
+                    100
+                )
+                .unwrap(),
+            CoreAgentAction::Idle
+        ));
+        let mut conflict = first.clone();
+        conflict.arguments_ref = BlobRef::from_bytes(b"different");
+        assert!(matches!(
+            drive.admit_command(CoreAgentCommand::AdmitCodeToolCall { call: conflict }, 100),
+            Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
+        ));
+        let result = completed_tool_result(&other).results.remove(0);
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CompleteCodeToolCall {
+                origin: second.origin.clone(),
+                result: result.clone(),
+            },
+        ));
+        assert!(matches!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::CompleteCodeToolCall {
+                        origin: second.origin,
+                        result
+                    },
+                    100
+                )
+                .unwrap(),
+            CoreAgentAction::Idle
+        ));
+        let mut result =
+            promise_tool_result(&request, &format!("promise_{}", request.promise_id_base))
+                .results
+                .remove(0);
+        let mut overflowing = result.clone();
+        overflowing.effects =
+            promise_tool_result(&request, &format!("promise_{}", other.promise_id_base))
+                .results
+                .remove(0)
+                .effects;
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::CompleteCodeToolCall {
+                        origin: first.origin.clone(),
+                        result: overflowing
+                    },
+                    100
+                )
+                .is_err()
+        );
+        result.model_visible_context_entries.clear();
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CompleteCodeToolCall {
+                origin: first.origin,
+                result,
+            },
+        ));
+        assert_eq!(drive.state().runs.active, outer);
+        assert_eq!(drive.state().context, context);
+        let retained =
+            crate::storage::collect_blob_refs(&serde_json::to_value(drive.state()).unwrap());
+        for call in drive.state().code_tools.scopes["execution-1"]
+            .calls
+            .values()
+        {
+            assert!(retained.contains(&call.spec.arguments_ref));
+            if let crate::CodeToolCallStatus::Completed { result } = &call.status {
+                for reference in result.output_ref.iter().chain(result.error_ref.iter()) {
+                    assert!(retained.contains(reference));
+                }
+            }
+        }
+        assert!(
+            drive
+                .state()
+                .promises
+                .promises
+                .contains_key(&PromiseId::from_number(request.promise_id_base))
+        );
+        replayed
+            .resume_appended(
+                log.iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
+    }
+
+    #[test]
+    fn code_tool_completion_compacts_payloads_preserves_retry_identity_and_replays_legacy_records()
+    {
+        let (mut drive, parent) = code_tool_fixture();
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
+        let mut legacy_replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
+        let mut log = code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::OpenCodeToolScope {
+                scope: code_tool_scope(parent),
+            },
+        );
+        let call = code_tool_spec("compact", "timer");
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+        ));
+        let request =
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "compact")
+                .unwrap();
+        let mut result =
+            promise_tool_result(&request, &format!("promise_{}", request.promise_id_base))
+                .results
+                .remove(0);
+        result.model_visible_context_entries[0].preview = Some("context".repeat(100_000));
+        result.effects[0]
+            .data
+            .insert("diagnostic".into(), "effect".repeat(100_000));
+        let attachment_ref = BlobRef::from_bytes(b"code tool attachment");
+        result.attachments = vec![crate::Attachment::File(crate::FileAttachment::new(
+            attachment_ref.clone(),
+            "result.txt".into(),
+            Some("text/plain".into()),
+        ))];
+        result.duration_ms = Some(21);
+        result.output_bytes = Some(7_000);
+        result.truncated = true;
+        let completion = code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CompleteCodeToolCall {
+                origin: call.origin.clone(),
+                result: result.clone(),
+            },
+        );
+        let stored = CoreAgentCodec.encode_entry(&completion[0]).unwrap();
+        let durable = &stored.event.payload["code_tool"]["call_completed"]["result"];
+        assert!(durable.is_object());
+        assert!(durable.get("model_visible_context_entries").is_none());
+        assert!(durable.get("effects").is_none());
+        assert_eq!(durable["duration_ms"], 21);
+        assert_eq!(durable["output_bytes"], 7_000);
+        assert_eq!(durable["truncated"], true);
+        assert!(serde_json::to_vec(&stored).unwrap().len() < 2_000);
+        assert!(crate::storage::collect_blob_refs(durable).contains(&attachment_ref));
+        assert!(completion.iter().any(|entry| matches!(
+            &entry.event,
+            CoreAgentEvent::Promise(PromiseEvent::Created { promise })
+                if promise.promise_id == PromiseId::from_number(request.promise_id_base)
+        )));
+        log.extend(completion);
+        let stored_log: Vec<_> = log
+            .iter()
+            .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+            .collect();
+        replayed.resume_appended(stored_log.clone()).unwrap();
+        assert_eq!(replayed.state(), drive.state());
+        let mut legacy_log = stored_log;
+        let legacy_completion = legacy_log
+            .iter_mut()
+            .find(|entry| entry.event.kind == "lightspeed.core.code_tool.call_completed")
+            .unwrap();
+        legacy_completion.event.payload["code_tool"]["call_completed"]["result"] =
+            serde_json::to_value(&result).unwrap();
+        legacy_replayed.resume_appended(legacy_log).unwrap();
+        assert_eq!(legacy_replayed.state(), drive.state());
+
+        // Both old snapshots and old events must fingerprint the discarded
+        // fields before projecting them away.
+        let mut legacy_snapshot = serde_json::to_value(drive.state()).unwrap();
+        legacy_snapshot["code_tools"]["scopes"]["execution-1"]["calls"]["compact"]["status"]["result"] =
+            serde_json::to_value(&result).unwrap();
+        let restored: CoreAgentState = serde_json::from_value(legacy_snapshot).unwrap();
+        assert_eq!(&restored, drive.state());
+        for replay in [&mut drive, &mut replayed, &mut legacy_replayed] {
+            assert!(matches!(
+                replay
+                    .admit_command(
+                        CoreAgentCommand::CompleteCodeToolCall {
+                            origin: call.origin.clone(),
+                            result: result.clone(),
+                        },
+                        100,
+                    )
+                    .unwrap(),
+                CoreAgentAction::Idle
+            ));
+            let mut changed_effect = result.clone();
+            changed_effect.effects[0]
+                .data
+                .insert("diagnostic".into(), "changed".into());
+            let mut changed_context = result.clone();
+            changed_context.model_visible_context_entries.clear();
+            for changed in [changed_effect, changed_context] {
+                assert!(matches!(
+                    replay.admit_command(
+                        CoreAgentCommand::CompleteCodeToolCall {
+                            origin: call.origin.clone(),
+                            result: changed,
+                        },
+                        100,
+                    ),
+                    Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn code_tool_joined_and_submit_await_have_independent_waits_and_session_owned_results() {
+        let (mut drive, parent) = code_tool_fixture();
+        let outer = drive.state().runs.active.clone();
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
+        let mut log = code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::OpenCodeToolScope {
+                scope: code_tool_scope(parent),
+            },
+        );
+        let joined = code_tool_spec("joined", "agent_run");
+        let submit = code_tool_spec("submit", "job_submit");
+        let waiter = code_tool_spec("await", "await");
+        for call in [&joined, &submit, &waiter] {
+            log.extend(code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+            ));
+        }
+        let mut promises = Vec::new();
+        for call in [&joined, &submit] {
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                &call.origin.request_id,
+            )
+            .unwrap();
+            promises.push(PromiseId::from_number(request.promise_id_base));
+            let (result, invocation) = code_tool_workflow_effect(&request);
+            let repeated_result = result.clone();
+            log.extend(code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: call.origin.clone(),
+                    result,
+                },
+            ));
+            assert!(
+                drive
+                    .state()
+                    .workflow_tools
+                    .emissions
+                    .contains_key(&invocation)
+                    || drive
+                        .state()
+                        .workflow_tools
+                        .start_requests
+                        .contains_key(&invocation)
+            );
+            assert!(matches!(
+                drive
+                    .admit_command(
+                        CoreAgentCommand::CompleteCodeToolCall {
+                            origin: call.origin.clone(),
+                            result: repeated_result
+                        },
+                        100
+                    )
+                    .unwrap(),
+                CoreAgentAction::Idle
+            ));
+        }
+        assert!(matches!(
+            crate::code_tool_call(drive.state(), &joined.origin)
+                .unwrap()
+                .status,
+            crate::CodeToolCallStatus::Waiting { .. }
+        ));
+        assert!(
+            crate::code_tool_call(drive.state(), &submit.origin)
+                .unwrap()
+                .status
+                .is_terminal()
+        );
+        let forbidden = CoreAgentCommand::DeferCodeToolCall {
+            origin: waiter.origin.clone(),
+            spec: AwaitSpec {
+                promise_ids: vec![promises[0].clone()],
+                mode: AwaitMode::All,
+                deadline_at_ms: None,
+            },
+        };
+        assert!(drive.admit_command(forbidden, 100).is_err());
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::DeferCodeToolCall {
+                origin: waiter.origin.clone(),
+                spec: AwaitSpec {
+                    promise_ids: vec![promises[1].clone()],
+                    mode: AwaitMode::All,
+                    deadline_at_ms: None,
+                },
+            },
+        ));
+        assert_eq!(
+            crate::code_tool_wake(drive.state(), &joined.origin, 100),
+            None
+        );
+        assert_eq!(
+            crate::code_tool_wake(drive.state(), &waiter.origin, 100),
+            None
+        );
+        for promise_id in &promises {
+            log.extend(code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::ResolvePromise {
+                    promise_id: promise_id.clone(),
+                    resolution: crate::PromiseResolution::Resolved {
+                        payload_ref: Some(BlobRef::from_bytes(promise_id.as_str().as_bytes())),
+                    },
+                },
+            ));
+        }
+        let result = crate::code_tool_joined_result(drive.state(), &joined.origin, false).unwrap();
+        let mut wrong = result.clone();
+        wrong.output_ref = Some(BlobRef::from_bytes(b"wrong"));
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::ResumeCodeToolCall {
+                        origin: joined.origin.clone(),
+                        result: wrong,
+                        claim_observed_at_ms: 100
+                    },
+                    100
+                )
+                .is_err()
+        );
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::ResumeCodeToolCall {
+                origin: joined.origin.clone(),
+                result: result.clone(),
+                claim_observed_at_ms: 100,
+            },
+        ));
+        assert!(matches!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::ResumeCodeToolCall {
+                        origin: joined.origin.clone(),
+                        result: result.clone(),
+                        claim_observed_at_ms: 100,
+                    },
+                    100,
+                )
+                .unwrap(),
+            CoreAgentAction::Idle
+        ));
+        let mut changed_resume = result;
+        changed_resume.effects = vec![crate::promise_cancel_effect(&promises[1])];
+        assert!(matches!(
+            drive.admit_command(
+                CoreAgentCommand::ResumeCodeToolCall {
+                    origin: joined.origin,
+                    result: changed_resume,
+                    claim_observed_at_ms: 100,
+                },
+                100,
+            ),
+            Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
+        ));
+        let call_id = crate::code_tool_call(drive.state(), &waiter.origin)
+            .unwrap()
+            .call_id
+            .clone();
+        let result = ToolInvocationResult {
+            call_id,
+            status: ToolCallStatus::Succeeded,
+            output_ref: Some(BlobRef::from_bytes(b"await projection")),
+            error_ref: None,
+            model_visible_context_entries: Vec::new(),
+            effects: Vec::new(),
+            attachments: Vec::new(),
+            duration_ms: None,
+            output_bytes: None,
+            truncated: false,
+        };
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::ResumeCodeToolCall {
+                origin: waiter.origin,
+                result,
+                claim_observed_at_ms: 100,
+            },
+        ));
+        assert_eq!(drive.state().runs.active, outer);
+        replayed
+            .resume_appended(
+                log.iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
+    }
+
+    #[test]
+    fn code_tool_scope_closure_preserves_completed_effects_and_cancels_only_owned_joined_waits() {
+        let (mut drive, parent) = code_tool_fixture();
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::OpenCodeToolScope {
+                scope: code_tool_scope(parent),
+            },
+        );
+        let joined = code_tool_spec("joined", "agent_run");
+        let submit = code_tool_spec("submit", "job_submit");
+        for call in [&joined, &submit] {
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+            );
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                &call.origin.request_id,
+            )
+            .unwrap();
+            let (result, _) = code_tool_workflow_effect(&request);
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: call.origin.clone(),
+                    result,
+                },
+            );
+        }
+        let submit_outcome = crate::code_tool_call(drive.state(), &submit.origin)
+            .unwrap()
+            .clone();
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CloseCodeToolScope {
+                execution_id: "execution-1".into(),
+                cancel: true,
+            },
+        );
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::AdmitCodeToolCall {
+                        call: code_tool_spec("late", "local_echo")
+                    },
+                    100
+                )
+                .is_err()
+        );
+        assert_eq!(
+            crate::code_tool_wake(drive.state(), &joined.origin, 100),
+            Some(WakeReason::Cancelled)
+        );
+        let result = crate::code_tool_joined_result(drive.state(), &joined.origin, true).unwrap();
+        assert_eq!(result.status, ToolCallStatus::Cancelled);
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::ResumeCodeToolCall {
+                origin: joined.origin,
+                result,
+                claim_observed_at_ms: 100,
+            },
+        );
+        assert_eq!(
+            crate::code_tool_call(drive.state(), &submit.origin),
+            Some(&submit_outcome)
+        );
+        assert_eq!(
+            drive.state().promises.promises
+                [&PromiseId::from_number(submit_outcome.promise_id_base)]
+                .status,
+            PromiseStatus::Pending
+        );
+        assert!(
+            drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .unwrap()
+                .parked_tool_batch
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn code_tool_admission_enforces_binding_limits_staleness_and_parent_authority() {
+        let (mut drive, parent) = code_tool_fixture();
+        let mut scope = code_tool_scope(parent);
+        scope.max_calls = 1;
+        scope.max_in_flight = 1;
+        let mut invalid = scope.clone();
+        invalid.parent_invocation_id =
+            crate::WorkflowToolInvocationId::new(format!("wti:sha256:{}", "f".repeat(64)));
+        assert!(
+            drive
+                .admit_command(CoreAgentCommand::OpenCodeToolScope { scope: invalid }, 100)
+                .is_err()
+        );
+        let mut recursive = scope.clone();
+        recursive.bindings.insert(
+            "code_execute".into(),
+            crate::CodeToolBinding {
+                tool_id: ToolName::new("code_execute"),
+                tool_name: ToolName::new("code_execute"),
+            },
+        );
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::OpenCodeToolScope { scope: recursive },
+                    100
+                )
+                .is_err()
+        );
+        code_tool_commit(&mut drive, CoreAgentCommand::OpenCodeToolScope { scope });
+        let mut forged = code_tool_spec("1", "local_echo");
+        forged.tool_name = ToolName::new("Bash");
+        assert!(
+            drive
+                .admit_command(CoreAgentCommand::AdmitCodeToolCall { call: forged }, 100)
+                .is_err()
+        );
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::AdmitCodeToolCall {
+                call: code_tool_spec("1", "local_echo"),
+            },
+        );
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::AdmitCodeToolCall {
+                        call: code_tool_spec("2", "local_echo")
+                    },
+                    100
+                )
+                .is_err()
+        );
+        let tools = drive.state().tooling.tools.clone();
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::ReplaceTools {
+                expected_revision: None,
+                tools,
+            },
+        );
+        assert!(
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
+                .is_err()
+        );
+    }
+    #[test]
+    fn code_tool_start_failure_reuses_promise_failure_and_parallel_emission_budget() {
+        let (mut drive, parent) = code_tool_fixture();
+        let mut scope = code_tool_scope(parent);
+        scope.max_calls = 64;
+        scope.max_in_flight = 64;
+        code_tool_commit(&mut drive, CoreAgentCommand::OpenCodeToolScope { scope });
+        let submit = code_tool_spec("submit", "job_submit");
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::AdmitCodeToolCall {
+                call: submit.clone(),
+            },
+        );
+        let request =
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "submit")
+                .unwrap();
+        let (result, invocation_id) = code_tool_workflow_effect(&request);
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CompleteCodeToolCall {
+                origin: submit.origin.clone(),
+                result,
+            },
+        );
+        let outcome = crate::code_tool_call(drive.state(), &submit.origin)
+            .unwrap()
+            .clone();
+        let error_ref = BlobRef::from_bytes(b"start denied");
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::FailWorkflowToolStart {
+                invocation_id,
+                error_ref: error_ref.clone(),
+            },
+        );
+        let promise =
+            &drive.state().promises.promises[&PromiseId::from_number(request.promise_id_base)];
+        assert_eq!(promise.status, PromiseStatus::Failed);
+        assert_eq!(promise.error_ref, Some(error_ref));
+        assert_eq!(
+            crate::code_tool_call(drive.state(), &submit.origin),
+            Some(&outcome)
+        );
+        for index in 0..crate::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN {
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::AdmitCodeToolCall {
+                    call: code_tool_spec(&format!("joined-{index}"), "agent_run"),
+                },
+            );
+        }
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::AdmitCodeToolCall {
+                        call: code_tool_spec("overflow", "agent_run")
+                    },
+                    100
+                )
+                .is_err()
+        );
+    }
+    #[test]
+    fn code_tool_cancellation_drains_late_effects_before_outer_batch_and_run_finish() {
+        let (mut drive, parent) = code_tool_fixture();
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::OpenCodeToolScope {
+                scope: code_tool_scope(parent),
+            },
+        );
+        let joined = code_tool_spec("joined", "agent_run");
+        let ordinary = code_tool_spec("ordinary", "timer");
+        for call in [&joined, &ordinary] {
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+            );
+        }
+        let joined_request =
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "joined")
+                .unwrap();
+        let ordinary_request =
+            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "ordinary")
+                .unwrap();
+        let (joined_effect, _) = code_tool_workflow_effect(&joined_request);
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CompleteCodeToolCall {
+                origin: joined.origin.clone(),
+                result: joined_effect,
+            },
+        );
+        let mut replayed = CoreAgentDrive::from_replayed(
+            drive.session_id().clone(),
+            drive.state().clone(),
+            drive.head().cloned(),
+        );
+        assert!(
+            drive
+                .admit_command(CoreAgentCommand::CloseSession { force: false }, 100)
+                .is_err()
+        );
+        let mut log = code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CancelRun {
+                run_id: ordinary_request.run_id,
+                requested_by: None,
+            },
+        );
+        assert!(!crate::code_tool_scope_is_live(
+            drive.state(),
+            &drive.state().code_tools.scopes["execution-1"].spec
+        ));
+        assert!(matches!(
+            drive.next_action(100, 64).unwrap(),
+            CoreAgentAction::Idle
+        ));
+        let outer_resume = CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
+            run_id: ordinary_request.run_id,
+            batch_id: ordinary_request.batch_id,
+            claim: WakeReason::Cancelled,
+            claim_observed_at_ms: 100,
+            output: ToolBatchResumeOutput::JoinedWorkflowCalls {
+                additional_context: Vec::new(),
+            },
+        });
+        assert!(drive.admit_command(outer_resume.clone(), 100).is_err());
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CloseCodeToolScope {
+                execution_id: "execution-1".into(),
+                cancel: true,
+            },
+        ));
+        let result = promise_tool_result(
+            &ordinary_request,
+            &format!("promise_{}", ordinary_request.promise_id_base),
+        )
+        .results
+        .remove(0);
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CompleteCodeToolCall {
+                origin: ordinary.origin.clone(),
+                result,
+            },
+        ));
+        assert_eq!(
+            drive.state().promises.promises
+                [&PromiseId::from_number(ordinary_request.promise_id_base)]
+                .status,
+            PromiseStatus::Pending
+        );
+        let result = crate::code_tool_joined_result(drive.state(), &joined.origin, true).unwrap();
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::ResumeCodeToolCall {
+                origin: joined.origin,
+                result,
+                claim_observed_at_ms: 100,
+            },
+        ));
+        log.extend(code_tool_commit(&mut drive, outer_resume));
+        for _ in 0..8 {
+            let action = drive.next_action(100, 64).unwrap();
+            if matches!(action, CoreAgentAction::Idle) {
+                break;
+            }
+            log.extend(commit_action(&mut drive, action));
+        }
+        assert!(drive.state().runs.active.is_none());
+        assert_eq!(
+            drive.state().runs.completed.last().unwrap().status,
+            RunStatus::Cancelled
+        );
+        assert!(
+            matches!(&crate::code_tool_call(drive.state(), &ordinary.origin).unwrap().status, crate::CodeToolCallStatus::Completed { result } if result.status == ToolCallStatus::Succeeded)
+        );
+        assert_eq!(
+            drive.state().promises.promises
+                [&PromiseId::from_number(ordinary_request.promise_id_base)]
+                .status,
+            PromiseStatus::Cancelled
+        );
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CloseSession { force: false },
+        ));
+        replayed
+            .resume_appended(
+                log.iter()
+                    .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(replayed.state(), drive.state());
+    }
+    #[test]
+    fn code_tool_force_recovery_records_unknown_unfinished_outcomes_and_replays() {
+        for close_session in [false, true] {
+            let (mut drive, parent) = code_tool_fixture();
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::OpenCodeToolScope {
+                    scope: code_tool_scope(parent),
+                },
+            );
+            let pending = code_tool_spec("pending", "local_echo");
+            let joined = code_tool_spec("joined", "agent_run");
+            let finished = code_tool_spec("finished", "local_echo");
+            for call in [&pending, &joined, &finished] {
+                code_tool_commit(
+                    &mut drive,
+                    CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+                );
+            }
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                "joined",
+            )
+            .unwrap();
+            let (result, _) = code_tool_workflow_effect(&request);
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: joined.origin.clone(),
+                    result,
+                },
+            );
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                "finished",
+            )
+            .unwrap();
+            let result = completed_tool_result(&request).results.remove(0);
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: finished.origin.clone(),
+                    result,
+                },
+            );
+            let finished_outcome = crate::code_tool_call(drive.state(), &finished.origin)
+                .unwrap()
+                .clone();
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                "pending",
+            )
+            .unwrap();
+            let late_result = completed_tool_result(&request).results.remove(0);
+            let mut replayed = CoreAgentDrive::from_replayed(
+                drive.session_id().clone(),
+                drive.state().clone(),
+                drive.head().cloned(),
+            );
+            let command = if close_session {
+                CoreAgentCommand::CloseSession { force: true }
+            } else {
+                CoreAgentCommand::ForceCancelRun {
+                    run_id: request.run_id,
+                }
+            };
+            let log = code_tool_commit(&mut drive, command);
+            assert!(drive.state().runs.active.is_none());
+            let scope = &drive.state().code_tools.scopes["execution-1"];
+            assert!(scope.closed && scope.cancel_requested);
+            for origin in [&pending.origin, &joined.origin] {
+                let crate::CodeToolCallStatus::Completed { result } =
+                    &crate::code_tool_call(drive.state(), origin).unwrap().status
+                else {
+                    panic!("forced interruption must terminate Update waiters");
+                };
+                assert_eq!(result.status, ToolCallStatus::Unavailable);
+                assert_eq!(result.error_ref, Some(crate::code_tool_interrupted_ref()));
+            }
+            assert_eq!(
+                crate::code_tool_call(drive.state(), &finished.origin),
+                Some(&finished_outcome)
+            );
+            assert!(
+                drive
+                    .admit_command(
+                        CoreAgentCommand::CompleteCodeToolCall {
+                            origin: pending.origin,
+                            result: late_result
+                        },
+                        100
+                    )
+                    .is_err()
+            );
+            if close_session {
+                assert_eq!(drive.state().lifecycle.status, CoreAgentStatus::Closed);
+            }
+            replayed
+                .resume_appended(
+                    log.iter()
+                        .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                        .collect(),
+                )
+                .unwrap();
+            assert_eq!(replayed.state(), drive.state());
+        }
+    }
+    #[test]
+    fn code_tool_close_before_joined_preparation_cancels_late_pending_reply_and_replays() {
+        for resolve_before_resume in [false, true] {
+            let (mut drive, parent) = code_tool_fixture();
+            code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::OpenCodeToolScope {
+                    scope: code_tool_scope(parent),
+                },
+            );
+            let joined = code_tool_spec("joined", "agent_run");
+            let submitted = code_tool_spec("submitted", "job_submit");
+            for call in [&joined, &submitted] {
+                code_tool_commit(
+                    &mut drive,
+                    CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+                );
+            }
+            let joined_request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                "joined",
+            )
+            .unwrap();
+            let submit_request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                "submitted",
+            )
+            .unwrap();
+            let reply_id = PromiseId::from_number(joined_request.promise_id_base);
+            let submitted_id = PromiseId::from_number(submit_request.promise_id_base);
+            let mut replayed = CoreAgentDrive::from_replayed(
+                drive.session_id().clone(),
+                drive.state().clone(),
+                drive.head().cloned(),
+            );
+            let mut log = code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::CloseCodeToolScope {
+                    execution_id: "execution-1".into(),
+                    cancel: true,
+                },
+            );
+            assert!(!drive.state().promises.promises.contains_key(&reply_id));
+            for (call, request) in [(&joined, &joined_request), (&submitted, &submit_request)] {
+                let (result, _) = code_tool_workflow_effect(request);
+                log.extend(code_tool_commit(
+                    &mut drive,
+                    CoreAgentCommand::CompleteCodeToolCall {
+                        origin: call.origin.clone(),
+                        result,
+                    },
+                ));
+            }
+            assert_eq!(
+                drive.state().promises.promises[&reply_id].status,
+                PromiseStatus::Pending
+            );
+            if resolve_before_resume {
+                log.extend(code_tool_commit(
+                    &mut drive,
+                    CoreAgentCommand::ResolvePromise {
+                        promise_id: reply_id.clone(),
+                        resolution: crate::PromiseResolution::Resolved {
+                            payload_ref: Some(BlobRef::from_bytes(b"already committed")),
+                        },
+                    },
+                ));
+            }
+            let result =
+                crate::code_tool_joined_result(drive.state(), &joined.origin, true).unwrap();
+            assert_eq!(
+                result.status,
+                if resolve_before_resume {
+                    ToolCallStatus::Succeeded
+                } else {
+                    ToolCallStatus::Cancelled
+                }
+            );
+            let resumed = code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::ResumeCodeToolCall {
+                    origin: joined.origin,
+                    result,
+                    claim_observed_at_ms: 100,
+                },
+            );
+            assert_eq!(resumed.iter().filter(|entry| matches!(&entry.event, CoreAgentEvent::Promise(PromiseEvent::Cancelled { promise_id }) if promise_id == &reply_id)).count(), usize::from(!resolve_before_resume));
+            log.extend(resumed);
+            assert_eq!(
+                drive.state().promises.promises[&reply_id].status,
+                if resolve_before_resume {
+                    PromiseStatus::Resolved
+                } else {
+                    PromiseStatus::Cancelled
+                }
+            );
+            assert_eq!(
+                drive.state().promises.promises[&submitted_id].status,
+                PromiseStatus::Pending
+            );
+            assert!(
+                matches!(&crate::code_tool_call(drive.state(), &submitted.origin).unwrap().status, crate::CodeToolCallStatus::Completed { result } if result.status == ToolCallStatus::Succeeded)
+            );
+            replayed
+                .resume_appended(
+                    log.iter()
+                        .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                        .collect(),
+                )
+                .unwrap();
+            assert_eq!(replayed.state(), drive.state());
+        }
     }
 }

@@ -20,6 +20,8 @@ pub struct CoreAgentState {
     pub promises: PromiseComponentState,
     #[serde(default)]
     pub workflow_tools: WorkflowToolState,
+    #[serde(default)]
+    pub code_tools: crate::CodeToolState,
 }
 
 impl CoreAgentState {
@@ -34,6 +36,7 @@ impl CoreAgentState {
             tooling: ToolingState::default(),
             promises: PromiseComponentState::default(),
             workflow_tools: WorkflowToolState::default(),
+            code_tools: crate::CodeToolState::default(),
         }
     }
 }

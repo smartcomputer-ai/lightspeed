@@ -24,11 +24,12 @@ pub struct BlobInfo {
 /// Contents of the well-known constant blobs the deterministic core
 /// references by hash without being able to write them itself (for example
 /// [`crate::UNAVAILABLE_TOOL_RESULT_CONTENT`]).
-pub const ENGINE_BLOB_CONTENTS: [&str; 4] = [
+pub const ENGINE_BLOB_CONTENTS: [&str; 5] = [
     crate::UNAVAILABLE_TOOL_RESULT_CONTENT,
     crate::TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT,
     crate::LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT,
     crate::CANCELLED_TOOL_RESULT_CONTENT,
+    crate::CODE_TOOL_INTERRUPTED_CONTENT,
 ];
 
 /// Refs of [`ENGINE_BLOB_CONTENTS`]. A long-running process may reference any
@@ -57,6 +58,7 @@ pub async fn ensure_harness_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStore
             crate::tool_runtime_boundary_failure_ref(),
             crate::llm_runtime_boundary_failure_ref(),
             crate::cancelled_tool_result_ref(),
+            crate::code_tool_interrupted_ref(),
         ]
     );
     Ok(())
@@ -1031,6 +1033,7 @@ mod tests {
                 crate::tool_runtime_boundary_failure_ref(),
                 crate::llm_runtime_boundary_failure_ref(),
                 crate::cancelled_tool_result_ref(),
+                crate::code_tool_interrupted_ref(),
             ]
         );
     }

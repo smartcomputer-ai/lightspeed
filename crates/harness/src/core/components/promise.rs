@@ -6,6 +6,15 @@ use thiserror::Error;
 
 use crate::{BlobRef, CoreAgentState, DomainError, RunId};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AwaitOutcome {
+    Terminal,
+    Timeout,
+    Cancelled,
+}
+
 /// Stable identifier for a promise: a session-scoped counter rendered as
 /// `promise_<n>`, the same convention as `run_<n>`, so the model copies a
 /// short handle rather than a digest. The harness hands every tool batch a

@@ -11,6 +11,7 @@ pub const CURRENT_PROTOCOL_VERSION: u32 = 2;
 macro_rules! string_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+        #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
         #[serde(transparent)]
         pub struct $name(pub String);
 
@@ -309,6 +310,8 @@ impl<'de> Deserialize<'de> for SecretString {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(with = "String"))]
 pub struct EnvironmentPath {
     normalized: String,
 }

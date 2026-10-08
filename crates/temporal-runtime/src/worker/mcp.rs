@@ -273,6 +273,7 @@ impl NativeMcpInventoryResolver {
                 remote_name: tool.name,
                 description: tool.description,
                 input_schema: tool.input_schema,
+                output_schema: tool.output_schema,
                 annotations: tool.annotations.map(native_tool_annotations),
             })
             .collect::<Vec<_>>();
@@ -282,6 +283,23 @@ impl NativeMcpInventoryResolver {
 }
 
 impl NativeMcpRuntime {
+    /// Use the same injected inventory and naming rules as the model adapters
+    /// when preparing an execution-scoped callable namespace.
+    pub(crate) async fn injected_tools(
+        &self,
+        spec: &RemoteMcpToolSpec,
+        server_name: &harness::ToolName,
+        request_tool_count: &mut usize,
+    ) -> Result<Vec<(String, NativeMcpTool)>, llm_runtime::LlmAdapterError> {
+        llm_runtime::injected_native_tools(
+            self.inventory.as_ref(),
+            spec,
+            server_name,
+            request_tool_count,
+        )
+        .await
+    }
+
     pub(crate) fn new(
         servers: Arc<dyn mcp::McpRegistryStore>,
         secrets: Arc<dyn SecretResolver>,
@@ -721,13 +739,17 @@ fn validate_mcp_arguments(
 }
 
 fn full_tool_definition(server: &str, tool: &NativeMcpTool) -> serde_json::Value {
-    serde_json::json!({
+    let mut definition = serde_json::json!({
         "server": server,
         "name": tool.remote_name,
         "description": tool.description,
         "inputSchema": tool.input_schema,
         "annotations": tool.annotations,
-    })
+    });
+    if let Some(schema) = &tool.output_schema {
+        definition["outputSchema"] = schema.clone();
+    }
+    definition
 }
 
 fn compact_search_hit(server: &str, tool: &NativeMcpTool) -> Result<serde_json::Value, String> {
@@ -748,6 +770,17 @@ fn compact_search_hit(server: &str, tool: &NativeMcpTool) -> Result<serde_json::
         "annotations": tool.annotations,
         "truncated": MCP_FIND_TRUNCATED_NOTE,
     });
+
+    if let Some(schema) = &tool.output_schema {
+        hit["outputSchema"] = schema.clone();
+        // Search hits may omit whole schemas to stay bounded. Never truncate
+        // a schema into a different contract; the full definition keeps it.
+        if serialized_len(&hit)? > MCP_FIND_HIT_MAX_BYTES {
+            hit.as_object_mut()
+                .expect("MCP search hit object")
+                .remove("outputSchema");
+        }
+    }
 
     if serialized_len(&hit)? > MCP_FIND_HIT_MAX_BYTES {
         let mut argument_names = tool
@@ -1195,6 +1228,7 @@ mod tests {
             remote_name: name.to_owned(),
             description,
             input_schema,
+            output_schema: None,
             annotations: Some(serde_json::json!({"readOnlyHint": true})),
         }
     }
@@ -1223,6 +1257,10 @@ mod tests {
                     title: None,
                     description: Some("test tool".to_owned()),
                     input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}}
+                    })),
                     annotations: None,
                 }],
                 tools_list_changed: self.tools_list_changed,
@@ -1351,6 +1389,31 @@ mod tests {
         assert_eq!(discoverer.calls.load(Ordering::SeqCst), 1);
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn discovered_output_schema_reaches_cached_full_definitions() {
+        let resolver = NativeMcpInventoryResolver::for_test(
+            Arc::new(CountingDiscoverer {
+                calls: AtomicUsize::new(0),
+                tools_list_changed: false,
+                ttl_ms: None,
+            }),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        let expected = serde_json::json!({
+            "type": "object",
+            "properties": {"value": {"type": "string"}}
+        });
+        for _ in 0..2 {
+            let inventory = resolver.list_tools(&spec(1)).await.expect("inventory");
+            assert_eq!(inventory[0].output_schema.as_ref(), Some(&expected));
+            assert_eq!(
+                full_tool_definition("test", &inventory[0])["outputSchema"],
+                expected
+            );
+        }
+    }
+
     #[test]
     fn binary_content_is_extracted_and_referenced_without_inline_base64() {
         let mut value = serde_json::json!({
@@ -1410,6 +1473,7 @@ mod tests {
         );
         assert_eq!(whole["annotations"]["readOnlyHint"], true);
         assert!(whole.get("truncated").is_none());
+        assert!(whole.get("outputSchema").is_none());
 
         let oversized = compact_search_hit(
             "docs",
@@ -1428,6 +1492,56 @@ mod tests {
                 .unwrap()
                 .is_char_boundary(oversized["description"].as_str().unwrap().len())
         );
+    }
+
+    #[test]
+    fn deferred_definitions_and_search_hits_preserve_optional_output_schemas() {
+        let mut tool = native_tool("read", None, serde_json::json!({"type": "object"}));
+        assert!(
+            full_tool_definition("docs", &tool)
+                .get("outputSchema")
+                .is_none()
+        );
+        assert!(
+            compact_search_hit("docs", &tool)
+                .unwrap()
+                .get("outputSchema")
+                .is_none()
+        );
+
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            "additionalProperties": false
+        });
+        tool.output_schema = Some(schema.clone());
+        assert_eq!(full_tool_definition("docs", &tool)["outputSchema"], schema);
+        assert_eq!(
+            compact_search_hit("docs", &tool).unwrap()["outputSchema"],
+            schema
+        );
+
+        tool.description = Some("d".repeat(MCP_FIND_HIT_MAX_BYTES));
+        let hit = compact_search_hit("docs", &tool).expect("bounded description");
+        assert_eq!(hit["outputSchema"], schema);
+        assert_eq!(hit["truncated"], MCP_FIND_TRUNCATED_NOTE);
+        assert!(serialized_len(&hit).unwrap() <= MCP_FIND_HIT_MAX_BYTES);
+    }
+
+    #[test]
+    fn oversized_output_schemas_are_omitted_only_from_compact_hits() {
+        let mut tool = native_tool("read", None, serde_json::json!({"type": "object"}));
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"title": {"type": "string", "description": "d".repeat(MCP_FIND_HIT_MAX_BYTES)}}
+        });
+        tool.output_schema = Some(schema.clone());
+        let hit = compact_search_hit("docs", &tool).expect("bounded schema");
+        assert!(hit.get("outputSchema").is_none());
+        assert_eq!(hit["truncated"], MCP_FIND_TRUNCATED_NOTE);
+        assert!(serialized_len(&hit).unwrap() <= MCP_FIND_HIT_MAX_BYTES);
+        assert_eq!(full_tool_definition("docs", &tool)["outputSchema"], schema);
     }
 
     #[test]

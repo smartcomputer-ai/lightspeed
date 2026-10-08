@@ -207,3 +207,18 @@ it("coalesces consecutive context updates into one row of chips inside the work"
   expect(chips[0]!.children).toHaveLength(2);
   expect(chips[0]!.children[0]!.className).toContain("opacity-50");
 });
+
+
+it("keeps the code activity icon on a folded run and its row when expanded", async () => {
+  const section = finished("completed");
+  section.work = [{ kind: "tool-group", key: "code-batch", status: "succeeded", calls: [read("code-1", {
+    toolName: "code_execute", argumentsJson: '{"code":"text(1)"}',
+    display: { group: "code", verb: "Run code", target: "JavaScript", detail: "1 line" },
+  })] }];
+  await render(section);
+  expect(strip().querySelector(".lucide-file-code-2")).not.toBeNull();
+  expect(strip().innerHTML).toContain("text-fuchsia-700");
+  await act(async () => strip().click());
+  expect(container.textContent).toContain("Run codeJavaScript1 line");
+  expect(container.querySelector('button[aria-label="Run code JavaScript"] .lucide-file-code-2')).not.toBeNull();
+});

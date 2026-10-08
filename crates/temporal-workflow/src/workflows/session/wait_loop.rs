@@ -46,9 +46,14 @@ fn workflow_has_immediate_work(ctx: &WorkflowContext<AgentSessionWorkflow>, now:
 }
 
 pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) -> bool {
-    (!state.ready && state.setup_requested)
+    // A final Update handler may finish after the last durable append. Wake
+    // the owner so it can recheck all_handlers_finished and complete, even
+    // when no further event, promise, or timer can drive the loop.
+    workflow_state_is_closed_and_quiescent(state)
+        || (!state.ready && state.setup_requested)
         || admissions::has_admissible_admissions(state)
         || !state.pending_tool_batch_resumes.is_empty()
+        || code_tools::has_immediate_work(state)
         || session_state::has_due_emissions(state)
         || !state.pending_source_resolutions.is_empty()
         || !state.pending_promise_cancellations.is_empty()
@@ -85,6 +90,7 @@ fn nearest_workflow_wake_ms_for_state(state: &AgentSessionWorkflow) -> Option<u6
     let emission_retry_deadline = session_state::nearest_emission_retry_ms(state);
     let workflow_start_deadline = workflow_starts::nearest_wake_ms(state);
     let promise_hard_deadline = promise_sources::nearest_promise_deadline_ms(state);
+    let code_tool_deadline = code_tools::nearest_wake_ms(state);
     [
         await_deadline,
         promise_source_deadline,
@@ -92,6 +98,7 @@ fn nearest_workflow_wake_ms_for_state(state: &AgentSessionWorkflow) -> Option<u6
         emission_retry_deadline,
         workflow_start_deadline,
         promise_hard_deadline,
+        code_tool_deadline,
     ]
     .into_iter()
     .flatten()
@@ -103,6 +110,7 @@ pub(super) fn can_continue_as_new(
     args: &AgentSessionArgs,
 ) -> bool {
     !workflow_state_should_complete(ctx)
+        && ctx.all_handlers_finished()
         && ctx.state(workflow_state_allows_continue_as_new)
         && history_rollover_due(ctx, args)
 }
@@ -127,6 +135,7 @@ pub(super) fn history_rollover_due(
 /// because their workflow execution identities are stable.
 pub(super) fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow) -> bool {
     state.ready
+        && code_tools::is_quiescent(state)
         && state.run_preparation.is_none()
         && state.pending_toolsets.is_empty()
         && state.pending_admissions.is_empty()
@@ -139,11 +148,12 @@ pub(super) fn workflow_state_allows_continue_as_new(state: &AgentSessionWorkflow
 }
 
 pub(super) fn workflow_state_should_complete(ctx: &WorkflowContext<AgentSessionWorkflow>) -> bool {
-    ctx.state(workflow_state_is_closed_and_quiescent)
+    ctx.all_handlers_finished() && ctx.state(workflow_state_is_closed_and_quiescent)
 }
 
 pub(super) fn workflow_state_is_closed_and_quiescent(state: &AgentSessionWorkflow) -> bool {
     state.initialized
+        && code_tools::is_quiescent(state)
         && state.core_state.lifecycle.status == CoreAgentStatus::Closed
         && state.run_preparation.is_none()
         && state.pending_toolsets.is_empty()

@@ -1,19 +1,28 @@
 //! Temporal workflow contract and deterministic session orchestration.
 
 mod activities;
+mod code_execution;
+mod code_tools;
+pub use code_tools::*;
 mod config;
 mod rehydrate;
 mod session_preparation;
 mod temporal_helpers;
 mod types;
+pub use activities::{ACTIVITY_CODE_TOOL_INVOKE, ACTIVITY_CODE_TOOL_PREPARE_SCOPE};
 pub use session_preparation::*;
+pub use types::{
+    CodeToolInvokeActivityRequest, CodeToolInvokeActivityResult,
+    CodeToolPrepareScopeActivityRequest, CodeToolPrepareScopeActivityResult,
+};
 pub mod workflow_contract;
 mod workflows;
 
 pub use activities::{
     ACTIVITY_APPEND_EVENTS, ACTIVITY_AWAIT_ENVIRONMENT_READY,
     ACTIVITY_CANCEL_WORKFLOW_TOOL_EXECUTION, ACTIVITY_CHECK_WORKFLOW_TOOL_EXECUTION,
-    ACTIVITY_CONTEXT_COMPACT, ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
+    ACTIVITY_CODE_FINALIZE, ACTIVITY_CODE_PREPARE, ACTIVITY_CODE_RUN, ACTIVITY_CONTEXT_COMPACT,
+    ACTIVITY_CREATE_OR_LOAD_SESSION, ACTIVITY_ENVIRONMENT_JOB_CANCEL,
     ACTIVITY_ENVIRONMENT_JOB_POLL, ACTIVITY_ENVIRONMENT_JOB_PREPARE_WORKFLOW_TOOL,
     ACTIVITY_ENVIRONMENT_JOB_START, ACTIVITY_LLM_GENERATE, ACTIVITY_MATERIALIZE_AWAIT_RESULT,
     ACTIVITY_PREPARE_JOINED_CONTEXT, ACTIVITY_PUT_BLOB, ACTIVITY_READ_BLOB,
@@ -21,6 +30,12 @@ pub use activities::{
     ACTIVITY_SUBAGENT_CLOSE, ACTIVITY_SUBAGENT_PREPARE, ACTIVITY_SUBAGENT_RESOLVE,
     ACTIVITY_TOOL_INVOKE_BATCH, ACTIVITY_TOOL_INVOKE_CALL, ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS,
     ACTIVITY_VALIDATE_WORKFLOW_TOOL_REPLY, WorkflowActivities,
+};
+pub use code_execution::{
+    CODE_EXECUTION_WORKFLOW_TYPE, CodeExecutionDescriptor, CodeExecutionInterruption,
+    CodeExecutionLimits, CodeExecutionPhase, CodeExecutionSnapshot, CodeExecutionTerminal,
+    CodeExecutionValidationError, CodeFinalizeActivityRequest, CodePrepareActivityRequest,
+    CodePrepareActivityResult, CodeRunActivityResult,
 };
 pub use config::{
     ACTIVITY_CANCELLATION_HEARTBEAT_INTERVAL, ACTIVITY_CANCELLATION_HEARTBEAT_TIMEOUT,
@@ -54,27 +69,27 @@ pub use types::{
     EnvironmentJobWorkflowArgs, EnvironmentJobWorkflowInput, EnvironmentJobWorkflowSnapshot,
     EnvironmentJobWorkflowToolContext, JoinedContextPreparationRequest,
     LLM_PROVIDER_TRANSIENT_ERROR_TYPE, LLM_TRANSIENT_FAILURE_DETAILS_VERSION,
-    LlmGenerateActivityRequest, LlmTransientFailureDetails, MaterializedAwaitPromiseResult,
-    MaterializedAwaitResult, PendingEmission, PendingPromiseCancellation, PendingSourceResolution,
-    PendingToolBatchResume, PromiseSourcePoll, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
-    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
-    SessionBootstrapPayloadTooLarge, SubagentChildRef, SubagentCloseActivityRequest,
-    SubagentExecutionPhase, SubagentExecutionSnapshot, SubagentPrepareActivityRequest,
-    SubagentPrepareActivityResult, SubagentResolveActivityRequest, SubagentTerminal,
-    ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest, ToolInvokeCallActivityResult,
-    ToolPreparePromiseControlsActivityRequest, WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX,
-    WORKFLOW_TOOL_RECIPE_FORMAT_V1, WORKFLOW_TOOL_RECOVERY_QUERY,
-    WorkflowToolExecutionCancelRequest, WorkflowToolExecutionCheckRequest, WorkflowToolRecipeV1,
-    WorkflowToolRecoveryResult, WorkflowToolReplyValidationRequest,
-    WorkflowToolReplyValidationResult, WorkflowToolStartActivityRequest,
-    WorkflowToolStartActivityResult, WorkflowToolStartArgs, compose_environment_job_workflow_id,
-    compose_workflow_id, split_workflow_id, workflow_tool_recipe_fingerprint,
+    LlmGenerateActivityRequest, LlmTransientFailureDetails, PendingEmission,
+    PendingPromiseCancellation, PendingSourceResolution, PendingToolBatchResume, PromiseSourcePoll,
+    PutBlobRequest, ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
+    RuntimeProjectionRefreshActivityResult, SessionBootstrapPayloadTooLarge, SubagentChildRef,
+    SubagentCloseActivityRequest, SubagentExecutionPhase, SubagentExecutionSnapshot,
+    SubagentPrepareActivityRequest, SubagentPrepareActivityResult, SubagentResolveActivityRequest,
+    SubagentTerminal, ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest,
+    ToolInvokeCallActivityResult, ToolPreparePromiseControlsActivityRequest,
+    WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX, WORKFLOW_TOOL_RECIPE_FORMAT_V1,
+    WORKFLOW_TOOL_RECOVERY_QUERY, WorkflowToolExecutionCancelRequest,
+    WorkflowToolExecutionCheckRequest, WorkflowToolRecipeV1, WorkflowToolRecoveryResult,
+    WorkflowToolReplyValidationRequest, WorkflowToolReplyValidationResult,
+    WorkflowToolStartActivityRequest, WorkflowToolStartActivityResult, WorkflowToolStartArgs,
+    compose_environment_job_workflow_id, compose_workflow_id, split_workflow_id,
+    workflow_tool_recipe_fingerprint,
 };
 pub use workflows::bots;
 pub use workflows::channels;
 pub use workflows::{
     AgentSessionWorkflow, BotControllerWorkflow, BotTriggerFireWorkflow,
-    ChannelConversationWorkflow, EnvironmentJobWorkflow, SubagentExecutionWorkflow,
-    TranscriptionActivityResult, TranscriptionSnapshot, TranscriptionWorkflow,
-    TranscriptionWorkflowArgs, transcription_id, transcription_workflow_id,
+    ChannelConversationWorkflow, CodeExecutionWorkflow, EnvironmentJobWorkflow,
+    SubagentExecutionWorkflow, TranscriptionActivityResult, TranscriptionSnapshot,
+    TranscriptionWorkflow, TranscriptionWorkflowArgs, transcription_id, transcription_workflow_id,
 };

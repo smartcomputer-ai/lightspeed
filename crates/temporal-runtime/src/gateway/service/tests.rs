@@ -2809,3 +2809,66 @@ async fn text_input_provenance_requires_an_existing_source_blob() {
         }
     }
 }
+
+#[test]
+fn code_mode_api_grant_round_trips_and_keeps_binding_deadline_immutable() {
+    let config = harness_session_config_from_api(
+        api::SessionConfig {
+            features: Some(api::FeaturesConfig {
+                code_mode: Some(api::CodeModeFeature {
+                    timeout_ms: 45,
+                    allowed_tools: Some(vec![]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        openai_model(),
+    )
+    .unwrap();
+    config.validate().unwrap();
+    let feature = config.features.code_mode.as_ref().unwrap();
+    assert_eq!(feature.allowed_tools, Some(vec![]));
+    assert_eq!(feature.limits.timeout_ms, 45);
+    assert_eq!(feature.limits.max_tool_calls, 128);
+    let projected = api_projection::session_config_to_api(&config).unwrap();
+    assert_eq!(
+        projected.features.unwrap().code_mode.unwrap().timeout_ms,
+        45
+    );
+
+    let mut state = harness::CoreAgentState::new();
+    let tool_id = WorkflowToolId::new(tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID);
+    let binding = harness::WorkflowToolBinding::admit(
+        uuid::Uuid::from_u128(1),
+        harness::WorkflowToolDefinition {
+            tool_id: tool_id.clone(),
+            revision: 1,
+            semantic_type: tools::code::CODE_EXECUTE_WORKFLOW_SEMANTIC_TYPE.into(),
+            tool: tools::definitions::register(
+                "code.execute",
+                Default::default(),
+                harness::ToolParallelism::ParallelSafe,
+                Default::default(),
+            ),
+        },
+        harness::WorkflowToolTarget::Bound {
+            receiver: harness::WorkflowEndpointRef {
+                workflow_id: "receiver".into(),
+                workflow_kind: "code.execution".into(),
+            },
+            dispatch: harness::BoundWorkflowToolDispatch::Push,
+        },
+        harness::WorkflowToolCompletion::Joined {
+            reply_schema_ref: None,
+            deadline_after_ms: tools::code::CODE_EXECUTION_OVERHEAD_MS + 44,
+        },
+    )
+    .unwrap();
+    state.workflow_tools.bindings.insert(tool_id, binding);
+    assert!(validate_code_deadline_for_existing_bindings(&state, &config.features).is_err());
+    let mut features = config.features;
+    features.code_mode.as_mut().unwrap().limits.timeout_ms = 44;
+    validate_code_deadline_for_existing_bindings(&state, &features).unwrap();
+}

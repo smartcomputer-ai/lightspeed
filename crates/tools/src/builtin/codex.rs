@@ -21,14 +21,14 @@ use crate::{
     error::{ToolError, ToolResult},
     fs::FsPath,
     limits::ToolLimits,
-    runtime::{ToolInvocationOutput, decode_args, encode_output},
+    runtime::{ToolInvocationOutput, decode_args},
 };
 
 use super::{
     BuiltinTool, BuiltinToolContext, BuiltinToolOperation, canonical,
+    process_output::encode_process_output,
     shared::{
-        ProcessPresentation, nullable_integer, nullable_string, object, optional_boolean,
-        process_visible_output, string,
+        ProcessPresentation, nullable_integer, nullable_string, object, optional_boolean, string,
     },
 };
 
@@ -170,13 +170,12 @@ pub(super) async fn invoke_json(
                 args.into_run_process_args(tool.one_shot(), &env_ctx.limits)?,
             )
             .await?;
-            let visible = process_visible_output(
-                &result,
+            encode_process_output(
+                result,
                 ProcessPresentation::Codex {
                     wall_time: started.elapsed(),
                 },
-            );
-            encode_output(&result, visible)
+            )
         }
         BuiltinToolOperation::ContinueProcess => {
             let args: CodexWriteStdinArgs = decode_args(arguments)?;
@@ -184,13 +183,12 @@ pub(super) async fn invoke_json(
             let started = Instant::now();
             let result =
                 invoke_continue_process(env_ctx, args.into_continue_process_args()).await?;
-            let visible = process_visible_output(
-                &result,
+            encode_process_output(
+                result,
                 ProcessPresentation::Codex {
                     wall_time: started.elapsed(),
                 },
-            );
-            encode_output(&result, visible)
+            )
         }
         _ => canonical::invoke_json(tool, ctx, arguments).await,
     }

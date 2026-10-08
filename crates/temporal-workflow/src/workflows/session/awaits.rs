@@ -25,6 +25,9 @@ pub(super) fn parked_tool_batch(core_state: &CoreAgentState) -> Option<ParkedToo
 }
 
 pub(super) fn has_satisfied_await(state: &AgentSessionWorkflow) -> bool {
+    if code_tools::blocks_parent_resume(state) {
+        return false;
+    }
     if state
         .pending_tool_batch_resumes
         .iter()
@@ -47,6 +50,9 @@ fn parked_tool_batch_batch_id(core_state: &CoreAgentState) -> Option<harness::To
 }
 
 pub(super) fn nearest_await_wake_ms(state: &AgentSessionWorkflow) -> Option<u64> {
+    if code_tools::blocks_parent_resume(state) {
+        return None;
+    }
     parked_tool_batch(&state.core_state).and_then(|parked| parked.spec().deadline_at_ms)
 }
 
@@ -56,6 +62,9 @@ pub(super) fn nearest_await_wake_ms(state: &AgentSessionWorkflow) -> Option<u64>
 pub(super) async fn process_satisfied_await(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
+    if ctx.state(code_tools::blocks_parent_resume) {
+        return Ok(());
+    }
     let now = workflow_time_ms(ctx);
     let resolved = ctx.state(|state| {
         let parked = parked_tool_batch(&state.core_state)?;

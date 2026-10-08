@@ -130,6 +130,101 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "CodeModeFeature": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
+          "properties": {
+            "allowedTools": {
+              "description": "Logical tool ids (for example vfs.read_file), not provider wire names.\nAbsent permits every currently callable grant; an empty list permits none.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "maxCatalogBytes": {
+              "default": 1048576,
+              "description": "Pinned callable catalog bytes, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxMemoryBytes": {
+              "default": 67108864,
+              "description": "Interpreter heap, at most 512 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutputBytes": {
+              "default": 1048576,
+              "description": "Combined text() output and return value, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutstandingToolCalls": {
+              "default": 16,
+              "description": "Concurrent pending calls, at most 64 and no greater than maxToolCalls.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxRequestBytes": {
+              "default": 1048576,
+              "description": "Serialized arguments per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxResultBytes": {
+              "default": 1048576,
+              "description": "Serialized completion per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxSourceBytes": {
+              "default": 262144,
+              "description": "UTF-8 source bytes, at most 1 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxStackBytes": {
+              "default": 1048576,
+              "description": "Interpreter native stack, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxToolCalls": {
+              "default": 128,
+              "description": "Calls per script, at most 1,024.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "default": 1,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -362,6 +457,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
           "properties": {
+            "codeMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CodeModeFeature"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "environments": {
               "anyOf": [
                 {
@@ -1271,6 +1376,101 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
+        "CodeModeFeature": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
+          "properties": {
+            "allowedTools": {
+              "description": "Logical tool ids (for example vfs.read_file), not provider wire names.\nAbsent permits every currently callable grant; an empty list permits none.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "maxCatalogBytes": {
+              "default": 1048576,
+              "description": "Pinned callable catalog bytes, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxMemoryBytes": {
+              "default": 67108864,
+              "description": "Interpreter heap, at most 512 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutputBytes": {
+              "default": 1048576,
+              "description": "Combined text() output and return value, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutstandingToolCalls": {
+              "default": 16,
+              "description": "Concurrent pending calls, at most 64 and no greater than maxToolCalls.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxRequestBytes": {
+              "default": 1048576,
+              "description": "Serialized arguments per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxResultBytes": {
+              "default": 1048576,
+              "description": "Serialized completion per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxSourceBytes": {
+              "default": 262144,
+              "description": "UTF-8 source bytes, at most 1 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxStackBytes": {
+              "default": 1048576,
+              "description": "Interpreter native stack, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxToolCalls": {
+              "default": 128,
+              "description": "Calls per script, at most 1,024.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "default": 1,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -1503,6 +1703,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
           "properties": {
+            "codeMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CodeModeFeature"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "environments": {
               "anyOf": [
                 {
@@ -3577,6 +3787,101 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       ],
       "type": "object",
       "definitions": {
+        "CodeModeFeature": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
+          "properties": {
+            "allowedTools": {
+              "description": "Logical tool ids (for example vfs.read_file), not provider wire names.\nAbsent permits every currently callable grant; an empty list permits none.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "maxCatalogBytes": {
+              "default": 1048576,
+              "description": "Pinned callable catalog bytes, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxMemoryBytes": {
+              "default": 67108864,
+              "description": "Interpreter heap, at most 512 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutputBytes": {
+              "default": 1048576,
+              "description": "Combined text() output and return value, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutstandingToolCalls": {
+              "default": 16,
+              "description": "Concurrent pending calls, at most 64 and no greater than maxToolCalls.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxRequestBytes": {
+              "default": 1048576,
+              "description": "Serialized arguments per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxResultBytes": {
+              "default": 1048576,
+              "description": "Serialized completion per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxSourceBytes": {
+              "default": 262144,
+              "description": "UTF-8 source bytes, at most 1 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxStackBytes": {
+              "default": 1048576,
+              "description": "Interpreter native stack, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxToolCalls": {
+              "default": 128,
+              "description": "Calls per script, at most 1,024.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "default": 1,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -3809,6 +4114,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
           "properties": {
+            "codeMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CodeModeFeature"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "environments": {
               "anyOf": [
                 {
@@ -5623,6 +5938,101 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ],
           "type": "object"
         },
+        "CodeModeFeature": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
+          "properties": {
+            "allowedTools": {
+              "description": "Logical tool ids (for example vfs.read_file), not provider wire names.\nAbsent permits every currently callable grant; an empty list permits none.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "maxCatalogBytes": {
+              "default": 1048576,
+              "description": "Pinned callable catalog bytes, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxMemoryBytes": {
+              "default": 67108864,
+              "description": "Interpreter heap, at most 512 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutputBytes": {
+              "default": 1048576,
+              "description": "Combined text() output and return value, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutstandingToolCalls": {
+              "default": 16,
+              "description": "Concurrent pending calls, at most 64 and no greater than maxToolCalls.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxRequestBytes": {
+              "default": 1048576,
+              "description": "Serialized arguments per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxResultBytes": {
+              "default": 1048576,
+              "description": "Serialized completion per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxSourceBytes": {
+              "default": 262144,
+              "description": "UTF-8 source bytes, at most 1 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxStackBytes": {
+              "default": 1048576,
+              "description": "Interpreter native stack, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxToolCalls": {
+              "default": 128,
+              "description": "Calls per script, at most 1,024.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "default": 1,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -5855,6 +6265,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
           "properties": {
+            "codeMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CodeModeFeature"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "environments": {
               "anyOf": [
                 {
@@ -6651,6 +7071,101 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ],
           "type": "object"
         },
+        "CodeModeFeature": {
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Grants JavaScript composition through `code_execute`. Available script tools\nare the session's ordinary callable tools, optionally narrowed by allowedTools.\nTypeScript, ambient filesystem/network access, and recursive code execution\nare unavailable. An empty allowedTools list grants pure computation only.",
+          "properties": {
+            "allowedTools": {
+              "description": "Logical tool ids (for example vfs.read_file), not provider wire names.\nAbsent permits every currently callable grant; an empty list permits none.",
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "maxCatalogBytes": {
+              "default": 1048576,
+              "description": "Pinned callable catalog bytes, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxMemoryBytes": {
+              "default": 67108864,
+              "description": "Interpreter heap, at most 512 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutputBytes": {
+              "default": 1048576,
+              "description": "Combined text() output and return value, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxOutstandingToolCalls": {
+              "default": 16,
+              "description": "Concurrent pending calls, at most 64 and no greater than maxToolCalls.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxRequestBytes": {
+              "default": 1048576,
+              "description": "Serialized arguments per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxResultBytes": {
+              "default": 1048576,
+              "description": "Serialized completion per tool request, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxSourceBytes": {
+              "default": 262144,
+              "description": "UTF-8 source bytes, at most 1 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxStackBytes": {
+              "default": 1048576,
+              "description": "Interpreter native stack, at most 8 MiB.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxToolCalls": {
+              "default": 128,
+              "description": "Calls per script, at most 1,024.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 60000,
+              "description": "Total attempt time including input loading, interpreter capacity waits,\nJavaScript evaluation, and tool waits; at most 600,000 milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "version": {
+              "default": 1,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "CompactionPolicy": {
           "oneOf": [
             {
@@ -6883,6 +7398,16 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "description": "Capability grants. An absent feature is not granted; `{}` grants it with\ndefaults. Every block carries a behavior `version` that pins semantics.",
           "properties": {
+            "codeMode": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CodeModeFeature"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "environments": {
               "anyOf": [
                 {

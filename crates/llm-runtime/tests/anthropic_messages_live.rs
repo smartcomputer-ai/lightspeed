@@ -61,6 +61,7 @@ fn user_entry(entry_id: u64, content_ref: BlobRef) -> ContextEntry {
 
 fn intent_request(fingerprint: &str, entries: Vec<ContextEntry>) -> LlmRequest {
     LlmRequest {
+        code_mode: None,
         model: model_selection(),
         request_fingerprint: fingerprint.to_string(),
         context: ContextSnapshot {

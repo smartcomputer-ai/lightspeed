@@ -13,7 +13,9 @@ use temporal_runtime::{
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
-    worker::{self, BotWorkerActivities, ChannelWorkerActivities, WorkerActivities},
+    worker::{
+        self, BotWorkerActivities, ChannelWorkerActivities, CodeWorkerActivities, WorkerActivities,
+    },
 };
 use tracing_subscriber::{EnvFilter, fmt};
 
@@ -23,7 +25,7 @@ use tracing_subscriber::{EnvFilter, fmt};
     version = release_info::LONG_VERSION,
     about = "Run the Lightspeed hosted runtime",
     after_help = "When no command is supplied, the server runs every role in this process: \
-gateway, environment-gateway, sessions, bots, channels. Select a subset with --roles \
+gateway, environment-gateway, sessions, bots, channels, code. Select a subset with --roles \
 (or LIGHTSPEED_ROLES). Each worker role runs its workflows and activities together."
 )]
 struct Cli {
@@ -135,7 +137,7 @@ enum ApiKeyCommand {
 #[derive(Clone, Debug, Args)]
 struct RunArgs {
     /// Roles this process runs: a comma-separated subset of gateway,
-    /// environment-gateway, sessions, bots, channels (default: all). Run
+    /// environment-gateway, sessions, bots, channels, code (default: all). Run
     /// exactly one environment-gateway process per deployment.
     #[arg(long, env = "LIGHTSPEED_ROLES")]
     roles: Option<String>,
@@ -153,6 +155,13 @@ struct RunArgs {
 
     #[arg(long, env = "LIGHTSPEED_TASK_QUEUE_CHANNELS")]
     channels_task_queue: Option<String>,
+
+    #[arg(long, env = "LIGHTSPEED_TASK_QUEUE_CODE")]
+    code_task_queue: Option<String>,
+
+    /// Maximum simultaneous JavaScript interpreters in this process.
+    #[arg(long, env = "LIGHTSPEED_CODE_MAX_CONCURRENT_EXECUTIONS", default_value_t = temporal_runtime::config::DEFAULT_CODE_MAX_CONCURRENT_EXECUTIONS)]
+    code_max_concurrent_executions: usize,
 
     #[arg(long, env = "TEMPORAL_ADDRESS", default_value = DEFAULT_TEMPORAL_TARGET)]
     temporal_target: String,
@@ -196,6 +205,13 @@ impl RunArgs {
             .filter(|value| !value.is_empty())
         {
             queues.channels = queue.to_owned();
+        }
+        if let Some(queue) = self
+            .code_task_queue
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            queues.code = queue.to_owned();
         }
         Ok(queues)
     }
@@ -562,6 +578,7 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         sessions_queue = %task_queues.sessions,
         bots_queue = %task_queues.bots,
         channels_queue = %task_queues.channels,
+        code_queue = %task_queues.code,
         "lightspeed-runtime starting"
     );
 
@@ -622,6 +639,22 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 &runtime,
                 client.clone(),
                 task_queues.channels.clone(),
+                activities,
+            )?,
+        ));
+    }
+
+    if roles.has(Role::Code) {
+        let activities = CodeWorkerActivities::with_runtime(
+            universes.clone(),
+            args.code_max_concurrent_executions,
+        )?;
+        workers.push((
+            Role::Code,
+            worker::code_worker(
+                &runtime,
+                client.clone(),
+                task_queues.code.clone(),
                 activities,
             )?,
         ));
@@ -761,6 +794,27 @@ mod tests {
         let error = Cli::try_parse_from(["lightspeed-runtime", "--task-types", "workflows"])
             .expect_err("removed polling override must be rejected");
         assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn code_role_accepts_its_own_queue_and_interpreter_capacity() {
+        let cli = Cli::try_parse_from([
+            "lightspeed-runtime",
+            "--roles",
+            "code",
+            "--task-queue",
+            "test-sessions",
+            "--code-task-queue",
+            "test-code",
+            "--code-max-concurrent-executions",
+            "7",
+        ])
+        .expect("parse code role configuration");
+        assert_eq!(cli.run.roles().unwrap().to_string(), "code");
+        let queues = cli.run.task_queues().expect("deployment queues");
+        assert_eq!(queues.sessions, "test-sessions");
+        assert_eq!(queues.code, "test-code");
+        assert_eq!(cli.run.code_max_concurrent_executions, 7);
     }
 
     #[test]

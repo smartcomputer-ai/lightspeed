@@ -32,6 +32,13 @@ function history(seqs: number[], head: number, before?: number) {
   return { events: seqs.map(message), headCursor: { seq: head },
     complete: before === undefined, nextCursor: before === undefined ? null : { seq: before } };
 }
+function codeToolProgress(seq: number): SessionEvent {
+  return {
+    sessionId: "session", cursor: { seq }, observedAtMs: seq, joins: {},
+    kind: { type: "codeToolProgress", executionId: "execution-1",
+      requestId: "request-1", phase: "callCompleted", status: "succeeded" },
+  };
+}
 async function reply(index: number, body: unknown, status = 200) {
   await act(async () => requests[index]!.reply(body, status));
 }
@@ -87,6 +94,22 @@ describe("recent transcript and live history", () => {
     expect(requests[1]!.url.searchParams.get("after")).toBe("0");
     await reply(1, { events: [message(1)], nextCursor: { seq: 1 }, complete: true });
     expect(tail.transcript.entries[0]!.key).toBe("message-1");
+  });
+
+  it("keeps code tool progress contiguous through history and live reads without adding chat entries", async () => {
+    await act(async () => root.render(<Harness />));
+    await reply(0, { events: [message(1), codeToolProgress(2), message(3)],
+      headCursor: { seq: 3 }, complete: true, nextCursor: null });
+    expect(tail.phase).toBe("live");
+    expect(tail.error).toBeNull();
+    expect(requests[1]!.url.searchParams.get("after")).toBe("3");
+    expect(tail.transcript.entries.map((entry) => entry.key)).toEqual(["message-1", "message-3"]);
+
+    await reply(1, { events: [codeToolProgress(4), message(5)], complete: true });
+    expect(tail.error).toBeNull();
+    expect(requests[2]!.url.searchParams.get("after")).toBe("5");
+    expect(tail.transcript.entries.map((entry) => entry.key)).toEqual(["message-1", "message-3", "message-5"]);
+    expect([...tail.transcript.seenEvents]).toEqual([1, 2, 3, 4, 5]);
   });
 
   it.each(["network", "gateway"])("recovers one %s failure immediately without flashing a disconnect", async (failure) => {

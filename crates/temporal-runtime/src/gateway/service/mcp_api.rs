@@ -540,6 +540,7 @@ mod tests {
             title: Some(retained.clone()),
             description: Some(retained.clone()),
             input_schema: serde_json::json!({"type": "object"}),
+            output_schema: None,
             annotations: None,
         }]);
         let api::McpServerToolsDiscoverResponse::Success { tools } = response else {

@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -29,11 +29,20 @@ use crate::{
 
 use super::{
     BuiltinTool, BuiltinToolContext, BuiltinToolOperation, BuiltinToolVariant, canonical,
+    process_output::encode_process_output,
     shared::{
         ProcessPresentation, invalid_request, nullable_integer, nullable_string, object,
-        optional_boolean, optional_enum, process_visible_output, string, visible_with_search_stop,
+        optional_boolean, optional_enum, string, visible_with_search_stop,
     },
 };
+
+/// Claude's Edit also creates a file when `old_string` is empty.
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub(super) enum EditResult {
+    Write(crate::fs::tools::WriteFileResult),
+    Edit(crate::fs::tools::EditFileResult),
+}
 
 /// How long `KillShell` waits for the killed group's final output: the
 /// environment daemon's output drain grace.
@@ -49,7 +58,9 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> ToolResult<S
         (BuiltinToolOperation::ReadFile, _) => {
             "Reads a file from the filesystem. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle. Use [label](media:handle) to link them or ![description](media:handle) to display an image inline."
         }
-        (BuiltinToolOperation::WriteFile, _) => "Writes a file to the filesystem.",
+        (BuiltinToolOperation::WriteFile, _) => {
+            "Writes a complete file using exactly one of content (UTF-8 text) or content_ref (a full blob reference, recorded handle, or descriptor). Reference writes preserve exact binary bytes."
+        }
         (BuiltinToolOperation::EditFile, _) => "Performs exact string replacements in a file.",
         (BuiltinToolOperation::Grep, _) => "Searches file contents with a regular expression.",
         (BuiltinToolOperation::Glob, _) => "Finds files by glob pattern.",
@@ -104,16 +115,7 @@ pub(super) fn input_schema(tool: BuiltinTool) -> ToolResult<Value> {
             ],
             ["file_path"],
         ),
-        (BuiltinToolOperation::WriteFile, _) => object(
-            [
-                (
-                    "file_path",
-                    string("The absolute path to the file to write."),
-                ),
-                ("content", string("The content to write to the file.")),
-            ],
-            ["file_path", "content"],
-        ),
+        (BuiltinToolOperation::WriteFile, _) => canonical::write_file_schema("file_path"),
         (BuiltinToolOperation::EditFile, _) => object(
             [
                 (
@@ -319,8 +321,11 @@ pub(super) async fn invoke_json(
         }
         (BuiltinToolOperation::WriteFile, _) => {
             let args: ClaudeCodeWriteArgs = decode_args(arguments)?;
-            let fs_ctx = ctx.filesystem()?;
-            let result = invoke_write_file(fs_ctx, args.try_into_write_file_args()?).await?;
+            let result = crate::fs::tools::write_file::invoke_builtin_write_file(
+                ctx,
+                args.try_into_write_file_args()?,
+            )
+            .await?;
             let visible = format!(
                 "Wrote {} bytes to {}",
                 result.bytes_written, result.resolved_path
@@ -336,7 +341,7 @@ pub(super) async fn invoke_json(
                     "Wrote {} bytes to {}",
                     result.bytes_written, result.resolved_path
                 );
-                return encode_output(&result, visible);
+                return encode_output(&EditResult::Write(result), visible);
             }
 
             let result = invoke_edit_file(fs_ctx, args.try_into_edit_file_args()?).await?;
@@ -344,7 +349,7 @@ pub(super) async fn invoke_json(
                 "Replaced {} match(es) in {}",
                 result.replacements, result.resolved_path
             );
-            encode_output(&result, visible)
+            encode_output(&EditResult::Edit(result), visible)
         }
         (BuiltinToolOperation::Grep, _) => {
             let args: ClaudeCodeGrepArgs = decode_args(arguments)?;
@@ -384,9 +389,7 @@ pub(super) async fn invoke_json(
                 args.into_run_process_args(background, &env_ctx.limits),
             )
             .await?;
-            let visible =
-                process_visible_output(&result, ProcessPresentation::ClaudeBash { background });
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::ClaudeBash { background })
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Primary) => {
             let args: ClaudeCodeBashOutputArgs = decode_args(arguments)?;
@@ -394,16 +397,14 @@ pub(super) async fn invoke_json(
             let result =
                 invoke_continue_process(env_ctx, args.into_continue_process_args(&env_ctx.limits))
                     .await?;
-            let visible = process_visible_output(&result, ProcessPresentation::ClaudeBashOutput);
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::ClaudeBashOutput)
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Kill) => {
             let args: ClaudeCodeKillShellArgs = decode_args(arguments)?;
             let env_ctx = ctx.environment()?;
             let result =
                 invoke_continue_process(env_ctx, args.into_continue_process_args()).await?;
-            let visible = process_visible_output(&result, ProcessPresentation::ClaudeKillShell);
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::ClaudeKillShell)
         }
         (
             BuiltinToolOperation::Reference
@@ -450,7 +451,16 @@ impl ClaudeCodeReadArgs {
 #[derive(Debug, Deserialize)]
 struct ClaudeCodeWriteArgs {
     file_path: String,
-    content: String,
+    #[serde(
+        default,
+        deserialize_with = "crate::fs::tools::write_file::present_value"
+    )]
+    content: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "crate::fs::tools::write_file::present_value"
+    )]
+    content_ref: Option<crate::content::ContentReference>,
 }
 
 impl ClaudeCodeWriteArgs {
@@ -458,6 +468,7 @@ impl ClaudeCodeWriteArgs {
         Ok(WriteFileArgs {
             path: parse_fs_path(self.file_path)?,
             content: self.content,
+            content_ref: self.content_ref,
         })
     }
 }
@@ -483,7 +494,8 @@ impl ClaudeCodeEditArgs {
     fn try_into_write_file_args(self) -> ToolResult<WriteFileArgs> {
         Ok(WriteFileArgs {
             path: parse_fs_path(self.file_path)?,
-            content: self.new_string,
+            content: Some(self.new_string),
+            content_ref: None,
         })
     }
 }

@@ -11,6 +11,9 @@ pub struct NativeMcpTool {
     pub remote_name: String,
     pub description: Option<String>,
     pub input_schema: Value,
+    /// Optional schema of `structuredContent`; the MCP result envelope and
+    /// content blocks are outside this schema.
+    pub output_schema: Option<Value>,
     /// Standard MCP annotation hints retained for model-facing discovery.
     /// They are untrusted metadata and never authorize execution or retries.
     pub annotations: Option<Value>,
@@ -40,7 +43,7 @@ pub trait McpInventoryResolver: Send + Sync {
 
 /// Resolve the shared injection policy before adapters construct native wire tools.
 /// The counter belongs to the request, so all injected servers share the cap.
-pub(crate) async fn injected_native_tools(
+pub async fn injected_native_tools(
     inventory: &dyn McpInventoryResolver,
     spec: &RemoteMcpToolSpec,
     server_name: &ToolName,
@@ -138,6 +141,10 @@ mod tests {
             remote_name: name.to_owned(),
             description: Some(format!("Description for {name}")),
             input_schema: json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {"matches": {"type": "array", "items": {"type": "string"}}}
+            })),
             annotations: Some(json!({"readOnlyHint": true})),
         }
     }

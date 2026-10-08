@@ -52,6 +52,7 @@ export default defineConfig({
           { slug: 'using-lightspeed/profiles-and-instructions' },
           { slug: 'using-lightspeed/workspaces-and-skills' },
           { slug: 'using-lightspeed/tools-and-mcp' },
+          { slug: 'using-lightspeed/code-mode' },
           { slug: 'using-lightspeed/bots-and-triggers' },
           { slug: 'using-lightspeed/subagents-and-federation' },
           { slug: 'using-lightspeed/chat-channels' },

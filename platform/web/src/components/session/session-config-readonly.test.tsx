@@ -25,6 +25,7 @@ it("keeps read-only settings expandable and copyable while disabling every edit 
       vfs: { workspaces: [{ workspaceId: "files", path: "/workspace", access: "read" }] },
       mcp: { servers: [{ serverId: "tools", tools: ["search"] }] },
       subagents: { agents: [{ profileId: "helper" }] },
+      codeMode: { timeoutMs: 60_000, maxToolCalls: 64, maxOutstandingToolCalls: 8 },
       web: { search: {}, fetch: {} }, timers: {},
     },
   }} />));
@@ -40,6 +41,7 @@ it("keeps read-only settings expandable and copyable while disabling every edit 
   }
   expect(container.textContent).toContain("Workspace");
   expect(container.textContent).toContain("search");
+  expect(container.textContent).toContain("Max outstanding calls");
   const inputs = [...container.querySelectorAll<HTMLInputElement>("input")]
     .filter((input) => input.type !== "hidden" && input.getAttribute("aria-label") !== "Search MCP tools");
   expect(inputs.length).toBeGreaterThan(10);

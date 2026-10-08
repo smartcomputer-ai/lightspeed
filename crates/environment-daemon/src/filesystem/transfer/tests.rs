@@ -9,6 +9,7 @@ use harness::{
     BlobRef,
     storage::{BlobSource, BlobStore, BlobStoreError},
 };
+use serde_json::json;
 use std::path::Path;
 use std::{
     os::unix::fs::{PermissionsExt, symlink},
@@ -122,6 +123,188 @@ fn repeated_ref(size: u64) -> BlobRef {
     }
     BlobRef::parse(format!("sha256:{}", hex::encode(hash.finalize()))).unwrap()
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn blob_file_tools_stream_without_vfs_and_keep_receipts_across_retries() {
+    use tools::builtin::{
+        BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op, BuiltinToolSurface as Surface,
+    };
+    for surface in [
+        Surface::Canonical,
+        Surface::CodexLike,
+        Surface::ClaudeCodeLike,
+    ] {
+        let environment = tempfile::tempdir().unwrap();
+        let cas = tempfile::tempdir().unwrap();
+        let store = Arc::new(store_fs::FsBlobStore::open(cas.path()).await.unwrap());
+        let size = 9 * 1024 * 1024 + 7;
+        let content = repeated_ref(size);
+        store
+            .put_stream(&content, size, &mut Repeated { remaining: size })
+            .await
+            .unwrap();
+        let (connection, largest, lose_commit) = remote(runtime(environment.path(), false));
+        let (_, context) = connection
+            .with_cwd(tools::fs::FsPath::new(environment.path().to_str().unwrap()).unwrap())
+            .into_contexts(store.clone());
+        let context = context.with_environment_id("test-env");
+        let key = if surface == Surface::ClaudeCodeLike {
+            "file_path"
+        } else {
+            "path"
+        };
+        let write = BuiltinTool::environment(Op::WriteFile, surface);
+        let capture = BuiltinTool::environment(Op::Reference, surface);
+        let writer = context.clone().with_operation_id("write-binary");
+        let output = write
+            .invoke_json(
+                BuiltinToolContext::Environment(&writer),
+                json!({key:"nested/source.bin","content_ref":content}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.output_json["bytes_written"], size);
+        assert_eq!(output.output_json["receipt"]["phase"], "complete");
+        assert_eq!(
+            std::fs::metadata(environment.path().join("nested/source.bin"))
+                .unwrap()
+                .len(),
+            size
+        );
+        let capture_cas = tempfile::tempdir().unwrap();
+        let capture_store = Arc::new(
+            store_fs::FsBlobStore::open(capture_cas.path())
+                .await
+                .unwrap(),
+        );
+        let mut capture_context = context.clone().with_operation_id("capture-binary");
+        capture_context.blobs = capture_store.clone();
+        let captured = capture
+            .invoke_json(
+                BuiltinToolContext::Environment(&capture_context),
+                json!({"path":"nested/source.bin"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(captured.output_json["content_ref"], content.to_string());
+        assert_eq!(captured.output_json["byte_len"], size);
+        assert_eq!(captured.attachments.len(), 1);
+        assert_eq!(captured.output_json["source"]["id"], "test-env");
+        assert_eq!(
+            capture_store.stat_blob(&content).await.unwrap().byte_len,
+            size
+        );
+        assert_eq!(
+            capture_store
+                .read_blob_range(&content, size - 7, 7)
+                .await
+                .unwrap(),
+            vec![0x83; 7]
+        );
+        std::fs::write(
+            environment.path().join("nested/source.bin"),
+            b"changed live file",
+        )
+        .unwrap();
+        let changed_source_retry = capture
+            .invoke_json(
+                BuiltinToolContext::Environment(&capture_context),
+                json!({"path":"nested/source.bin"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            changed_source_retry.output_json, captured.output_json,
+            "same-operation capture retry must keep the original immutable version"
+        );
+        std::fs::remove_file(environment.path().join("nested/source.bin")).unwrap();
+        let retry = capture
+            .invoke_json(
+                BuiltinToolContext::Environment(&capture_context),
+                json!({"path":"nested/source.bin"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            retry.output_json, captured.output_json,
+            "completed capture must not revisit the deleted live path"
+        );
+
+        // Materialization's receipt must make a lost commit response unambiguous.
+        std::fs::write(environment.path().join("result.bin"), b"original").unwrap();
+        std::fs::set_permissions(
+            environment.path().join("result.bin"),
+            std::fs::Permissions::from_mode(0o751),
+        )
+        .unwrap();
+        let writer = context.clone().with_operation_id("lost-write-receipt");
+        lose_commit.store(true, Ordering::Relaxed);
+        assert!(
+            write
+                .invoke_json(
+                    BuiltinToolContext::Environment(&writer),
+                    json!({key:"result.bin","content_ref":content})
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::metadata(environment.path().join("result.bin"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o751
+        );
+        std::fs::write(environment.path().join("result.bin"), b"later local edit").unwrap();
+        let retry = write
+            .invoke_json(
+                BuiltinToolContext::Environment(&writer),
+                json!({key:"result.bin","content_ref":content}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retry.output_json["receipt"]["phase"], "complete");
+        assert_eq!(
+            std::fs::read(environment.path().join("result.bin")).unwrap(),
+            b"later local edit"
+        );
+
+        std::fs::create_dir(environment.path().join("directory")).unwrap();
+        std::fs::write(environment.path().join("directory/keep"), b"keep").unwrap();
+        let writer = context.clone().with_operation_id("reject-directory-write");
+        assert!(
+            write
+                .invoke_json(
+                    BuiltinToolContext::Environment(&writer),
+                    json!({key:"directory","content_ref":content})
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(environment.path().join("directory/keep")).unwrap(),
+            b"keep"
+        );
+        let reader = context
+            .clone()
+            .with_operation_id("reject-directory-capture");
+        assert!(
+            capture
+                .invoke_json(
+                    BuiltinToolContext::Environment(&reader),
+                    json!({"path":"directory"})
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            largest.load(Ordering::Relaxed) < 400_000,
+            "large binary transfers must use bounded chunks"
+        );
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn rpc_vfs_roundtrip_streams_large_files_reuses_bytes_and_preserves_retry_receipt() {
     let environment = tempfile::tempdir().unwrap();

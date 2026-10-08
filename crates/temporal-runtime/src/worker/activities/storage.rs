@@ -210,7 +210,7 @@ pub(super) async fn materialize_await_result(
             Some(("error", value)) => (None, Some(value)),
             _ => (None, None),
         };
-        results.push(temporal_workflow::MaterializedAwaitPromiseResult {
+        results.push(tools::concurrency::AwaitPromiseOutput {
             promise_id: result.promise_id,
             status: result.status,
             output,
@@ -218,7 +218,7 @@ pub(super) async fn materialize_await_result(
         });
     }
 
-    let aggregate = temporal_workflow::MaterializedAwaitResult {
+    let aggregate = tools::concurrency::AwaitOutput {
         outcome: request.outcome,
         results,
     };
@@ -304,8 +304,15 @@ async fn prepare_payload_context(
                 if admitted.handle != descriptor.handle {
                     continue;
                 }
-                let Ok(info) = deps.blobs.stat_blob(&admitted.content_ref).await else {
-                    continue;
+                let info = match deps.blobs.stat_blob(&admitted.content_ref).await {
+                    Ok(info) => info,
+                    Err(harness::storage::BlobStoreError::NotFound { .. }) => {
+                        prepared
+                            .entries
+                            .push(unavailable_attachment_note(deps, &admitted.handle).await?);
+                        continue;
+                    }
+                    Err(error) => return Err(activity_error(error)),
                 };
                 if harness::media::admit_tool_media(Some(&admitted.media_type), info.byte_len)
                     .is_err()
@@ -316,23 +323,47 @@ async fn prepare_payload_context(
                     prepared.omitted += 1;
                     continue;
                 }
+                match deps.blobs.retain_blob(&admitted.content_ref).await {
+                    Ok(()) => (),
+                    Err(harness::storage::BlobStoreError::NotFound { .. }) => {
+                        prepared
+                            .entries
+                            .push(unavailable_attachment_note(deps, &admitted.handle).await?);
+                        continue;
+                    }
+                    Err(error) => return Err(activity_error(error)),
+                }
                 *media_budget -= 1;
                 prepared.entries.push(admitted.context_entry());
                 prepared.attachments.push(Attachment::Media(admitted));
             }
             Attachment::File(file) => {
-                if *file_budget == 0
-                    || !file.is_valid()
-                    || deps.blobs.stat_blob(&file.content_ref).await.is_err()
-                {
+                if *file_budget == 0 || !file.is_valid() {
                     continue;
+                }
+                match deps.blobs.stat_blob(&file.content_ref).await {
+                    Ok(_) => (),
+                    Err(harness::storage::BlobStoreError::NotFound { .. }) => {
+                        prepared
+                            .entries
+                            .push(unavailable_attachment_note(deps, &file.handle).await?);
+                        continue;
+                    }
+                    Err(error) => return Err(activity_error(error)),
                 }
                 let attachment = Attachment::File(file);
                 let mut retained = true;
                 for reference in attachment.blob_refs() {
-                    if deps.blobs.retain_blob(&reference).await.is_err() {
-                        retained = false;
-                        break;
+                    match deps.blobs.retain_blob(&reference).await {
+                        Ok(()) => (),
+                        Err(harness::storage::BlobStoreError::NotFound { .. }) => {
+                            prepared.entries.push(
+                                unavailable_attachment_note(deps, attachment.handle()).await?,
+                            );
+                            retained = false;
+                            break;
+                        }
+                        Err(error) => return Err(activity_error(error)),
                     }
                 }
                 if !retained {
@@ -344,6 +375,29 @@ async fn prepare_payload_context(
         }
     }
     Ok(prepared)
+}
+
+async fn unavailable_attachment_note(
+    deps: &StorageActivityDeps,
+    handle: &str,
+) -> Result<harness::ContextEntryInput, ActivityError> {
+    let text =
+        format!("[Attachment {handle} could not be delivered: its stored content is unavailable.]");
+    let content_ref = deps
+        .blobs
+        .put_bytes(text.clone().into_bytes())
+        .await
+        .map_err(activity_error)?;
+    Ok(harness::ContextEntryInput {
+        kind: harness::ContextEntryKind::Message {
+            role: harness::ContextMessageRole::User,
+        },
+        content: harness::ContentRef::text(content_ref),
+        preview: Some(text),
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
+    })
 }
 
 /// A user-role text entry telling the model that media beyond the cap was
@@ -1075,6 +1129,59 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn attachment_store_failures_retry_instead_of_silently_losing_selected_media() {
+        struct FailingStatStore(harness::storage::InMemoryBlobStore);
+        #[async_trait::async_trait]
+        impl harness::storage::BlobStore for FailingStatStore {
+            async fn put_bytes(
+                &self,
+                bytes: Vec<u8>,
+            ) -> Result<BlobRef, harness::storage::BlobStoreError> {
+                self.0.put_bytes(bytes).await
+            }
+            async fn read_bytes(
+                &self,
+                reference: &BlobRef,
+            ) -> Result<Vec<u8>, harness::storage::BlobStoreError> {
+                self.0.read_bytes(reference).await
+            }
+            async fn has_blob(
+                &self,
+                reference: &BlobRef,
+            ) -> Result<bool, harness::storage::BlobStoreError> {
+                self.0.has_blob(reference).await
+            }
+            async fn stat_blob(
+                &self,
+                _reference: &BlobRef,
+            ) -> Result<harness::storage::BlobInfo, harness::storage::BlobStoreError> {
+                Err(harness::storage::BlobStoreError::Store {
+                    message: "temporary storage outage".into(),
+                })
+            }
+        }
+        let mut deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        deps.blobs = Arc::new(FailingStatStore(harness::storage::InMemoryBlobStore::new()));
+        let reference = deps.blobs.put_bytes(b"image".to_vec()).await.unwrap();
+        let media = harness::Attachment::Media(
+            harness::media::MediaDescriptor::new(reference, "image/png", None).unwrap(),
+        );
+        let payload = deps
+            .blobs
+            .put_bytes(serde_json::to_vec(&json!({"attachments":[media]})).unwrap())
+            .await
+            .unwrap();
+        let error = match prepare_payload_context(&deps, &payload, &mut 8, &mut 128).await {
+            Err(error) => error,
+            Ok(_) => panic!("a storage outage must not masquerade as successful delivery"),
+        };
+        let ActivityError::Application(error) = error else {
+            panic!("expected retryable activity failure")
+        };
+        assert!(!error.is_non_retryable());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn joined_and_awaited_file_attachments_are_metadata_without_media_input() {
         use tools::attachments::Attachment;
         let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
@@ -1258,11 +1365,18 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             previews,
-            vec!["[document: report.pdf]", "[image: render.png]"]
+            vec![
+                "[document: report.pdf]".to_owned(),
+                format!(
+                    "[Attachment {} could not be delivered: its stored content is unavailable.]",
+                    harness::media::media_handle(&missing)
+                ),
+                "[image: render.png]".to_owned(),
+            ]
         );
-        assert_eq!(prepared[0].entries[1].content.content_ref, png);
+        assert_eq!(prepared[0].entries[2].content.content_ref, png);
         assert_eq!(
-            prepared[0].entries[1].content.media_type.as_deref(),
+            prepared[0].entries[2].content.media_type.as_deref(),
             Some("image/png")
         );
     }
@@ -1395,6 +1509,21 @@ mod tests {
                 .expect("aggregate bytes"),
         )
         .expect("aggregate JSON");
+
+        let definition = tools::concurrency::concurrency_tool_definitions(
+            &tools::concurrency::ConcurrencyToolsetConfig::timer(),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|definition| definition.name.as_str() == "await")
+        .unwrap();
+        let schema = jsonschema::validator_for(&definition.output_schema.unwrap()).unwrap();
+        schema
+            .validate(&value)
+            .expect("actual materialized await matches its advertised schema");
+        let mut invalid = value.clone();
+        invalid["results"] = json!("not an array");
+        assert!(!schema.is_valid(&invalid));
 
         assert_eq!(value["outcome"], "timeout");
         assert_eq!(value["results"][0]["output"], json!({"answer": 42}));

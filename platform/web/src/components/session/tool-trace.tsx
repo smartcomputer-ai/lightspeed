@@ -1,3 +1,4 @@
+import type { ToolCallDisplayGroup } from "@lightspeed-ai/sdk";
 import { filesFromAttachments } from "@/lib/file-references";
 import { useContext, useEffect, useState, type ComponentType, type ReactNode, type SVGProps } from "react";
 import { MediaStrip } from "@/components/session/media";
@@ -10,6 +11,7 @@ import {
   Clock3,
   Copy,
   ExternalLink,
+  FileCode2,
   GitFork,
   Hourglass,
   Layers,
@@ -55,10 +57,11 @@ interface GroupStyle {
   tile: string;
 }
 
-const GROUP_STYLES: Record<string, GroupStyle> = {
+const GROUP_STYLES: Record<ToolCallDisplayGroup, GroupStyle> = {
   explore: { icon: Search, text: "text-cyan-700 dark:text-cyan-300", tile: "bg-cyan-500/10" },
   edit: { icon: PencilLine, text: "text-amber-700 dark:text-amber-300", tile: "bg-amber-500/10" },
   execute: { icon: SquareTerminal, text: "text-blue-700 dark:text-blue-300", tile: "bg-blue-500/10" },
+  code: { icon: FileCode2, text: "text-fuchsia-700 dark:text-fuchsia-300", tile: "bg-fuchsia-500/10" },
   mcp: { icon: Plug, text: "text-violet-700 dark:text-violet-300", tile: "bg-violet-500/10" },
   agent: { icon: GitFork, text: "text-indigo-700 dark:text-indigo-300", tile: "bg-indigo-500/10" },
   bot: { icon: BotIcon, text: "text-teal-700 dark:text-teal-300", tile: "bg-teal-500/10" },
@@ -67,10 +70,12 @@ const GROUP_STYLES: Record<string, GroupStyle> = {
 };
 
 /// Display order of activity families on a folded run strip.
-export const GROUP_ORDER = ["explore", "edit", "execute", "mcp", "agent", "bot", "message", "other"];
+export const GROUP_ORDER = Object.keys(GROUP_STYLES) as ToolCallDisplayGroup[];
 
 export function groupStyle(group: string | null | undefined): GroupStyle {
-  return GROUP_STYLES[group ?? "other"] ?? GROUP_STYLES.other!;
+  return group && Object.hasOwn(GROUP_STYLES, group)
+    ? GROUP_STYLES[group as ToolCallDisplayGroup]
+    : GROUP_STYLES.other;
 }
 
 export function ActivityIcon({ group, className }: { group?: string | null; className?: string }) {

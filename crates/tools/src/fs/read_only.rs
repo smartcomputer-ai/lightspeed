@@ -63,6 +63,14 @@ impl FileSystem for ReadOnlyFileSystem {
         Err(self.deny_write(path))
     }
 
+    async fn write_file_ref(
+        &self,
+        path: &FsPath,
+        _content: &crate::content::ContentDescriptor,
+    ) -> FsResult<()> {
+        Err(self.deny_write(path))
+    }
+
     async fn create_directory(
         &self,
         path: &FsPath,

@@ -3,45 +3,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use harness::{
-    LlmGenerationResult, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpToolSpec,
-    ToolChoice, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+    LlmGenerationResult, ProviderNativeToolExecution, ToolChoice, ToolName, ToolSpec,
+    storage::BlobStore,
 };
-use serde_json::Value;
-use tools::{
-    definitions,
-    runtime::{FunctionDefinition, ToolTarget},
-};
+use tools::{callable, runtime::ToolTarget};
 
-use crate::{
-    blob_io::{read_json, read_text},
-    error::{LlmAdapterError, LlmAdapterResult},
+pub(crate) use tools::callable::{
+    NativeDefinition, ResolvedTool, ResolvedToolKind, valid_exposed_name,
 };
 
-#[derive(Clone, Debug)]
-pub(crate) struct ResolvedTool {
-    pub id: ToolName,
-    pub name: ToolName,
-    pub kind: ResolvedToolKind,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum ResolvedToolKind {
-    Function(FunctionDefinition),
-    ProviderNative(NativeDefinition),
-    RemoteMcp(RemoteMcpToolSpec),
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct NativeDefinition {
-    pub api_kind: ProviderApiKind,
-    pub definition: Value,
-    pub execution: ProviderNativeToolExecution,
-}
+use crate::error::{LlmAdapterError, LlmAdapterResult};
 
 pub(crate) struct ToolCatalog {
     pub tools: Vec<ResolvedTool>,
     pub names: AdvertisedNames,
     primary_names: BTreeMap<ToolName, ToolName>,
+    code_mode: Option<harness::CodeModePresentation>,
 }
 
 impl ToolCatalog {
@@ -54,100 +31,85 @@ impl ToolCatalog {
             tools: Vec::new(),
             names: AdvertisedNames::default(),
             primary_names: BTreeMap::new(),
+            code_mode: None,
         };
-        let mut ids = BTreeSet::new();
-        for tool in tools {
-            if !ids.insert(&tool.name) {
-                return Err(LlmAdapterError::InvalidProviderRequest {
-                    message: format!("duplicate tool registration {}", tool.name),
-                });
-            }
-            match &tool.kind {
-                ToolKind::Builtin(spec) => {
-                    for resolved in
-                        definitions::resolve(&tool.name, spec, target).map_err(|error| {
-                            LlmAdapterError::InvalidProviderRequest {
-                                message: error.to_string(),
-                            }
-                        })?
-                    {
-                        let kind = match resolved.definition {
-                            definitions::Definition::Function(function) => {
-                                ResolvedToolKind::Function(function)
-                            }
-                            definitions::Definition::Native(definition) => {
-                                ResolvedToolKind::ProviderNative(NativeDefinition {
-                                    api_kind: target.api_kind.clone(),
-                                    definition,
-                                    execution: ProviderNativeToolExecution::ProviderHosted,
-                                })
-                            }
-                        };
-                        catalog.push(ResolvedTool {
-                            id: tool.name.clone(),
-                            name: resolved.name,
-                            kind,
-                        })?;
-                    }
-                }
-                ToolKind::Function(function) => {
-                    let definition = FunctionDefinition {
-                        name: tool.name.clone(),
-                        description: match &function.description_ref {
-                            Some(reference) => Some(read_text(blobs, reference).await?),
-                            None => None,
-                        },
-                        input_schema: read_json(blobs, &function.input_schema_ref).await?,
-                        strict: function.strict,
-                        provider_options: match &function.provider_options_ref {
-                            Some(reference) => Some(read_json(blobs, reference).await?),
-                            None => None,
-                        },
-                    };
-                    catalog.push(ResolvedTool {
-                        id: tool.name.clone(),
-                        name: tool.name.clone(),
-                        kind: ResolvedToolKind::Function(definition),
-                    })?;
-                }
-                ToolKind::ProviderNative(native) => {
-                    let definition = read_json(blobs, &native.native_tool_ref).await?;
-                    let name = match definition.get("name").and_then(Value::as_str) {
-                        Some(name) => ToolName::try_new(name).map_err(|error| {
-                            LlmAdapterError::InvalidProviderRequest {
-                                message: error.to_string(),
-                            }
-                        })?,
-                        None => tool.name.clone(),
-                    };
-                    catalog.push(ResolvedTool {
-                        id: tool.name.clone(),
-                        name,
-                        kind: ResolvedToolKind::ProviderNative(NativeDefinition {
-                            api_kind: native.api_kind.clone(),
-                            definition,
-                            execution: native.execution.clone(),
-                        }),
-                    })?;
-                }
-                ToolKind::RemoteMcp(remote) => catalog.push(ResolvedTool {
-                    id: tool.name.clone(),
-                    name: tool.name.clone(),
-                    kind: ResolvedToolKind::RemoteMcp(remote.clone()),
-                })?,
-            }
-        }
-        // Preserve the previous provider-visible BTreeMap ordering, even though
-        // the admitted registry is now ordered by logical identity.
-        if tools
-            .iter()
-            .any(|tool| matches!(tool.kind, ToolKind::Builtin(_)))
+        for tool in callable::resolve(blobs, target, tools)
+            .await
+            .map_err(catalog_error)?
         {
-            catalog
-                .tools
-                .sort_by(|left, right| left.name.cmp(&right.name));
+            catalog.push(tool)?;
         }
         Ok(catalog)
+    }
+
+    pub async fn resolve_for_request(
+        blobs: &dyn BlobStore,
+        request: &harness::LlmRequest,
+    ) -> LlmAdapterResult<Self> {
+        let mut catalog =
+            Self::resolve(blobs, &ToolTarget::from(&request.model), &request.tools).await?;
+        let Some(presentation) = &request.code_mode else {
+            return Ok(catalog);
+        };
+        for tool in &mut catalog.tools {
+            let ResolvedToolKind::Function(definition) = &mut tool.kind else {
+                continue;
+            };
+            if let Some(contract) = presentation.workflow_results.get(&tool.id) {
+                let authored = request.tools.iter().any(|spec| {
+                    spec.name == tool.id && matches!(spec.kind, harness::ToolKind::Function(_))
+                });
+                definition.output_schema = callable::workflow_result_schema(
+                    blobs,
+                    contract,
+                    authored,
+                    definition.output_schema.take(),
+                )
+                .await
+                .map_err(catalog_error)?;
+            }
+            let outer = tool.id.as_str() == "code.execute";
+            let callable = !outer
+                && tool.callable_binding.is_some()
+                && presentation.allowed_tools.contains(&tool.id);
+            let mut description = code_description(
+                definition.description.as_deref(),
+                tool.name.as_str(),
+                definition.output_schema.as_ref(),
+                callable,
+                outer,
+                tool.id.as_str() == "mcp.call",
+            );
+            match tool.id.as_str() {
+                "mcp.call" => description.push_str(" Obtain the selected remote tool's inputSchema and optional outputSchema with mcp_find_tools; that outputSchema describes the server's structuredContent."),
+                "mcp.find_tools" => description.push_str(" Discovery results carry inputSchema and optional outputSchema. Remote outputSchema describes structuredContent within the MCP result envelope. Emit discovery results with text(value) if the model needs them to write a subsequent script."),
+                _ => {},
+            }
+            definition.description = Some(description);
+        }
+        catalog.code_mode = Some(presentation.clone());
+        Ok(catalog)
+    }
+
+    pub fn native_mcp_description(
+        &self,
+        id: &ToolName,
+        name: &str,
+        tool: &crate::mcp::NativeMcpTool,
+    ) -> Option<String> {
+        self.code_mode.as_ref().map_or_else(
+            || tool.description.clone(),
+            |presentation| {
+                Some(code_description(
+                    tool.description.as_deref(),
+                    name,
+                    tool.output_schema.as_ref(),
+                    presentation.allowed_tools.contains(id),
+                    false,
+                    true,
+                ))
+            },
+        )
     }
 
     fn push(&mut self, tool: ResolvedTool) -> LlmAdapterResult<()> {
@@ -190,6 +152,43 @@ impl ToolCatalog {
     }
 }
 
+fn code_description(
+    original: Option<&str>,
+    name: &str,
+    output_schema: Option<&serde_json::Value>,
+    callable: bool,
+    outer: bool,
+    mcp: bool,
+) -> String {
+    let mut description = original.unwrap_or_default().to_owned();
+    description.push_str("\n\nCode mode: ");
+    if outer {
+        description.push_str(
+            "Call this tool directly to execute a script; recursive script calls are unavailable.",
+        );
+    } else if callable {
+        let name = serde_json::to_string(name).expect("tool names serialize");
+        description.push_str(&format!("Invoke as await tools[{name}](args), using the input schema above. Successful calls resolve to JSON; failures reject with kind, message, and optional value. "));
+    } else {
+        description.push_str("This tool is not available inside this session's scripts. ");
+    }
+    if mcp {
+        description.push_str("MCP calls return an object with content and optional structuredContent. Remote tool errors reject with that envelope in error.value. The server's output schema describes only result.structuredContent, not the envelope. In content and structuredContent, inline image/audio data and resource blobs are replaced by blobRef artifact references. ");
+    }
+    if let Some(schema) = output_schema {
+        description.push_str(if mcp {
+            "\nMCP structuredContent JSON Schema: "
+        } else {
+            "\nReturn JSON Schema: "
+        });
+        description.push_str(&schema.to_string());
+    } else {
+        description
+            .push_str("No output schema is declared; do not assume tool-specific return fields.");
+    }
+    description
+}
+
 /// The exact function namespace advertised in this request, including expanded
 /// MCP functions and provider-hosted helpers. Only client functions can route
 /// back into the harness.
@@ -218,12 +217,22 @@ impl AdvertisedNames {
     }
 }
 
-pub(crate) fn valid_exposed_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+fn catalog_error(error: callable::CatalogError) -> LlmAdapterError {
+    match error {
+        callable::CatalogError::BlobStore(error) => error.into(),
+        callable::CatalogError::InvalidUtf8 { blob_ref, message } => {
+            LlmAdapterError::InvalidUtf8 { blob_ref, message }
+        }
+        callable::CatalogError::InvalidJson { blob_ref, message } => {
+            LlmAdapterError::InvalidJson { blob_ref, message }
+        }
+        callable::CatalogError::Tool(error) => LlmAdapterError::InvalidProviderRequest {
+            message: error.to_string(),
+        },
+        callable::CatalogError::InvalidCatalog { message } => {
+            LlmAdapterError::InvalidProviderRequest { message }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -234,7 +243,9 @@ mod tests {
         LlmGenerationStatus, ObservedToolCall, RunId, ToolCallId, ToolParallelism, TurnId,
         storage::InMemoryBlobStore,
     };
+    use harness::{ProviderApiKind, ToolKind};
     use serde_json::json;
+    use tools::definitions;
 
     fn builtin(id: &str) -> ToolSpec {
         definitions::register(

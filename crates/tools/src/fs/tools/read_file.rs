@@ -25,7 +25,7 @@ pub struct ReadFileArgs {
     pub limit: Option<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadFileResult {
     pub path: FsPath,
     pub resolved_path: FsPath,
@@ -46,7 +46,7 @@ pub struct ReadFileResult {
 }
 
 /// An image or PDF read as media rather than text; the bytes are in CAS.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadFileMedia {
     pub content_ref: BlobRef,
     pub media_type: String,

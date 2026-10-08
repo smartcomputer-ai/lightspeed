@@ -125,6 +125,7 @@ fn intent_request(
     params: Option<AnthropicMessagesParams>,
 ) -> LlmRequest {
     LlmRequest {
+        code_mode: None,
         model: ModelSelection {
             api_kind: ProviderApiKind::AnthropicMessages,
             provider_id: "anthropic".to_string(),

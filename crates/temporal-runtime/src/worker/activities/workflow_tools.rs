@@ -13,8 +13,8 @@ use temporal_workflow::{
 };
 use temporalio_client::WorkflowExecutionStatus;
 use temporalio_client::{
-    UntypedWorkflow, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowQueryOptions,
-    WorkflowStartOptions,
+    UntypedWorkflow, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowIdReusePolicy,
+    WorkflowQueryOptions, WorkflowStartOptions,
 };
 use temporalio_common::data_converters::PayloadConverter;
 use temporalio_common::data_converters::RawValue;
@@ -91,8 +91,7 @@ pub(super) async fn start_execution(
         .start_workflow(
             UntypedWorkflow::new(recipe.workflow_type.clone()),
             input,
-            WorkflowStartOptions::new(recipe.task_queue.clone(), request.execution_id.clone())
-                .build(),
+            execution_start_options(recipe.task_queue.clone(), request.execution_id.clone()),
         )
         .await
     {
@@ -103,6 +102,15 @@ pub(super) async fn start_execution(
             message: format!("start workflow tool execution: {error}"),
         }),
     }
+}
+
+fn execution_start_options(task_queue: String, execution_id: String) -> WorkflowStartOptions {
+    // A lost start acknowledgement may be retried after the execution has
+    // already closed. Reusing that id would replay domain work and replace the
+    // recovery view, so the same invocation must always name its original run.
+    WorkflowStartOptions::new(task_queue, execution_id)
+        .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
+        .build()
 }
 
 /// Recovery check for one keyed promise of a started execution. Running (or
@@ -228,5 +236,21 @@ pub(super) async fn cancel_execution(
         Err(error) => Err(activity_error(anyhow::anyhow!(
             "cancel workflow execution: {error}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retrying_a_start_cannot_reexecute_a_closed_invocation() {
+        let options = execution_start_options("workflow-tools".into(), "wte:execution".into());
+        assert_eq!(
+            options.id_reuse_policy,
+            WorkflowIdReusePolicy::RejectDuplicate
+        );
+        assert_eq!(options.workflow_id, "wte:execution");
+        assert_eq!(options.task_queue, "workflow-tools");
     }
 }

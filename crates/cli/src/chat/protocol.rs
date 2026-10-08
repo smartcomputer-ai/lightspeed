@@ -348,6 +348,7 @@ pub(crate) enum ChatToolDisplayGroup {
     Explore,
     Edit,
     Execute,
+    Code,
     Mcp,
     Agent,
     Bot,

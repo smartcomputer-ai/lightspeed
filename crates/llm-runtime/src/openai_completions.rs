@@ -190,10 +190,9 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
                 ),
             });
         }
-        let mut catalog = crate::tool_catalog::ToolCatalog::resolve(
+        let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(
             self.blobs.as_ref(),
-            &tools::runtime::ToolTarget::from(&request.request.model),
-            &request.request.tools,
+            &request.request,
         )
         .await?;
         let mut provider_request = materialize_request_with_catalog(
@@ -297,12 +296,7 @@ async fn materialize_create_request_with_inventory(
     inventory: &dyn McpInventoryResolver,
     request: &LlmRequest,
 ) -> LlmAdapterResult<oai_c::CreateCompletionRequest> {
-    let mut catalog = crate::tool_catalog::ToolCatalog::resolve(
-        blobs,
-        &tools::runtime::ToolTarget::from(&request.model),
-        &request.tools,
-    )
-    .await?;
+    let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(blobs, request).await?;
     materialize_request_with_catalog(blobs, inventory, request, &mut catalog).await
 }
 
@@ -855,11 +849,12 @@ async fn materialize_tools(
                     catalog
                         .names
                         .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                    let description = catalog.native_mcp_description(&tool.id, &name, &native_tool);
                     materialized.push(oai_c::CompletionTool {
                         r#type: oai_c::CompletionToolType::Function,
                         function: oai_c::CompletionFunction {
                             name,
-                            description: native_tool.description,
+                            description,
                             parameters: Some(native_tool.input_schema),
                             // MCP accepts general JSON Schema. OpenAI strict
                             // functions accept only a narrower subset.
@@ -1495,8 +1490,80 @@ mod tests {
                 remote_name: "lookup".to_owned(),
                 description: Some("Lookup".to_owned()),
                 input_schema: json!({"type": "object"}),
+                output_schema: Some(
+                    json!({"type":"object","properties":{"found":{"type":"boolean"}},"required":["found"]}),
+                ),
                 annotations: None,
             }])
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_mode_describes_injected_mcp_structured_content_without_changing_inputs() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = request(Vec::new());
+        request.tools = vec![ToolSpec {
+            name: ToolName::new("mcp_schema"),
+            kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
+                server_id: "schema".into(),
+                record_revision: 1,
+                server_label: "schema".into(),
+                server_url: "https://example.com/mcp".into(),
+                description_ref: None,
+                allowed_tools: None,
+                execution: RemoteMcpExecution::Native,
+                exposure: RemoteMcpExposure::Inject,
+                approval: harness::RemoteMcpApprovalPolicy::Never,
+                defer_loading: None,
+                auth_ref: None,
+                auth_required: false,
+                allow_private_network: false,
+            }),
+            execution: Default::default(),
+            parallelism: ToolParallelism::ParallelSafe,
+        }];
+        let ordinary = serde_json::to_value(
+            materialize_create_request_with_inventory(&blobs, &StaticMcpInventory, &request)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        for allowed in [true, false] {
+            request.code_mode = Some(harness::CodeModePresentation {
+                allowed_tools: if allowed {
+                    [ToolName::new("mcp_schema")].into_iter().collect()
+                } else {
+                    Default::default()
+                },
+                workflow_results: Default::default(),
+            });
+            let wire = serde_json::to_value(
+                materialize_create_request_with_inventory(&blobs, &StaticMcpInventory, &request)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            let function = &wire["tools"][0]["function"];
+            let description = function["description"].as_str().unwrap();
+            assert_eq!(function["name"], "mcp_schema__lookup");
+            assert!(description.contains("only result.structuredContent"));
+            assert!(description.contains("error.value"));
+            assert_eq!(
+                description.contains("await tools[\"mcp_schema__lookup\"](args)"),
+                allowed
+            );
+            let schema: serde_json::Value = serde_json::from_str(
+                description
+                    .split_once("MCP structuredContent JSON Schema: ")
+                    .unwrap()
+                    .1,
+            )
+            .unwrap();
+            assert_eq!(schema["properties"]["found"]["type"], "boolean");
+            let mut restored = wire.clone();
+            let before = &ordinary["tools"][0]["function"];
+            restored["tools"][0]["function"]["description"] = before["description"].clone();
+            assert_eq!(restored, ordinary);
         }
     }
 
@@ -1608,6 +1675,7 @@ mod tests {
 
     fn request(entries: Vec<ContextEntry>) -> LlmRequest {
         LlmRequest {
+            code_mode: None,
             model: model(),
             request_fingerprint: "sha256:test".to_owned(),
             context: ContextSnapshot {

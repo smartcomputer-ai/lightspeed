@@ -6,6 +6,7 @@
 pub mod bots;
 pub mod channels;
 pub(crate) mod checkpoint;
+pub mod code;
 pub mod config;
 pub(crate) mod credential_injection;
 pub mod environments;

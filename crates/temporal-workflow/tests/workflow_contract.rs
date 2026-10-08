@@ -69,6 +69,32 @@ fn vector_fixtures_validate_against_every_public_root() {
         "WorkflowToolRecipeV1",
         &vectors["recipe"],
     );
+    for (definition, fixture) in [
+        ("OpenCodeToolScopeRequest", "openRequest"),
+        ("InvokeCodeToolRequest", "invokeRequest"),
+        ("CloseCodeToolScopeRequest", "closeRequest"),
+        ("CodeToolScopeReportRequest", "reportRequest"),
+        ("CodeToolScopeReport", "report"),
+        ("CodeToolCallOutcome", "outcome"),
+        ("CodeToolRejection", "rejection"),
+    ] {
+        assert_validates(
+            &exported.schema_bundle,
+            definition,
+            &vectors["codeTools"][fixture],
+        );
+    }
+    for (definition, fixture) in [
+        ("CodeExecutionDescriptor", "descriptor"),
+        ("CodeExecutionSnapshot", "snapshot"),
+        ("CodeRunActivityResult", "result"),
+    ] {
+        assert_validates(
+            &exported.schema_bundle,
+            definition,
+            &vectors["codeExecution"][fixture],
+        );
+    }
 }
 
 #[test]

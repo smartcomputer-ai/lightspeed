@@ -32,6 +32,8 @@ pub const ACTIVITY_LLM_GENERATE: &str = "WorkflowActivities::llm_generate";
 pub const ACTIVITY_CONTEXT_COMPACT: &str = "WorkflowActivities::context_compact";
 pub const ACTIVITY_TOOL_INVOKE_BATCH: &str = "WorkflowActivities::tool_invoke_batch";
 pub const ACTIVITY_TOOL_INVOKE_CALL: &str = "WorkflowActivities::tool_invoke_call";
+pub const ACTIVITY_CODE_TOOL_INVOKE: &str = "WorkflowActivities::code_tool_invoke";
+pub const ACTIVITY_CODE_TOOL_PREPARE_SCOPE: &str = "WorkflowActivities::code_tool_prepare_scope";
 pub const ACTIVITY_TOOL_PREPARE_PROMISE_CONTROLS: &str =
     "WorkflowActivities::tool_prepare_promise_controls";
 pub const ACTIVITY_RUNTIME_PROJECTION_REFRESH: &str =
@@ -53,11 +55,38 @@ pub const ACTIVITY_AWAIT_ENVIRONMENT_READY: &str = "WorkflowActivities::await_en
 pub const ACTIVITY_SUBAGENT_PREPARE: &str = "WorkflowActivities::subagent_prepare";
 pub const ACTIVITY_SUBAGENT_RESOLVE: &str = "WorkflowActivities::subagent_resolve";
 pub const ACTIVITY_SUBAGENT_CLOSE: &str = "WorkflowActivities::subagent_close";
+pub const ACTIVITY_CODE_PREPARE: &str = "WorkflowActivities::code_prepare";
+pub const ACTIVITY_CODE_RUN: &str = "WorkflowActivities::code_run";
+pub const ACTIVITY_CODE_FINALIZE: &str = "WorkflowActivities::code_finalize";
 
 pub struct WorkflowActivities;
 
 #[activities]
 impl WorkflowActivities {
+    #[activity(name = ACTIVITY_CODE_PREPARE)]
+    pub async fn code_prepare(
+        _ctx: ActivityContext,
+        _request: crate::CodePrepareActivityRequest,
+    ) -> Result<crate::CodePrepareActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_CODE_RUN)]
+    pub async fn code_run(
+        _ctx: ActivityContext,
+        _descriptor: crate::CodeExecutionDescriptor,
+    ) -> Result<crate::CodeRunActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_CODE_FINALIZE)]
+    pub async fn code_finalize(
+        _ctx: ActivityContext,
+        _request: crate::CodeFinalizeActivityRequest,
+    ) -> Result<harness::PromiseResolution, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
     #[activity(name = "WorkflowActivities::execute_transcription")]
     pub async fn execute_transcription(
         _ctx: ActivityContext,
@@ -151,6 +180,22 @@ impl WorkflowActivities {
         _ctx: ActivityContext,
         _request: ToolInvokeCallActivityRequest,
     ) -> Result<ToolInvokeCallActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_CODE_TOOL_INVOKE)]
+    pub async fn code_tool_invoke(
+        _ctx: ActivityContext,
+        _request: crate::CodeToolInvokeActivityRequest,
+    ) -> Result<crate::CodeToolInvokeActivityResult, ActivityError> {
+        unimplemented!("workflow activity definition only")
+    }
+
+    #[activity(name = ACTIVITY_CODE_TOOL_PREPARE_SCOPE)]
+    pub async fn code_tool_prepare_scope(
+        _ctx: ActivityContext,
+        _request: crate::CodeToolPrepareScopeActivityRequest,
+    ) -> Result<crate::CodeToolPrepareScopeActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

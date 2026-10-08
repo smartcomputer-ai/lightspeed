@@ -5,6 +5,7 @@
 
 pub mod approval;
 pub mod attribution;
+pub mod code_tool;
 pub mod command;
 pub mod config;
 pub mod context;
@@ -24,6 +25,7 @@ pub mod workflow_tool;
 
 pub use approval::*;
 pub use attribution::Attribution;
+pub use code_tool::*;
 pub use command::*;
 pub use config::*;
 pub use context::{
@@ -53,6 +55,7 @@ pub use ids::*;
 pub use lifecycle::{CoreAgentLifecycleEvent, CoreAgentStatus, LifecycleState};
 pub use llm::*;
 pub use log::*;
+pub use promise::AwaitOutcome;
 pub use promise::{
     PROMISE_CANCEL_EFFECT_KIND, PROMISE_CREATE_EFFECT_KIND, PROMISE_DETACH_EFFECT_KIND,
     PROMISE_ID_PREFIX, Promise, PromiseComponentState, PromiseEvent, PromiseId, PromiseIdAllocator,

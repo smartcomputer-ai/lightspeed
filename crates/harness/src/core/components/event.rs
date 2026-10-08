@@ -23,4 +23,5 @@ pub enum CoreAgentEvent {
     Promise(PromiseEvent),
     WorkflowToolConfig(WorkflowToolConfigEvent),
     WorkflowTool(WorkflowToolEvent),
+    CodeTool(crate::CodeToolEvent),
 }

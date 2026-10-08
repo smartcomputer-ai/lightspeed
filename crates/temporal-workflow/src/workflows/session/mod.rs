@@ -3,6 +3,7 @@ mod admissions;
 mod awaits;
 mod bootstrap;
 mod clock;
+mod code_tools;
 mod control;
 mod drive;
 mod errors;
@@ -92,6 +93,7 @@ pub struct AgentSessionWorkflow {
     rollover_delay_logged: bool,
     last_error: Option<String>,
     bootstrap_failed: bool,
+    code_tools: code_tools::CodeToolExecutionState,
 }
 
 impl Default for AgentSessionWorkflow {
@@ -124,6 +126,7 @@ impl Default for AgentSessionWorkflow {
             rollover_delay_logged: false,
             last_error: None,
             bootstrap_failed: false,
+            code_tools: Default::default(),
         }
     }
 }
@@ -142,6 +145,7 @@ impl AgentSessionWorkflow {
 
         let preparation_ctx = ctx.clone();
         let preparation = preparation::run_preparation_loop(preparation_ctx).fuse();
+        let code_tool_dispatch = code_tools::run_dispatch_loop(ctx.clone()).fuse();
         let session = async {
             loop {
                 preparation::prepare_initial_session(ctx, &args)
@@ -153,6 +157,9 @@ impl AgentSessionWorkflow {
                 reconcile_cancelling_watchdog(ctx);
                 promise_sources::reconcile_polls(ctx);
                 wait_for_workflow_work(ctx).await;
+                code_tools::process_pending(ctx)
+                    .await
+                    .map_err(temporalio_sdk::ApplicationFailure::new)?;
                 if let Err(error) = flush_pending_emissions(ctx).await {
                     record_error(ctx, &error, "pending_emission");
                     return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
@@ -270,8 +277,12 @@ impl AgentSessionWorkflow {
             }
         }
         .fuse();
-        pin_mut!(session, preparation);
-        futures::select_biased! { result = session => result, _ = preparation => unreachable!() }
+        pin_mut!(session, preparation, code_tool_dispatch);
+        futures::select_biased! {
+            result = session => result,
+            result = code_tool_dispatch => Err(temporalio_sdk::ApplicationFailure::new(result.err().unwrap_or_else(|| anyhow::anyhow!("code tool dispatcher stopped"))).into()),
+            _ = preparation => unreachable!()
+        }
     }
 
     /// Queues a batch of admissions atomically: entries in one signal are
@@ -339,6 +350,39 @@ impl AgentSessionWorkflow {
     #[query(name = "status")]
     pub fn status(&self, _ctx: &WorkflowContextView) -> AgentSessionStatus {
         self.status_snapshot()
+    }
+
+    #[update(name = "open_code_tool_scope")]
+    pub async fn open_code_tool_scope(
+        ctx: &mut WorkflowContext<Self>,
+        request: crate::OpenCodeToolScopeRequest,
+    ) -> crate::CodeToolScopeResult {
+        code_tools::open(ctx, request).await
+    }
+
+    #[update(name = "invoke_code_tool")]
+    pub async fn invoke_code_tool(
+        ctx: &mut WorkflowContext<Self>,
+        request: crate::InvokeCodeToolRequest,
+    ) -> crate::CodeToolInvocationResult {
+        code_tools::invoke(ctx, request).await
+    }
+
+    #[update(name = "close_code_tool_scope")]
+    pub async fn close_code_tool_scope(
+        ctx: &mut WorkflowContext<Self>,
+        request: crate::CloseCodeToolScopeRequest,
+    ) -> crate::CodeToolScopeResult {
+        code_tools::close(ctx, request).await
+    }
+
+    #[query(name = "code_tool_scope_report")]
+    pub fn code_tool_scope_report(
+        &self,
+        _ctx: &WorkflowContextView,
+        request: crate::CodeToolScopeReportRequest,
+    ) -> crate::CodeToolScopeResult {
+        code_tools::report(self, &request.execution_id)
     }
 }
 

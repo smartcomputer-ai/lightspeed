@@ -7,6 +7,7 @@ use temporal_workflow::{SessionToolsetPreparation, SessionToolsetSource};
 pub(crate) struct SessionPreparationService {
     pub(crate) store: Arc<PgStore>,
     pub(crate) task_queue: String,
+    pub(crate) code_task_queue: String,
 }
 
 impl SessionPreparationService {
@@ -89,13 +90,23 @@ impl SessionPreparationService {
             .await
             .map_err(map_blob_store_error)?;
 
+        let reply_schema_ref = self
+            .store
+            .put_bytes(
+                serde_json::to_vec(&tools::definitions::output_schema_for::<
+                    tools::environment::jobs::ModelJobResult,
+                >())
+                .map_err(|error| AgentApiError::internal(error.to_string()))?,
+            )
+            .await
+            .map_err(map_blob_store_error)?;
         let definitions = [
             (
                 BuiltinToolOperation::JobSubmit,
                 JOB_SUBMIT_WORKFLOW_TOOL_ID,
                 JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE,
                 WorkflowToolCompletion::Promises {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: None,
                     max_promises: harness::MAX_COMPLETION_PROMISES,
                     key_source: WorkflowToolCompletionKeySource::ArrayItemField {
@@ -109,7 +120,7 @@ impl SessionPreparationService {
                 JOB_RUN_WORKFLOW_TOOL_ID,
                 JOB_RUN_WORKFLOW_SEMANTIC_TYPE,
                 WorkflowToolCompletion::Joined {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: JOB_RUN_DEADLINE_AFTER_MS,
                 },
             ),
@@ -164,6 +175,16 @@ impl SessionPreparationService {
             .put_bytes(recipe_bytes)
             .await
             .map_err(map_blob_store_error)?;
+        let reply_schema_ref = self
+            .store
+            .put_bytes(
+                serde_json::to_vec(&tools::definitions::output_schema_for::<
+                    tools::subagents::SubagentResultEnvelope,
+                >())
+                .map_err(|error| AgentApiError::internal(error.to_string()))?,
+            )
+            .await
+            .map_err(map_blob_store_error)?;
         // The binding carries the hard ceiling; the grant's `deadlineMs` is
         // pinned per call and enforced inside the execution, so the
         // immutable binding never has to change with the grant.
@@ -171,14 +192,14 @@ impl SessionPreparationService {
             (
                 tools::subagents::SubagentToolKind::Run,
                 WorkflowToolCompletion::Joined {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: harness::SUBAGENT_DEADLINE_CEILING_MS,
                 },
             ),
             (
                 tools::subagents::SubagentToolKind::Spawn,
                 WorkflowToolCompletion::Promises {
-                    reply_schema_ref: None,
+                    reply_schema_ref: Some(reply_schema_ref.clone()),
                     deadline_after_ms: Some(harness::SUBAGENT_DEADLINE_CEILING_MS),
                     max_promises: 1,
                     key_source: WorkflowToolCompletionKeySource::Reply,
@@ -217,6 +238,58 @@ impl SessionPreparationService {
         Ok(declarations)
     }
 
+    pub(crate) async fn core_code_workflow_tool_declaration(
+        &self,
+    ) -> Result<WorkflowToolDeclaration, AgentApiError> {
+        let recipe_bytes = serde_json::to_vec(&temporal_workflow::WorkflowToolRecipeV1 {
+            workflow_type: tools::code::CODE_EXECUTION_WORKFLOW_TYPE.to_owned(),
+            task_queue: self.code_task_queue.clone(),
+        })
+        .map_err(|error| {
+            AgentApiError::internal(format!("encode code workflow recipe: {error}"))
+        })?;
+        let recipe_fingerprint = temporal_workflow::workflow_tool_recipe_fingerprint(&recipe_bytes);
+        let recipe_ref = self
+            .store
+            .put_bytes(recipe_bytes)
+            .await
+            .map_err(map_blob_store_error)?;
+        let output_schema = serde_json::to_vec(&tools::code::code_execution_output_schema())
+            .map_err(|error| {
+                AgentApiError::internal(format!("encode code output schema: {error}"))
+            })?;
+        let reply_schema_ref = self
+            .store
+            .put_bytes(output_schema)
+            .await
+            .map_err(map_blob_store_error)?;
+        Ok(WorkflowToolDeclaration::new(
+            WorkflowToolDefinition {
+                tool_id: WorkflowToolId::new(tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID),
+                revision: 1,
+                semantic_type: tools::code::CODE_EXECUTE_WORKFLOW_SEMANTIC_TYPE.to_owned(),
+                tool: tools::definitions::register(
+                    "code.execute",
+                    Default::default(),
+                    harness::ToolParallelism::ParallelSafe,
+                    Default::default(),
+                ),
+            },
+            WorkflowToolTarget::Start {
+                start: WorkflowStartRef {
+                    recipe_format: temporal_workflow::WORKFLOW_TOOL_RECIPE_FORMAT_V1,
+                    revision: 1,
+                    recipe_ref,
+                    recipe_fingerprint,
+                },
+            },
+            WorkflowToolCompletion::Joined {
+                reply_schema_ref: Some(reply_schema_ref),
+                deadline_after_ms: tools::code::CODE_EXECUTION_DEADLINE_CEILING_MS,
+            },
+        ))
+    }
+
     pub(crate) async fn prepare_toolset(
         &self,
         source: SessionToolsetSource,
@@ -229,6 +302,7 @@ impl SessionPreparationService {
             .and_then(|environments| environments.tool_access())
             .is_some_and(|access| access.allows_jobs());
         let subagents = session_config.features.subagents.is_some();
+        let code_mode = session_config.features.code_mode.is_some();
         let mut declarations = Vec::new();
         if jobs {
             declarations.extend(
@@ -238,6 +312,9 @@ impl SessionPreparationService {
         }
         if subagents {
             declarations.extend(self.core_subagent_workflow_tool_declarations().await?);
+        }
+        if code_mode {
+            declarations.push(self.core_code_workflow_tool_declaration().await?);
         }
         for declaration in &declarations {
             let id = &declaration.definition.tool_id;
@@ -258,6 +335,7 @@ impl SessionPreparationService {
             &validation_state,
             &session_config.features,
         )?;
+        validate_code_deadline_for_existing_bindings(&validation_state, &session_config.features)?;
         declarations.retain(|declaration| {
             !source
                 .bindings
@@ -279,6 +357,9 @@ impl SessionPreparationService {
             .filter(|binding| {
                 (jobs || !is_core_environment_job_binding(binding))
                     && (subagents || !is_core_subagent_binding(binding))
+                    && (code_mode
+                        || binding.definition.tool_id.as_str()
+                            != tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID)
             })
             .collect::<Vec<_>>();
         let mut config = Self::session_toolset_config(
@@ -448,6 +529,7 @@ impl GatewayAgentApi {
         SessionPreparationService {
             store: self.store.clone(),
             task_queue: self.task_queue.clone(),
+            code_task_queue: self.code_task_queue.clone(),
         }
     }
 }

@@ -88,15 +88,32 @@ pub async fn materialize(
     destination: EnvironmentPath,
     on_existing: TransferOnExisting,
 ) -> ToolResult<TransferStatus> {
+    materialize_selection(
+        remote,
+        blobs,
+        id,
+        entry,
+        TransferSelection::Materialize {
+            destination,
+            on_existing,
+        },
+    )
+    .await
+}
+
+async fn materialize_selection(
+    remote: &dyn EnvironmentTransfer,
+    blobs: &dyn BlobStore,
+    id: &str,
+    entry: &vfs::VfsEntry,
+    selection: TransferSelection,
+) -> ToolResult<TransferStatus> {
     let result = async {
         let initial = status(
             remote
                 .request(TransferRequest::Begin {
                     operation_id: id.into(),
-                    selection: TransferSelection::Materialize {
-                        destination,
-                        on_existing,
-                    },
+                    selection,
                     limits: InventoryLimits::default(),
                 })
                 .await?,
@@ -269,12 +286,45 @@ pub async fn capture(
     id: &str,
     source: EnvironmentPath,
 ) -> ToolResult<CapturedSelection> {
+    let captured = capture_selection(remote, blobs, id, source, false).await?;
+    let snapshot = vfs::commit_snapshot_manifest(blobs, graph, captured.manifest)
+        .await
+        .map_err(blob_error)?;
+    Ok(CapturedSelection {
+        entry: captured.entry,
+        snapshot_ref: snapshot.snapshot_ref,
+        status: captured.status,
+    })
+}
+
+struct CapturedContent {
+    entry: vfs::VfsEntry,
+    manifest: vfs::VfsSnapshotManifest,
+    status: TransferStatus,
+}
+
+async fn capture_selection(
+    remote: &dyn EnvironmentTransfer,
+    blobs: &dyn BlobStore,
+    id: &str,
+    source: EnvironmentPath,
+    single_file: bool,
+) -> ToolResult<CapturedContent> {
+    let limits = if single_file {
+        InventoryLimits {
+            max_entries: 1,
+            max_depth: 0,
+            ..InventoryLimits::default()
+        }
+    } else {
+        InventoryLimits::default()
+    };
     let initial = status(
         remote
             .request(TransferRequest::Begin {
                 operation_id: id.into(),
                 selection: TransferSelection::Capture { source },
-                limits: InventoryLimits::default(),
+                limits,
             })
             .await?,
     )?;
@@ -307,6 +357,13 @@ pub async fn capture(
             Some(_) => return Err(invalid("inventory made no progress")),
             None => break,
         }
+    }
+    if single_file
+        && !matches!(entries.as_slice(), [InventoryEntry { path, content: InventoryContent::File { .. } }] if path.is_empty())
+    {
+        return Err(invalid(
+            "reference requires exactly one file, not a directory",
+        ));
     }
     let mut manifest = vfs::VfsSnapshotManifest::empty();
     let mut refs = BTreeMap::new();
@@ -382,17 +439,165 @@ pub async fn capture(
         .get("selection")
         .cloned()
         .ok_or_else(|| invalid("capture omitted selected root"))?;
-    let snapshot = vfs::commit_snapshot_manifest(blobs, graph, manifest)
-        .await
-        .map_err(blob_error)?;
-    Ok(CapturedSelection {
+    Ok(CapturedContent {
         entry,
-        snapshot_ref: snapshot.snapshot_ref,
+        manifest,
         status: state,
     })
 }
 
 pub type SharedEnvironmentTransfer = Arc<dyn EnvironmentTransfer>;
+
+/// Materialize a single immutable blob using bounded provider transfer chunks.
+pub(crate) async fn invoke_write_reference(
+    ctx: &crate::environment::EnvironmentToolContext,
+    args: crate::fs::tools::WriteFileArgs,
+) -> ToolResult<crate::fs::tools::WriteFileResult> {
+    args.validate()?;
+    let filesystem = ctx
+        .filesystem
+        .as_ref()
+        .ok_or_else(|| invalid("environment filesystem unavailable"))?;
+    let resolved_path = crate::fs::tools::resolve_path(filesystem, &args.path)?;
+    if !filesystem.fs.access_policy().can_write_path(&resolved_path) {
+        return Err(crate::fs::FsError::PermissionDenied {
+            path: resolved_path,
+        }
+        .into());
+    }
+    let reference = filesystem
+        .content_resolver
+        .resolve(args.content_ref.as_ref().unwrap())
+        .await?;
+    let bytes_written = usize::try_from(reference.byte_len)
+        .map_err(|_| invalid("file size exceeds platform limits"))?;
+    let remote = ctx
+        .transfer
+        .as_ref()
+        .ok_or_else(|| invalid("environment transfer unavailable"))?;
+    let destination = EnvironmentPath::new(resolved_path.as_str()).map_err(blob_error)?;
+    let id = ctx
+        .operation_id
+        .clone()
+        .unwrap_or_else(|| format!("write-ref-{}", uuid::Uuid::new_v4().simple()));
+    // A completed receipt must survive source/destination changes on retry.
+    // The transfer protocol checks the complete selection and operation identity.
+    let mut guard = TransferGuard {
+        remote: remote.clone(),
+        id: id.clone(),
+        complete: false,
+    };
+    let receipt = materialize_selection(
+        remote.as_ref(),
+        ctx.blobs.as_ref(),
+        &id,
+        &vfs::VfsEntry::File(vfs::VfsFile {
+            blob_ref: reference.content_ref,
+            size_bytes: reference.byte_len,
+            media_type: reference.media_type,
+            executable: false,
+        }),
+        TransferSelection::WriteFile { destination },
+    )
+    .await?;
+    guard.complete = true;
+    Ok(crate::fs::tools::WriteFileResult {
+        path: args.path,
+        resolved_path,
+        bytes_written,
+        receipt: Some(receipt),
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnvironmentReferenceArgs {
+    path: crate::fs::FsPath,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct EnvironmentReferenceResult {
+    #[serde(flatten)]
+    pub content: crate::content::ContentDescriptor,
+    pub receipt: TransferStatus,
+}
+
+/// Capture one environment file into CAS without a VFS attachment or publication.
+pub(crate) async fn invoke_environment_reference(
+    ctx: &crate::environment::EnvironmentToolContext,
+    arguments: serde_json::Value,
+) -> ToolResult<crate::runtime::ToolInvocationOutput> {
+    let args: EnvironmentReferenceArgs = crate::runtime::decode_args(arguments)?;
+    let filesystem = ctx
+        .filesystem
+        .as_ref()
+        .ok_or_else(|| invalid("environment filesystem unavailable"))?;
+    let path = crate::fs::tools::resolve_path(filesystem, &args.path)?;
+    if !filesystem.fs.access_policy().can_read_path(&path) {
+        return Err(crate::fs::FsError::PermissionDenied { path }.into());
+    }
+    let source = EnvironmentPath::new(path.as_str()).map_err(blob_error)?;
+    let remote = ctx
+        .transfer
+        .as_ref()
+        .ok_or_else(|| invalid("environment transfer unavailable"))?;
+    let id = ctx
+        .operation_id
+        .clone()
+        .unwrap_or_else(|| format!("env-reference-{}", uuid::Uuid::new_v4().simple()));
+    let mut guard = TransferGuard {
+        remote: remote.clone(),
+        id: id.clone(),
+        complete: false,
+    };
+    let captured =
+        capture_selection(remote.as_ref(), ctx.blobs.as_ref(), &id, source, true).await?;
+    guard.complete = true;
+    let vfs::VfsEntry::File(file) = captured.entry else {
+        return Err(invalid("reference requires a file"));
+    };
+    let name = path
+        .as_str()
+        .rsplit('/')
+        .next()
+        .unwrap_or(path.as_str())
+        .to_owned();
+    let mut attachment =
+        harness::FileAttachment::new(file.blob_ref.clone(), name.clone(), file.media_type.clone());
+    attachment.source = ctx
+        .environment_id
+        .as_ref()
+        .map(|environment| harness::AttachmentSource {
+            kind: "environment".into(),
+            id: environment.clone(),
+            path: path.to_string(),
+        });
+    filesystem
+        .content_resolver
+        .validate_attachment(&harness::Attachment::File(attachment.clone()))?;
+    let output = EnvironmentReferenceResult {
+        content: crate::content::ContentDescriptor {
+            content_ref: file.blob_ref,
+            byte_len: file.size_bytes,
+            media_type: file.media_type,
+            name: Some(name),
+            handle: Some(attachment.handle.clone()),
+            source: attachment.source.clone(),
+        },
+        receipt: captured.status,
+    };
+    let mut result = crate::runtime::encode_output(
+        &output,
+        format!(
+            "Captured immutable file: {}\nReference: {}",
+            attachment.name, attachment.handle
+        ),
+    )?;
+    result
+        .attachments
+        .push(harness::Attachment::File(attachment));
+    Ok(result)
+}
 
 struct TransferGuard {
     remote: Arc<dyn EnvironmentTransfer>,
@@ -430,6 +635,23 @@ struct CaptureArgs {
     destination_vfs_path: crate::fs::FsPath,
     #[serde(default)]
     on_existing: TransferOnExisting,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MaterializeResult {
+    pub operation_id: String,
+    pub destination: EnvironmentPath,
+    pub receipt: TransferStatus,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct CaptureResult {
+    pub operation_id: String,
+    pub snapshot_ref: BlobRef,
+    pub snapshot_path: String,
+    pub destination: crate::fs::FsPath,
+    pub published: bool,
+    pub receipt: TransferStatus,
 }
 
 fn resolve_environment_path(
@@ -478,12 +700,17 @@ pub async fn invoke_materialize(
     )
     .await?;
     guard.complete = true;
+    let message = format!(
+        "Materialized {} entries ({} bytes); transferred {} bytes, reused {} bytes.",
+        receipt.entries, receipt.bytes, receipt.transferred_bytes, receipt.reused_bytes
+    );
     crate::runtime::encode_output(
-        &serde_json::json!({"operation_id":id,"destination":args.destination_environment_path,"receipt":receipt}),
-        format!(
-            "Materialized {} entries ({} bytes); transferred {} bytes, reused {} bytes.",
-            receipt.entries, receipt.bytes, receipt.transferred_bytes, receipt.reused_bytes
-        ),
+        &MaterializeResult {
+            operation_id: id,
+            destination: args.destination_environment_path,
+            receipt,
+        },
+        message,
     )
 }
 pub async fn invoke_capture(
@@ -542,7 +769,14 @@ pub async fn invoke_capture(
         ),
     };
     let output = crate::runtime::encode_output(
-        &serde_json::json!({"operation_id":id,"snapshot_ref":captured.snapshot_ref,"snapshot_path":"/selection","destination":args.destination_vfs_path,"published":published,"receipt":captured.status}),
+        &CaptureResult {
+            operation_id: id,
+            snapshot_ref: captured.snapshot_ref,
+            snapshot_path: "/selection".into(),
+            destination: args.destination_vfs_path,
+            published,
+            receipt: captured.status,
+        },
         message,
     )?;
     persist_capture_result(vfs.blobs.as_ref(), graph.as_deref(), &output).await?;

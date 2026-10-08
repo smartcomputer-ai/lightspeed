@@ -173,10 +173,9 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
             });
         }
 
-        let mut catalog = crate::tool_catalog::ToolCatalog::resolve(
+        let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(
             self.blobs.as_ref(),
-            &tools::runtime::ToolTarget::from(&request.request.model),
-            &request.request.tools,
+            &request.request,
         )
         .await?;
         let mut provider_request = materialize_request_with_catalog(
@@ -240,6 +239,7 @@ impl OpenAiResponsesLlmAdapter {
     ) -> LlmAdapterResult<ContextCompactionResult> {
         let task = &request.request;
         let intent = LlmRequest {
+            code_mode: None,
             model: task.model.clone(),
             request_fingerprint: task.request_fingerprint.clone(),
             context: task.context.clone(),
@@ -388,12 +388,7 @@ async fn materialize_create_request_with_inventory(
     inventory: &dyn McpInventoryResolver,
     request: &LlmRequest,
 ) -> LlmAdapterResult<oai::CreateResponseRequest> {
-    let mut catalog = crate::tool_catalog::ToolCatalog::resolve(
-        blobs,
-        &tools::runtime::ToolTarget::from(&request.model),
-        &request.tools,
-    )
-    .await?;
+    let mut catalog = crate::tool_catalog::ToolCatalog::resolve_for_request(blobs, request).await?;
     materialize_request_with_catalog(blobs, inventory, request, &mut catalog).await
 }
 
@@ -764,8 +759,9 @@ async fn materialize_tools(
                     catalog
                         .names
                         .insert(ToolName::new(name.clone()), Some(tool.id.clone()))?;
+                    let description = catalog.native_mcp_description(&tool.id, &name, &native_tool);
                     let mut function = oai::FunctionTool::new(name, native_tool.input_schema);
-                    function.description = native_tool.description;
+                    function.description = description;
                     // MCP accepts general JSON Schema. OpenAI strict functions
                     // accept only a narrower subset, so a live remote schema
                     // cannot safely be promoted to strict mode.
@@ -1675,6 +1671,9 @@ mod tests {
                 remote_name: "search_issues".to_owned(),
                 description: Some("Search issues".to_owned()),
                 input_schema: json!({"type": "object", "properties": {"q": {"type": "string"}}}),
+                output_schema: Some(
+                    json!({"type":"object","properties":{"found":{"type":"boolean"}},"required":["found"]}),
+                ),
                 annotations: None,
             }])
         }
@@ -1700,6 +1699,75 @@ mod tests {
             }),
             execution: Default::default(),
             parallelism: ToolParallelism::ParallelSafe,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_mode_describes_injected_mcp_structured_content_without_changing_inputs() {
+        let blobs = InMemoryBlobStore::new();
+        let mut request = intent_request(Vec::new());
+        request.tools = vec![ToolSpec {
+            name: ToolName::new("mcp_schema"),
+            kind: ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
+                server_id: "schema".into(),
+                record_revision: 1,
+                server_label: "schema".into(),
+                server_url: "https://example.com/mcp".into(),
+                description_ref: None,
+                allowed_tools: None,
+                execution: RemoteMcpExecution::Native,
+                exposure: RemoteMcpExposure::Inject,
+                approval: harness::RemoteMcpApprovalPolicy::Never,
+                defer_loading: None,
+                auth_ref: None,
+                auth_required: false,
+                allow_private_network: false,
+            }),
+            execution: Default::default(),
+            parallelism: ToolParallelism::ParallelSafe,
+        }];
+        let ordinary = serde_json::to_value(
+            materialize_create_request_with_inventory(&blobs, &StaticMcpInventory, &request)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        for allowed in [true, false] {
+            request.code_mode = Some(harness::CodeModePresentation {
+                allowed_tools: if allowed {
+                    [ToolName::new("mcp_schema")].into_iter().collect()
+                } else {
+                    Default::default()
+                },
+                workflow_results: Default::default(),
+            });
+            let wire = serde_json::to_value(
+                materialize_create_request_with_inventory(&blobs, &StaticMcpInventory, &request)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            let function = &wire["tools"][0];
+            let description = function["description"].as_str().unwrap();
+            assert_eq!(function["name"], "mcp_schema__search_issues");
+            assert!(description.contains("only result.structuredContent"));
+            assert!(description.contains("error.value"));
+            assert_eq!(
+                description.contains("await tools[\"mcp_schema__search_issues\"](args)"),
+                allowed
+            );
+            let schema: serde_json::Value = serde_json::from_str(
+                description
+                    .split_once("MCP structuredContent JSON Schema: ")
+                    .unwrap()
+                    .1,
+            )
+            .unwrap();
+            assert_eq!(schema["properties"]["found"]["type"], "boolean");
+            let mut restored = wire.clone();
+            let before = &ordinary["tools"][0];
+            restored["tools"][0]["description"] = before["description"].clone();
+            assert_eq!(restored, ordinary);
         }
     }
 
@@ -1837,6 +1905,7 @@ mod tests {
 
     fn intent_request(entries: Vec<ContextEntry>) -> LlmRequest {
         LlmRequest {
+            code_mode: None,
             model: model(),
             request_fingerprint: "sha256:test".to_string(),
             context: ContextSnapshot {
@@ -3733,6 +3802,7 @@ mod tests {
             run_id: RunId::new(1),
             turn_id: TurnId::new(1),
             request: LlmRequest {
+                code_mode: None,
                 model: model(),
                 request_fingerprint: "test".to_string(),
                 context: ContextSnapshot {

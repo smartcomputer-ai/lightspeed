@@ -76,6 +76,26 @@ where
 }
 
 #[test]
+fn single_file_transfer_has_distinct_wire_semantics() {
+    use environment_protocol::{
+        data::transfer_session::TransferSelection, shared::EnvironmentPath,
+    };
+    assert_round_trip(
+        TransferSelection::WriteFile {
+            destination: EnvironmentPath::new("/workspace/output.bin").unwrap(),
+        },
+        json!({"direction":"writeFile","destination":"/workspace/output.bin"}),
+    );
+    let existing: TransferSelection =
+        serde_json::from_value(json!({"direction":"materialize","destination":"/workspace/tree"}))
+            .unwrap();
+    assert_eq!(
+        serde_json::to_value(existing).unwrap(),
+        json!({"direction":"materialize","destination":"/workspace/tree","onExisting":"replace"})
+    );
+}
+
+#[test]
 fn method_names_match_data_plane_contract() {
     assert_eq!(INITIALIZE_METHOD, "initialize");
     assert_eq!(FS_READ_FILE_METHOD, "fs/readFile");

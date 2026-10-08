@@ -1603,7 +1603,7 @@ async fn run_agent_spawn_cancel_live_client(
     assert_eq!(await_calls.len(), 1, "expected one parked await call");
     assert_eq!(await_calls[0].tool_id.as_deref(), Some("concurrency.await"));
     assert_eq!(await_calls[0].status, api::ToolItemStatus::Succeeded);
-    let await_result: temporal_workflow::MaterializedAwaitResult =
+    let await_result: tools::concurrency::AwaitOutput =
         serde_json::from_str(await_calls[0].output.as_deref().expect("await result"))?;
     assert_eq!(
         await_result.outcome,

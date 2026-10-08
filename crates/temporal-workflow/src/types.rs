@@ -373,31 +373,7 @@ pub struct AwaitMaterializationRequest {
     pub results: Vec<AwaitPromiseResult>,
 }
 
-/// Canonical model-visible value written by the await materializer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MaterializedAwaitResult {
-    pub outcome: AwaitOutcome,
-    #[serde(default)]
-    pub results: Vec<MaterializedAwaitPromiseResult>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MaterializedAwaitPromiseResult {
-    pub promise_id: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<serde_json::Value>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AwaitOutcome {
-    Terminal,
-    Timeout,
-    Cancelled,
-}
+pub use harness::AwaitOutcome;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AwaitPromiseResult {
@@ -754,6 +730,38 @@ pub struct ToolInvokeBatchActivityRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolInvokeCallActivityRequest {
     pub request: harness::ToolInvocationCallRequest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeToolPrepareScopeActivityRequest {
+    pub tools: Vec<harness::ToolSpec>,
+    pub model: harness::ModelSelection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeToolPrepareScopeActivityResult {
+    pub bindings: BTreeMap<String, harness::CodeToolBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeToolInvokeActivityRequest {
+    pub request: harness::ToolInvocationCallRequest,
+}
+
+/// Code tool waits belong to their execution scope; they never suspend or replace
+/// the parent's conversational tool batch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodeToolInvokeActivityResult {
+    Completed {
+        result: harness::ToolInvocationResult,
+    },
+    Deferred {
+        spec: harness::AwaitSpec,
+    },
+    EnvironmentNotReady {
+        environment_id: String,
+    },
 }
 
 /// Outcome of one per-call tool activity.

@@ -62,6 +62,9 @@ fn apply_event_kind(state: &mut CoreAgentState, entry: &CoreAgentEntry) -> Resul
         CoreAgentEvent::WorkflowToolConfig(event) => {
             crate::core::components::workflow_tool::apply_config_event(state, event)
         }
+        CoreAgentEvent::CodeTool(event) => {
+            crate::core::components::code_tool::apply_code_tool_event(state, event)
+        }
         CoreAgentEvent::WorkflowTool(event) => {
             crate::core::components::workflow_tool::apply_event(state, event)
         }

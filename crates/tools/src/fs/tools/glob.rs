@@ -22,7 +22,7 @@ pub struct GlobArgs {
     pub limit: Option<usize>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GlobResult {
     pub path: FsPath,
     pub pattern: String,

@@ -16,6 +16,71 @@ use crate::{
     runtime::ToolInvocationOutput,
 };
 
+/// Structured acknowledgement persisted by the generic workflow-tool adapter.
+/// Joined calls replace this internal acknowledgement with their eventual reply.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowToolAcknowledgement {
+    accepted: bool,
+    invocation_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    promise: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    promises: Option<BTreeMap<String, String>>,
+}
+
+/// The call result contract for a non-joined workflow binding. Its completion
+/// mode determines whether callers receive a single promise or a keyed map;
+/// the reply schema describes the later payload, not this acknowledgement.
+pub fn acknowledgement_output_schema(
+    completion: &WorkflowToolCompletion,
+    target: &WorkflowToolTarget,
+) -> Option<Value> {
+    acknowledgement_result_schema(
+        completion,
+        matches!(target, WorkflowToolTarget::Start { .. }),
+    )
+}
+
+pub fn acknowledgement_result_schema(
+    completion: &WorkflowToolCompletion,
+    starts_workflow: bool,
+) -> Option<Value> {
+    if matches!(completion, WorkflowToolCompletion::Joined { .. }) {
+        return None;
+    }
+    let mut schema = crate::definitions::output_schema_for::<WorkflowToolAcknowledgement>();
+    let properties = schema["properties"].as_object_mut().expect("object schema");
+    properties.insert("accepted".into(), json!({"const": true}));
+    let mut required = vec!["accepted", "invocationId"];
+    if starts_workflow {
+        required.push("executionId");
+    } else {
+        properties.remove("executionId");
+    }
+    match completion {
+        WorkflowToolCompletion::Promises {
+            key_source: WorkflowToolCompletionKeySource::Reply,
+            ..
+        } => {
+            required.push("promise");
+            properties.remove("promises");
+        }
+        WorkflowToolCompletion::Promises { .. } => {
+            required.push("promises");
+            properties.remove("promise");
+        }
+        _ => {
+            properties.remove("promise");
+            properties.remove("promises");
+        }
+    }
+    schema["required"] = json!(required);
+    Some(schema)
+}
+
 /// Validate every CAS document needed to present and invoke a workflow tool.
 pub async fn validate_workflow_tool_definition_documents(
     blobs: &dyn BlobStore,
@@ -230,16 +295,19 @@ pub async fn invoke_workflow_tool(
         execution_context_ref,
         completion_promises,
     };
-    let mut acknowledgement = json!({
-        "accepted": true,
-        "invocationId": invocation_id.as_str(),
-    });
-    if let WorkflowToolTarget::Start { start } = &binding.target {
-        acknowledgement["executionId"] = Value::String(workflow_tool_execution_id(
-            &invocation_id,
-            &start.recipe_fingerprint,
-        ));
-    }
+    let mut acknowledgement = WorkflowToolAcknowledgement {
+        accepted: true,
+        invocation_id: invocation_id.to_string(),
+        execution_id: match &binding.target {
+            WorkflowToolTarget::Start { start } => Some(workflow_tool_execution_id(
+                &invocation_id,
+                &start.recipe_fingerprint,
+            )),
+            _ => None,
+        },
+        promise: None,
+        promises: None,
+    };
     // The model gets exactly what it can act on: the single promise of a
     // reply-keyed call, or the keyed map of a multi-item call. Invocation
     // and execution ids are client diagnostics and stay in `output_json`.
@@ -251,14 +319,19 @@ pub async fn invoke_workflow_tool(
             && let Some(promise_id) = promises.get(REPLY_COMPLETION_KEY)
         {
             let promise = Value::String(promise_id.to_string());
-            acknowledgement["promise"] = promise.clone();
+            acknowledgement.promise = Some(promise_id.to_string());
             model_visible["promise"] = promise;
         } else {
             let map: serde_json::Map<String, Value> = promises
                 .iter()
                 .map(|(key, promise_id)| (key.clone(), Value::String(promise_id.to_string())))
                 .collect();
-            acknowledgement["promises"] = Value::Object(map.clone());
+            acknowledgement.promises = Some(
+                promises
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.to_string()))
+                    .collect(),
+            );
             model_visible["promises"] = Value::Object(map);
         }
     }
@@ -268,7 +341,11 @@ pub async fn invoke_workflow_tool(
     );
     Ok(ToolInvocationOutput {
         model_visible_text: model_visible.to_string(),
-        output_json: acknowledgement,
+        output_json: serde_json::to_value(acknowledgement).map_err(|error| {
+            ToolError::InvalidRequest {
+                message: format!("failed to encode workflow acknowledgement: {error}"),
+            }
+        })?,
         effects: vec![effect],
         attachments: Vec::new(),
     })
@@ -446,6 +523,24 @@ mod tests {
     use super::*;
     use crate::toolset::{ToolsetConfig, register_toolset, register_workflow_tools};
 
+    fn validate_acknowledgement(binding: &WorkflowToolBinding, output: &ToolInvocationOutput) {
+        let schema = acknowledgement_output_schema(&binding.completion, &binding.target)
+            .expect("acknowledgement schema");
+        let validator = jsonschema::validator_for(&schema).expect("valid schema");
+        validator
+            .validate(&output.output_json)
+            .expect("actual acknowledgement matches schema");
+        assert!(
+            !validator.is_valid(&json!({"accepted": true})),
+            "invocation id is required"
+        );
+        assert!(
+            !validator
+                .is_valid(&serde_json::from_str::<Value>(&output.model_visible_text).unwrap()),
+            "provider text intentionally omits client diagnostic fields"
+        );
+    }
+
     async fn binding(blobs: &dyn BlobStore) -> WorkflowToolBinding {
         let schema_ref = blobs
             .put_bytes(
@@ -533,6 +628,7 @@ mod tests {
         .await
         .expect("retry");
 
+        validate_acknowledgement(&binding, &first);
         assert_eq!(first, retry);
         assert_eq!(first.effects.len(), 1);
         assert_eq!(
@@ -624,6 +720,7 @@ mod tests {
         .await
         .expect("invoke");
 
+        validate_acknowledgement(&binding, &output);
         assert_eq!(output.output_json["promise"], json!("promise_1"));
         assert_eq!(
             output.model_visible_text, r#"{"accepted":true,"promise":"promise_1"}"#,
@@ -689,6 +786,7 @@ mod tests {
         .await
         .expect("invoke Joined call");
 
+        assert!(acknowledgement_output_schema(&binding.completion, &binding.target).is_none());
         assert!(output.output_json.get("promises").is_none());
         assert_eq!(output.model_visible_text, r#"{"accepted":true}"#);
         assert_eq!(
@@ -891,6 +989,7 @@ mod tests {
         let output = invoke(br#"{"jobs":[{"job_id":"build","argv":["make"]},{"job_id":"test","argv":["make","test"]}]}"#)
             .await
             .expect("invoke keyed by job id");
+        validate_acknowledgement(&binding, &output);
         assert_eq!(
             output.output_json["promises"],
             json!({ "build": "promise_7", "test": "promise_8" })
@@ -983,6 +1082,7 @@ mod tests {
         .await
         .expect("invoke start-on-call");
 
+        validate_acknowledgement(&binding, &output);
         let invocation_id = WorkflowToolInvocationId::for_call(
             binding.session_universe_id,
             &SessionId::new("session-1"),

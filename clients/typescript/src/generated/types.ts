@@ -180,7 +180,7 @@ export type ToolItemStatus =
  * via the `definition` "ToolCallDisplayGroup".
  */
 export type ToolCallDisplayGroup =
-  "other" | "explore" | "edit" | "execute" | "mcp" | "agent" | "bot" | "message";
+  "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot" | "message";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryKindView".
@@ -802,6 +802,13 @@ export type SessionEventKindView =
       runId: string;
       turnId: string;
       type: "toolBatchCompleted";
+    }
+  | {
+      executionId: string;
+      phase: CodeToolProgressPhase;
+      requestId?: string | null;
+      status?: ToolItemStatus | null;
+      type: "codeToolProgress";
     };
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
@@ -837,6 +844,14 @@ export type RunFailureKindView =
  * via the `definition` "ToolAttachmentKind".
  */
 export type ToolAttachmentKind = "media" | "file";
+/**
+ * Bounded lifecycle telemetry for a session-owned code tool execution.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CodeToolProgressPhase".
+ */
+export type CodeToolProgressPhase =
+  "scopeOpened" | "callAdmitted" | "callDeferred" | "callCompleted" | "scopeClosed";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "RunViewSource".
@@ -2252,12 +2267,71 @@ export interface ContextConfig {
  * via the `definition` "FeaturesConfig".
  */
 export interface FeaturesConfig {
+  codeMode?: CodeModeFeature | null;
   environments?: EnvironmentsFeature | null;
   mcp?: McpFeature | null;
   subagents?: SubagentsFeature | null;
   timers?: TimersFeature | null;
   vfs?: VfsFeature | null;
   web?: WebFeature | null;
+}
+/**
+ * Grants JavaScript composition through `code_execute`. Available script tools
+ * are the session's ordinary callable tools, optionally narrowed by allowedTools.
+ * TypeScript, ambient filesystem/network access, and recursive code execution
+ * are unavailable. An empty allowedTools list grants pure computation only.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "CodeModeFeature".
+ */
+export interface CodeModeFeature {
+  /**
+   * Logical tool ids (for example vfs.read_file), not provider wire names.
+   * Absent permits every currently callable grant; an empty list permits none.
+   */
+  allowedTools?: string[] | null;
+  /**
+   * Pinned callable catalog bytes, at most 8 MiB.
+   */
+  maxCatalogBytes?: number;
+  /**
+   * Interpreter heap, at most 512 MiB.
+   */
+  maxMemoryBytes?: number;
+  /**
+   * Combined text() output and return value, at most 8 MiB.
+   */
+  maxOutputBytes?: number;
+  /**
+   * Concurrent pending calls, at most 64 and no greater than maxToolCalls.
+   */
+  maxOutstandingToolCalls?: number;
+  /**
+   * Serialized arguments per tool request, at most 8 MiB.
+   */
+  maxRequestBytes?: number;
+  /**
+   * Serialized completion per tool request, at most 8 MiB.
+   */
+  maxResultBytes?: number;
+  /**
+   * UTF-8 source bytes, at most 1 MiB.
+   */
+  maxSourceBytes?: number;
+  /**
+   * Interpreter native stack, at most 8 MiB.
+   */
+  maxStackBytes?: number;
+  /**
+   * Calls per script, at most 1,024.
+   */
+  maxToolCalls?: number;
+  /**
+   * Total attempt time including input loading, interpreter capacity waits,
+   * JavaScript evaluation, and tool waits; at most 600,000 milliseconds.
+   */
+  timeoutMs?: number;
+  version?: number;
 }
 /**
  * Grants session environments. The `environments` list is the allowed set:

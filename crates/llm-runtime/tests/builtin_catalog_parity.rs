@@ -94,6 +94,7 @@ async fn fixture(api: ProviderApiKind, case: &str) -> Value {
     };
     let tools = registered(case, &api);
     let request = LlmRequest {
+        code_mode: None,
         model,
         request_fingerprint: "sha256:catalog-parity".into(),
         context: ContextSnapshot {

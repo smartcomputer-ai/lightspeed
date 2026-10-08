@@ -1200,7 +1200,8 @@ impl ChatSessionDriver {
             | SessionEventKindView::ToolsPatched { .. }
             | SessionEventKindView::ToolBatchDeferred { .. }
             | SessionEventKindView::ToolBatchResumed { .. }
-            | SessionEventKindView::ActiveEnvironmentChanged { .. } => {}
+            | SessionEventKindView::ActiveEnvironmentChanged { .. }
+            | SessionEventKindView::CodeToolProgress { .. } => {}
         }
         events
     }
@@ -1851,6 +1852,7 @@ fn tool_display_from_api(display: &api::ToolCallDisplayView) -> ChatToolCallDisp
             api::ToolCallDisplayGroup::Explore => ChatToolDisplayGroup::Explore,
             api::ToolCallDisplayGroup::Edit => ChatToolDisplayGroup::Edit,
             api::ToolCallDisplayGroup::Execute => ChatToolDisplayGroup::Execute,
+            api::ToolCallDisplayGroup::Code => ChatToolDisplayGroup::Code,
             api::ToolCallDisplayGroup::Mcp => ChatToolDisplayGroup::Mcp,
             api::ToolCallDisplayGroup::Agent => ChatToolDisplayGroup::Agent,
             api::ToolCallDisplayGroup::Bot => ChatToolDisplayGroup::Bot,
@@ -1879,6 +1881,7 @@ fn tool_activity_summary(calls: &[ChatToolCallView]) -> Option<String> {
             ChatToolDisplayGroup::Explore => "explore",
             ChatToolDisplayGroup::Edit => "edit",
             ChatToolDisplayGroup::Execute => "execute",
+            ChatToolDisplayGroup::Code => "code",
             ChatToolDisplayGroup::Mcp => "mcp",
             ChatToolDisplayGroup::Agent => "agents",
             ChatToolDisplayGroup::Bot => "bots",
