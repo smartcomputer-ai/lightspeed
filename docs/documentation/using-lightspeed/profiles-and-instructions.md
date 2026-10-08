@@ -71,9 +71,10 @@ operations Lightspeed makes available. Both matter: “do not edit files”
 expresses the reviewer's procedure, while read-only tools and links enforce
 the file-access boundary even if the model asks to write.
 
-The editor groups capabilities into VFS, Web, Sub-agents, Timers,
-Environments, and MCP Servers. Attach a workspace, environment, or MCP server
-to make that resource available, then select the access this job needs.
+The editor groups capabilities into VFS, Web, Sub-agents,
+[Code mode](code-mode.md), Timers, Environments, and MCP Servers. Attach a
+workspace, environment, or MCP server to make that resource available, then
+select the access this job needs.
 Workspace access can be read-only or editable. Environment access can also
 allow processes and jobs. An MCP attachment can select a subset of the
 server's allowed tools. [Tools and MCP](tools-and-mcp.md) explains the choices.
