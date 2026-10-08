@@ -122,7 +122,7 @@ async fn filesystem_outputs_match_each_surface_and_claude_edit_creation() {
     }
 }
 
-struct FixedProcessOutput;
+struct FixedProcessOutput(ProcessOutput);
 
 fn process_output() -> ProcessOutput {
     ProcessOutput {
@@ -147,23 +147,28 @@ fn process_output() -> ProcessOutput {
 #[async_trait]
 impl ProcessExecutor for FixedProcessOutput {
     async fn run_process(&self, _: ProcessRequest) -> ProcessExecResult<ProcessOutput> {
-        Ok(process_output())
+        Ok(self.0.clone())
     }
 
     async fn continue_process(
         &self,
         _: ContinueProcessRequest,
     ) -> ProcessExecResult<ProcessOutput> {
-        Ok(process_output())
+        Ok(self.0.clone())
     }
 }
 
 #[tokio::test]
-async fn process_presentations_return_bytes_and_handles_not_the_text_header() {
+async fn process_presentations_return_text_and_preserve_process_metadata() {
     let ctx = EnvironmentToolContext::new(
-        Some(Arc::new(FixedProcessOutput)),
+        Some(Arc::new(FixedProcessOutput(process_output()))),
         Arc::new(InMemoryBlobStore::new()),
     );
+    let expected = json!({
+        "status": "running", "handle": "process-1", "pid": 123, "exit_code": null,
+        "stdout": "hello", "stderr": "", "omitted_bytes": 32, "stdout_omitted_at": 2,
+        "leftover_processes": [{"pid": 124, "command": "child"}],
+    });
     for (surface, run_args, continue_args, kill_args) in [
         (
             BuiltinToolSurface::Canonical,
@@ -188,24 +193,22 @@ async fn process_presentations_return_bytes_and_handles_not_the_text_header() {
             (BuiltinToolOperation::RunProcess, run_args),
             (BuiltinToolOperation::ContinueProcess, continue_args),
         ] {
-            let tool = BuiltinTool::environment(operation, surface);
-            let result = tool
-                .invoke_json(BuiltinToolContext::Environment(&ctx), args)
-                .await
-                .expect("process call");
-            let schema = validator(tool);
-            schema
-                .validate(&result.output_json)
-                .expect("serialized process result");
-            assert_eq!(result.output_json, serialized(&process_output()));
-            let mut invalid = result.output_json;
-            invalid["stdout"]["bytes"] = json!("hello");
-            assert!(
-                !schema.is_valid(&invalid),
-                "stream bytes are an array, not visible text"
-            );
-            invalid["stdout"]["bytes"] = json!([256]);
-            assert!(!schema.is_valid(&invalid), "stream byte range is bounded");
+            for one_shot in [false, true] {
+                if one_shot && operation == BuiltinToolOperation::ContinueProcess {
+                    continue;
+                }
+                let tool = BuiltinTool::environment(operation, surface).with_one_shot(one_shot);
+                let result = tool
+                    .invoke_json(BuiltinToolContext::Environment(&ctx), args.clone())
+                    .await
+                    .expect("process call");
+                validator(tool)
+                    .validate(&result.output_json)
+                    .expect("serialized process result");
+                assert_eq!(result.output_json, expected);
+                assert!(result.model_visible_text.contains("[omitted 32 bytes]"));
+                assert!(result.model_visible_text.contains("child"));
+            }
         }
         if let Some(args) = kill_args {
             let tool = BuiltinTool::environment(BuiltinToolOperation::ContinueProcess, surface)
@@ -217,7 +220,68 @@ async fn process_presentations_return_bytes_and_handles_not_the_text_header() {
             validator(tool)
                 .validate(&result.output_json)
                 .expect("kill returns process result");
+            assert_eq!(result.output_json, expected);
         }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn process_schema_requires_one_typed_encoding_per_stream() {
+    let mut output = process_output();
+    output.stdout.bytes = vec![255, 254, 0];
+    output.stderr.bytes = b"warning".to_vec();
+    let ctx = EnvironmentToolContext::new(
+        Some(Arc::new(FixedProcessOutput(output))),
+        Arc::new(InMemoryBlobStore::new()),
+    );
+    let tool = BuiltinTool::environment_canonical(BuiltinToolOperation::RunProcess);
+    let result = tool
+        .invoke_json(
+            BuiltinToolContext::Environment(&ctx),
+            json!({"argv": ["true"]}),
+        )
+        .await
+        .expect("binary process output");
+    let schema = validator(tool);
+    schema
+        .validate(&result.output_json)
+        .expect("binary fallback");
+    assert_eq!(result.output_json["stdout_bytes"], json!([255, 254, 0]));
+    assert_eq!(result.output_json["stderr"], "warning");
+    assert!(result.output_json.get("stdout").is_none());
+    assert!(result.output_json.get("stderr_bytes").is_none());
+
+    for (stream, bytes) in [("stdout", "stdout_bytes"), ("stderr", "stderr_bytes")] {
+        let mut missing = result.output_json.clone();
+        missing.as_object_mut().unwrap().remove(stream);
+        missing.as_object_mut().unwrap().remove(bytes);
+        assert!(!schema.is_valid(&missing), "one encoding is required");
+
+        let mut text = missing.clone();
+        text[stream] = json!("héllo 🌍\u{0000}");
+        assert!(schema.is_valid(&text), "text encoding is valid");
+        let mut both = text.clone();
+        both[bytes] = json!([255]);
+        assert!(!schema.is_valid(&both), "encodings are mutually exclusive");
+
+        for invalid in [Value::Null, json!({"bytes": [65]}), json!([65])] {
+            text[stream] = invalid;
+            assert!(!schema.is_valid(&text), "text must be a string");
+        }
+        for invalid in [
+            Value::Null,
+            json!("binary"),
+            json!([-1]),
+            json!([256]),
+            json!([1.5]),
+        ] {
+            let mut binary = missing.clone();
+            binary[bytes] = invalid;
+            assert!(!schema.is_valid(&binary), "bytes must be unsigned octets");
+        }
+        let mut binary = missing;
+        binary[bytes] = json!([0, 127, 255]);
+        assert!(schema.is_valid(&binary), "byte boundaries are valid");
     }
 }
 

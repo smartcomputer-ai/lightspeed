@@ -20,6 +20,7 @@ use crate::{
 mod canonical;
 mod claude;
 mod codex;
+mod process_output;
 mod shared;
 
 #[cfg(test)]
@@ -747,7 +748,7 @@ impl BuiltinTool {
     /// for a provider. Adapter-specific result variants remain explicit.
     pub fn output_schema(self) -> Value {
         use crate::definitions::output_schema_for;
-        use crate::environment::{jobs, process::ProcessOutput};
+        use crate::environment::jobs;
         use crate::fs::tools::ListDirResult;
 
         match self.operation {
@@ -765,7 +766,7 @@ impl BuiltinTool {
             BuiltinToolOperation::Glob => output_schema_for::<GlobResult>(),
             BuiltinToolOperation::ListDir => output_schema_for::<ListDirResult>(),
             BuiltinToolOperation::RunProcess | BuiltinToolOperation::ContinueProcess => {
-                output_schema_for::<ProcessOutput>()
+                output_schema_for::<process_output::ProcessToolOutput>()
             }
             BuiltinToolOperation::JobSubmit => output_schema_for::<jobs::JobSubmitResult>(),
             BuiltinToolOperation::JobRun => output_schema_for::<jobs::ModelJobResult>(),

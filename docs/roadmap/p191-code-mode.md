@@ -69,6 +69,16 @@ The first slice established callable contracts and execution metadata:
 - `ScriptToolResult` defines successful structured values and failed calls with
   optional structured error output. Session effects and attachment admission
   stay with the host; formatted provider text is not the script return value.
+- Process tools project retained output into `stdout`/`stderr` strings when it
+  is valid UTF-8, or lossless `stdout_bytes`/`stderr_bytes` arrays otherwise.
+  Exactly one field per stream is present, including empty strings for empty
+  output; output schemas enforce this exclusivity. Execution, polling, and kill
+  variants share this conversion across presentations. Process metadata is
+  preserved, with `stdout_omitted_at`/`stderr_omitted_at` retaining byte offsets.
+  The environment protocol keeps raw bytes and direct model calls retain their
+  existing text formatting. Native QuickJS integration covers parsing string
+  stdout and handling binary fallback across process polls. Media emission
+  helpers remain deferred.
 - `temporal-workflow` owns a validated `CodeExecutionDescriptor` with source and
   catalog CAS references, parent identity, and explicit positive execution limits.
   It introduces no interpreter dependency. The workflow integration contract now

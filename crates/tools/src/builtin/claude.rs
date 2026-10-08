@@ -29,9 +29,10 @@ use crate::{
 
 use super::{
     BuiltinTool, BuiltinToolContext, BuiltinToolOperation, BuiltinToolVariant, canonical,
+    process_output::encode_process_output,
     shared::{
         ProcessPresentation, invalid_request, nullable_integer, nullable_string, object,
-        optional_boolean, optional_enum, process_visible_output, string, visible_with_search_stop,
+        optional_boolean, optional_enum, string, visible_with_search_stop,
     },
 };
 
@@ -392,9 +393,7 @@ pub(super) async fn invoke_json(
                 args.into_run_process_args(background, &env_ctx.limits),
             )
             .await?;
-            let visible =
-                process_visible_output(&result, ProcessPresentation::ClaudeBash { background });
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::ClaudeBash { background })
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Primary) => {
             let args: ClaudeCodeBashOutputArgs = decode_args(arguments)?;
@@ -402,16 +401,14 @@ pub(super) async fn invoke_json(
             let result =
                 invoke_continue_process(env_ctx, args.into_continue_process_args(&env_ctx.limits))
                     .await?;
-            let visible = process_visible_output(&result, ProcessPresentation::ClaudeBashOutput);
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::ClaudeBashOutput)
         }
         (BuiltinToolOperation::ContinueProcess, BuiltinToolVariant::Kill) => {
             let args: ClaudeCodeKillShellArgs = decode_args(arguments)?;
             let env_ctx = ctx.environment()?;
             let result =
                 invoke_continue_process(env_ctx, args.into_continue_process_args()).await?;
-            let visible = process_visible_output(&result, ProcessPresentation::ClaudeKillShell);
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::ClaudeKillShell)
         }
         (
             BuiltinToolOperation::Reference

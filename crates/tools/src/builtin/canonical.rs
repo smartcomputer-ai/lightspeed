@@ -25,9 +25,10 @@ use crate::{
 
 use super::{
     BuiltinTool, BuiltinToolContext, BuiltinToolOperation,
+    process_output::encode_process_output,
     shared::{
         ProcessPresentation, array_of_strings, boolean, nullable_integer, nullable_string, object,
-        optional_enum, process_visible_output, string, string_map, visible_with_search_stop,
+        optional_enum, string, string_map, visible_with_search_stop,
     },
 };
 
@@ -420,14 +421,12 @@ pub(super) async fn invoke_json(
                 args.yield_ms = None;
             }
             let result = invoke_run_process(env_ctx, args).await?;
-            let visible = process_visible_output(&result, ProcessPresentation::Canonical);
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::Canonical)
         }
         BuiltinToolOperation::ContinueProcess => {
             let env_ctx = ctx.environment()?;
             let result = invoke_continue_process(env_ctx, decode_args(arguments)?).await?;
-            let visible = process_visible_output(&result, ProcessPresentation::Canonical);
-            encode_output(&result, visible)
+            encode_process_output(result, ProcessPresentation::Canonical)
         }
         BuiltinToolOperation::JobSubmit => {
             let env_ctx = ctx.environment()?;
