@@ -4018,7 +4018,13 @@ mod tests {
             (br#"{"code":"return 7;"}"#.as_slice(), None),
             (
                 br#"{"code":"return 7;","timeout_ms":30001}"#.as_slice(),
-                Some(harness::CodeModeFeature::default()),
+                Some(harness::CodeModeFeature {
+                    limits: harness::CodeModeLimits {
+                        timeout_ms: 30_000,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
             ),
             (
                 br#"{"code":"return 7;","timeout_ms":0}"#.as_slice(),
@@ -4046,7 +4052,12 @@ mod tests {
                 .unwrap()
                 .completed_result()
                 .unwrap();
-            assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+            assert_eq!(
+                result.results[0].status,
+                ToolCallStatus::Failed,
+                "arguments: {}",
+                String::from_utf8_lossy(args)
+            );
             assert!(result.results[0].effects.is_empty());
         }
         let binding = code_binding(&blobs, tools::code::CODE_EXECUTION_OVERHEAD_MS + 10).await;
