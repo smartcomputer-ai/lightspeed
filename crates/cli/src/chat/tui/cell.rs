@@ -599,6 +599,7 @@ fn activity_style(group: ChatToolDisplayGroup) -> Style {
         ChatToolDisplayGroup::Explore => Style::default().fg(Color::Cyan),
         ChatToolDisplayGroup::Edit => Style::default().fg(Color::Yellow),
         ChatToolDisplayGroup::Execute => Style::default().fg(Color::White),
+        ChatToolDisplayGroup::Code => Style::default().fg(Color::LightBlue),
         ChatToolDisplayGroup::Mcp => Style::default().fg(Color::Magenta),
         ChatToolDisplayGroup::Agent => Style::default().fg(Color::LightMagenta),
         ChatToolDisplayGroup::Bot => Style::default().fg(Color::Green),

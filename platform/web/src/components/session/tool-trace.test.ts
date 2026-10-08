@@ -33,6 +33,17 @@ describe("tool trace names", () => {
 });
 
 describe("step rows", () => {
+  it("gives code orchestration a distinct icon and color without showing the source", () => {
+    const html = render(group([call({
+      toolName: "code_execute", argumentsJson: '{"code":"text(secret)"}',
+      display: { group: "code", verb: "Run code", target: "JavaScript", detail: "1 line" },
+    })]));
+    expect(text(html)).toBe("Run code JavaScript 1 line");
+    expect(html).toContain("lucide-file-code-2");
+    expect(html).toContain("text-fuchsia-700");
+    expect(html).not.toContain("secret");
+  });
+
   it("renders a finished call as one quiet row: verb, target, duration, and no badge", () => {
     const html = render(group([call({
       display: { group: "explore", verb: "Read", target: "/workspace/notes.md" }, durationMs: 340,

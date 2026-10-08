@@ -17298,6 +17298,11 @@
           "type": "string"
         },
         {
+          "const": "code",
+          "description": "Orchestrates tool calls in a code-mode script.",
+          "type": "string"
+        },
+        {
           "const": "mcp",
           "description": "Calls a tool on an MCP server, through the builtin bridge or a\nprovider-native MCP block.",
           "type": "string"

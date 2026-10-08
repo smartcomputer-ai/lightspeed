@@ -2974,7 +2974,82 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
     let json = serde_json::from_str::<Value>(arguments).ok();
     let normalized = tool_name.to_ascii_lowercase();
     let view = match normalized.as_str() {
-        "read_file" | "read" => ToolCallDisplayView {
+        "code_execute" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Code,
+            verb: "Run code".to_owned(),
+            target: Some("JavaScript".to_owned()),
+            detail: json.as_ref().and_then(|json| {
+                let code = json.get("code")?.as_str()?.trim();
+                let lines = code.lines().count();
+                (lines > 0)
+                    .then(|| format!("{lines} {}", if lines == 1 { "line" } else { "lines" }))
+            }),
+        },
+        "blob_info" | "blob_read" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Explore,
+            verb: if normalized == "blob_info" {
+                "Inspect blob"
+            } else {
+                "Read blob"
+            }
+            .to_owned(),
+            target: json.as_ref().and_then(|json| first_string(json, &["ref"])),
+            detail: None,
+        },
+        "blob_put" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Edit,
+            verb: "Store blob".to_owned(),
+            target: json.as_ref().and_then(|json| first_string(json, &["name"])),
+            detail: None,
+        },
+        "vfs_reference" | "env_reference" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Explore,
+            verb: "Reference".to_owned(),
+            target: json.as_ref().and_then(|json| first_string(json, &["path"])),
+            detail: None,
+        },
+        "vfs_materialize" | "vfs_capture" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Edit,
+            verb: if normalized == "vfs_materialize" {
+                "Materialize"
+            } else {
+                "Capture"
+            }
+            .to_owned(),
+            target: json.as_ref().and_then(|json| {
+                first_string(
+                    json,
+                    &["destination_environment_path", "destination_vfs_path"],
+                )
+            }),
+            detail: json
+                .as_ref()
+                .and_then(|json| {
+                    first_string(json, &["source_vfs_path", "source_environment_path"])
+                })
+                .map(|source| format!("from {source}")),
+        },
+        "job_submit" | "job_read" => ToolCallDisplayView {
+            group: ToolCallDisplayGroup::Execute,
+            verb: if normalized == "job_submit" {
+                "Submit jobs"
+            } else {
+                "Read jobs"
+            }
+            .to_owned(),
+            target: json
+                .as_ref()
+                .and_then(|json| json.get("jobs")?.as_array())
+                .map(|jobs| {
+                    format!(
+                        "{} {}",
+                        jobs.len(),
+                        if jobs.len() == 1 { "job" } else { "jobs" }
+                    )
+                }),
+            detail: None,
+        },
+        "read_file" | "read" | "vfs_read_file" | "vfsread" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Explore,
             verb: "Read".to_owned(),
             target: json
@@ -2982,7 +3057,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["path", "file_path"])),
             detail: None,
         },
-        "list_dir" | "ls" => ToolCallDisplayView {
+        "list_dir" | "listdir" | "ls" | "vfs_list_dir" | "vfslistdir" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Explore,
             verb: "List".to_owned(),
             target: json
@@ -2991,7 +3066,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .or_else(|| Some("/".to_owned())),
             detail: None,
         },
-        "grep" => ToolCallDisplayView {
+        "grep" | "vfs_grep" | "vfsgrep" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Explore,
             verb: "Search".to_owned(),
             target: json
@@ -3002,7 +3077,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["path", "include"]))
                 .map(|target| format!("in {target}")),
         },
-        "glob" => ToolCallDisplayView {
+        "glob" | "vfs_glob" | "vfsglob" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Explore,
             verb: "Find".to_owned(),
             target: json
@@ -3055,7 +3130,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| json.get("arguments"))
                 .and_then(first_scalar_text),
         },
-        "write_file" | "write" => ToolCallDisplayView {
+        "write_file" | "write" | "vfs_write_file" | "vfswrite" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Edit,
             verb: "Write".to_owned(),
             target: json
@@ -3063,7 +3138,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["path", "file_path"])),
             detail: None,
         },
-        "edit_file" | "edit" => ToolCallDisplayView {
+        "edit_file" | "edit" | "vfs_edit_file" | "vfsedit" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Edit,
             verb: "Edit".to_owned(),
             target: json
@@ -3071,7 +3146,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["path", "file_path"])),
             detail: None,
         },
-        "apply_patch" => ToolCallDisplayView {
+        "apply_patch" | "vfs_apply_patch" | "vfsapplypatch" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Edit,
             verb: "Patch".to_owned(),
             target: json
@@ -3080,7 +3155,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|patch| patch_target(&patch)),
             detail: None,
         },
-        "exec_command" | "bash" | "Bash" | "run_process" => ToolCallDisplayView {
+        "exec_command" | "bash" | "run_process" | "job_run" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Execute,
             verb: "Run".to_owned(),
             target: json.as_ref().and_then(command_display),
@@ -3089,7 +3164,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .and_then(|json| first_string(json, &["cwd", "workdir"]))
                 .map(|cwd| format!("in {cwd}")),
         },
-        "write_stdin" | "continue_process" | "BashOutput" => ToolCallDisplayView {
+        "write_stdin" | "continue_process" | "bashoutput" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Execute,
             verb: "Continue process".to_owned(),
             target: json.as_ref().and_then(|json| {
@@ -3100,7 +3175,7 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
             }),
             detail: None,
         },
-        "KillShell" => ToolCallDisplayView {
+        "killshell" => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Execute,
             verb: "Stop process".to_owned(),
             target: json
@@ -3266,6 +3341,19 @@ fn tool_call_display(tool_name: &str, arguments: &str) -> Option<ToolCallDisplay
                 .map(|ms| format!("{ms} ms")),
             detail: None,
         },
+        _ if tool_name
+            .strip_prefix("mcp_")
+            .and_then(|name| name.split_once("__"))
+            .is_some_and(|(server, tool)| !server.is_empty() && !tool.is_empty()) =>
+        {
+            let (server, tool) = tool_name.strip_prefix("mcp_")?.split_once("__")?;
+            ToolCallDisplayView {
+                group: ToolCallDisplayGroup::Mcp,
+                verb: server.to_owned(),
+                target: Some(tool.to_owned()),
+                detail: json.as_ref().and_then(first_scalar_text),
+            }
+        }
         _ => ToolCallDisplayView {
             group: ToolCallDisplayGroup::Other,
             verb: tool_name.to_owned(),
@@ -3469,6 +3557,201 @@ mod tests {
             completed_at_ms: None,
             duration_ms: None,
             media: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn code_display_summarizes_source_without_exposing_it_in_the_row() {
+        let display = tool_call_display("code_execute", r#"{"code":"const result = await tools.vfs_read_file({path:'/notes'});\ntext(result);\n"}"#).unwrap();
+        assert_eq!(display.group, ToolCallDisplayGroup::Code);
+        assert_eq!(display.verb, "Run code");
+        assert_eq!(display.target.as_deref(), Some("JavaScript"));
+        assert_eq!(display.detail.as_deref(), Some("2 lines"));
+        assert_eq!(
+            tool_call_display("code_execute", r#"{"code":"return 1"}"#)
+                .unwrap()
+                .detail
+                .as_deref(),
+            Some("1 line")
+        );
+        for arguments in ["{", "{}", r#"{"code":" "}"#] {
+            let display = tool_call_display("code_execute", arguments).unwrap();
+            assert_eq!(display.group, ToolCallDisplayGroup::Code);
+            assert_eq!(display.detail, None);
+        }
+    }
+
+    #[test]
+    fn filesystem_surfaces_share_activity_styles() {
+        for (names, group, verb, args, target) in [
+            (
+                vec!["read_file", "Read", "vfs_read_file", "VfsRead"],
+                ToolCallDisplayGroup::Explore,
+                "Read",
+                r#"{"path":"/notes"}"#,
+                "/notes",
+            ),
+            (
+                vec!["list_dir", "ListDir", "vfs_list_dir", "VfsListDir"],
+                ToolCallDisplayGroup::Explore,
+                "List",
+                r#"{"path":"/docs"}"#,
+                "/docs",
+            ),
+            (
+                vec!["grep", "Grep", "vfs_grep", "VfsGrep"],
+                ToolCallDisplayGroup::Explore,
+                "Search",
+                r#"{"pattern":"todo"}"#,
+                "todo",
+            ),
+            (
+                vec!["glob", "Glob", "vfs_glob", "VfsGlob"],
+                ToolCallDisplayGroup::Explore,
+                "Find",
+                r#"{"pattern":"*.rs"}"#,
+                "*.rs",
+            ),
+            (
+                vec!["write_file", "Write", "vfs_write_file", "VfsWrite"],
+                ToolCallDisplayGroup::Edit,
+                "Write",
+                r#"{"path":"/notes"}"#,
+                "/notes",
+            ),
+            (
+                vec!["edit_file", "Edit", "vfs_edit_file", "VfsEdit"],
+                ToolCallDisplayGroup::Edit,
+                "Edit",
+                r#"{"path":"/notes"}"#,
+                "/notes",
+            ),
+            (
+                vec!["apply_patch", "vfs_apply_patch", "VfsApplyPatch"],
+                ToolCallDisplayGroup::Edit,
+                "Patch",
+                r#"{"patch":"*** Begin Patch\n*** Update File: /notes\n*** End Patch"}"#,
+                "/notes",
+            ),
+        ] {
+            for name in names {
+                let display = tool_call_display(name, args).unwrap();
+                assert_eq!(display.group, group, "{name}");
+                assert_eq!(display.verb, verb, "{name}");
+                assert_eq!(display.target.as_deref(), Some(target), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn storage_and_jobs_have_specific_activity_rows() {
+        for (name, args, group, verb, target) in [
+            (
+                "blob_info",
+                r#"{"ref":"file:abc"}"#,
+                ToolCallDisplayGroup::Explore,
+                "Inspect blob",
+                "file:abc",
+            ),
+            (
+                "blob_read",
+                r#"{"ref":"sha256:abc"}"#,
+                ToolCallDisplayGroup::Explore,
+                "Read blob",
+                "sha256:abc",
+            ),
+            (
+                "blob_put",
+                r#"{"name":"report.txt","text":"private content"}"#,
+                ToolCallDisplayGroup::Edit,
+                "Store blob",
+                "report.txt",
+            ),
+            (
+                "vfs_reference",
+                r#"{"path":"/report.txt"}"#,
+                ToolCallDisplayGroup::Explore,
+                "Reference",
+                "/report.txt",
+            ),
+            (
+                "env_reference",
+                r#"{"path":"/report.txt"}"#,
+                ToolCallDisplayGroup::Explore,
+                "Reference",
+                "/report.txt",
+            ),
+            (
+                "vfs_materialize",
+                r#"{"source_vfs_path":"/source","destination_environment_path":"/dest"}"#,
+                ToolCallDisplayGroup::Edit,
+                "Materialize",
+                "/dest",
+            ),
+            (
+                "vfs_capture",
+                r#"{"source_environment_path":"/source","destination_vfs_path":"/dest"}"#,
+                ToolCallDisplayGroup::Edit,
+                "Capture",
+                "/dest",
+            ),
+            (
+                "job_run",
+                r#"{"argv":["echo","hello"]}"#,
+                ToolCallDisplayGroup::Execute,
+                "Run",
+                "echo hello",
+            ),
+            (
+                "job_submit",
+                r#"{"jobs":[{},{}]}"#,
+                ToolCallDisplayGroup::Execute,
+                "Submit jobs",
+                "2 jobs",
+            ),
+            (
+                "job_read",
+                r#"{"jobs":[{}]}"#,
+                ToolCallDisplayGroup::Execute,
+                "Read jobs",
+                "1 job",
+            ),
+            (
+                "BashOutput",
+                r#"{"bash_id":"process1"}"#,
+                ToolCallDisplayGroup::Execute,
+                "Continue process",
+                "process1",
+            ),
+            (
+                "KillShell",
+                r#"{"shell_id":"process1"}"#,
+                ToolCallDisplayGroup::Execute,
+                "Stop process",
+                "process1",
+            ),
+        ] {
+            let display = tool_call_display(name, args).unwrap();
+            assert_eq!(display.group, group, "{name}");
+            assert_eq!(display.verb, verb, "{name}");
+            assert_eq!(display.target.as_deref(), Some(target), "{name}");
+            if name.starts_with("vfs_") && name != "vfs_reference" {
+                assert_eq!(display.detail.as_deref(), Some("from /source"));
+            }
+        }
+    }
+
+    #[test]
+    fn injected_mcp_display_preserves_names_and_unknown_tools_stay_generic() {
+        let display = tool_call_display("mcp_docs__Search", r#"{"query":"QuickJS"}"#).unwrap();
+        assert_eq!(display.group, ToolCallDisplayGroup::Mcp);
+        assert_eq!(display.verb, "docs");
+        assert_eq!(display.target.as_deref(), Some("Search"));
+        assert_eq!(display.detail.as_deref(), Some("QuickJS"));
+        for name in ["custom_tool", "mcp_unknown", "mcp___", "mcp_docs__"] {
+            let display = tool_call_display(name, "{}").unwrap();
+            assert_eq!(display.group, ToolCallDisplayGroup::Other);
+            assert_eq!(display.verb, name);
         }
     }
 

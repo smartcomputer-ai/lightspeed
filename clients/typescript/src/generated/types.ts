@@ -180,7 +180,7 @@ export type ToolItemStatus =
  * via the `definition` "ToolCallDisplayGroup".
  */
 export type ToolCallDisplayGroup =
-  "other" | "explore" | "edit" | "execute" | "mcp" | "agent" | "bot" | "message";
+  "other" | "explore" | "edit" | "execute" | "code" | "mcp" | "agent" | "bot" | "message";
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "ContextEntryKindView".

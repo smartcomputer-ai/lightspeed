@@ -323,6 +323,8 @@ pub enum ToolCallDisplayGroup {
     Edit,
     /// Runs or controls a process.
     Execute,
+    /// Orchestrates tool calls in a code-mode script.
+    Code,
     /// Calls a tool on an MCP server, through the builtin bridge or a
     /// provider-native MCP block.
     Mcp,

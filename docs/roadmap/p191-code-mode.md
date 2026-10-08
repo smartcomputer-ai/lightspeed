@@ -1338,6 +1338,11 @@ Implementation sequence and current status:
    schemas are filled in; the real-model test uses these contracts without
    prompt-supplied return hints. Ordinary tools remain alongside `code_execute`.
    TypeScript declaration rendering remains optional.
+   Transcript projection also identifies code execution as its own activity
+   family. The web UI uses a distinct code icon/color in call rows and folded
+   run summaries, with JavaScript and source line count in the compact row;
+   source remains in the expandable arguments. VFS, blob, job, and injected
+   MCP calls reuse the existing activity styles.
 6. **Remaining — integration coverage and operational validation.** Extend the
    existing OpenAI Responses cases to other actual model providers. Native/deferred
    MCP and real job/sub-agent runtimes have scripted-model live coverage.
