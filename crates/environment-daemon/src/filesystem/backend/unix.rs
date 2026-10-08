@@ -183,6 +183,25 @@ impl Directory {
     pub fn metadata(&self, path: &str) -> io::Result<File> {
         self.open_kind(path, true)
     }
+    /// Check the same existing-file write permission as a normal write, without
+    /// truncation, and without following filesystem aliases outside the scope.
+    pub fn writable_file(&self, path: &str) -> io::Result<File> {
+        let (dir, name) = self.parent(path)?;
+        let file: File = fs::openat(
+            &dir.0,
+            &name,
+            OFlags::WRONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?
+        .into();
+        if !file.metadata()?.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "write requires a regular file",
+            ));
+        }
+        Ok(file)
+    }
     fn open_kind(&self, path: &str, metadata_only: bool) -> io::Result<File> {
         let (dir, name) = self.parent(path)?;
         #[cfg(target_os = "linux")]
@@ -287,6 +306,12 @@ impl Directory {
             Err(error) => Err(error),
         }
     }
+
+    /// A normal rename atomically refuses to replace a directory with a file,
+    /// including a directory created after the caller's destination check.
+    pub fn publish_file(&self, stage: &Self, target: &str) -> io::Result<()> {
+        fs::renameat(&stage.0, "tree", &self.0, target).map_err(io::Error::from)
+    }
     pub fn remove_tree(&self, name: &str) -> io::Result<()> {
         struct Frame {
             name: CString,
@@ -338,6 +363,37 @@ impl Directory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_publication_cannot_replace_a_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = Directory::anchor(root.path()).unwrap();
+        let stage = parent.mkdir("staging", true).unwrap();
+        std::fs::write(root.path().join("staging/tree"), b"new bytes").unwrap();
+        // The file was valid when checked, but another actor replaced it by a
+        // nonempty directory before publication.
+        std::fs::write(root.path().join("target"), b"old bytes").unwrap();
+        parent.writable_file("target").unwrap();
+        std::fs::remove_file(root.path().join("target")).unwrap();
+        std::fs::create_dir(root.path().join("target")).unwrap();
+        std::fs::write(root.path().join("target/keep"), b"keep").unwrap();
+        assert!(parent.publish_file(&stage, "target").is_err());
+        assert_eq!(
+            std::fs::read(root.path().join("target/keep")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("staging/tree")).unwrap(),
+            b"new bytes"
+        );
+        std::fs::remove_dir_all(root.path().join("target")).unwrap();
+        std::fs::write(root.path().join("target"), b"old bytes").unwrap();
+        parent.publish_file(&stage, "target").unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join("target")).unwrap(),
+            b"new bytes"
+        );
+    }
 
     #[test]
     fn directory_enumerations_have_independent_offsets_and_enforce_limits() {

@@ -21,6 +21,12 @@ pub enum TransferSelection {
         #[serde(default)]
         on_existing: TransferOnExisting,
     },
+    /// Write exactly one file, rejecting directories and preserving existing
+    /// file permissions. Uses the same bounded chunks and durable receipts.
+    /// A separate direction makes older endpoints reject unsupported semantics.
+    WriteFile {
+        destination: EnvironmentPath,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(

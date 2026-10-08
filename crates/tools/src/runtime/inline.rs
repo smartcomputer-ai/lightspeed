@@ -6,12 +6,14 @@ use async_trait::async_trait;
 use harness::{
     CoreAgentIoError, CoreAgentTools, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
     ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, ToolName,
-    storage::BlobStore,
+    storage::{BlobGraphStore, BlobStore, collect_blob_refs, record_contains_edges},
 };
 use serde_json::Value;
 
 use crate::{
+    blobs::BlobTool,
     builtin::{BuiltinTool, BuiltinToolContext, BuiltinToolDomain},
+    content::ContentResolver,
     environment::EnvironmentToolContext,
     error::{ToolError, ToolResult},
     fs::FsToolContext,
@@ -27,6 +29,9 @@ pub struct InlineToolRuntime {
     environment: Option<EnvironmentToolContext>,
     catalog: ToolCatalog,
     blobs: Arc<dyn BlobStore>,
+    blob_graph: Option<Arc<dyn BlobGraphStore>>,
+    content_resolver: ContentResolver,
+    call_scope: Option<String>,
     limits: ToolLimits,
 }
 
@@ -55,9 +60,62 @@ impl InlineToolRuntime {
             vfs_attachments: Vec::new(),
             environment,
             catalog,
+            content_resolver: ContentResolver::new(blobs.clone()),
             blobs,
+            blob_graph: None,
+            call_scope: None,
             limits,
         }
+    }
+
+    /// Provider call IDs can repeat in later turns; transfer receipts must not.
+    pub fn with_call_scope(mut self, request: &ToolInvocationBatchRequest) -> Self {
+        self.call_scope = Some(format!(
+            "{}:{}:{}:{}",
+            request.session_id, request.run_id, request.turn_id, request.batch_id,
+        ));
+        self
+    }
+
+    fn operation_id(
+        &self,
+        call: &ToolInvocationRequest,
+        environment: &EnvironmentToolContext,
+    ) -> String {
+        let scope = self
+            .call_scope
+            .as_deref()
+            .or(environment.session_id.as_deref())
+            .unwrap_or("local");
+        let identity = format!("{scope}:{}:{}", call.call_id, call.arguments_ref);
+        format!(
+            "tool-{}",
+            harness::BlobRef::from_bytes(identity.as_bytes())
+                .as_str()
+                .trim_start_matches("sha256:")
+        )
+    }
+
+    pub fn with_blob_graph(mut self, graph: Arc<dyn BlobGraphStore>) -> Self {
+        self.blob_graph = Some(graph.clone());
+        let resolver = self.content_resolver.clone().with_blob_graph(graph);
+        self.with_content_resolver(resolver)
+    }
+
+    /// Recorded aliases are descriptive facts, not a blob access allowlist.
+    pub fn with_content_resolver(mut self, resolver: ContentResolver) -> Self {
+        if let Some(ctx) = &mut self.vfs {
+            *ctx = ctx.clone().with_content_resolver(resolver.clone());
+        }
+        if let Some(ctx) = self
+            .environment
+            .as_mut()
+            .and_then(|ctx| ctx.filesystem.as_mut())
+        {
+            *ctx = ctx.clone().with_content_resolver(resolver.clone());
+        }
+        self.content_resolver = resolver;
+        self
     }
 
     /// Origin metadata from the same mounts used to construct the VFS filesystem.
@@ -85,11 +143,22 @@ impl InlineToolRuntime {
         &self,
         call: &ToolInvocationRequest,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
+        let mut runtime = self.clone();
+        if let Some(environment) = runtime.environment.as_mut() {
+            environment.operation_id = Some(self.operation_id(call, environment));
+        }
+        runtime.invoke_prepared_call(call).await
+    }
+
+    async fn invoke_prepared_call(
+        &self,
+        call: &ToolInvocationRequest,
+    ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         let binding = match self.resolve_binding(call) {
             Ok(binding) => binding,
             Err(error) => return self.failed_result_without_context(call, error).await,
         };
-        if binding.logical_id == WEB_FETCH_LOGICAL_ID {
+        if is_context_free(&binding.logical_id) {
             let arguments = match self.read_arguments_from_blobs(call).await {
                 Ok(arguments) => arguments,
                 Err(error) => return self.failed_result_without_context(call, error).await,
@@ -109,18 +178,7 @@ impl InlineToolRuntime {
         };
         let operation_id = match ctx {
             BuiltinToolContext::Transfer { environment, .. } => {
-                let identity = format!(
-                    "{}:{}:{}",
-                    environment.session_id.as_deref().unwrap_or("local"),
-                    call.call_id,
-                    call.arguments_ref
-                );
-                Some(format!(
-                    "tool-{}",
-                    harness::BlobRef::from_bytes(identity.as_bytes())
-                        .as_str()
-                        .trim_start_matches("sha256:")
-                ))
+                Some(self.operation_id(call, environment))
             }
             _ => None,
         };
@@ -259,6 +317,8 @@ impl InlineToolRuntime {
         let output_bytes = serde_json::to_vec(&output.output_json)
             .map_err(|error| io_error(format!("failed to encode tool output: {error}")))?;
         let output_ref = self.put_blob(ctx, output_bytes).await?;
+        self.record_output_edges(&output_ref, &output.output_json)
+            .await?;
         let visible = output.model_visible_text.into_bytes();
         let projection = projected(visible, ctx.limits().max_model_visible_output_bytes);
         let model_visible_ref = self.put_blob(ctx, projection.bytes).await?;
@@ -322,6 +382,8 @@ impl InlineToolRuntime {
         let output_bytes = serde_json::to_vec(&output.output_json)
             .map_err(|error| io_error(format!("failed to encode tool output: {error}")))?;
         let output_ref = self.put_blob_bytes(output_bytes).await?;
+        self.record_output_edges(&output_ref, &output.output_json)
+            .await?;
         let projection = projected(
             output.model_visible_text.into_bytes(),
             self.limits.max_model_visible_output_bytes,
@@ -401,6 +463,29 @@ impl InlineToolRuntime {
             .map_err(|error| io_error(format!("failed to write tool blob: {error}")))
     }
 
+    async fn record_output_edges(
+        &self,
+        output_ref: &harness::BlobRef,
+        output: &Value,
+    ) -> Result<(), CoreAgentIoError> {
+        let Some(graph) = self.blob_graph.as_deref() else {
+            return Ok(());
+        };
+        let mut children = Vec::new();
+        for child in collect_blob_refs(output) {
+            // A read can return arbitrary JSON containing hashes that do not
+            // name stored content. Only existing content forms retention edges.
+            match self.blobs.retain_blob(&child).await {
+                Ok(()) => children.push(child),
+                Err(harness::storage::BlobStoreError::NotFound { .. }) => {}
+                Err(error) => return Err(io_error(error.to_string())),
+            }
+        }
+        record_contains_edges(Some(graph), output_ref, children)
+            .await
+            .map_err(|error| io_error(format!("failed to retain tool output content: {error}")))
+    }
+
     async fn invoke_json_with_binding(
         &self,
         ctx: Option<BuiltinToolContext<'_>>,
@@ -409,7 +494,10 @@ impl InlineToolRuntime {
         arguments: Value,
     ) -> ToolResult<ToolInvocationOutput> {
         if binding.logical_id == WEB_FETCH_LOGICAL_ID {
-            return invoke_web_fetch(arguments).await;
+            return invoke_web_fetch(self.blobs.as_ref(), arguments).await;
+        }
+        if let Some(tool) = BlobTool::from_logical_id(&binding.logical_id) {
+            return tool.invoke_json(&self.content_resolver, arguments).await;
         }
         let builtin_tool = BuiltinTool::from_binding(
             &binding.logical_id,
@@ -439,7 +527,7 @@ impl ToolRuntime for InlineToolRuntime {
                 .ok_or_else(|| ToolError::UnsupportedCapability {
                     message: format!("unknown tool: {tool_name}"),
                 })?;
-        if binding.logical_id == WEB_FETCH_LOGICAL_ID {
+        if is_context_free(&binding.logical_id) {
             return self
                 .invoke_json_with_binding(None, binding, tool_name, arguments)
                 .await;
@@ -454,15 +542,20 @@ impl ToolRuntime for InlineToolRuntime {
     }
 }
 
+fn is_context_free(logical_id: &str) -> bool {
+    logical_id == WEB_FETCH_LOGICAL_ID || BlobTool::from_logical_id(logical_id).is_some()
+}
+
 #[async_trait]
 impl CoreAgentTools for InlineToolRuntime {
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
     ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+        let runtime = self.clone().with_call_scope(&request);
         let mut results = Vec::with_capacity(request.calls.len());
         for call in request.calls {
-            results.push(self.invoke_call(&call).await?);
+            results.push(runtime.invoke_call(&call).await?);
         }
         Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
             run_id: request.run_id,

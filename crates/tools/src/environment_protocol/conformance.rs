@@ -136,7 +136,8 @@ where
         &fs_context,
         WriteFileArgs {
             path: source.clone(),
-            content: contents.to_owned(),
+            content: Some(contents.to_owned()),
+            content_ref: None,
         },
     )
     .await?;

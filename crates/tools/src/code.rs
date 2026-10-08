@@ -111,7 +111,7 @@ impl CodeExecutionContextV1 {
 pub fn code_execute_tool_definition() -> ToolResult<crate::runtime::FunctionDefinition> {
     Ok(crate::runtime::FunctionDefinition::new(
         CODE_EXECUTE_TOOL_NAME,
-        "Run a JavaScript async function body once. Call the session's granted tools with await tools.tool_name(arguments), or tools[\"tool_name\"](arguments); tool arguments and successful JSON values follow the ordinary tool contracts. Promise.all, Promise.allSettled, loops, and dependent calls are supported. Use text(value) to retain selected JSON output and return a JSON value. Failed calls reject with kind, message, and optional value. There is no filesystem, network, module loading, TypeScript, or recursive code_execute; external effects must use tools. Unawaited calls are cancelled when the script finishes. Failure reports retain completed tool outcomes; completed side effects are not rolled back and the whole script is not retried.",
+        "Run a JavaScript async function body once. Call the session's granted tools with await tools.tool_name(arguments), or tools[\"tool_name\"](arguments); tool arguments and successful JSON values follow the ordinary tool contracts. Promise.all, Promise.allSettled, loops, and dependent calls are supported. Use text(value) for selected JSON output, await media(source, options) to show a supported image/PDF to the model, or await file(source, options) for a downloadable file attachment/link. Both helpers accept a full content reference, recorded media:/file: handle, tool-result descriptor, or explicit inline {text:...}, {json:...}, or {bytes:[0..255]}; a string always means a reference, never literal text or a path. Options are optional descriptive name/media_type metadata. Helpers return the admitted descriptor. They call the ordinary blob tools: media requires blob_read, file requires blob_info, and inline input additionally requires blob_put. Those calls use the same allowlist, call counts, and byte limits as tools calls. Only explicitly selected assets enter the outer result; text objects and return values never attach media/files. Await helpers to retain their output, and return a JSON value separately. Failed calls reject with kind, message, and optional value. There is no filesystem, network, module loading, TypeScript, or recursive code_execute; external effects must use tools. Unawaited calls are cancelled when the script finishes. Failure reports retain completed tool outcomes and earlier selected output; completed side effects are not rolled back and the whole script is not retried.",
         json!({
             "type": "object",
             "properties": {
@@ -127,12 +127,30 @@ pub fn code_execute_tool_definition() -> ToolResult<crate::runtime::FunctionDefi
 /// Compact model output points to a detailed report containing canonical
 /// per-call outcomes, so durable history does not inline every tool result.
 pub fn code_execution_output_schema() -> Value {
-    json!({
+    let mut attachment_schema = crate::definitions::output_schema_for::<harness::Attachment>();
+    let definitions = attachment_schema.as_object_mut().unwrap().remove("$defs");
+    attachment_schema.as_object_mut().unwrap().remove("$schema");
+    let mut schema = json!({
         "type": "object",
         "properties": {
             "status": {"enum": ["succeeded", "failed", "cancelled", "interrupted"]},
             "output_available": {"type": "boolean", "description": "Whether a JavaScript receipt was retained. False means selected output may be missing after interruption, even when tool outcomes are known."},
-            "output": {"type": "array", "items": {}, "description": "Values explicitly emitted with text(value)."},
+            "output": {"type": "array", "items": {}, "description": "Selected output in emission order: raw text(value) JSON values and media/file attachment descriptors as {kind, data}. Only the top-level attachments list selects native media or file links; a text value with the same shape remains ordinary JSON."},
+            "attachments": {"type": "array", "items": attachment_schema, "description": "Validated media/file selections. Media is supplied as companion model input; files are downloadable attachment metadata."},
+            "output_errors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "selection_index": {"type":"integer", "minimum":0},
+                        "kind": {"enum":["text", "media", "file"]},
+                        "request_id": {"type":"string"},
+                        "message": {"type":"string"}
+                    },
+                    "required":["selection_index", "kind", "message"]
+                },
+                "description": "Output finalization errors, if any. Valid sibling selections remain available; inspect these before claiming an asset was delivered."
+            },
             "return_value": {"description": "Final returned JSON value, or null."},
             "error": {"type": ["object", "null"], "description": "Script error kind and message, if any."},
             "interruption": {"description": "Workflow interruption when execution could not return normally."},
@@ -142,12 +160,48 @@ pub fn code_execution_output_schema() -> Value {
             "report_ref": {"type": "string", "description": "Artifact reference to detailed execution and canonical per-tool outcomes."}
         },
         "required": ["status", "output_available", "output", "return_value", "error", "report_ref"]
-    })
+    });
+    if let Some(definitions) = definitions {
+        schema["$defs"] = definitions;
+    }
+    schema
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_schema_accepts_legacy_text_and_typed_media_file_selections() {
+        let validator = jsonschema::validator_for(&code_execution_output_schema()).unwrap();
+        let reference = BlobRef::from_bytes(b"content");
+        let mut report = json!({
+            "status":"succeeded", "output_available":true,
+            "output":[{"answer":42}], "return_value":null,
+            "error":null, "report_ref":reference
+        });
+        validator.validate(&report).unwrap();
+        let media = harness::Attachment::Media(
+            harness::media::MediaDescriptor::new(reference.clone(), "image/png", Some("plot.png"))
+                .unwrap(),
+        );
+        let file = harness::Attachment::File(harness::FileAttachment::new(
+            reference,
+            "report.txt".into(),
+            Some("text/plain".into()),
+        ));
+        report["output"].as_array_mut().unwrap().extend([
+            serde_json::to_value(&media).unwrap(),
+            serde_json::to_value(&file).unwrap(),
+        ]);
+        report["attachments"] = json!([media, file]);
+        report["output_errors"] = json!([{
+            "selection_index":3, "kind":"media", "request_id":"call-4", "message":"unavailable"
+        }]);
+        validator.validate(&report).unwrap();
+        report["attachments"][0]["data"]["content_ref"] = json!(false);
+        assert!(!validator.is_valid(&report));
+    }
 
     #[test]
     fn source_and_time_options_cannot_widen_grants() {

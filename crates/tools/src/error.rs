@@ -9,6 +9,9 @@ pub type ToolResult<T> = Result<T, ToolError>;
 #[derive(Debug, Error)]
 pub enum ToolError {
     #[error(transparent)]
+    Content(#[from] crate::content::ContentError),
+
+    #[error(transparent)]
     Filesystem(#[from] FsError),
 
     #[error(transparent)]

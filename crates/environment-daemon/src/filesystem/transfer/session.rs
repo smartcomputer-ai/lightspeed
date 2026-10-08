@@ -347,7 +347,9 @@ impl TransferManager {
                         if let (
                             Some(name),
                             TransferRequest::Begin {
-                                selection: TransferSelection::Materialize { destination, .. },
+                                selection:
+                                    TransferSelection::Materialize { destination, .. }
+                                    | TransferSelection::WriteFile { destination },
                                 ..
                             },
                         ) = (&record.stage_name, &record.request)
@@ -458,7 +460,9 @@ impl TransferManager {
                 if let (
                     Some(name),
                     TransferRequest::Begin {
-                        selection: TransferSelection::Materialize { destination, .. },
+                        selection:
+                            TransferSelection::Materialize { destination, .. }
+                            | TransferSelection::WriteFile { destination },
                         ..
                     },
                 ) = (&record.stage_name, &record.request)
@@ -542,10 +546,8 @@ impl TransferManager {
             let anchor = Directory::anchor(root).map_err(io)?;
             let (selected, stage, ignore_errors) = match selection {
                 TransferSelection::Capture { source } => (relative(root, source)?, None, false),
-                TransferSelection::Materialize {
-                    destination,
-                    on_existing,
-                } => {
+                TransferSelection::Materialize { destination, .. }
+                | TransferSelection::WriteFile { destination } => {
                     let path = relative(root, destination)?;
                     if path.is_empty() {
                         return Err(invalid("cannot replace the filesystem root"));
@@ -567,10 +569,19 @@ impl TransferManager {
                         }
                     }
                     let (parent, target) = anchor.ensure_parent(&path).map_err(io)?;
-                    if parent.target_exists(&target).map_err(io)?
-                        && *on_existing == TransferOnExisting::Error
-                    {
-                        return Err(error(Code::Conflict, "destination exists"));
+                    if parent.target_exists(&target).map_err(io)? {
+                        if matches!(
+                            selection,
+                            TransferSelection::Materialize {
+                                on_existing: TransferOnExisting::Error,
+                                ..
+                            }
+                        ) {
+                            return Err(error(Code::Conflict, "destination exists"));
+                        }
+                        if matches!(selection, TransferSelection::WriteFile { .. }) {
+                            parent.writable_file(&target).map_err(io)?;
+                        }
                     }
                     let name = format!(".env-transfer-{:032x}", rand::random::<u128>());
                     let directory = parent.mkdir(&name, true).map_err(io)?;
@@ -798,6 +809,13 @@ impl Operation {
                 }
                 if entries.is_empty() {
                     return Err(invalid("empty inventory page"));
+                }
+                if self.is_file_write()
+                    && (offset != 0
+                        || !last
+                        || !matches!(entries.as_slice(), [InventoryEntry { path, content: InventoryContent::File { .. } }] if path.is_empty()))
+                {
+                    return Err(invalid("file write requires exactly one file"));
                 }
                 // Validate the complete page before mutating the operation.
                 let mut total = self.status.bytes;
@@ -1052,10 +1070,29 @@ impl Operation {
                         }
                     );
                     stage.parent.target_exists(&stage.target).map_err(io)?;
-                    stage
-                        .parent
-                        .publish(&stage.directory, &stage.target, replace)
-                        .map_err(io)?;
+                    if self.is_file_write() {
+                        match stage.parent.writable_file(&stage.target) {
+                            Ok(target) => {
+                                let permissions = target.metadata().map_err(io)?.permissions();
+                                let staged = stage.directory.open("tree").map_err(io)?;
+                                staged.set_permissions(permissions).map_err(io)?;
+                                staged.sync_all().map_err(io)?;
+                            }
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                            Err(error) => return Err(io(error)),
+                        }
+                    }
+                    if self.is_file_write() {
+                        stage
+                            .parent
+                            .publish_file(&stage.directory, &stage.target)
+                            .map_err(io)?;
+                    } else {
+                        stage
+                            .parent
+                            .publish(&stage.directory, &stage.target, replace)
+                            .map_err(io)?;
+                    }
                     // Rename has succeeded. A later durability error must never cause
                     // a second swap on retry.
                     self.status.phase = TransferPhase::Complete;
@@ -1073,6 +1110,16 @@ impl Operation {
     }
     fn file_size(&self, digest: &str) -> Option<u64> {
         self.sizes.get(digest).copied()
+    }
+
+    fn is_file_write(&self) -> bool {
+        matches!(
+            &self.request,
+            TransferRequest::Begin {
+                selection: TransferSelection::WriteFile { .. },
+                ..
+            }
+        )
     }
     fn missing(&self) -> Vec<String> {
         let mut missing = std::collections::BTreeSet::new();

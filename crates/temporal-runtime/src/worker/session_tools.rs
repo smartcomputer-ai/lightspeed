@@ -15,7 +15,7 @@ use harness::{
     CoreAgentIoError, CoreAgentTools, PromiseSource, SessionId, ToolBatchOutcome, ToolCallStatus,
     ToolInvocationBatchRequest, ToolInvocationBatchResult, ToolInvocationResult,
     promise_create_effect,
-    storage::{BlobEdge, BlobGraphStore, BlobStore, BlobStoreError},
+    storage::{BlobEdge, BlobGraphStore, BlobStore, BlobStoreError, SessionStore},
 };
 use store_pg::PgStore;
 use tools::{
@@ -59,6 +59,7 @@ use crate::{
 pub struct SessionTools {
     blobs: Arc<dyn BlobStore>,
     blob_graph: Option<Arc<dyn BlobGraphStore>>,
+    sessions: Option<Arc<dyn SessionStore>>,
     workspace_store: Arc<dyn VfsWorkspaceStore>,
     environments: SessionEnvironmentManager,
     environment_store: Option<Arc<dyn EnvironmentStore>>,
@@ -73,6 +74,7 @@ impl SessionTools {
         Self {
             blobs,
             blob_graph: None,
+            sessions: None,
             workspace_store,
             environments,
             environment_store: None,
@@ -84,6 +86,12 @@ impl SessionTools {
 
     pub fn with_environment_store(mut self, environments: Arc<dyn EnvironmentStore>) -> Self {
         self.environment_store = Some(environments);
+        self
+    }
+
+    /// Session history supplies recorded short aliases independently of active context.
+    pub fn with_session_store(mut self, sessions: Arc<dyn SessionStore>) -> Self {
+        self.sessions = Some(sessions);
         self
     }
 
@@ -129,6 +137,7 @@ impl SessionTools {
         let resolver =
             crate::environments::resolver::EnvironmentResolver::from_pg_store(store.clone());
         Self::new(blobs, workspace_store)
+            .with_session_store(store)
             .with_blob_graph(blob_graph)
             .with_environment_store(environments)
             .with_environment_resolver(resolver)
@@ -1371,14 +1380,57 @@ impl SessionTools {
         };
         let environment =
             active_environment_id.and_then(|id| environments.active_tool_context(id.as_str()));
-        Ok(InlineToolRuntime::with_contexts_and_blob_store(
+        let mut runtime = InlineToolRuntime::with_contexts_and_blob_store(
             vfs,
             environment,
             self.blobs.clone(),
             ToolLimits::default(),
             ToolCatalog::new(),
         )
-        .with_vfs_attachments(attachments))
+        .with_vfs_attachments(attachments);
+        if let Some(graph) = &self.blob_graph {
+            runtime = runtime.with_blob_graph(graph.clone());
+        }
+        Ok(runtime)
+    }
+
+    async fn with_recorded_content(
+        &self,
+        runtime: InlineToolRuntime,
+        request: &ToolInvocationBatchRequest,
+    ) -> Result<InlineToolRuntime, CoreAgentIoError> {
+        let runtime = runtime.with_call_scope(request);
+        // Process, read, and control calls do not need historical alias lookup.
+        if !request.calls.iter().any(|call| {
+            call.tool_id.as_ref().is_some_and(|id| {
+                matches!(
+                    id.as_str(),
+                    "blob.info"
+                        | "blob.read"
+                        | "blob.put"
+                        | "vfs.write_file"
+                        | "env.write_file"
+                        | "vfs.reference"
+                        | "env.reference"
+                )
+            })
+        }) {
+            return Ok(runtime);
+        }
+        let Some(sessions) = &self.sessions else {
+            return Ok(runtime);
+        };
+        let attachments = super::session_content::recorded_content_attachments(
+            sessions.as_ref(),
+            &request.session_id,
+        )
+        .await?;
+        let mut resolver =
+            tools::content::ContentResolver::new(self.blobs.clone()).with_attachments(attachments);
+        if let Some(graph) = &self.blob_graph {
+            resolver = resolver.with_blob_graph(graph.clone());
+        }
+        Ok(runtime.with_content_resolver(resolver))
     }
 }
 
@@ -1482,9 +1534,8 @@ fn environment_tool_denial(
 ) -> Option<String> {
     let id = call.tool_id.as_ref()?.as_str();
     let required = match id {
-        "env.read_file" | "env.grep" | "env.glob" | "env.list_dir" | "vfs.capture" => {
-            harness::EnvironmentAccess::Read
-        }
+        "env.read_file" | "env.reference" | "env.grep" | "env.glob" | "env.list_dir"
+        | "vfs.capture" => harness::EnvironmentAccess::Read,
         "env.write_file" | "env.edit_file" | "env.apply_patch" | "vfs.materialize" => {
             harness::EnvironmentAccess::Edit
         }
@@ -1736,15 +1787,15 @@ impl CoreAgentTools for SessionTools {
         };
         let outcome = async {
             let runtime = if has_generic_runtime_call {
-                Some(
-                    self.runtime_for_domains(
+                let runtime = self
+                    .runtime_for_domains(
                         attachments,
                         &environments,
                         request.active_environment_id.as_ref(),
                         request.vfs_working_directory.as_deref(),
                     )
-                    .await?,
-                )
+                    .await?;
+                Some(self.with_recorded_content(runtime, &request).await?)
             } else {
                 None
             };
@@ -2042,6 +2093,7 @@ impl SessionTools {
                     batch_request.vfs_working_directory.as_deref(),
                 )
                 .await?;
+            let runtime = self.with_recorded_content(runtime, &batch_request).await?;
             runtime
                 .invoke_call(&call)
                 .await
@@ -2339,6 +2391,10 @@ mod tests {
             "environment_activate" => "environment.activate",
             "environment_deactivate" => "environment.deactivate",
             "read_file" => "env.read_file",
+            "env_reference" => "env.reference",
+            "blob_info" => "blob.info",
+            "blob_read" => "blob.read",
+            "blob_put" => "blob.put",
             "run_process" => "env.run_process",
             "job_read" => "env.job_read",
             "vfs_read_file" | "VfsRead" => "vfs.read_file",
@@ -2403,6 +2459,7 @@ mod tests {
             let policy = test_environment_policy_with_access(&["environment-active"], access);
             for (id, allowed) in [
                 ("env.read_file", true),
+                ("env.reference", true),
                 ("env.grep", true),
                 ("env.glob", true),
                 ("env.list_dir", true),
@@ -2532,6 +2589,138 @@ mod tests {
                 .collect(),
             execution: harness::ToolExecutionSpec::default(),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn core_blob_calls_retain_content_and_resolve_recorded_handles_without_features() {
+        use harness::storage::{AppendSessionEvents, CreateSession, InMemorySessionStore};
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let session_id = SessionId::new("session-a");
+        sessions
+            .create_session(CreateSession {
+                session_id: session_id.clone(),
+                display_name: None,
+                metadata: Default::default(),
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        let runtime = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .with_blob_graph(blobs.clone())
+            .with_session_store(sessions.clone());
+        let child = blobs.put_bytes(b"child content".to_vec()).await.unwrap();
+        let absent = BlobRef::from_bytes(b"absent data");
+        let payload = serde_json::json!({"answer":42, "child":child, "absent":absent});
+        let args =
+            serde_json::to_vec(&serde_json::json!({"json":payload, "name":"answer.json"})).unwrap();
+        blobs.put_bytes(args.clone()).await.unwrap();
+        let stored = runtime
+            .invoke_call(per_call_request("blob_put", &args, &[]))
+            .await
+            .unwrap();
+        assert_eq!(stored.status, ToolCallStatus::Succeeded);
+        assert!(stored.attachments.is_empty());
+        let descriptor: serde_json::Value = serde_json::from_slice(
+            &blobs
+                .read_bytes(stored.output_ref.as_ref().unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let reference = BlobRef::parse(descriptor["content_ref"].as_str().unwrap()).unwrap();
+        assert!(descriptor.get("handle").is_none());
+        assert!(blobs.edges().contains(&BlobEdge::contains(
+            stored.output_ref.clone().unwrap(),
+            reference.clone()
+        )));
+        assert!(
+            blobs
+                .edges()
+                .contains(&BlobEdge::contains(reference.clone(), child))
+        );
+        assert!(!blobs.edges().iter().any(|edge| edge.child == absent));
+
+        let args = serde_json::to_vec(&serde_json::json!({"ref":descriptor,"presentation":"file"}))
+            .unwrap();
+        blobs.put_bytes(args.clone()).await.unwrap();
+        let linked = runtime
+            .invoke_call(per_call_request("blob_info", &args, &[]))
+            .await
+            .unwrap();
+        assert_eq!(linked.status, ToolCallStatus::Succeeded);
+        assert_eq!(linked.attachments.len(), 1);
+        assert_eq!(
+            linked.model_visible_context_entries.len(),
+            1,
+            "file presentation does not add native media"
+        );
+        let handle = linked.attachments[0].handle().to_owned();
+        // The durable code completion is sufficient; the attachment need not
+        // appear in active model context or the outer code result.
+        sessions
+            .append(AppendSessionEvents {
+                session_id,
+                expected_head: None,
+                events: vec![harness::session::UncommittedStoredEvent {
+                    observed_at_ms: 1,
+                    joins: Default::default(),
+                    event: harness::CoreAgentCodec
+                        .encode_event(&harness::CoreAgentEvent::CodeTool(
+                            harness::CodeToolEvent::CallCompleted {
+                                origin: harness::CodeToolOrigin {
+                                    execution_id: "execution".into(),
+                                    request_id: "file".into(),
+                                },
+                                result: linked.into(),
+                            },
+                        ))
+                        .unwrap(),
+                }],
+            })
+            .await
+            .unwrap();
+        let fresh_runtime = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .with_blob_graph(blobs.clone())
+            .with_session_store(sessions);
+        for reference_input in [serde_json::json!(handle), serde_json::json!(reference)] {
+            let args =
+                serde_json::to_vec(&serde_json::json!({"ref":reference_input,"format":"json"}))
+                    .unwrap();
+            blobs.put_bytes(args.clone()).await.unwrap();
+            let read = fresh_runtime
+                .invoke_call(per_call_request("blob_read", &args, &[]))
+                .await
+                .unwrap();
+            assert_eq!(read.status, ToolCallStatus::Succeeded);
+            let output: serde_json::Value = serde_json::from_slice(
+                &blobs
+                    .read_bytes(read.output_ref.as_ref().unwrap())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(output["json"], payload);
+            assert_eq!(output["content_ref"], reference.to_string());
+            assert_eq!(output["handle"], handle);
+            assert_eq!(output["name"], "answer.json");
+            assert!(blobs.edges().contains(&BlobEdge::contains(
+                read.output_ref.unwrap(),
+                reference.clone()
+            )));
+        }
+        // A full hash is usable without ever registering it with this session.
+        let independent = blobs.put_bytes(b"unregistered".to_vec()).await.unwrap();
+        let args =
+            serde_json::to_vec(&serde_json::json!({"ref":independent,"format":"text"})).unwrap();
+        blobs.put_bytes(args.clone()).await.unwrap();
+        let read = fresh_runtime
+            .invoke_call(per_call_request("blob_read", &args, &[]))
+            .await
+            .unwrap();
+        assert_eq!(read.status, ToolCallStatus::Succeeded);
     }
 
     #[test]

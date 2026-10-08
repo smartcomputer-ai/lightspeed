@@ -228,9 +228,7 @@ impl BuiltinTool {
     pub const fn environment(operation: BuiltinToolOperation, surface: BuiltinToolSurface) -> Self {
         assert!(!matches!(
             operation,
-            BuiltinToolOperation::Materialize
-                | BuiltinToolOperation::Capture
-                | BuiltinToolOperation::Reference
+            BuiltinToolOperation::Materialize | BuiltinToolOperation::Capture
         ));
         Self {
             domain: BuiltinToolDomain::Environment,
@@ -349,6 +347,7 @@ impl BuiltinTool {
             (BuiltinToolDomain::Vfs, BuiltinToolOperation::Materialize) => "vfs.materialize",
             (BuiltinToolDomain::Vfs, BuiltinToolOperation::Capture) => "vfs.capture",
             (BuiltinToolDomain::Environment, BuiltinToolOperation::ReadFile) => "env.read_file",
+            (BuiltinToolDomain::Environment, BuiltinToolOperation::Reference) => "env.reference",
             (BuiltinToolDomain::Environment, BuiltinToolOperation::WriteFile) => "env.write_file",
             (BuiltinToolDomain::Environment, BuiltinToolOperation::EditFile) => "env.edit_file",
             (BuiltinToolDomain::Environment, BuiltinToolOperation::ApplyPatch) => "env.apply_patch",
@@ -364,9 +363,7 @@ impl BuiltinTool {
             (BuiltinToolDomain::Environment, BuiltinToolOperation::JobRead) => "env.job_read",
             (
                 BuiltinToolDomain::Environment,
-                BuiltinToolOperation::Materialize
-                | BuiltinToolOperation::Capture
-                | BuiltinToolOperation::Reference,
+                BuiltinToolOperation::Materialize | BuiltinToolOperation::Capture,
             ) => unreachable!(),
             (
                 BuiltinToolDomain::Vfs,
@@ -433,6 +430,7 @@ impl BuiltinTool {
             };
         }
         match (self.surface, self.operation, self.variant) {
+            (_, BuiltinToolOperation::Reference, _) => "env_reference",
             (
                 BuiltinToolSurface::Canonical | BuiltinToolSurface::CodexLike,
                 BuiltinToolOperation::ReadFile,
@@ -479,13 +477,7 @@ impl BuiltinTool {
             (_, BuiltinToolOperation::JobSubmit, _) => {
                 crate::environment::jobs::JOB_SUBMIT_TOOL_NAME
             }
-            (
-                _,
-                BuiltinToolOperation::Materialize
-                | BuiltinToolOperation::Capture
-                | BuiltinToolOperation::Reference,
-                _,
-            ) => {
+            (_, BuiltinToolOperation::Materialize | BuiltinToolOperation::Capture, _) => {
                 unreachable!()
             }
             (_, BuiltinToolOperation::JobRun, _) => crate::environment::jobs::JOB_RUN_TOOL_NAME,
@@ -554,6 +546,10 @@ impl BuiltinTool {
             }
             "env.read_file" => Self::environment(
                 BuiltinToolOperation::ReadFile,
+                BuiltinToolSurface::Canonical,
+            ),
+            "env.reference" => Self::environment(
+                BuiltinToolOperation::Reference,
                 BuiltinToolSurface::Canonical,
             ),
             "env.write_file" => Self::environment(
@@ -689,6 +685,20 @@ impl BuiltinTool {
     }
 
     pub const fn execution_spec(self) -> ToolExecutionSpec {
+        if matches!(self.domain, BuiltinToolDomain::Environment)
+            && matches!(
+                self.operation,
+                BuiltinToolOperation::Reference | BuiltinToolOperation::WriteFile
+            )
+        {
+            // Transfer guards abort incomplete work after a failed call. Only
+            // completed receipts can be redelivered; a fresh call is required
+            // after an earlier transfer failed before commit.
+            return ToolExecutionSpec {
+                class: ToolExecutionClass::Bulk,
+                retry_safe: false,
+            };
+        }
         match self.operation {
             BuiltinToolOperation::Reference
             | BuiltinToolOperation::ReadFile
@@ -752,7 +762,12 @@ impl BuiltinTool {
         use crate::fs::tools::ListDirResult;
 
         match self.operation {
-            BuiltinToolOperation::Reference => output_schema_for::<harness::FileAttachment>(),
+            BuiltinToolOperation::Reference if self.domain == BuiltinToolDomain::Environment => {
+                output_schema_for::<crate::transfer::EnvironmentReferenceResult>()
+            }
+            BuiltinToolOperation::Reference => {
+                output_schema_for::<crate::content::ContentDescriptor>()
+            }
             BuiltinToolOperation::ReadFile => output_schema_for::<ReadFileResult>(),
             BuiltinToolOperation::WriteFile => output_schema_for::<WriteFileResult>(),
             BuiltinToolOperation::EditFile
@@ -855,6 +870,28 @@ mod tests {
 
     fn target() -> ToolTarget {
         ToolTarget::api_kind(ProviderApiKind::OpenAiResponses)
+    }
+
+    #[test]
+    fn environment_content_transfers_do_not_retry_aborted_operations() {
+        for surface in [
+            BuiltinToolSurface::Canonical,
+            BuiltinToolSurface::CodexLike,
+            BuiltinToolSurface::ClaudeCodeLike,
+        ] {
+            for operation in [
+                BuiltinToolOperation::Reference,
+                BuiltinToolOperation::WriteFile,
+            ] {
+                let policy = BuiltinTool::environment(operation, surface).execution_spec();
+                assert_eq!(policy.class, ToolExecutionClass::Bulk);
+                assert!(!policy.retry_safe);
+            }
+            let metadata_reference =
+                BuiltinTool::vfs(BuiltinToolOperation::Reference, surface).execution_spec();
+            assert_eq!(metadata_reference.class, ToolExecutionClass::Interactive);
+            assert!(metadata_reference.retry_safe);
+        }
     }
 
     #[test]

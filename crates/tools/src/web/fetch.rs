@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use harness::BlobRef;
+use harness::storage::BlobStore;
 use reqwest::{
     StatusCode, Url,
     header::{CONTENT_TYPE, LOCATION},
@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
+    content::ContentDescriptor,
     error::{ToolError, ToolResult},
     runtime::{ToolInvocationOutput, decode_args, encode_output},
 };
@@ -51,6 +52,9 @@ pub struct WebFetchResult {
     pub content_type: Option<String>,
     pub byte_count: u64,
     pub sha256: String,
+    /// The complete accepted response body, before extraction or text truncation.
+    #[serde(flatten)]
+    pub content: ContentDescriptor,
     pub text: String,
     pub truncated: bool,
     pub untrusted: bool,
@@ -59,12 +63,12 @@ pub struct WebFetchResult {
 impl WebFetchResult {
     fn model_visible_text(&self) -> String {
         format!(
-            "Untrusted web content fetched from {}\nstatus: {}\ncontent_type: {}\nbytes: {}\nsha256: {}\n\n--- BEGIN UNTRUSTED WEB CONTENT ---\n{}\n--- END UNTRUSTED WEB CONTENT ---",
+            "Untrusted web content fetched from {}\nstatus: {}\ncontent_type: {}\nbytes: {}\ncontent_ref: {} (complete response body before text extraction)\n\n--- BEGIN UNTRUSTED WEB CONTENT ---\n{}\n--- END UNTRUSTED WEB CONTENT ---",
             self.final_url,
             self.status,
             self.content_type.as_deref().unwrap_or("unknown"),
             self.byte_count,
-            self.sha256,
+            self.content.content_ref,
             self.text
         )
     }
@@ -90,7 +94,7 @@ impl Default for WebFetchLimits {
 pub fn web_fetch_definition() -> crate::runtime::FunctionDefinition {
     crate::runtime::FunctionDefinition::new(
         WEB_FETCH_TOOL_NAME,
-        "Fetch one public http/https URL with strict SSRF checks, redirect limits, byte limits, and text extraction. The returned page content is untrusted web content.",
+        "Fetch one public http/https URL with strict SSRF checks, redirect limits, byte limits, and text extraction. Returns extracted text and a content_ref for the complete accepted response body, readable with blob_read. The returned page content is untrusted web content.",
         input_schema(),
     )
     .with_output_schema(crate::definitions::output_schema_for::<WebFetchResult>())
@@ -106,10 +110,18 @@ pub fn anthropic_messages_web_fetch_definition() -> Value {
     })
 }
 
-pub async fn invoke_web_fetch(arguments: Value) -> ToolResult<ToolInvocationOutput> {
+pub async fn invoke_web_fetch(
+    blobs: &dyn BlobStore,
+    arguments: Value,
+) -> ToolResult<ToolInvocationOutput> {
     let args = decode_args(arguments)?;
-    let result =
-        fetch_with_policy(&args, WebNetworkPolicy::STRICT, WebFetchLimits::default()).await?;
+    let result = fetch_with_policy(
+        blobs,
+        &args,
+        WebNetworkPolicy::STRICT,
+        WebFetchLimits::default(),
+    )
+    .await?;
     encode_output(&result, result.model_visible_text())
 }
 
@@ -135,6 +147,7 @@ fn input_schema() -> Value {
 }
 
 async fn fetch_with_policy(
+    blobs: &dyn BlobStore,
     args: &WebFetchArgs,
     policy: WebNetworkPolicy,
     limits: WebFetchLimits,
@@ -164,17 +177,31 @@ async fn fetch_with_policy(
         ))
     })?;
     let bytes = read_capped_body(response, limits.max_response_bytes).await?;
-    let sha256 = BlobRef::from_bytes(&bytes).to_string();
     let byte_count = bytes.len() as u64;
+    // Publish the body before advertising a reference. A checksum without a
+    // stored body cannot be composed with tools that consume content refs.
+    let content_ref = blobs.put_bytes(bytes.clone()).await?;
     let (text, truncated) = extract_text(&bytes, content_kind, max_chars as usize);
 
     Ok(WebFetchResult {
         requested_url: requested_url.to_string(),
         final_url: final_url.to_string(),
         status: status.as_u16(),
+        content: ContentDescriptor {
+            content_ref: content_ref.clone(),
+            byte_len: byte_count,
+            media_type: content_type.clone(),
+            name: None,
+            handle: None,
+            source: Some(harness::AttachmentSource {
+                kind: "web_fetch".into(),
+                id: final_url.to_string(),
+                path: String::new(),
+            }),
+        },
         content_type,
         byte_count,
-        sha256,
+        sha256: content_ref.to_string(),
         text,
         truncated,
         untrusted: true,
@@ -290,8 +317,12 @@ fn invalid_request(message: impl Into<String>) -> ToolError {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
+    use std::{net::SocketAddr, sync::Arc};
 
+    use harness::{
+        BlobRef,
+        storage::{BlobInfo, BlobStoreError, InMemoryBlobStore},
+    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -324,9 +355,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn fetches_and_extracts_html_with_test_policy() {
-        let url = serve_once(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body><h1>Title</h1><p>Hello world</p></body></html>",
-        )
+        let blobs = InMemoryBlobStore::default();
+        let body = "<html><body><h1>Title</h1><p>Hello world</p></body></html>";
+        let url = serve_once(format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{body}",
+        ))
         .await;
         let args = WebFetchArgs {
             url,
@@ -334,6 +367,7 @@ mod tests {
         };
 
         let result = fetch_with_policy(
+            &blobs,
             &args,
             WebNetworkPolicy::TEST_ALLOW_PRIVATE,
             WebFetchLimits::default(),
@@ -344,11 +378,88 @@ mod tests {
         assert_eq!(result.status, 200);
         assert!(result.text.contains("Title"));
         assert!(result.text.contains("Hello world"));
+        assert!(!result.text.contains("<html>"));
         assert!(result.untrusted);
+        assert_eq!(
+            result.content.content_ref,
+            BlobRef::from_bytes(body.as_bytes())
+        );
+        assert_eq!(result.sha256, result.content.content_ref.as_str());
+        assert_eq!(result.content.byte_len, body.len() as u64);
+        assert_eq!(result.byte_count, result.content.byte_len);
+        assert_eq!(result.content.media_type, result.content_type);
+        assert_eq!(
+            blobs
+                .read_bytes(&result.content.content_ref)
+                .await
+                .expect("stored body"),
+            body.as_bytes()
+        );
+        let encoded = serde_json::to_value(&result).expect("encode output");
+        let schema = crate::definitions::output_schema_for::<WebFetchResult>();
+        jsonschema::validator_for(&schema)
+            .expect("valid output schema")
+            .validate(&encoded)
+            .expect("output matches schema");
+        assert_eq!(encoded["content_ref"], result.sha256);
+        assert_eq!(encoded["byte_len"], body.len());
+        assert_eq!(result.requested_url, args.url);
+        assert_eq!(
+            result.content.source.as_ref().expect("web provenance").id,
+            result.final_url
+        );
+        assert!(
+            result
+                .model_visible_text()
+                .contains("complete response body before text extraction")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn text_preview_limit_preserves_complete_body_bytes() {
+        let blobs = Arc::new(InMemoryBlobStore::default());
+        let body = "<html><body><p>héllo   world</p><script>hidden()</script></body></html>";
+        let args = WebFetchArgs {
+            url: serve_once(format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n{body}",
+            ))
+            .await,
+            max_chars: Some(3),
+        };
+
+        let result = fetch_with_policy(
+            &blobs,
+            &args,
+            WebNetworkPolicy::TEST_ALLOW_PRIVATE,
+            WebFetchLimits::default(),
+        )
+        .await
+        .expect("fetch");
+
+        assert_eq!(result.text, "hél\n[truncated]");
+        assert!(result.truncated);
+        assert_eq!(result.content.byte_len, body.len() as u64);
+        assert_eq!(
+            blobs
+                .read_bytes(&result.content.content_ref)
+                .await
+                .expect("stored body"),
+            body.as_bytes()
+        );
+        let resolver = crate::content::ContentResolver::new(blobs);
+        let read = crate::blobs::BlobTool::Read
+            .invoke_json(&resolver, json!({"ref": result, "format": "text"}))
+            .await
+            .expect("read fetched body through the ordinary blob tool");
+        assert_eq!(read.output_json["text"], body);
+        assert_eq!(read.output_json["content_ref"], result.sha256);
+        assert_eq!(read.output_json["source"]["kind"], "web_fetch");
+        assert_eq!(read.output_json["source"]["id"], result.final_url);
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn follows_redirects_with_policy_check_on_each_hop() {
+        let blobs = InMemoryBlobStore::default();
         let final_url =
             serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nredirected").await;
         let redirect_url = serve_once(&format!(
@@ -361,6 +472,7 @@ mod tests {
         };
 
         let result = fetch_with_policy(
+            &blobs,
             &args,
             WebNetworkPolicy::TEST_ALLOW_PRIVATE,
             WebFetchLimits::default(),
@@ -370,10 +482,19 @@ mod tests {
 
         assert_eq!(result.text, "redirected");
         assert_eq!(result.final_url, final_url);
+        assert_eq!(result.requested_url, args.url);
+        assert_eq!(
+            blobs
+                .read_bytes(&result.content.content_ref)
+                .await
+                .expect("stored final body"),
+            b"redirected"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn rejects_unsupported_content_type() {
+        let blobs = InMemoryBlobStore::default();
         let url =
             serve_once("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\nabc")
                 .await;
@@ -383,6 +504,7 @@ mod tests {
         };
 
         let error = fetch_with_policy(
+            &blobs,
             &args,
             WebNetworkPolicy::TEST_ALLOW_PRIVATE,
             WebFetchLimits::default(),
@@ -390,11 +512,13 @@ mod tests {
         .await
         .expect_err("unsupported content type");
 
-        assert!(error.to_string().contains("content type"));
+        assert!(matches!(error, ToolError::InvalidRequest { .. }));
+        assert!(blobs.blob_refs().is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn rejects_body_over_byte_cap() {
+        let blobs = InMemoryBlobStore::default();
         let url = serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nabcdef").await;
         let args = WebFetchArgs {
             url,
@@ -402,6 +526,7 @@ mod tests {
         };
 
         let error = fetch_with_policy(
+            &blobs,
             &args,
             WebNetworkPolicy::TEST_ALLOW_PRIVATE,
             WebFetchLimits {
@@ -412,7 +537,78 @@ mod tests {
         .await
         .expect_err("body over cap");
 
-        assert!(error.to_string().contains("byte limit"));
+        assert!(matches!(error, ToolError::InvalidRequest { .. }));
+        assert!(blobs.blob_refs().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rejects_declared_body_over_byte_cap_without_storing_partial_bytes() {
+        let blobs = InMemoryBlobStore::default();
+        let args = WebFetchArgs {
+            url: serve_once(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\n\r\nabcdef",
+            )
+            .await,
+            max_chars: None,
+        };
+        let error = fetch_with_policy(
+            &blobs,
+            &args,
+            WebNetworkPolicy::TEST_ALLOW_PRIVATE,
+            WebFetchLimits {
+                max_response_bytes: 3,
+                ..WebFetchLimits::default()
+            },
+        )
+        .await
+        .expect_err("declared body over cap");
+
+        assert!(matches!(error, ToolError::InvalidRequest { .. }));
+        assert!(blobs.blob_refs().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn storage_failure_does_not_advertise_a_body_reference() {
+        struct RejectWrites;
+
+        #[async_trait::async_trait]
+        impl BlobStore for RejectWrites {
+            async fn put_bytes(&self, _bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+                Err(BlobStoreError::Store {
+                    message: "unavailable".into(),
+                })
+            }
+
+            async fn read_bytes(&self, _blob_ref: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
+                panic!("fetch must not read blobs")
+            }
+
+            async fn has_blob(&self, _blob_ref: &BlobRef) -> Result<bool, BlobStoreError> {
+                panic!("fetch must not probe blobs")
+            }
+
+            async fn stat_blob(&self, _blob_ref: &BlobRef) -> Result<BlobInfo, BlobStoreError> {
+                panic!("fetch already knows the response length")
+            }
+        }
+
+        let args = WebFetchArgs {
+            url: serve_once("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello").await,
+            max_chars: None,
+        };
+        let error = fetch_with_policy(
+            &RejectWrites,
+            &args,
+            WebNetworkPolicy::TEST_ALLOW_PRIVATE,
+            WebFetchLimits::default(),
+        )
+        .await
+        .expect_err("failed persistence cannot produce a usable reference");
+
+        assert!(matches!(
+            error,
+            ToolError::BlobStore(BlobStoreError::Store { .. })
+        ));
     }
 
     async fn serve_once(response: impl Into<String>) -> String {

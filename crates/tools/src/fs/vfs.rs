@@ -454,6 +454,13 @@ impl crate::fs::VfsCaptureTarget for WorkspaceCaptureTarget {
 
 #[async_trait]
 impl FileSystem for VfsSnapshotFileSystem {
+    async fn write_file_ref(
+        &self,
+        path: &FsPath,
+        _content: &crate::content::ContentDescriptor,
+    ) -> FsResult<()> {
+        Err(self.deny_write(path))
+    }
     async fn export_vfs(&self, path: &FsPath) -> FsResult<::vfs::VfsEntry> {
         selected_entry(&self.manifest, path)
     }
@@ -526,6 +533,24 @@ impl FileSystem for VfsSnapshotFileSystem {
 
 #[async_trait]
 impl FileSystem for VfsWorkspaceFileSystem {
+    async fn write_file_ref(
+        &self,
+        path: &FsPath,
+        content: &crate::content::ContentDescriptor,
+    ) -> FsResult<()> {
+        let vfs_path = fs_path_to_vfs_path(path)?;
+        self.update_head(path, |manifest| {
+            ::vfs::write_manifest_file_ref(
+                manifest,
+                &vfs_path,
+                content.content_ref.clone(),
+                content.byte_len,
+                content.media_type.clone(),
+                false,
+            )
+        })
+        .await
+    }
     async fn export_vfs(&self, path: &FsPath) -> FsResult<::vfs::VfsEntry> {
         let (_, manifest) = self.read_head().await?;
         selected_entry(&manifest, path)
@@ -664,6 +689,18 @@ impl FileSystem for VfsWorkspaceFileSystem {
 
 #[async_trait]
 impl FileSystem for AttachedVfsFileSystem {
+    async fn write_file_ref(
+        &self,
+        path: &FsPath,
+        content: &crate::content::ContentDescriptor,
+    ) -> FsResult<()> {
+        let Some(resolved) = self.route_attachment(path)? else {
+            return Err(FsError::PermissionDenied { path: path.clone() });
+        };
+        self.writable_workspace_for_attachment(&resolved.attachment, path)?
+            .write_file_ref(&resolved.inner_path, content)
+            .await
+    }
     async fn export_vfs(&self, path: &FsPath) -> FsResult<::vfs::VfsEntry> {
         let route = self
             .route_attachment(path)?
@@ -1307,6 +1344,156 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn content_reference_writes_reuse_binary_blobs_on_every_surface() {
+        use crate::builtin::{
+            BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op,
+            BuiltinToolSurface as Surface,
+        };
+        struct NoContentRead {
+            store: Arc<InMemoryBlobStore>,
+            content: BlobRef,
+        }
+        #[async_trait]
+        impl BlobStore for NoContentRead {
+            async fn put_bytes(
+                &self,
+                bytes: Vec<u8>,
+            ) -> Result<BlobRef, harness::storage::BlobStoreError> {
+                self.store.put_bytes(bytes).await
+            }
+            async fn read_bytes(
+                &self,
+                reference: &BlobRef,
+            ) -> Result<Vec<u8>, harness::storage::BlobStoreError> {
+                assert_ne!(
+                    reference, &self.content,
+                    "reference writes must not load file bytes"
+                );
+                self.store.read_bytes(reference).await
+            }
+            async fn has_blob(
+                &self,
+                reference: &BlobRef,
+            ) -> Result<bool, harness::storage::BlobStoreError> {
+                self.store.has_blob(reference).await
+            }
+            async fn stat_blob(
+                &self,
+                reference: &BlobRef,
+            ) -> Result<harness::storage::BlobInfo, harness::storage::BlobStoreError> {
+                self.store.stat_blob(reference).await
+            }
+        }
+        for surface in [
+            Surface::Canonical,
+            Surface::CodexLike,
+            Surface::ClaudeCodeLike,
+        ] {
+            let (blobs, mut fs, _, _) =
+                test_workspace_fs(Arc::new(TestWorkspaceStore::default()), Vec::new()).await;
+            let bytes = vec![0, 255, 128, 1, 0];
+            let reference = blobs.put_bytes(bytes.clone()).await.unwrap();
+            let attachment = harness::FileAttachment::new(
+                reference.clone(),
+                "binary.dat".into(),
+                Some("application/octet-stream".into()),
+            );
+            let store = Arc::new(NoContentRead {
+                store: blobs.clone(),
+                content: reference.clone(),
+            });
+            fs.blobs = store.clone();
+            let ctx = FsToolContext::new(Arc::new(fs.clone()), store.clone())
+                .with_content_resolver(
+                    crate::content::ContentResolver::new(store)
+                        .with_attachments(vec![harness::Attachment::File(attachment.clone())]),
+                );
+            let path_key = if surface == Surface::ClaudeCodeLike {
+                "file_path"
+            } else {
+                "path"
+            };
+            let tool = BuiltinTool::vfs(Op::WriteFile, surface);
+            let definition = tool
+                .definition(
+                    &ToolTarget::api_kind(harness::ProviderApiKind::OpenAiResponses),
+                    false,
+                )
+                .unwrap();
+            let validator = jsonschema::validator_for(&definition.input_schema).unwrap();
+            for (index, input) in [
+                serde_json::json!(reference),
+                serde_json::json!(attachment.handle),
+                serde_json::json!({"blobRef": reference, "mediaType":"application/octet-stream"}),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let destination = format!("/nested/{index}.dat");
+                let arguments = serde_json::json!({path_key: destination, "content_ref":input});
+                assert!(validator.is_valid(&arguments));
+                let result = tool
+                    .invoke_json(
+                        BuiltinToolContext::Vfs {
+                            filesystem: &ctx,
+                            attachments: &[],
+                        },
+                        arguments,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(result.output_json["bytes_written"], bytes.len());
+                let vfs::VfsEntry::File(file) = fs
+                    .export_vfs(&FsPath::new(destination).unwrap())
+                    .await
+                    .unwrap()
+                else {
+                    panic!("expected file")
+                };
+                assert_eq!(file.blob_ref, reference);
+                assert_eq!(file.size_bytes, bytes.len() as u64);
+            }
+            for arguments in [
+                serde_json::json!({path_key:"/invalid"}),
+                serde_json::json!({path_key:"/invalid", "content":"text", "content_ref":reference}),
+                serde_json::json!({path_key:"/invalid", "content":null, "content_ref":reference}),
+                serde_json::json!({path_key:"/invalid", "content":"text", "content_ref":null}),
+            ] {
+                assert!(!validator.is_valid(&arguments));
+                assert!(matches!(
+                    tool.invoke_json(
+                        BuiltinToolContext::Vfs {
+                            filesystem: &ctx,
+                            attachments: &[]
+                        },
+                        arguments
+                    )
+                    .await,
+                    Err(crate::error::ToolError::InvalidRequest { .. })
+                ));
+            }
+            let read_only = FsToolContext::new(
+                Arc::new(crate::fs::ReadOnlyFileSystem::new(fs)),
+                blobs.clone(),
+            );
+            assert!(matches!(
+                tool.invoke_json(
+                    BuiltinToolContext::Vfs {
+                        filesystem: &read_only,
+                        attachments: &[]
+                    },
+                    serde_json::json!({path_key:"/denied.dat", "content_ref":reference})
+                )
+                .await,
+                Err(crate::error::ToolError::Filesystem(
+                    FsError::PermissionDenied { .. }
+                ))
+            ));
+            assert_eq!(blobs.read_bytes(&reference).await.unwrap(), bytes);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn explicit_reference_preserves_versions_without_changing_other_tool_outputs() {
         use crate::builtin::{
             BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op,
@@ -1352,6 +1539,11 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(reference.attachments.len(), 1);
+            assert_eq!(reference.output_json["byte_len"], 8);
+            assert_eq!(
+                reference.output_json["content_ref"],
+                reference.attachments[0].content_ref().to_string()
+            );
             assert!(reference.effects.is_empty());
             let write = BuiltinTool::vfs(Op::WriteFile, surface)
                 .invoke_json(
@@ -1960,7 +2152,8 @@ mod tests {
             &fs_ctx,
             WriteFileArgs {
                 path: FsPath::new("src/lib.rs").unwrap(),
-                content: "pub fn alpha() {}\n".to_owned(),
+                content: Some("pub fn alpha() {}\n".to_owned()),
+                content_ref: None,
             },
         )
         .await
@@ -2257,7 +2450,8 @@ mod tests {
             &fs_ctx,
             WriteFileArgs {
                 path: FsPath::new("src/lib.rs").unwrap(),
-                content: "pub fn alpha() {}\n".to_owned(),
+                content: Some("pub fn alpha() {}\n".to_owned()),
+                content_ref: None,
             },
         )
         .await

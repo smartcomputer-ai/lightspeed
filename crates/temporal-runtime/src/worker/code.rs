@@ -548,18 +548,232 @@ async fn finalize(
         });
     }
     let report_ref = store_report(api.store().as_ref(), &report).await?;
-    let model = model_report(&report, &report_ref);
+    let selected = prepare_code_output(api.store().as_ref(), &report).await?;
+    let children: Vec<_> = std::iter::once(report_ref.clone())
+        .chain(
+            selected
+                .attachments
+                .iter()
+                .flat_map(harness::Attachment::blob_refs),
+        )
+        .collect();
+    let model = model_report_with_output(&report, &report_ref, selected);
     let payload_ref = api
         .store()
         .put_bytes(serde_json::to_vec(&model).map_err(retryable)?)
         .await
         .map_err(retryable)?;
-    record_contains_edges(Some(api.store().as_ref()), &payload_ref, [report_ref])
+    record_contains_edges(Some(api.store().as_ref()), &payload_ref, children)
         .await
         .map_err(retryable)?;
     Ok(PromiseResolution::Resolved {
         payload_ref: Some(payload_ref),
     })
+}
+
+#[derive(Debug, Default)]
+struct PreparedCodeOutput {
+    output: Vec<Value>,
+    attachments: Vec<harness::Attachment>,
+    errors: Vec<CodeOutputError>,
+}
+
+#[derive(Debug, Serialize)]
+struct CodeOutputError {
+    selection_index: usize,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum CodeOutputAdmissionError {
+    #[error("{0}")]
+    Invalid(String),
+    #[error("selected content is unavailable: {0}")]
+    Blob(#[from] BlobStoreError),
+}
+
+/// Only private interpreter selections promote a completed ordinary tool's
+/// authoritative attachments. Text and return values are never interpreted as
+/// attachment envelopes, even when their JSON has an identical shape.
+async fn prepare_code_output(
+    blobs: &dyn BlobStore,
+    report: &DetailedCodeReport,
+) -> Result<PreparedCodeOutput, ActivityError> {
+    let Some(execution) = &report.execution else {
+        // Scope recovery can establish effects, but cannot reconstruct which
+        // outputs the script selected if its interpreter receipt was lost.
+        return Ok(PreparedCodeOutput::default());
+    };
+    if execution.selections.is_empty() {
+        return Ok(PreparedCodeOutput {
+            output: execution.output.clone(),
+            ..Default::default()
+        });
+    }
+    let mut prepared = PreparedCodeOutput::default();
+    let mut media_remaining = harness::media::MAX_TOOL_MEDIA_ITEMS;
+    let mut files_remaining = tools::attachments::MAX_FILE_ATTACHMENTS;
+    for (selection_index, selection) in execution.selections.iter().enumerate() {
+        let (kind, request_id) = match selection {
+            codemode::OutputSelection::Text { index } => {
+                match execution.output.get(*index) {
+                    Some(value) => prepared.output.push(value.clone()),
+                    None => prepared.errors.push(CodeOutputError {
+                        selection_index,
+                        kind: "text",
+                        request_id: None,
+                        message: "selected text is missing from the interpreter receipt".into(),
+                    }),
+                }
+                continue;
+            }
+            codemode::OutputSelection::Media { request_id } => ("media", request_id),
+            codemode::OutputSelection::File { request_id } => ("file", request_id),
+        };
+        let admit = async {
+            let scope = report
+                .scope
+                .as_ref()
+                .filter(|scope| scope.execution_id == report.execution_id)
+                .ok_or_else(|| {
+                    CodeOutputAdmissionError::Invalid(
+                        "authoritative code-tool scope is unavailable".into(),
+                    )
+                })?;
+            let call = scope
+                .calls
+                .get(request_id)
+                .filter(|call| call.request_id == *request_id)
+                .ok_or_else(|| {
+                    CodeOutputAdmissionError::Invalid(
+                        "selected tool request is missing from the authoritative scope".into(),
+                    )
+                })?;
+            if call.status != temporal_workflow::CodeToolCallStatus::Succeeded {
+                return Err(CodeOutputAdmissionError::Invalid(
+                    "selected tool request did not succeed".into(),
+                ));
+            }
+            let mut matching = call.attachments.iter().filter(|attachment| {
+                matches!(
+                    (kind, attachment),
+                    ("media", harness::Attachment::Media(_))
+                        | ("file", harness::Attachment::File(_))
+                )
+            });
+            let attachment = matching.next().cloned().ok_or_else(|| {
+                CodeOutputAdmissionError::Invalid(format!(
+                    "selected tool request has no admitted {kind} attachment"
+                ))
+            })?;
+            if matching.next().is_some() {
+                return Err(CodeOutputAdmissionError::Invalid(format!(
+                    "selected tool request has ambiguous {kind} attachments"
+                )));
+            }
+            let remaining = if kind == "media" {
+                &mut media_remaining
+            } else {
+                &mut files_remaining
+            };
+            if *remaining == 0 {
+                return Err(CodeOutputAdmissionError::Invalid(format!(
+                    "selected {kind} output exceeds the per-result attachment limit"
+                )));
+            }
+            validate_selected_attachment(blobs, &attachment).await?;
+            *remaining -= 1;
+            Ok(attachment)
+        }
+        .await;
+        match admit {
+            Ok(attachment) => {
+                prepared
+                    .output
+                    .push(serde_json::to_value(&attachment).expect("attachment serializes"));
+                prepared.attachments.push(attachment);
+            }
+            // Finalization is retryable and consumes an existing runner receipt;
+            // recovering storage here never reruns the script or its effects.
+            Err(CodeOutputAdmissionError::Blob(error @ BlobStoreError::Store { .. })) => {
+                return Err(retryable(error));
+            }
+            Err(error) => prepared.errors.push(CodeOutputError {
+                selection_index,
+                kind,
+                request_id: Some(request_id.clone()),
+                message: error.to_string(),
+            }),
+        }
+    }
+    Ok(prepared)
+}
+
+async fn validate_selected_attachment(
+    blobs: &dyn BlobStore,
+    attachment: &harness::Attachment,
+) -> Result<(), CodeOutputAdmissionError> {
+    let info = blobs.stat_blob(attachment.content_ref()).await?;
+    match attachment {
+        harness::Attachment::Media(media) => {
+            let canonical = harness::media::MediaDescriptor::new(
+                media.content_ref.clone(),
+                &media.media_type,
+                media.name.as_deref(),
+            )
+            .ok_or_else(|| {
+                CodeOutputAdmissionError::Invalid("selected media type is unsupported".into())
+            })?;
+            if canonical != *media {
+                return Err(CodeOutputAdmissionError::Invalid(
+                    "selected media descriptor is invalid".into(),
+                ));
+            }
+            harness::media::admit_tool_media(Some(&media.media_type), info.byte_len).map_err(
+                |error| {
+                    CodeOutputAdmissionError::Invalid(format!(
+                        "selected media cannot be presented: {error}"
+                    ))
+                },
+            )?;
+        }
+        harness::Attachment::File(file) if !file.is_valid() => {
+            return Err(CodeOutputAdmissionError::Invalid(
+                "selected file descriptor is invalid".into(),
+            ));
+        }
+        harness::Attachment::File(_) => (),
+    }
+    // Renew admission immediately before publishing. The generic joined-result
+    // adapter performs the same native media checks when adding companions.
+    for reference in attachment.blob_refs() {
+        blobs.retain_blob(&reference).await?;
+    }
+    Ok(())
+}
+
+fn model_report_with_output(
+    report: &DetailedCodeReport,
+    report_ref: &BlobRef,
+    selected: PreparedCodeOutput,
+) -> Value {
+    let mut model = model_report(report, report_ref);
+    model["output"] = Value::Array(selected.output);
+    if !selected.attachments.is_empty() {
+        model["attachments"] =
+            serde_json::to_value(selected.attachments).expect("attachments serialize");
+    }
+    if !selected.errors.is_empty() {
+        if model["status"] == "succeeded" {
+            model["status"] = Value::String("failed".into());
+        }
+        model["output_errors"] =
+            serde_json::to_value(selected.errors).expect("output errors serialize");
+    }
+    model
 }
 
 fn model_report(report: &DetailedCodeReport, report_ref: &BlobRef) -> Value {
@@ -648,6 +862,373 @@ fn non_retryable(error: impl std::fmt::Display) -> ActivityError {
 mod tests {
     use super::*;
 
+    fn output_report(
+        output: Vec<Value>,
+        selections: Vec<codemode::OutputSelection>,
+        calls: Vec<temporal_workflow::CodeToolCallOutcome>,
+    ) -> DetailedCodeReport {
+        DetailedCodeReport {
+            version: 1,
+            execution_id: "code-output-test".into(),
+            descriptor: None,
+            execution: Some(codemode::ExecutionReport {
+                output,
+                selections,
+                return_value: None,
+                error: None,
+                pending_request_ids: Vec::new(),
+                metrics: Default::default(),
+            }),
+            scope: Some(CodeToolScopeReport {
+                execution_id: "code-output-test".into(),
+                closed: true,
+                cancel_requested: false,
+                bindings: Default::default(),
+                calls: calls
+                    .into_iter()
+                    .map(|call| (call.request_id.clone(), call))
+                    .collect(),
+            }),
+            interruption: None,
+            cleanup_error: None,
+            report_unavailable: None,
+        }
+    }
+
+    fn admitted_call(
+        request_id: &str,
+        attachment: harness::Attachment,
+    ) -> temporal_workflow::CodeToolCallOutcome {
+        temporal_workflow::CodeToolCallOutcome {
+            request_id: request_id.into(),
+            call_id: harness::ToolCallId::new(format!("tool-{request_id}")),
+            status: temporal_workflow::CodeToolCallStatus::Succeeded,
+            output_ref: Some(BlobRef::from_bytes(request_id.as_bytes())),
+            error_ref: None,
+            attachments: vec![attachment],
+        }
+    }
+
+    async fn image_attachment(blobs: &dyn BlobStore, name: &str) -> harness::Attachment {
+        let reference = blobs
+            .put_bytes(format!("image {name}").into_bytes())
+            .await
+            .unwrap();
+        harness::Attachment::Media(
+            harness::media::MediaDescriptor::new(reference, "image/png", Some(name)).unwrap(),
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn selected_output_preserves_mixed_order_and_successes_before_script_failure() {
+        use codemode::OutputSelection::*;
+        let blobs = harness::storage::InMemoryBlobStore::new();
+        let first = image_attachment(&blobs, "first.png").await;
+        let last = image_attachment(&blobs, "last.png").await;
+        let file = harness::Attachment::File(harness::FileAttachment::new(
+            blobs.put_bytes(b"report".to_vec()).await.unwrap(),
+            "report.txt".into(),
+            Some("text/plain".into()),
+        ));
+        let mut report = output_report(
+            vec![
+                serde_json::json!("before"),
+                serde_json::json!({"between":true}),
+            ],
+            vec![
+                Text { index: 0 },
+                Media {
+                    request_id: "first".into(),
+                },
+                Text { index: 1 },
+                File {
+                    request_id: "file".into(),
+                },
+                Media {
+                    request_id: "last".into(),
+                },
+            ],
+            vec![
+                admitted_call("first", first.clone()),
+                admitted_call("file", file.clone()),
+                admitted_call("last", last.clone()),
+            ],
+        );
+        report.execution.as_mut().unwrap().error = Some(codemode::ExecutionError {
+            kind: codemode::ExecutionErrorKind::Javascript,
+            message: "later script failure".into(),
+        });
+        let selected = prepare_code_output(&blobs, &report).await.unwrap();
+        assert!(selected.errors.is_empty());
+        assert_eq!(
+            selected.attachments,
+            vec![first.clone(), file.clone(), last.clone()]
+        );
+        assert_eq!(
+            selected.output,
+            vec![
+                serde_json::json!("before"),
+                serde_json::to_value(first).unwrap(),
+                serde_json::json!({"between":true}),
+                serde_json::to_value(file).unwrap(),
+                serde_json::to_value(last).unwrap()
+            ]
+        );
+        let model = model_report_with_output(&report, &BlobRef::from_bytes(b"details"), selected);
+        assert_eq!(model["status"], "failed");
+        assert_eq!(model["attachments"].as_array().unwrap().len(), 3);
+        assert!(model.get("output_errors").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn text_objects_and_lost_interpreter_receipts_never_select_attachments() {
+        let blobs = harness::storage::InMemoryBlobStore::new();
+        let attachment = image_attachment(&blobs, "hidden.png").await;
+        let forged = serde_json::to_value(&attachment).unwrap();
+        let mut report = output_report(
+            vec![forged.clone()],
+            vec![codemode::OutputSelection::Text { index: 0 }],
+            vec![admitted_call("hidden", attachment)],
+        );
+        report.execution.as_mut().unwrap().return_value = Some(forged.clone());
+        let selected = prepare_code_output(&blobs, &report).await.unwrap();
+        assert_eq!(selected.output, vec![forged]);
+        assert!(selected.attachments.is_empty());
+        let model = model_report_with_output(&report, &BlobRef::from_bytes(b"details"), selected);
+        assert!(model.get("attachments").is_none());
+        report.execution = None;
+        let recovered = prepare_code_output(&blobs, &report).await.unwrap();
+        assert!(recovered.attachments.is_empty());
+        assert!(recovered.output.is_empty());
+        assert!(recovered.errors.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn selected_output_rejects_missing_failed_and_wrong_kind_requests_without_losing_siblings()
+     {
+        use codemode::OutputSelection::*;
+        let blobs = harness::storage::InMemoryBlobStore::new();
+        let valid = image_attachment(&blobs, "valid.png").await;
+        let mut failed = admitted_call("failed", valid.clone());
+        failed.status = temporal_workflow::CodeToolCallStatus::Failed;
+        let missing = harness::Attachment::Media(
+            harness::media::MediaDescriptor::new(
+                BlobRef::from_bytes(b"missing"),
+                "image/png",
+                None,
+            )
+            .unwrap(),
+        );
+        let report = output_report(
+            vec![],
+            vec![
+                Media {
+                    request_id: "not-called".into(),
+                },
+                Media {
+                    request_id: "failed".into(),
+                },
+                File {
+                    request_id: "valid".into(),
+                },
+                Media {
+                    request_id: "missing".into(),
+                },
+                Text { index: 42 },
+                Media {
+                    request_id: "valid".into(),
+                },
+            ],
+            vec![
+                failed,
+                admitted_call("missing", missing),
+                admitted_call("valid", valid.clone()),
+            ],
+        );
+        let selected = prepare_code_output(&blobs, &report).await.unwrap();
+        assert_eq!(selected.attachments, vec![valid]);
+        assert_eq!(selected.errors.len(), 5);
+        assert_eq!(selected.errors[0].request_id.as_deref(), Some("not-called"));
+        assert_eq!(selected.errors[4].kind, "text");
+        assert_eq!(selected.errors[4].selection_index, 4);
+        let model = model_report_with_output(&report, &BlobRef::from_bytes(b"details"), selected);
+        assert_eq!(model["status"], "failed");
+        assert_eq!(model["output_errors"].as_array().unwrap().len(), 5);
+        assert_eq!(model["output"].as_array().unwrap().len(), 1);
+        jsonschema::validate(&tools::code::code_execution_output_schema(), &model)
+            .expect("compact output and diagnostics match the model-facing schema");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn selected_output_retries_store_failures_but_reports_missing_content_per_selection() {
+        struct FailingOnceStore {
+            inner: harness::storage::InMemoryBlobStore,
+            reference: BlobRef,
+            retain: bool,
+            error: BlobStoreError,
+            failed: std::sync::atomic::AtomicBool,
+        }
+        impl FailingOnceStore {
+            fn check(&self, reference: &BlobRef, retain: bool) -> Result<(), BlobStoreError> {
+                if self.reference == *reference
+                    && self.retain == retain
+                    && !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    return Err(self.error.clone());
+                }
+                Ok(())
+            }
+        }
+        #[async_trait::async_trait]
+        impl BlobStore for FailingOnceStore {
+            async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+                self.inner.put_bytes(bytes).await
+            }
+            async fn read_bytes(&self, reference: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
+                self.inner.read_bytes(reference).await
+            }
+            async fn has_blob(&self, reference: &BlobRef) -> Result<bool, BlobStoreError> {
+                self.inner.has_blob(reference).await
+            }
+            async fn stat_blob(
+                &self,
+                reference: &BlobRef,
+            ) -> Result<harness::storage::BlobInfo, BlobStoreError> {
+                self.check(reference, false)?;
+                self.inner.stat_blob(reference).await
+            }
+            async fn retain_blob(&self, reference: &BlobRef) -> Result<(), BlobStoreError> {
+                self.check(reference, true)?;
+                self.inner.retain_blob(reference).await
+            }
+        }
+
+        for retain in [false, true] {
+            for missing in [false, true] {
+                let inner = harness::storage::InMemoryBlobStore::new();
+                let before = image_attachment(&inner, "before.png").await;
+                let affected = image_attachment(&inner, "affected.png").await;
+                let after = image_attachment(&inner, "after.png").await;
+                let reference = affected.content_ref().clone();
+                let blobs = FailingOnceStore {
+                    inner,
+                    reference: reference.clone(),
+                    retain,
+                    error: if missing {
+                        BlobStoreError::NotFound {
+                            blob_ref: reference,
+                        }
+                    } else {
+                        BlobStoreError::Store {
+                            message: "temporary storage outage".into(),
+                        }
+                    },
+                    failed: Default::default(),
+                };
+                let report = output_report(
+                    vec![],
+                    ["before", "affected", "after"]
+                        .into_iter()
+                        .map(|request_id| codemode::OutputSelection::Media {
+                            request_id: request_id.into(),
+                        })
+                        .collect(),
+                    vec![
+                        admitted_call("before", before.clone()),
+                        admitted_call("affected", affected.clone()),
+                        admitted_call("after", after.clone()),
+                    ],
+                );
+                let first = prepare_code_output(&blobs, &report).await;
+                if missing {
+                    let partial = first.expect("missing content produces a partial result");
+                    assert_eq!(partial.attachments, vec![before, after]);
+                    assert_eq!(partial.errors.len(), 1);
+                    assert_eq!(partial.errors[0].request_id.as_deref(), Some("affected"));
+                    assert_eq!(partial.errors[0].selection_index, 1);
+                    let model = model_report_with_output(
+                        &report,
+                        &BlobRef::from_bytes(b"details"),
+                        partial,
+                    );
+                    assert_eq!(model["status"], "failed");
+                } else {
+                    let ActivityError::Application(error) =
+                        first.expect_err("storage failure must retry finalization")
+                    else {
+                        panic!("expected application failure");
+                    };
+                    assert!(!error.is_non_retryable());
+                    let retried = prepare_code_output(&blobs, &report).await.unwrap();
+                    assert!(retried.errors.is_empty());
+                    assert_eq!(retried.attachments, vec![before, affected, after]);
+                    let model = model_report_with_output(
+                        &report,
+                        &BlobRef::from_bytes(b"details"),
+                        retried,
+                    );
+                    assert_eq!(model["status"], "succeeded");
+                }
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn selected_output_applies_aggregate_attachment_caps() {
+        let blobs = harness::storage::InMemoryBlobStore::new();
+        let media = image_attachment(&blobs, "image.png").await;
+        let file = harness::Attachment::File(harness::FileAttachment::new(
+            blobs.put_bytes(b"file".to_vec()).await.unwrap(),
+            "file.txt".into(),
+            None,
+        ));
+        let selections = std::iter::repeat_n(
+            codemode::OutputSelection::Media {
+                request_id: "media".into(),
+            },
+            harness::media::MAX_TOOL_MEDIA_ITEMS + 1,
+        )
+        .chain(std::iter::repeat_n(
+            codemode::OutputSelection::File {
+                request_id: "file".into(),
+            },
+            tools::attachments::MAX_FILE_ATTACHMENTS + 1,
+        ))
+        .collect();
+        let report = output_report(
+            vec![],
+            selections,
+            vec![admitted_call("media", media), admitted_call("file", file)],
+        );
+        let selected = prepare_code_output(&blobs, &report).await.unwrap();
+        assert_eq!(
+            selected.attachments.len(),
+            harness::media::MAX_TOOL_MEDIA_ITEMS + tools::attachments::MAX_FILE_ATTACHMENTS
+        );
+        assert_eq!(selected.errors.len(), 2);
+        assert_eq!(selected.errors[0].kind, "media");
+        assert_eq!(selected.errors[1].kind, "file");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn historical_text_receipts_keep_the_compact_output_contract() {
+        let blobs = harness::storage::InMemoryBlobStore::new();
+        let report = output_report(
+            vec![serde_json::json!("legacy"), serde_json::json!({"value":42})],
+            vec![],
+            vec![],
+        );
+        let encoded = serde_json::to_value(&report).unwrap();
+        assert!(encoded["execution"].get("selections").is_none());
+        let restored: DetailedCodeReport = serde_json::from_value(encoded).unwrap();
+        let selected = prepare_code_output(&blobs, &restored).await.unwrap();
+        let reference = BlobRef::from_bytes(b"details");
+        assert_eq!(
+            model_report_with_output(&restored, &reference, selected),
+            model_report(&restored, &reference)
+        );
+    }
+
     #[test]
     fn run_activity_defensively_rejects_source_retries() {
         validate_attempt(1).expect("first attempt");
@@ -669,6 +1250,7 @@ mod tests {
             descriptor: None,
             execution: Some(codemode::ExecutionReport {
                 output: vec![serde_json::json!({"saved": true})],
+                selections: Vec::new(),
                 return_value: None,
                 error: None,
                 pending_request_ids: vec!["call-2".into()],

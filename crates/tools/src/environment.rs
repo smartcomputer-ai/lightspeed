@@ -31,6 +31,8 @@ pub struct EnvironmentToolContext {
     pub limits: ToolLimits,
     pub process_cwd: Option<FsPath>,
     pub session_id: Option<String>,
+    /// Stable invocation identity used by resumable content transfers.
+    pub operation_id: Option<String>,
 }
 
 impl EnvironmentToolContext {
@@ -45,11 +47,17 @@ impl EnvironmentToolContext {
             limits: ToolLimits::default(),
             process_cwd: None,
             session_id: None,
+            operation_id: None,
         }
     }
 
     pub fn with_environment_id(mut self, environment_id: impl Into<String>) -> Self {
         self.environment_id = Some(environment_id.into());
+        self
+    }
+
+    pub fn with_operation_id(mut self, operation_id: impl Into<String>) -> Self {
+        self.operation_id = Some(operation_id.into());
         self
     }
 

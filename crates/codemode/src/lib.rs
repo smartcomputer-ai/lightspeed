@@ -100,8 +100,20 @@ pub struct ExecutionMetrics {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OutputSelection {
+    Text { index: usize },
+    Media { request_id: String },
+    File { request_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionReport {
     pub output: Vec<Value>,
+    /// Ordered receipts for explicit output. Empty on historical text-only
+    /// reports; consumers then render `output` in its existing order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selections: Vec<OutputSelection>,
     pub return_value: Option<Value>,
     pub error: Option<ExecutionError>,
     /// Requests issued before script termination, whose completions have not

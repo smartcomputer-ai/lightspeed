@@ -42,9 +42,10 @@ broader live integration coverage and operational validation:
 Wasm isolation, TypeScript source support, optional TypeScript declaration
 rendering, and ordinary transcription/image/decision-model tools remain later
 phases. [Shared content references and code output](p192-content-references-and-code-output.md)
-plans ordinary blob tools, file integration, and then `media()`/`file()` helpers;
-no separate named store is planned. The current guest surface is `tools`,
-`text(value)`, and a JSON return value. Durable waits already work through the
+implements ordinary blob tools, file integration, and awaitable `media()`/`file()`
+helpers. No separate named store is planned. The current guest surface is `tools`,
+`text(value)`, `media(source, options?)`, `file(source, options?)`, and a JSON
+return value. Durable waits already work through the
 ordinary `tools["await"]` call. Approval suspension,
 persistent JS heaps, and durable JavaScript replay remain outside v1.
 
@@ -79,8 +80,8 @@ The first slice established callable contracts and execution metadata:
   preserved, with `stdout_omitted_at`/`stderr_omitted_at` retaining byte offsets.
   The environment protocol keeps raw bytes and direct model calls retain their
   existing text formatting. Native QuickJS integration covers parsing string
-  stdout and handling binary fallback across process polls. Media emission
-  helpers remain deferred.
+  stdout and handling binary fallback across process polls. Awaitable `media()`
+  and `file()` helpers now use ordinary blob tools to select output assets.
 - `temporal-workflow` owns a validated `CodeExecutionDescriptor` with source and
   catalog CAS references, parent identity, and explicit positive execution limits.
   It introduces no interpreter dependency. The workflow integration contract now
@@ -1097,8 +1098,9 @@ boundary. `ParallelSafe` and `Exclusive` policies still
 apply even when the script requests several calls concurrently. They do not
 promise isolation from other sessions using the same resource.
 
-`text(value)` and a bounded JSON return value are implemented. Dedicated media
-output and blob tools are planned in
+`text(value)`, awaitable `media()` / `file()`, and a bounded JSON return value
+are implemented. The helpers compose ordinary blob tools and select admitted
+assets for the outer result, as described in
 [shared content references and code output](p192-content-references-and-code-output.md).
 Only selected output and the compact execution report enter the model's tool
 result. The complete code tool call report is stored separately. No separate

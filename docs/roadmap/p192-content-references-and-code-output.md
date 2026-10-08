@@ -1,14 +1,16 @@
 # Shared content references, blob tools, and code output
 
-**Status:** Planned, 2026-10-08. The approach is agreed; the implementation
-slices below are pending. Tool names and example field layouts are proposed
-contracts, to be finalized with their owned DTOs and JSON Schemas.
+**Status:** Shared content tools, filesystem integration, and code-mode
+`media()` / `file()` helpers implemented, 2026-10-08. This includes environment
+references, stored `web_fetch` bodies, and selected-output delivery through the
+existing attachment pipeline. Tool contracts are owned by Rust DTOs and JSON
+Schemas; helper calls use those same admitted capabilities.
 
 Make immutable content usable throughout an agent session: obtain a reference,
 inspect it, read selected bytes, pass it to another tool, save it as a file,
 or show it to the model. Ordinary tool calls and code-mode scripts use the
-same capabilities. Implement `media()` and `file()` after the content and
-filesystem paths work end to end.
+same capabilities. `media()` and `file()` compose the ordinary content tools
+and select which admitted assets reach the outer code-tool result.
 
 Related decisions:
 
@@ -59,15 +61,15 @@ and [sandbox store contract](https://github.com/earendil-works/pi/blob/main/pack
 
 | Area | Already present | Gap to close |
 | --- | --- | --- |
-| Blob storage | CAS, stat, bounded range reads, streaming writes, retention, and public `blobs/put`, `blobs/read`, `blobs/has` APIs | No ordinary session blob tools; public reads return an entire base64 body and do not resolve model handles. |
-| References | Full content refs, media/file descriptors, short-handle matching and attachment-link resolution | No shared tool-facing resolver covering full refs, short handles, and admitted descriptors. |
-| VFS reference | `vfs_reference` resolves an immutable file version without reading its body | Align its descriptor with common size/metadata conventions. |
-| Environment reference | Image/PDF reads can put content into CAS; `vfs_capture` can copy environment output into VFS | No general environment-file-to-reference tool independent of VFS. Other binary reads fail text decoding. |
-| File writes | VFS/environment writers accept text; lower filesystem interfaces can write bytes | Tool arguments cannot reference existing content. VFS should reuse its blob; environment writes need a host-side byte transfer. |
-| File reads | Line-oriented text and supported image/PDF results | Media descriptors must compose with the shared reference API. General binary access needs the reference/read path. |
-| MCP and jobs | MCP binary blocks become `blobRef`; binary job output is stored in CAS; job artifacts identify environment paths | Consumers cannot consistently inspect, save, or reuse these results through ordinary tools. |
-| Web fetch | Extracted text, content type, byte count, truncation, source URL, and a SHA-256 checksum | The response bytes behind that checksum are not stored. The checksum is not currently a readable blob reference. |
-| Code output | `text(value)`, JSON return values, retained per-call reports and attachment metadata | No explicit selected-media/file output through the outer code-tool result. |
+| Blob storage | CAS, streaming/range operations, retention, public blob APIs, and always-available `blob_info` / `blob_read` / `blob_put` tools | No additional storage layer needed. |
+| References | Shared resolver accepts full refs, recorded media/file handles, and supported producer descriptors; aliases survive context compaction | Lookup currently pages durable event metadata; it does not restore reducer state or load historical tool bodies. |
+| VFS reference | `vfs_reference` selects an immutable version without reading its body and returns a common descriptor with verified size | None for this slice. |
+| Environment reference | `env_reference` captures one file into CAS without VFS, using streaming and durable transfer receipts | Directories continue to use existing capture tools. |
+| File writes | All presentations accept text or `content_ref`; VFS reuses CAS content and environment writes stream exact bytes | Environment reference writes require a daemon supporting the new file-write transfer direction. |
+| File reads | Existing text/image/PDF behavior is preserved; media descriptors compose with blob tools and writers | General binary access uses reference creation and bounded blob reads. |
+| MCP and jobs | Resolver accepts existing `blobRef` envelopes and `mimeType` / `mediaType` metadata; job artifact paths can use `env_reference` | Remote URIs still require an explicit fetch capability. |
+| Web fetch | Exact accepted body bytes are stored and referenced alongside extracted text, checksum, and source provenance | Historical checksums without stored bytes remain unavailable. |
+| Code output | `text(value)`, awaitable `media()` / `file()`, JSON return values, retained per-call reports, and explicit media/file selection | Native formats and aggregate budgets remain those of ordinary tool media. |
 
 Relevant implementation boundaries are the
 [blob APIs](../../crates/api/src/storage.rs),
@@ -110,6 +112,11 @@ required for newly resolved descriptors; descriptive fields are optional when
 unknown. Names and media types describe a particular use of the bytes. They
 are not global mutable properties of the hash. Keep provenance where it is
 already available, without treating it as authority.
+
+Descriptors can also carry the existing `source` navigation object. Names,
+MIME types, and provenance travel with supplied descriptors or recorded
+attachments. A bare full hash may have no such metadata: it identifies bytes,
+not the particular URL or filename through which those bytes were obtained.
 
 Every successful blob operation returns the full canonical `content_ref` in
 its structured descriptor. Short handles supplement that identity; they never
@@ -179,6 +186,12 @@ from guest code.
 Reuse workflow-tool starts/signals and the existing code-tool protocol; add no
 feature-specific session transport or cross-role activity dispatch.
 
+The implementation scans durable session event metadata in pages of 1,000 for
+content operations. It collects input media and ordinary/code-tool attachment
+records, including records removed from active context. It does not read old
+tool result bodies. A future derived index can optimize this lookup without
+changing alias or access semantics.
+
 Recorded results, attachments, workspace manifests, and execution reports retain
 their canonical refs through the existing blob graph. Renew admission grace
 before publishing a reused reference and record containment edges before its
@@ -224,8 +237,9 @@ store; short handles resolve through the session's recorded descriptors.
 ### `blob_info`
 
 Resolve a reference input and return the common descriptor without returning
-the body. Use existing stat/recorded metadata; inspect only bounded headers
-when a supported type needs detection. Report missing, malformed, or ambiguous
+the body. Use existing stat and supplied/recorded metadata; metadata inspection
+does not read file bytes. Native-media presentation performs bounded format
+detection when requested through `blob_read`. Report missing, malformed, or ambiguous
 references with typed tool errors. A full ref does not need to have appeared
 in the session before this call.
 
@@ -239,6 +253,8 @@ when file presentation is requested without a recorded or supplied name.
 ### `blob_read`
 
 Read bounded data using an explicit format: text, JSON, bytes, or native media.
+The implemented `format` values are `text`, `json`, `bytes`, and `media`.
+`max_bytes` defaults to 8 KiB and is capped at 1 MiB; `offset` defaults to zero.
 Byte-range reads report the full size, returned offset/count, and continuation
 offset or completion. Use the existing range interface; do not silently buffer
 an entire large object to satisfy a small request.
@@ -264,6 +280,11 @@ ordinary string is literal content, base64, a path, or a reference. UTF-8 is the
 text encoding. JSON means the serialized JSON value, not an implicit binary
 encoding. Byte representation and encoded-size overhead must be included in
 the schema and request budgets.
+
+The implemented inputs are `text`, `json` (including JSON null), or `bytes`
+(an integer array from 0 to 255), with optional `name` and `media_type`.
+Stored content is capped at 1 MiB. Request and code-mode budgets apply
+separately to the JSON transport representation, including byte-array overhead.
 
 Use existing content-addressed storage and deduplication. Publish the full ref
 and metadata in a retained normal tool result. Optional name/media-type metadata
@@ -306,6 +327,20 @@ repeated delivery must not silently overwrite unrelated later edits. Reuse
 existing capture publication and transfer receipts instead of inventing a
 second filesystem workflow system. State resulting overwrite/retry semantics
 in the tool descriptions and tests.
+
+The implemented writers overwrite existing files, create missing parents,
+and reject directory targets. Environment reference writes use a distinct
+`writeFile` transfer direction with the existing chunking and receipt engine;
+it preserves existing file permissions. Older daemons reject that direction
+instead of interpreting it as a less constrained tree replacement. Existing
+text calls and materialize/capture wire forms remain supported.
+
+Hosted transfer operation identities include session, run, turn, batch, call,
+and argument identity. Activity redelivery reuses its receipt; a model reusing
+the same call ID and arguments in a later run performs a new operation.
+Environment capture and file writes use the existing bulk, non-retry-safe
+activity policy: failed incomplete transfers are aborted, and the model can
+issue a fresh call. Completed receipts remain available for redelivery.
 
 ### `env_reference`
 
@@ -368,9 +403,9 @@ Provider-native fetch results remain provider-owned; this change concerns the
 Lightspeed tool implementation and must not fabricate raw response bodies for
 providers that did not return them.
 
-## Final slice: `media()` and `file()`
+## Code-mode output: `media()` and `file()`
 
-Add two small output helpers to code mode:
+Code mode provides two awaitable output helpers:
 
 ```javascript
 const asset = await tools.blob_info({ ref: "media:<known handle>" });
@@ -382,14 +417,17 @@ await media({ bytes: pngBytes }, { media_type: "image/png" });
 await file({ text: report }, { name: "report.txt", media_type: "text/plain" });
 ```
 
-These are proposed awaitable helpers. Keeping admission asynchronous lets
+Keeping admission asynchronous lets
 scripts catch missing-reference, unsupported-format, and size errors before
 continuing. They accept a supported reference/descriptor or an explicit inline
 source object, avoiding ambiguity between text content and reference strings.
-An explicit filename is required when neither existing metadata nor the
-ordinary file-reference presentation provides a suitable name.
+Both return the admitted ordinary-tool descriptor. Options may supply `name`
+and `media_type`; file presentation uses the supplied or recorded name and
+otherwise provides a deterministic content-derived filename. A producer
+descriptor remains a reference even if it also contains text or byte-range
+data: passing a `blob_read` result selects its original immutable content.
 
-Implement them as thin wrappers over admitted blob operations plus a private
+The helpers are thin wrappers over admitted blob operations plus a private
 typed-output emitter. `media()` uses native-media read/admission; `file()` uses
 explicit file-reference presentation. Inline sources first use `blob_put`.
 These underlying calls follow ordinary session tool scheduling, tracing,
@@ -398,11 +436,21 @@ open paths, fetch URLs, or gain broader storage access. Reference-based output
 does not load large bodies into JavaScript.
 
 `text()` remains synchronous and retains JSON-compatible values. A JSON return
-value remains a separate final value. Add a typed selected-output representation
-so media/file selection cannot be forged by passing an object with a `type`
-field to `text()`. Preserve selection order; parallel helper calls take their
-place when their admission completes and they emit. Do not reorder tool-result
-and companion-media blocks in ways that violate provider request formatting.
+value remains a separate final value. A private receipt records ordered text
+indices and media/file admission request IDs. The native emitter accepts only
+successfully completed helper admissions and accounts for their descriptor bytes
+under the existing output budget. Passing an object with a `type`, `kind`, or
+`attachments` field to `text()` does not select an asset. Parallel helper calls
+take their place when their admission completes and they emit.
+
+Finalization verifies each selection against the session's authoritative
+completed tool attachments. The compact result's `output` array interleaves
+original text values with the existing attachment envelopes (`{kind, data}`).
+Its top-level `attachments` list carries the actual selected assets into joined
+completion, provider media lowering, and existing client file/media views.
+Provider-native tool results still precede their companion media. Historical
+interpreter receipts without the new selection field retain their text-only
+meaning.
 
 Tool-produced attachments remain recorded at the session owner. At outer
 code-tool completion, materialize only explicitly selected media/file outputs
@@ -419,12 +467,20 @@ because their bytes are available. Additional conversions/formats are later
 ordinary tool capabilities. No `image()` alias or separate `audio()` helper is
 needed for this slice.
 
-Selected output follows existing partial-result semantics. An awaited helper
-failure rejects in JavaScript and can be caught; completed effects and earlier
-selected outputs remain. On script failure, retain any valid selected-output
-receipt already available. Host finalization errors must be visible and must
-not discard successful siblings or silently claim delivery. After interpreter
-loss, distinguish retained tool outcomes from missing output-selection receipts.
+Selected output follows existing partial-result semantics. Ordinary blob
+admission failures reject in JavaScript and can be caught; completed effects and
+earlier selected outputs remain. Interpreter byte, call, and outstanding-call
+budget violations remain terminal execution errors even if caught by JavaScript.
+On script failure, retain any valid selected-output receipt already available.
+Finalization applies the existing limits of eight native media items and 128
+file attachments per result. An invalid, missing, or over-cap selection adds
+`output_errors` with its selection index, kind,
+request identity when applicable, and diagnostic message. Valid siblings stay
+selected; an otherwise successful report becomes failed. Finalization and late
+attachment reads retry transient storage errors without rerunning JavaScript;
+unavailable content is explicitly reported rather than silently claiming
+delivery. After interpreter loss, distinguish retained tool outcomes from missing
+output-selection receipts.
 Unawaited helper work follows the existing cancellation policy.
 
 File output registers a usable attachment and its short link; it does not
@@ -453,9 +509,11 @@ original content.
   and attachment presentation; update only what the new selected-output path
   requires.
 
-Finalize exact tool names, descriptor placement, reference-input unions,
-read encodings, file-presentation option, and positive limits with the first
-implementation slice. Keep one source of truth for schemas and execution.
+The implemented tools own their names, descriptor placement, reference-input
+unions, read encodings, file-presentation option, and limits in Rust DTOs and
+JSON Schemas. Keep those as the source of truth for schemas and execution.
+Selected-output receipts stay within the interpreter and runtime report boundary;
+the existing workflow attachment contract carries their admitted results.
 Regenerate public API/TypeScript consumers when public wire DTOs change and the
 workflow contract when execution receipts or result contracts change. Do not
 hand-edit generated artifacts or rewrite historical stored result payloads.
@@ -482,13 +540,34 @@ hand-edit generated artifacts or rewrite historical stored result payloads.
 
 Implementation progress:
 
-- [ ] Shared descriptor/input schemas, full-ref lookup, and session alias resolution.
-- [ ] Core blob tools, existing universe isolation, limits, and durable retention.
-- [ ] VFS/environment write-from-reference and existing producer alignment.
-- [ ] Environment file references without VFS.
-- [ ] Stored and usable `web_fetch` body references.
-- [ ] Code-mode media/file helpers and selected-output delivery.
-- [ ] Contracts, client integration, documentation, and end-to-end validation.
+- [x] Shared descriptor/input schemas, full-ref lookup, and session alias resolution.
+- [x] Core blob tools, existing universe isolation, limits, and durable retention.
+- [x] VFS/environment write-from-reference and existing producer alignment.
+- [x] Environment file references without VFS.
+- [x] Stored and usable `web_fetch` body references.
+- [x] Code-mode media/file helpers and selected-output delivery.
+- [x] Shared-content schemas, provider catalog fixtures, roadmap progress, and
+  end-to-end tests for the implemented tools.
+- [x] Selected-output contracts and existing client attachment integration.
+- [x] Final helper validation: unit/schema checks, native integration, workflow
+  live tests, actual-model execution, and workspace Clippy.
+
+Implementation validation includes native tool tests, metadata-only VFS tests,
+real daemon streaming/receipt tests, provider request fixtures, and live
+Temporal/PostgreSQL/object-store flows. The helper validation passes 28 native
+interpreter unit tests, nine native live tests, and 15 workflow live tests using
+real JavaScript and production workflows with a scripted model. Two actual-model
+live tests pass, including a model-authored helper script that presents an image,
+identifies its color on continuation, and links the generated file. Selected
+images and PDF documents also pass native request-lowering checks for OpenAI
+Responses, OpenAI Completions, and Anthropic Messages; file-only documents are
+excluded from native model input. Runtime tests cover selection validation,
+partial failures, aggregate caps, and transient-storage retries. Tools,
+LLM-runtime, and runtime unit suites, provider schema/catalog checks, and
+workspace Clippy pass. Environment live tests cover
+all three provider presentations, files larger than native-media limits,
+read-only grants, exact binary restoration, and fresh captures across runs
+that reuse call IDs.
 
 Acceptance tests should cover complete data flows, not just individual shapes:
 

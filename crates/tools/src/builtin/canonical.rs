@@ -18,7 +18,7 @@ use crate::{
     error::ToolResult,
     fs::tools::{
         invoke_apply_patch, invoke_edit_file, invoke_glob, invoke_grep, invoke_list_dir,
-        invoke_read_file, invoke_write_file,
+        invoke_read_file,
     },
     runtime::{ToolInvocationOutput, decode_args, encode_output},
 };
@@ -39,6 +39,11 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
         ""
     };
     let text = match tool.operation() {
+        BuiltinToolOperation::Reference
+            if tool.domain() == super::BuiltinToolDomain::Environment =>
+        {
+            "Capture one file from the active environment into immutable blob storage and return its content reference, verified size, file handle, and transfer receipt. Works for binary and large files without a VFS attachment. Use the returned reference with blob tools or file writers. Directories require vfs_capture."
+        }
         BuiltinToolOperation::Reference => {
             "Get a reference to an immutable file version to share with the user. Use [label](file:handle) to link the file, or ![description](file:handle) to display an image inline, using the returned handle. Does not read or modify file contents. Use path in the attached VFS, or provide snapshot_ref and a path inside a captured snapshot. Subagents can also include the link in their final answer to pass the attachment to their parent."
         }
@@ -46,7 +51,7 @@ pub(super) fn description(tool: BuiltinTool, scoped_paths: bool) -> String {
             "Read a UTF-8 file with optional 1-based line offset and line limit. Images (PNG, JPEG, GIF, WebP) and PDFs are shown to you as media and named by a media: handle. Use [label](media:handle) to link them or ![description](media:handle) to display an image inline."
         }
         BuiltinToolOperation::WriteFile => {
-            "Write full UTF-8 file content, creating parent directories when needed."
+            "Write a complete file, creating parent directories when needed. Provide exactly one of content (UTF-8 text) or content_ref (a full blob reference, recorded handle, or content descriptor). References preserve exact binary bytes."
         }
         BuiltinToolOperation::EditFile => {
             "Replace exact text in a UTF-8 file. Multiple matches require replace_all=true."
@@ -109,6 +114,14 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
         BuiltinToolOperation::Capture => {
             json!({"type":"object","properties":{"source_environment_path":{"type":"string"},"destination_vfs_path":{"type":"string"},"on_existing":{"type":"string","enum":["replace","error"]}},"required":["source_environment_path","destination_vfs_path"],"additionalProperties":false})
         }
+        BuiltinToolOperation::Reference
+            if tool.domain() == super::BuiltinToolDomain::Environment =>
+        {
+            object(
+                [("path", string("Environment file path to capture."))],
+                ["path"],
+            )
+        }
         BuiltinToolOperation::Reference => object(
             [
                 (
@@ -136,13 +149,7 @@ pub(super) fn input_schema(tool: BuiltinTool) -> Value {
             ],
             ["path"],
         ),
-        BuiltinToolOperation::WriteFile => object(
-            [
-                ("path", string("File path to write.")),
-                ("content", string("Full file content.")),
-            ],
-            ["path", "content"],
-        ),
+        BuiltinToolOperation::WriteFile => write_file_schema("path"),
         BuiltinToolOperation::EditFile => object(
             [
                 ("path", string("File path to edit.")),
@@ -345,8 +352,16 @@ pub(super) async fn invoke_json(
             .await
         }
         BuiltinToolOperation::Reference => {
-            crate::attachments::invoke_reference(ctx.vfs()?, ctx.workspace_attachments(), arguments)
+            if tool.domain() == super::BuiltinToolDomain::Environment {
+                crate::transfer::invoke_environment_reference(ctx.environment()?, arguments).await
+            } else {
+                crate::attachments::invoke_reference(
+                    ctx.vfs()?,
+                    ctx.workspace_attachments(),
+                    arguments,
+                )
                 .await
+            }
         }
         BuiltinToolOperation::ReadFile => {
             let fs_ctx = ctx.filesystem()?;
@@ -356,8 +371,11 @@ pub(super) async fn invoke_json(
                 .map(|output| output.with_media(media))
         }
         BuiltinToolOperation::WriteFile => {
-            let fs_ctx = ctx.filesystem()?;
-            let result = invoke_write_file(fs_ctx, decode_args(arguments)?).await?;
+            let result = crate::fs::tools::write_file::invoke_builtin_write_file(
+                ctx,
+                decode_args(arguments)?,
+            )
+            .await?;
             let visible = format!(
                 "Wrote {} bytes to {}",
                 result.bytes_written, result.resolved_path
@@ -449,6 +467,25 @@ pub(super) async fn invoke_json(
             encode_output(&result, visible)
         }
     }
+}
+
+pub(super) fn write_file_schema(path_field: &'static str) -> Value {
+    let mut schema = object(
+        [
+            (path_field, string("File path to write.")),
+            (
+                "content",
+                string("Full UTF-8 file content; mutually exclusive with content_ref."),
+            ),
+            ("content_ref", crate::blobs::reference_schema()),
+        ],
+        [path_field],
+    );
+    schema["oneOf"] = json!([
+        {"required":["content"],"not":{"required":["content_ref"]}},
+        {"required":["content_ref"],"not":{"required":["content"]}}
+    ]);
+    schema
 }
 
 fn job_submit_schema() -> Value {

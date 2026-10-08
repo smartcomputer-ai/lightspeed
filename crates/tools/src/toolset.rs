@@ -328,6 +328,9 @@ impl EnvironmentToolsetConfig {
 
     fn operations(&self) -> Vec<BuiltinToolOperation> {
         let mut operations = self.filesystem.operations();
+        if self.filesystem.read_file {
+            operations.push(BuiltinToolOperation::Reference);
+        }
         if self.run_process {
             operations.push(BuiltinToolOperation::RunProcess);
         }
@@ -410,6 +413,14 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
         }
         Ok(())
     };
+    for id in ["blob.info", "blob.read", "blob.put"] {
+        add(register(
+            id,
+            BuiltinSettings::default(),
+            ToolParallelism::ParallelSafe,
+            ToolExecutionSpec::new(ToolExecutionClass::Interactive, true),
+        ))?;
+    }
     for (domain, operations) in [
         (BuiltinToolDomain::Vfs, config.builtin.vfs_operations()),
         (
@@ -548,10 +559,11 @@ mod tests {
         ToolTarget::api_kind(api_kind)
     }
 
-    fn visible_names(toolset: &PresentedToolset) -> Vec<String> {
+    fn optional_tool_names(toolset: &PresentedToolset) -> Vec<String> {
         toolset
             .tools
             .keys()
+            .filter(|name| !matches!(name.as_str(), "blob_info" | "blob_read" | "blob_put"))
             .map(|name| name.as_str().to_owned())
             .collect()
     }
@@ -568,10 +580,14 @@ mod tests {
     }
 
     fn native_definition(toolset: &PresentedToolset) -> Value {
-        let Definition::Native(native) = &toolset.tools.values().next().unwrap().definition else {
-            panic!("native definition");
-        };
-        native.clone()
+        toolset
+            .tools
+            .values()
+            .find_map(|tool| match &tool.definition {
+                Definition::Native(native) => Some(native.clone()),
+                Definition::Function(_) => None,
+            })
+            .expect("native definition")
     }
 
     fn property_names(schema: &Value) -> Vec<String> {
@@ -594,12 +610,52 @@ mod tests {
     }
 
     #[test]
+    fn blob_tools_are_core_capabilities_on_every_provider_without_optional_features() {
+        for api_kind in [
+            ProviderApiKind::OpenAiResponses,
+            ProviderApiKind::OpenAiCompletions,
+            ProviderApiKind::AnthropicMessages,
+        ] {
+            for timers in [false, true] {
+                let mut config = ToolsetConfig::empty();
+                config.concurrency.timer = timers;
+                let toolset = present_toolset(&target(api_kind.clone()), &config).unwrap();
+                for (name, id) in [
+                    ("blob_info", "blob.info"),
+                    ("blob_read", "blob.read"),
+                    ("blob_put", "blob.put"),
+                ] {
+                    let definition = &toolset.tools[&ToolName::new(name)].definition;
+                    let Definition::Function(definition) = definition else {
+                        panic!("blob tools are host functions")
+                    };
+                    assert!(definition.output_schema.is_some());
+                    assert_eq!(
+                        toolset
+                            .catalog
+                            .get(&ToolName::new(name))
+                            .unwrap()
+                            .logical_id,
+                        id
+                    );
+                }
+                if !timers {
+                    assert_eq!(toolset.tools.len(), 3);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn provider_defaults_use_shell_commands_and_keep_explicit_canonical_execution() {
         let mut config = process_config();
 
         let responses = target(ProviderApiKind::OpenAiResponses);
         let toolset = present_toolset(&responses, &config).expect("toolset");
-        assert_eq!(visible_names(&toolset), vec!["exec_command", "write_stdin"]);
+        assert_eq!(
+            optional_tool_names(&toolset),
+            vec!["exec_command", "write_stdin"]
+        );
         let exec = input_schema(&toolset, "exec_command");
         assert_eq!(
             property_names(&exec),
@@ -630,7 +686,7 @@ mod tests {
         let anthropic = target(ProviderApiKind::AnthropicMessages);
         let toolset = present_toolset(&anthropic, &config).expect("toolset");
         assert_eq!(
-            visible_names(&toolset),
+            optional_tool_names(&toolset),
             vec!["Bash", "BashOutput", "KillShell"]
         );
         assert_eq!(
@@ -664,7 +720,10 @@ mod tests {
 
         let completions = target(ProviderApiKind::OpenAiCompletions);
         let toolset = present_toolset(&completions, &config).expect("toolset");
-        assert_eq!(visible_names(&toolset), vec!["exec_command", "write_stdin"]);
+        assert_eq!(
+            optional_tool_names(&toolset),
+            vec!["exec_command", "write_stdin"]
+        );
         assert_eq!(
             input_schema(&toolset, "exec_command"),
             input_schema(
@@ -683,7 +742,7 @@ mod tests {
         config.builtin.presentation = BuiltinToolPresentation::Canonical;
         let toolset = present_toolset(&completions, &config).expect("explicit canonical tools");
         assert_eq!(
-            visible_names(&toolset),
+            optional_tool_names(&toolset),
             vec!["continue_process", "run_process"]
         );
         let run = input_schema(&toolset, "run_process");
@@ -718,7 +777,7 @@ mod tests {
         let target = target(ProviderApiKind::OpenAiCompletions);
         let mut config = ToolsetConfig::workspace();
         config.builtin.environment = EnvironmentToolsetConfig::basic();
-        let names = visible_names(&present_toolset(&target, &config).unwrap());
+        let names = optional_tool_names(&present_toolset(&target, &config).unwrap());
         for name in [
             "read_file",
             "write_file",
@@ -743,14 +802,14 @@ mod tests {
             BuiltinToolPresentation::Canonical,
         ] {
             config.builtin.presentation = presentation;
-            let names = visible_names(&present_toolset(&target, &config).unwrap());
+            let names = optional_tool_names(&present_toolset(&target, &config).unwrap());
             assert!(names.contains(&"apply_patch".to_owned()));
             assert!(names.contains(&"vfs_apply_patch".to_owned()));
         }
 
         config.builtin.vfs.apply_patch = false;
         config.builtin.environment.filesystem.apply_patch = false;
-        let names = visible_names(&present_toolset(&target, &config).unwrap());
+        let names = optional_tool_names(&present_toolset(&target, &config).unwrap());
         assert!(!names.contains(&"apply_patch".to_owned()));
         assert!(!names.contains(&"vfs_apply_patch".to_owned()));
     }
@@ -762,7 +821,7 @@ mod tests {
 
         let responses = target(ProviderApiKind::OpenAiResponses);
         let toolset = present_toolset(&responses, &config).expect("toolset");
-        assert_eq!(visible_names(&toolset), vec!["exec_command"]);
+        assert_eq!(optional_tool_names(&toolset), vec!["exec_command"]);
         assert_eq!(
             property_names(&input_schema(&toolset, "exec_command")),
             ["cmd", "login", "max_output_tokens", "timeout_ms", "workdir"]
@@ -779,7 +838,7 @@ mod tests {
 
         let anthropic = target(ProviderApiKind::AnthropicMessages);
         let toolset = present_toolset(&anthropic, &config).expect("toolset");
-        assert_eq!(visible_names(&toolset), vec!["Bash"]);
+        assert_eq!(optional_tool_names(&toolset), vec!["Bash"]);
         assert!(
             !property_names(&input_schema(&toolset, "Bash"))
                 .contains(&"run_in_background".to_owned())
@@ -787,7 +846,7 @@ mod tests {
 
         let completions = target(ProviderApiKind::OpenAiCompletions);
         let toolset = present_toolset(&completions, &config).expect("toolset");
-        assert_eq!(visible_names(&toolset), vec!["exec_command"]);
+        assert_eq!(optional_tool_names(&toolset), vec!["exec_command"]);
         assert!(
             !property_names(&input_schema(&toolset, "exec_command"))
                 .contains(&"yield_time_ms".to_owned())
@@ -801,7 +860,7 @@ mod tests {
         let toolset = present_toolset(&target, &ToolsetConfig::workspace()).expect("toolset");
 
         assert_eq!(
-            visible_names(&toolset),
+            optional_tool_names(&toolset),
             vec![
                 "vfs_apply_patch",
                 "vfs_edit_file",
@@ -830,7 +889,7 @@ mod tests {
         let toolset = present_toolset(&target, &config).expect("toolset");
 
         assert_eq!(
-            visible_names(&toolset),
+            optional_tool_names(&toolset),
             vec![
                 "vfs_glob",
                 "vfs_grep",
@@ -843,7 +902,8 @@ mod tests {
             toolset
                 .catalog
                 .bindings()
-                .all(|binding| binding.logical_id.starts_with("vfs."))
+                .all(|binding| binding.logical_id.starts_with("vfs.")
+                    || binding.logical_id.starts_with("blob."))
         );
     }
 
@@ -854,14 +914,15 @@ mod tests {
         config.builtin.environment = EnvironmentToolsetConfig::basic();
 
         let toolset = present_toolset(&target, &config).expect("toolset");
-        let names = visible_names(&toolset);
+        let names = optional_tool_names(&toolset);
 
         assert!(names.contains(&"vfs_read_file".to_owned()));
         assert!(names.contains(&"read_file".to_owned()));
         assert!(names.contains(&"exec_command".to_owned()));
         assert!(names.contains(&"vfs_materialize".to_owned()));
         assert!(names.contains(&"vfs_capture".to_owned()));
-        assert_eq!(names.len(), 19);
+        assert!(names.contains(&"env_reference".to_owned()));
+        assert_eq!(names.len(), 20);
         assert!(
             toolset
                 .catalog
@@ -883,7 +944,7 @@ mod tests {
         config.builtin.environment = EnvironmentToolsetConfig::jobs();
 
         let toolset = present_toolset(&target, &config).expect("toolset");
-        let names = visible_names(&toolset);
+        let names = optional_tool_names(&toolset);
 
         assert!(names.contains(&"job_submit".to_owned()));
         assert!(names.contains(&"job_read".to_owned()));
@@ -909,7 +970,7 @@ mod tests {
         let target = target(ProviderApiKind::OpenAiResponses);
         let disabled = present_toolset(&target, &ToolsetConfig::empty()).expect("disabled toolset");
         assert!(
-            visible_names(&disabled)
+            optional_tool_names(&disabled)
                 .iter()
                 .all(|name| !name.starts_with("environment_"))
         );
@@ -917,13 +978,13 @@ mod tests {
         let mut config = ToolsetConfig::empty();
         config.environment_read = true;
         let read_only = present_toolset(&target, &config).expect("environment read toolset");
-        assert_eq!(visible_names(&read_only), vec!["environment_read"]);
+        assert_eq!(optional_tool_names(&read_only), vec!["environment_read"]);
 
         config.environment_selection = true;
         let enabled = present_toolset(&target, &config).expect("selection toolset");
 
         assert_eq!(
-            visible_names(&enabled),
+            optional_tool_names(&enabled),
             vec![
                 "environment_activate",
                 "environment_deactivate",
@@ -940,7 +1001,7 @@ mod tests {
         config.concurrency = ConcurrencyToolsetConfig::timer();
 
         let toolset = present_toolset(&target, &config).expect("toolset");
-        let names = visible_names(&toolset);
+        let names = optional_tool_names(&toolset);
 
         assert!(names.contains(&AWAIT_TOOL_NAME.to_owned()));
         assert!(names.contains(&CANCEL_TOOL_NAME.to_owned()));
@@ -962,7 +1023,10 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec!["VfsRead", "vfs_reference"]);
+        assert_eq!(
+            optional_tool_names(&toolset),
+            vec!["VfsRead", "vfs_reference"]
+        );
         assert!(
             input_schema(&toolset, "VfsRead")["properties"]
                 .get("file_path")
@@ -977,7 +1041,7 @@ mod tests {
         let toolset = present_toolset(&target, &ToolsetConfig::workspace()).expect("toolset");
 
         assert_eq!(
-            visible_names(&toolset),
+            optional_tool_names(&toolset),
             vec![
                 "VfsEdit",
                 "VfsGlob",
@@ -999,7 +1063,7 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec!["ListDir", "VfsListDir"]);
+        assert_eq!(optional_tool_names(&toolset), vec!["ListDir", "VfsListDir"]);
         assert_eq!(
             toolset
                 .catalog
@@ -1029,8 +1093,13 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec!["web_search"]);
-        assert!(toolset.catalog.is_empty());
+        assert_eq!(optional_tool_names(&toolset), vec!["web_search"]);
+        assert!(
+            toolset
+                .catalog
+                .bindings()
+                .all(|binding| binding.logical_id.starts_with("blob."))
+        );
         let native = native_definition(&toolset);
         assert_eq!(
             native,
@@ -1050,8 +1119,13 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec!["web_search"]);
-        assert!(toolset.catalog.is_empty());
+        assert_eq!(optional_tool_names(&toolset), vec!["web_search"]);
+        assert!(
+            toolset
+                .catalog
+                .bindings()
+                .all(|binding| binding.logical_id.starts_with("blob."))
+        );
         let native = native_definition(&toolset);
         assert_eq!(native["type"], json!("web_search_20250305"));
     }
@@ -1064,7 +1138,7 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec![WEB_FETCH_TOOL_NAME]);
+        assert_eq!(optional_tool_names(&toolset), vec![WEB_FETCH_TOOL_NAME]);
         assert!(
             toolset
                 .catalog
@@ -1085,8 +1159,13 @@ mod tests {
 
         let toolset = present_toolset(&target, &config).expect("toolset");
 
-        assert_eq!(visible_names(&toolset), vec![WEB_FETCH_TOOL_NAME]);
-        assert!(toolset.catalog.is_empty());
+        assert_eq!(optional_tool_names(&toolset), vec![WEB_FETCH_TOOL_NAME]);
+        assert!(
+            toolset
+                .catalog
+                .bindings()
+                .all(|binding| binding.logical_id.starts_with("blob."))
+        );
         let spec = toolset
             .tools
             .get(&ToolName::new(WEB_FETCH_TOOL_NAME))

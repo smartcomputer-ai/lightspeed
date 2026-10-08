@@ -2236,14 +2236,20 @@ mod tests {
         )
         .expect("json");
 
-        assert_eq!(value["tools"][0]["type"], "web_fetch_20250910");
-        assert_eq!(value["tools"][0]["citations"]["enabled"], true);
-        assert_eq!(value["tools"][1]["type"], "web_search_20250305");
-        assert_eq!(value["tools"][1]["allowed_domains"], json!(["example.com"]));
-        assert_eq!(
-            value["tools"][1]["cache_control"],
-            json!({ "type": "ephemeral" })
-        );
+        let advertised = value["tools"].as_array().unwrap();
+        let fetch = advertised
+            .iter()
+            .find(|tool| tool["name"] == "web_fetch")
+            .unwrap();
+        let search = advertised
+            .iter()
+            .find(|tool| tool["name"] == "web_search")
+            .unwrap();
+        assert_eq!(fetch["type"], "web_fetch_20250910");
+        assert_eq!(fetch["citations"]["enabled"], true);
+        assert_eq!(search["type"], "web_search_20250305");
+        assert_eq!(search["allowed_domains"], json!(["example.com"]));
+        assert_eq!(search["cache_control"], json!({ "type": "ephemeral" }));
     }
     use crate::executor::{LlmAdapterRegistry, LlmRuntime};
     use crate::params::{AnthropicMessagesParams, AnthropicThinkingConfig};

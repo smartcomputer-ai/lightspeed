@@ -114,6 +114,16 @@ impl FileSystem for ScopedFileSystem {
         self.inner.write_file(&resolved, contents).await
     }
 
+    async fn write_file_ref(
+        &self,
+        path: &FsPath,
+        content: &crate::content::ContentDescriptor,
+    ) -> FsResult<()> {
+        let resolved = self.resolved_path(path)?;
+        self.ensure_write_allowed(path, &resolved)?;
+        self.inner.write_file_ref(&resolved, content).await
+    }
+
     async fn create_directory(
         &self,
         path: &FsPath,

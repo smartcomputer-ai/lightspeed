@@ -8,6 +8,7 @@ mod fake;
 pub(crate) mod mcp;
 mod reaper;
 mod secrets;
+mod session_content;
 mod session_tools;
 mod universes;
 

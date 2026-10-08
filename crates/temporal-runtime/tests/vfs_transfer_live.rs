@@ -24,9 +24,9 @@ use harness::{
     BlobRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentIoError,
     CoreAgentLlm, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, ObservedToolCall, ProviderApiKind, SessionId, ToolCallId, ToolName,
-    storage::BlobStore,
+    storage::{BlobStore, ReadSessionEvents, SessionStore},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use support::live::{
     LIVE_TEST_LOCK, require_storage_live_env, run_with_live_worker, wait_for_terminal_run,
 };
@@ -163,6 +163,10 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                 (ProviderApiKind::OpenAiResponses, "readonly"),
                 (ProviderApiKind::OpenAiResponses, "sourcing"),
                 (ProviderApiKind::OpenAiResponses, "noenv"),
+                (ProviderApiKind::OpenAiResponses, "content"),
+                (ProviderApiKind::AnthropicMessages, "content"),
+                (ProviderApiKind::OpenAiCompletions, "content"),
+                (ProviderApiKind::OpenAiResponses, "contentread"),
             ].into_iter().enumerate() {
                 let session = SessionId::new(format!("{base_session}_{index}_{mode}"));
                 let case = Box::pin(run_case(&api, store.as_ref(), &session, provider, mode, index, &root, &environment.environment_id)).await;
@@ -245,6 +249,19 @@ async fn run_case(
     root: &Path,
     environment: &str,
 ) -> anyhow::Result<()> {
+    if matches!(mode, "content" | "contentread") {
+        return run_content_case(
+            api,
+            store,
+            session,
+            provider,
+            mode,
+            index,
+            root,
+            environment,
+        )
+        .await;
+    }
     let original = vec![0x30 + index as u8; FILE_SIZE];
     let captured = vec![0x80 + index as u8; FILE_SIZE];
     if mode == "edit" {
@@ -481,8 +498,271 @@ async fn run_case(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn run_content_case(
+    api: &GatewayAgentApi,
+    store: &store_pg::PgStore,
+    session: &SessionId,
+    provider: ProviderApiKind,
+    mode: &str,
+    index: usize,
+    root: &Path,
+    environment: &str,
+) -> anyhow::Result<()> {
+    let bytes = vec![0xd0 + index as u8; FILE_SIZE];
+    let content_ref = BlobRef::from_bytes(&bytes);
+    assert!(
+        !store.has_blob(&content_ref).await?,
+        "capture starts outside CAS"
+    );
+    let name = format!("content-{index}.bin");
+    std::fs::write(root.join(&name), &bytes)?;
+    let repeat_run = mode == "content" && provider == ProviderApiKind::OpenAiResponses;
+    let mut model = support::live::openai_live_model();
+    model.api_kind = provider;
+    let profile = api
+        .create_profile(api::ProfileCreateParams {
+            profile: api::AgentProfileInput {
+                profile_id: api::ProfileId::new(format!("profile_{session}")),
+                display_name: None,
+                description: None,
+                document: api::ProfileDocument {
+                    config: Some(serde_json::from_value(json!({
+                        "model": api_projection::model_to_api(&model),
+                        "features": {"environments": {"environments": [{
+                            "environmentId":environment, "default":true,
+                            "access":if mode == "contentread" { "read" } else { "edit" }
+                        }]}}
+                    }))?),
+                    ..Default::default()
+                },
+            },
+        })
+        .await?
+        .result
+        .profile;
+    api.start_session(api::SessionStartParams {
+        session_id: Some(session.to_string()),
+        profile: Some(api::ProfileSource::Named {
+            profile_id: profile.profile_id,
+        }),
+        ..Default::default()
+    })
+    .await?;
+    let run = support::live::start_text_run(
+        api,
+        session,
+        "capture and reuse immutable environment content without VFS",
+    )
+    .await?;
+    let run = wait_for_terminal_run(api, session, &run.id).await?;
+    assert_eq!(run.status, api::RunStatus::Completed, "{run:?}");
+    let calls = run
+        .tool_batches
+        .iter()
+        .flat_map(|batch| &batch.calls)
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), if mode == "contentread" { 3 } else { 5 });
+    for (position, call) in calls.iter().enumerate() {
+        assert_eq!(call.status, api::ToolItemStatus::Succeeded, "{call:?}");
+        assert_eq!(
+            call.tool_id.as_deref(),
+            Some(match position {
+                0 => "env.reference",
+                1 => "blob.info",
+                2 => "blob.read",
+                _ => "env.write_file",
+            })
+        );
+    }
+    assert_eq!(store.read_bytes(&content_ref).await?, bytes);
+    if mode == "contentread" {
+        assert_eq!(std::fs::read(root.join(&name))?, bytes);
+        assert!(!root.join(format!("restored-{index}.bin")).exists());
+    } else {
+        assert_eq!(std::fs::read(root.join(&name))?, b"changed after capture");
+        assert_eq!(
+            std::fs::read(root.join(format!("restored-{index}.bin")))?,
+            bytes
+        );
+    }
+
+    let mut after = None;
+    let mut verified = 0;
+    loop {
+        let page = store
+            .read_after(ReadSessionEvents {
+                session_id: session.clone(),
+                after,
+                limit: 1000,
+            })
+            .await?;
+        for entry in page.entries {
+            if entry.event.kind != "lightspeed.core.tool.call_completed" {
+                continue;
+            }
+            let harness::CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted { result, .. }) =
+                harness::CoreAgentCodec.decode_event(&entry.event)?
+            else {
+                continue;
+            };
+            if !matches!(
+                result.call_id.as_str(),
+                "transfer-0" | "transfer-1" | "transfer-2"
+            ) {
+                continue;
+            }
+            let output_ref = result.output_ref.expect("successful content output");
+            let output: Value = serde_json::from_slice(&store.read_bytes(&output_ref).await?)?;
+            assert_eq!(output["content_ref"], content_ref.as_str());
+            assert_eq!(output["byte_len"], FILE_SIZE);
+            assert_eq!(output["name"], name);
+            assert_eq!(output["source"]["kind"], "environment");
+            assert_eq!(output["source"]["id"], environment);
+            if result.call_id.as_str() == "transfer-2" {
+                assert_eq!(
+                    output["bytes"],
+                    json!([0xd0 + index, 0xd0 + index, 0xd0 + index, 0xd0 + index])
+                );
+                assert_eq!(output["offset"], FILE_SIZE - 11);
+                assert_eq!(output["bytes_read"], 4);
+                assert_eq!(output["next_offset"], FILE_SIZE - 7);
+                assert_eq!(output["truncated"], true);
+            }
+            let retained: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM cas_blob_edges WHERE universe_id=$1 AND parent_digest=$2 AND child_digest=$3 AND edge_kind='contains')",
+            ).bind(store.config().universe_id)
+                .bind(output_ref.as_str().trim_start_matches("sha256:"))
+                .bind(content_ref.as_str().trim_start_matches("sha256:"))
+                .fetch_one(store.pool()).await?;
+            assert!(retained, "content result retains captured bytes");
+            verified += 1;
+        }
+        if page.complete {
+            break;
+        }
+        after = page.next_after;
+    }
+    assert_eq!(verified, 3);
+    let layout: String = sqlx::query_scalar(
+        "SELECT storage_kind FROM cas_blobs WHERE universe_id=$1 AND blob_ref=$2",
+    )
+    .bind(store.config().universe_id)
+    .bind(content_ref.as_str())
+    .fetch_one(store.pool())
+    .await?;
+    assert_eq!(
+        layout, "object",
+        "large immutable capture uses streamed storage"
+    );
+    if repeat_run {
+        let changed = vec![0xf0; FILE_SIZE];
+        let changed_ref = BlobRef::from_bytes(&changed);
+        std::fs::write(root.join(&name), &changed)?;
+        let next =
+            support::live::start_text_run(api, session, "capture this file again in a new run")
+                .await?;
+        let next = wait_for_terminal_run(api, session, &next.id).await?;
+        assert_eq!(next.status, api::RunStatus::Completed, "{next:?}");
+        let next_calls = next
+            .tool_batches
+            .iter()
+            .flat_map(|batch| &batch.calls)
+            .collect::<Vec<_>>();
+        assert_eq!(next_calls.len(), 5);
+        assert!(
+            next_calls
+                .iter()
+                .all(|call| call.status == api::ToolItemStatus::Succeeded)
+        );
+        assert_eq!(next_calls[0].call_id, calls[0].call_id);
+        assert_eq!(next_calls[0].arguments_ref, calls[0].arguments_ref);
+        assert_eq!(
+            store.read_bytes(&changed_ref).await?,
+            changed,
+            "same call ID and capture arguments in another run must capture fresh bytes"
+        );
+        assert_eq!(
+            std::fs::read(root.join(format!("restored-{index}.bin")))?,
+            changed
+        );
+        assert_eq!(
+            store.read_bytes(&content_ref).await?,
+            bytes,
+            "earlier content remains immutable"
+        );
+    }
+    Ok(())
+}
+
 struct TransferLlm {
     blobs: Arc<dyn BlobStore>,
+}
+
+impl TransferLlm {
+    async fn visible_result(
+        &self,
+        request: &LlmGenerationRequest,
+        step: usize,
+    ) -> Result<String, CoreAgentIoError> {
+        let call = format!("transfer-{step}");
+        let entry = request.request.context.entries.iter().find(|entry| {
+            matches!(&entry.kind, ContextEntryKind::ToolResult { call_id, is_error: false } if call_id.as_str() == call)
+                && matches!(entry.source, harness::ContextEntrySource::Tool { run_id, .. } if run_id == request.run_id)
+        }).expect("previous tool completed successfully");
+        self.blobs
+            .read_text(&entry.content.content_ref)
+            .await
+            .map_err(io_error)
+    }
+
+    async fn content_call(
+        &self,
+        request: &LlmGenerationRequest,
+        step: usize,
+    ) -> Result<(&'static str, Value), CoreAgentIoError> {
+        let index = request.session_id.as_str().rsplit('_').nth(1).unwrap();
+        if step == 0 {
+            return Ok((
+                "env_reference",
+                json!({"path":format!("./content-{index}.bin")}),
+            ));
+        }
+        if step == 1 {
+            let visible = self.visible_result(request, 0).await?;
+            let handle = visible
+                .lines()
+                .find_map(|line| line.strip_prefix("Reference: "))
+                .expect("environment reference announces a file handle");
+            return Ok(("blob_info", json!({"ref":handle})));
+        }
+        let descriptor: Value =
+            serde_json::from_str(&self.visible_result(request, 1).await?).map_err(io_error)?;
+        if step == 2 {
+            return Ok((
+                "blob_read",
+                json!({"ref":descriptor,"format":"bytes","offset":FILE_SIZE-11,"max_bytes":4}),
+            ));
+        }
+        let claude = test_support::scripted_tool_id(request, "Write").is_some();
+        let name = if claude { "Write" } else { "write_file" };
+        let path = if step == 3 {
+            format!("./content-{index}.bin")
+        } else {
+            format!("./restored-{index}.bin")
+        };
+        let mut arguments = if claude {
+            json!({"file_path":path})
+        } else {
+            json!({"path":path})
+        };
+        if step == 3 {
+            arguments["content"] = json!("changed after capture");
+        } else {
+            arguments["content_ref"] = descriptor;
+        }
+        Ok((name, arguments))
+    }
 }
 
 #[async_trait]
@@ -492,6 +772,7 @@ impl CoreAgentLlm for TransferLlm {
         request: LlmGenerationRequest,
     ) -> Result<LlmGenerationResult, CoreAgentIoError> {
         let mode = request.session_id.as_str().rsplit('_').next().unwrap();
+        let content_mode = matches!(mode, "content" | "contentread");
         for (name, expected) in [
             ("vfs_materialize", matches!(mode, "edit" | "readonly")),
             ("vfs_capture", mode == "edit"),
@@ -500,6 +781,21 @@ impl CoreAgentLlm for TransferLlm {
                 test_support::scripted_tool_id(&request, name).is_some(),
                 expected,
                 "{mode}: {name}"
+            );
+        }
+        assert_eq!(
+            test_support::scripted_tool_id(&request, "env_reference").is_some(),
+            mode != "noenv"
+        );
+        if content_mode {
+            assert!(test_support::scripted_tool_id(&request, "vfs_reference").is_none());
+            let has_write = ["write_file", "Write"]
+                .iter()
+                .any(|name| test_support::scripted_tool_id(&request, name).is_some());
+            assert_eq!(
+                has_write,
+                mode == "content",
+                "environment grant controls writers"
             );
         }
         if mode == "sourcing" {
@@ -549,15 +845,20 @@ impl CoreAgentLlm for TransferLlm {
             .entries
             .iter()
             .filter(|e| matches!(e.kind, ContextEntryKind::ToolResult { .. }))
+            .filter(|entry| matches!(entry.source, harness::ContextEntrySource::Tool { run_id, .. } if run_id == request.run_id))
             .count();
         let total = match mode {
             "edit" => 4,
             "readonly" => 2,
+            "content" => 5,
+            "contentread" => 3,
             _ => 0,
         };
         let mut calls = Vec::new();
         let (kind, bytes, media_type) = if step < total {
-            let (name, arguments) = if step < 2 {
+            let (name, arguments) = if content_mode {
+                self.content_call(&request, step).await?
+            } else if step < 2 {
                 (
                     "vfs_materialize",
                     json!({"source_vfs_path":"/workspace/input","destination_environment_path":"./tree"}),
@@ -568,6 +869,34 @@ impl CoreAgentLlm for TransferLlm {
                     json!({"source_environment_path":"./capture-source","destination_vfs_path":"/workspace/output"}),
                 )
             };
+            let tool_id = test_support::scripted_tool_id(&request, name).expect("tool admitted");
+            let spec = request
+                .request
+                .tools
+                .iter()
+                .find(|tool| tool.name == tool_id)
+                .unwrap();
+            let harness::ToolKind::Builtin(specification) = &spec.kind else {
+                panic!("scripted transfer uses ordinary builtin tools")
+            };
+            let resolved = tools::definitions::resolve(
+                &tool_id,
+                specification,
+                &tools::runtime::ToolTarget::from(&request.request.model),
+            )
+            .expect("provider tool definition")
+            .into_iter()
+            .find(|tool| tool.name.as_str() == name)
+            .unwrap();
+            let tools::definitions::Definition::Function(definition) = resolved.definition else {
+                panic!("transfer and content tools use function schemas")
+            };
+            jsonschema::validator_for(&definition.input_schema)
+                .expect("valid input schema")
+                .validate(&arguments)
+                .unwrap_or_else(|error| {
+                    panic!("{name} arguments violate advertised schema: {error}")
+                });
             let bytes = serde_json::to_vec(&arguments).unwrap();
             let arguments_ref = self
                 .blobs

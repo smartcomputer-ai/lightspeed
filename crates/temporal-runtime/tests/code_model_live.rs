@@ -2,6 +2,8 @@
 //! Session admission, code tool effects, the interpreter, and model continuation
 //! all use the production runtime over local Temporal and PostgreSQL.
 
+#[path = "support/code_media.rs"]
+mod code_media;
 mod support;
 
 use std::{sync::Arc, time::Duration};
@@ -32,6 +34,17 @@ use temporalio_client::{Client, WorkflowQueryOptions};
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires local Temporal/PostgreSQL and OPENAI_API_KEY; costs real money; run serially"]
 async fn real_model_composes_timer_effects_and_consumes_the_code_result() -> anyhow::Result<()> {
+    real_model_scenario(false).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires local Temporal/PostgreSQL and OPENAI_API_KEY; costs real money; run serially"]
+async fn real_model_selects_code_media_and_file_outputs_and_reads_the_presented_image()
+-> anyhow::Result<()> {
+    real_model_scenario(true).await
+}
+
+async fn real_model_scenario(selected_media: bool) -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;
     let _ = dotenvy::dotenv();
     require_storage_live_env()?;
@@ -65,7 +78,11 @@ async fn real_model_composes_timer_effects_and_consumes_the_code_result() -> any
             let worker_run = worker.run();
             tokio::pin!(worker_run);
             let body = Box::pin(async {
-                let result = run_model_scenario(&api, &client, &store, &session_id, &model).await;
+                let result = if selected_media {
+                    run_media_model_scenario(&api, &client, &store, &session_id, &model).await
+                } else {
+                    run_model_scenario(&api, &client, &store, &session_id, &model).await
+                };
                 let _ = api
                     .close_session(api::SessionCloseParams {
                         session_id: session_id.to_string(),
@@ -252,6 +269,142 @@ async fn run_model_scenario(
     }
     timer_delays.sort_unstable();
     assert_eq!(timer_delays, [10, 20]);
+    Ok(())
+}
+
+async fn run_media_model_scenario(
+    api: &GatewayAgentApi,
+    client: &Client,
+    store: &store_pg::PgStore,
+    session_id: &SessionId,
+    model: &harness::ModelSelection,
+) -> anyhow::Result<()> {
+    let image = code_media::png(false);
+    let image_ref = store.put_bytes(image).await?;
+    api.start_session(api::SessionStartParams {
+        session_id: Some(session_id.to_string()),
+        config: Some(api::SessionConfig {
+            model: Some(model_to_api(model)),
+            generation: Some(api::GenerationConfig {
+                max_output_tokens: Some(2048),
+                reasoning_effort: Some("low".into()),
+                ..Default::default()
+            }),
+            limits: Some(api::LimitsConfig {
+                max_turns: Some(3),
+                max_tool_rounds: Some(1),
+            }),
+            features: Some(api::FeaturesConfig {
+                code_mode: Some(api::CodeModeFeature {
+                    allowed_tools: Some(vec![
+                        "blob.info".into(),
+                        "blob.read".into(),
+                        "blob.put".into(),
+                    ]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+    .await?;
+    let run = start_text_run(api, session_id, &format!(
+        "Use code_execute exactly once. In its JavaScript, use the awaitable media() helper to show \
+         the image at reference {image_ref}, with name sample.png. Also use the awaitable file() helper \
+         to create a downloadable file named note.txt containing exactly 'media helper live report'. \
+         Emit those two selections only, without text(), and return the file descriptor. \
+         Do not call tools outside code_execute. After the execution result shows the image, \
+         inspect its actual dominant color. Reply with MEDIA_COLOR=<color in uppercase>, followed \
+         by a Markdown download link to note.txt using its returned file handle. Do not guess the color \
+         before viewing the image."
+    )).await?;
+    let run =
+        wait_for_terminal_run_with_timeout(api, session_id, &run.id, Duration::from_secs(120))
+            .await?;
+    anyhow::ensure!(run.status == api::RunStatus::Completed, "{run:#?}");
+    let reply = final_assistant_text(&run).unwrap_or_default();
+    assert!(
+        reply.contains("MEDIA_COLOR=RED"),
+        "model must consume the selected native image: {reply}"
+    );
+    let file_ref = BlobRef::from_bytes(b"media helper live report");
+    let file = harness::FileAttachment::new(
+        file_ref.clone(),
+        "note.txt".into(),
+        Some("text/plain".into()),
+    );
+    assert!(
+        reply.contains(&format!("]({})", file.handle)),
+        "model should link the selected file: {reply}"
+    );
+    assert_eq!(
+        store.read_bytes(&file_ref).await?,
+        b"media helper live report"
+    );
+    let state = read_state(store, session_id).await?;
+    let model_calls = state
+        .context
+        .entries
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            ContextEntryKind::ToolCall { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(model_calls, [tools::code::CODE_EXECUTE_TOOL_NAME]);
+    let media = state
+        .context
+        .entries
+        .iter()
+        .filter(|entry| harness::media::is_media_content(&entry.content))
+        .collect::<Vec<_>>();
+    assert_eq!(media.len(), 1, "only selected output enters model context");
+    assert_eq!(media[0].content.content_ref, image_ref);
+    let invocations = state
+        .workflow_tools
+        .start_requests
+        .values()
+        .filter(|call| call.tool_id.as_str() == tools::code::CODE_EXECUTE_WORKFLOW_TOOL_ID)
+        .collect::<Vec<_>>();
+    assert_eq!(invocations.len(), 1);
+    let invocation = invocations[0];
+    let binding = &state.workflow_tools.bindings[&invocation.tool_id];
+    let WorkflowToolTarget::Start { start } = &binding.target else {
+        anyhow::bail!("code tool did not start a workflow")
+    };
+    let execution_id =
+        harness::workflow_tool_execution_id(&invocation.invocation_id, &start.recipe_fingerprint);
+    let snapshot = client
+        .get_workflow_handle::<CodeExecutionWorkflow>(execution_id)
+        .query(
+            CodeExecutionWorkflow::snapshot,
+            (),
+            WorkflowQueryOptions::default(),
+        )
+        .await?;
+    let Some(PromiseResolution::Resolved {
+        payload_ref: Some(reference),
+    }) = snapshot.resolution
+    else {
+        anyhow::bail!("code workflow did not resolve: {snapshot:?}")
+    };
+    let result: Value = serde_json::from_slice(&store.read_bytes(&reference).await?)?;
+    assert_eq!(result["status"], "succeeded", "{result}");
+    assert_eq!(result["return_value"]["content_ref"], file_ref.as_str());
+    let selected: Vec<harness::Attachment> = serde_json::from_value(result["attachments"].clone())?;
+    assert_eq!(selected.len(), 2);
+    assert!(selected.iter().any(|attachment| matches!(attachment, harness::Attachment::Media(media) if media.content_ref == image_ref)));
+    assert!(selected.iter().any(|attachment| matches!(attachment, harness::Attachment::File(file) if file.content_ref == file_ref && file.name == "note.txt")));
+    assert_eq!(result["output"].as_array().unwrap().len(), 2);
+    let report_ref = BlobRef::parse(
+        result["report_ref"]
+            .as_str()
+            .expect("detailed report reference"),
+    )?;
+    let detail: Value = serde_json::from_slice(&store.read_bytes(&report_ref).await?)?;
+    assert_eq!(detail["scope"]["closed"], true);
     Ok(())
 }
 

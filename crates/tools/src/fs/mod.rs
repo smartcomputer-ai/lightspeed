@@ -265,6 +265,17 @@ pub trait FileSystem: Send + Sync {
 
     async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()>;
 
+    /// Link existing immutable content without loading its bytes into the tool worker.
+    async fn write_file_ref(
+        &self,
+        _path: &FsPath,
+        _content: &crate::content::ContentDescriptor,
+    ) -> FsResult<()> {
+        Err(FsError::Unsupported {
+            message: "filesystem does not support writing content references".into(),
+        })
+    }
+
     async fn create_directory(
         &self,
         path: &FsPath,
@@ -343,16 +354,23 @@ pub struct FsToolContext {
     pub blobs: Arc<dyn BlobStore>,
     pub limits: ToolLimits,
     pub fs_cwd: Option<FsPath>,
+    pub content_resolver: crate::content::ContentResolver,
 }
 
 impl FsToolContext {
     pub fn new(fs: Arc<dyn FileSystem>, blobs: Arc<dyn BlobStore>) -> Self {
         Self {
             fs,
+            content_resolver: crate::content::ContentResolver::new(blobs.clone()),
             blobs,
             limits: ToolLimits::default(),
             fs_cwd: None,
         }
+    }
+
+    pub fn with_content_resolver(mut self, resolver: crate::content::ContentResolver) -> Self {
+        self.content_resolver = resolver;
+        self
     }
 
     pub fn with_limits(mut self, limits: ToolLimits) -> Self {

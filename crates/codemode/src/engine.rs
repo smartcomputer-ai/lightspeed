@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     rc::Rc,
     sync::{
         Arc,
@@ -22,12 +22,27 @@ const IDLE_POLL: Duration = Duration::from_millis(5);
 #[derive(Default)]
 struct State {
     output: Vec<Value>,
+    selections: Vec<OutputSelection>,
     output_bytes: u64,
     pending: BTreeSet<String>,
+    helper_calls: BTreeMap<String, HelperCall>,
     failure: Option<ExecutionError>,
     calls: u32,
     jobs: u64,
     startup_micros: u64,
+}
+
+#[derive(Clone, Copy)]
+enum HelperKind {
+    Media,
+    File,
+}
+
+struct HelperCall {
+    kind: HelperKind,
+    /// Present only after the actual host completion succeeded. The guest
+    /// cannot lower this count by replacing or editing its returned descriptor.
+    result_bytes: Option<u64>,
 }
 
 pub(super) fn start(
@@ -203,6 +218,7 @@ fn run(
         .or(execution_error);
     ExecutionReport {
         output: std::mem::take(&mut state.output),
+        selections: std::mem::take(&mut state.selections),
         return_value,
         error: execution_error,
         pending_request_ids: state.pending.iter().cloned().collect(),
@@ -232,18 +248,22 @@ fn run_context<'js>(
     let send_events = events.clone();
     let send_limits = input.limits.clone();
     let send_cancel = cancellation.clone();
-    let allowed: HashSet<_> = input
+    let allowed: HashMap<_, _> = input
         .bindings
         .iter()
-        .map(|binding| binding.binding_id.clone())
+        .map(|binding| (binding.binding_id.clone(), binding.name.clone()))
         .collect();
     let send = Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, binding_id: String, json: String| -> rquickjs::Result<String> {
+        move |ctx: Ctx<'js>,
+              binding_id: String,
+              json: String,
+              selection: String|
+              -> rquickjs::Result<String> {
             let mut state = send_state.borrow_mut();
             let failure = if let Some(reason) = stop_reason(&send_cancel, deadline) {
                 Some(reason)
-            } else if !allowed.contains(&binding_id) {
+            } else if !allowed.contains_key(&binding_id) {
                 Some(error(ExecutionErrorKind::Internal, "unrecognized binding"))
             } else if json.len() as u64 > send_limits.max_request_bytes {
                 Some(error(
@@ -266,7 +286,7 @@ fn run_context<'js>(
             if let Some(failure) = failure {
                 return Err(fail_callback(&ctx, &mut state, &send_fatal, failure));
             }
-            let arguments = serde_json::from_str(&json).map_err(|_| {
+            let arguments: Value = serde_json::from_str(&json).map_err(|_| {
                 fail_callback(
                     &ctx,
                     &mut state,
@@ -274,6 +294,33 @@ fn run_context<'js>(
                     error(ExecutionErrorKind::Internal, "invalid bridge JSON"),
                 )
             })?;
+            let helper_kind = match selection.as_str() {
+                "" => None,
+                "media"
+                    if allowed.get(&binding_id).map(String::as_str) == Some("blob_read")
+                        && arguments.get("format").and_then(Value::as_str) == Some("media") =>
+                {
+                    Some(HelperKind::Media)
+                }
+                "file"
+                    if allowed.get(&binding_id).map(String::as_str) == Some("blob_info")
+                        && arguments.get("presentation").and_then(Value::as_str)
+                            == Some("file") =>
+                {
+                    Some(HelperKind::File)
+                }
+                _ => {
+                    return Err(fail_callback(
+                        &ctx,
+                        &mut state,
+                        &send_fatal,
+                        error(
+                            ExecutionErrorKind::Internal,
+                            "invalid output admission request",
+                        ),
+                    ));
+                }
+            };
             let request_id = format!("call-{}", state.calls + 1);
             let request = HostRequest {
                 request_id: request_id.clone(),
@@ -296,6 +343,15 @@ fn run_context<'js>(
             }
             state.calls += 1;
             state.pending.insert(request_id.clone());
+            if let Some(kind) = helper_kind {
+                state.helper_calls.insert(
+                    request_id.clone(),
+                    HelperCall {
+                        kind,
+                        result_bytes: None,
+                    },
+                );
+            }
             Ok(request_id)
         },
     )
@@ -313,7 +369,12 @@ fn run_context<'js>(
             }
             // Include an element separator in the retained-output budget, so a
             // million small values cannot avoid collection-overhead accounting.
-            let bytes = (json.len() as u64).saturating_add(1);
+            let selection = OutputSelection::Text {
+                index: state.output.len(),
+            };
+            let bytes = (json.len() as u64)
+                .saturating_add(serialized_len(&selection))
+                .saturating_add(2);
             if state.output_bytes.saturating_add(bytes) > max_output {
                 return Err(fail_callback(
                     &ctx,
@@ -335,6 +396,68 @@ fn run_context<'js>(
             })?;
             state.output_bytes += bytes;
             state.output.push(value);
+            state.selections.push(selection);
+            Ok(())
+        },
+    )
+    .map_err(|failure| js_error(&ctx, failure))?;
+    let select_state = state.clone();
+    let select_fatal = fatal.clone();
+    let select_cancel = cancellation.clone();
+    let select = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, request_id: String| -> rquickjs::Result<()> {
+            let mut state = select_state.borrow_mut();
+            if let Some(reason) = stop_reason(&select_cancel, deadline) {
+                return Err(fail_callback(&ctx, &mut state, &select_fatal, reason));
+            }
+            let Some(call) = state.helper_calls.get(&request_id) else {
+                return Err(fail_callback(
+                    &ctx,
+                    &mut state,
+                    &select_fatal,
+                    error(
+                        ExecutionErrorKind::Internal,
+                        "unknown output admission receipt",
+                    ),
+                ));
+            };
+            let Some(result_bytes) = call.result_bytes else {
+                return Err(fail_callback(
+                    &ctx,
+                    &mut state,
+                    &select_fatal,
+                    error(
+                        ExecutionErrorKind::Internal,
+                        "output admission has not completed successfully",
+                    ),
+                ));
+            };
+            let selection = match call.kind {
+                HelperKind::Media => OutputSelection::Media {
+                    request_id: request_id.clone(),
+                },
+                HelperKind::File => OutputSelection::File {
+                    request_id: request_id.clone(),
+                },
+            };
+            let bytes = result_bytes
+                .saturating_add(serialized_len(&selection))
+                .saturating_add(2);
+            if state.output_bytes.saturating_add(bytes) > max_output {
+                return Err(fail_callback(
+                    &ctx,
+                    &mut state,
+                    &select_fatal,
+                    error(
+                        ExecutionErrorKind::LimitExceeded,
+                        "selected output exceeds byte limit",
+                    ),
+                ));
+            }
+            state.output_bytes += bytes;
+            state.selections.push(selection);
+            state.helper_calls.remove(&request_id);
             Ok(())
         },
     )
@@ -345,7 +468,7 @@ fn run_context<'js>(
     let catalog = serde_json::to_string(&input.bindings)
         .map_err(|failure| error(ExecutionErrorKind::Internal, failure.to_string()))?;
     let controls: Object = prelude
-        .call((send, emit, catalog))
+        .call((send, emit, select, catalog))
         .map_err(|failure| js_error(&ctx, failure))?;
     let compile: Function = controls
         .get("compile")
@@ -453,6 +576,16 @@ fn apply_completion<'js>(
         Err(value) => (false, serde_json::to_string(&value)),
     };
     let json = json.map_err(|failure| error(ExecutionErrorKind::Internal, failure.to_string()))?;
+    {
+        let mut state = state.borrow_mut();
+        if success {
+            if let Some(call) = state.helper_calls.get_mut(&completion.request_id) {
+                call.result_bytes = Some(json.len() as u64);
+            }
+        } else {
+            state.helper_calls.remove(&completion.request_id);
+        }
+    }
     deliver
         .call::<_, ()>((&completion.request_id, success, json))
         .map_err(|failure| js_error(ctx, failure))?;

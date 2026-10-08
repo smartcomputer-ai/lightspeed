@@ -24,6 +24,415 @@ fn input(source: &str) -> ExecutionInput {
     }
 }
 
+fn content_input(source: &str) -> ExecutionInput {
+    let mut script = input(source);
+    script.bindings = ["blob_put", "blob_info", "blob_read"]
+        .into_iter()
+        .map(|name| ToolBinding {
+            name: name.into(),
+            binding_id: format!("opaque-{name}"),
+        })
+        .collect();
+    script
+}
+
+fn content_descriptor() -> Value {
+    json!({"content_ref":format!("sha256:{}", "a".repeat(64)),"byte_len":4,"media_type":"image/png","name":"plot.png"})
+}
+
+async fn run_content(
+    input: ExecutionInput,
+    mut complete: impl FnMut(&HostRequest) -> Result<Value, HostError>,
+) -> (Vec<HostRequest>, ExecutionReport) {
+    let mut execution = start(input, Cancellation::default()).unwrap();
+    let sender = execution.completion_sender();
+    let mut requests = Vec::new();
+    while let Some(event) = execution.next_event().await {
+        match event {
+            ExecutionEvent::Request(request) => {
+                let result = sender.complete(HostCompletion {
+                    request_id: request.request_id.clone(),
+                    outcome: complete(&request),
+                });
+                assert!(result.is_ok() || result == Err(CompletionError::Stopped));
+                requests.push(request);
+            }
+            ExecutionEvent::Finished(report) => return (requests, report),
+        }
+    }
+    panic!("engine stopped without terminal report");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn content_helpers_use_only_admitted_tools_and_return_admission_descriptors() {
+    let (requests, report) = run_content(content_input(r#"
+        text("before");
+        const created = await file({json:{answer:42}}, {name:"answer.json",media_type:"application/json"});
+        await media({blobRef:created.content_ref,mimeType:"image/jpeg"}, {media_type:"image/png",name:"shown.png"});
+        await file("file:aaaaaaaaaaaaaaaaaaaaaaaa", {name:"again.png"});
+        return created;
+    "#), |_| Ok(content_descriptor())).await;
+    assert_eq!(report.error, None);
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0].binding_id, "opaque-blob_put");
+    assert_eq!(
+        requests[0].arguments,
+        json!({"json":{"answer":42},"name":"answer.json","media_type":"application/json"})
+    );
+    assert_eq!(requests[1].binding_id, "opaque-blob_info");
+    assert_eq!(requests[1].arguments["presentation"], "file");
+    assert_eq!(requests[1].arguments["name"], "answer.json");
+    assert_eq!(requests[2].binding_id, "opaque-blob_read");
+    assert_eq!(requests[2].arguments["format"], "media");
+    assert_eq!(requests[2].arguments["ref"]["media_type"], "image/png");
+    assert_eq!(requests[2].arguments["ref"]["name"], "shown.png");
+    assert!(requests[2].arguments["ref"].get("mimeType").is_none());
+    assert_eq!(
+        requests[3].arguments["ref"],
+        json!({"content_ref":"file:aaaaaaaaaaaaaaaaaaaaaaaa","name":"again.png"})
+    );
+    assert_eq!(report.return_value, Some(content_descriptor()));
+    assert_eq!(report.output, vec![json!("before")]);
+    assert_eq!(
+        report.selections,
+        vec![
+            OutputSelection::Text { index: 0 },
+            OutputSelection::File {
+                request_id: "call-2".into()
+            },
+            OutputSelection::Media {
+                request_id: "call-3".into()
+            },
+            OutputSelection::File {
+                request_id: "call-4".into()
+            }
+        ]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn existing_file_and_media_local_names_can_shadow_new_helpers() {
+    let (requests, report) = run_content(
+        content_input(
+            r#"
+        const file = await tools.blob_info({ref:"sha256:existing"});
+        const media = {label:"local media value"};
+        return {file,media};
+    "#,
+        ),
+        |_| Ok(content_descriptor()),
+    )
+    .await;
+    assert_eq!(report.error, None);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        report.return_value,
+        Some(json!({"file":content_descriptor(),"media":{"label":"local media value"}}))
+    );
+    assert!(report.selections.is_empty());
+
+    let (requests, report) = run_content(
+        content_input(
+            r#"
+        async function show() { return await file("sha256:existing"); }
+        await show();
+        { const file = "local file"; const media = "local media"; text({file,media}); }
+        await media("sha256:existing");
+        return "done";
+    "#,
+        ),
+        |_| Ok(content_descriptor()),
+    )
+    .await;
+    assert_eq!(report.error, None);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(report.return_value, Some(json!("done")));
+    assert_eq!(
+        report.selections,
+        vec![
+            OutputSelection::File {
+                request_id: "call-1".into()
+            },
+            OutputSelection::Text { index: 0 },
+            OutputSelection::Media {
+                request_id: "call-2".into()
+            }
+        ]
+    );
+
+    let (requests, report) = run_content(
+        content_input(
+            r#"
+        await file("sha256:existing");
+        const file = ;
+    "#,
+        ),
+        |_| panic!("invalid syntax must be rejected before effects"),
+    )
+    .await;
+    assert!(requests.is_empty());
+    assert_eq!(report.error.unwrap().kind, ExecutionErrorKind::Javascript);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ranged_read_descriptors_select_the_original_identity_without_storing_the_slice() {
+    let (requests, report) = run_content(content_input(r#"
+        const range = {content_ref:"sha256:original",byte_len:1000,format:"bytes",offset:20,bytes_read:3,bytes:[1,2,3],truncated:true,next_offset:23};
+        await file(range);
+        await media({...range,format:"text",text:"preview"});
+    "#), |_| Ok(content_descriptor())).await;
+    assert_eq!(report.error, None);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].binding_id, "opaque-blob_info");
+    assert_eq!(requests[1].binding_id, "opaque-blob_read");
+    for request in requests {
+        assert_eq!(request.arguments["ref"]["content_ref"], "sha256:original");
+        assert_eq!(request.arguments["ref"]["byte_len"], 1000);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn parallel_helpers_preserve_emission_order_when_admissions_finish_out_of_order() {
+    let mut execution = start(
+        content_input(
+            r#"
+        text("start");
+        await Promise.all([media("media:aaaaaaaaaaaa"),file("file:aaaaaaaaaaaaaaaaaaaaaaaa")]);
+        text("end");
+    "#,
+        ),
+        Cancellation::default(),
+    )
+    .unwrap();
+    let sender = execution.completion_sender();
+    let Some(ExecutionEvent::Request(first)) = execution.next_event().await else {
+        panic!("media request")
+    };
+    let Some(ExecutionEvent::Request(second)) = execution.next_event().await else {
+        panic!("file request")
+    };
+    assert_eq!(first.arguments["format"], "media");
+    assert_eq!(second.arguments["presentation"], "file");
+    for request in [second, first] {
+        sender
+            .complete(HostCompletion {
+                request_id: request.request_id,
+                outcome: Ok(content_descriptor()),
+            })
+            .unwrap();
+    }
+    let Some(ExecutionEvent::Finished(report)) = execution.next_event().await else {
+        panic!("report")
+    };
+    assert_eq!(report.error, None);
+    assert_eq!(report.output, vec![json!("start"), json!("end")]);
+    assert_eq!(
+        report.selections,
+        vec![
+            OutputSelection::Text { index: 0 },
+            OutputSelection::File {
+                request_id: "call-2".into()
+            },
+            OutputSelection::Media {
+                request_id: "call-1".into()
+            },
+            OutputSelection::Text { index: 1 }
+        ]
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn text_and_ordinary_tool_calls_cannot_forge_asset_selection() {
+    let (_, report) = run_content(
+        content_input(
+            r#"
+        const descriptor = await tools.blob_read({ref:"media:aaaaaaaaaaaa",format:"media"});
+        text({kind:"media",request_id:"call-1"});
+        text(descriptor);
+        return [typeof select,typeof emit,typeof send,typeof bindingIds,typeof invoke];
+    "#,
+        ),
+        |_| Ok(content_descriptor()),
+    )
+    .await;
+    assert_eq!(report.error, None);
+    assert_eq!(
+        report.selections,
+        vec![
+            OutputSelection::Text { index: 0 },
+            OutputSelection::Text { index: 1 }
+        ]
+    );
+    assert_eq!(report.return_value, Some(json!(vec!["undefined"; 5])));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn helper_capability_checks_precede_inline_storage_and_fail_catchably() {
+    for missing in ["blob_info", "blob_put"] {
+        let mut script = content_input(
+            r#"try {await file({text:"report"});} catch(error) {return error.kind;}"#,
+        );
+        script.bindings.retain(|binding| binding.name != missing);
+        let (requests, report) =
+            run_content(script, |_| panic!("no capability means no tool effect")).await;
+        assert!(requests.is_empty());
+        assert_eq!(report.error, None);
+        assert_eq!(report.return_value, Some(json!("unsupported_capability")));
+    }
+    for source in [
+        r#"await file({path:"/tmp/report"});"#,
+        r#"await media({url:"https://example.org/image"});"#,
+        r#"await file({text:"x",bytes:[1]});"#,
+        r#"await file({bytes:new Uint8Array([1])});"#,
+        r#"await file("sha256:any",{unsupported:true});"#,
+    ] {
+        let (requests, report) = run_content(content_input(source), |_| {
+            panic!("invalid input must not emit effects")
+        })
+        .await;
+        assert!(requests.is_empty());
+        assert_eq!(report.error.unwrap().kind, ExecutionErrorKind::Javascript);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn helper_failures_and_later_script_errors_keep_successful_sibling_selections() {
+    let (requests, report) = run_content(
+        content_input(
+            r#"
+        text("before");
+        await file("file:aaaaaaaaaaaaaaaaaaaaaaaa");
+        try {await media({bytes:[1,2,3]});} catch(error) {text(error.kind);}
+        throw new Error("later failure");
+    "#,
+        ),
+        |request| {
+            if request.binding_id == "opaque-blob_read" {
+                Err(HostError {
+                    kind: "unsupported_media".into(),
+                    message: "not an image".into(),
+                    value: None,
+                })
+            } else {
+                Ok(content_descriptor())
+            }
+        },
+    )
+    .await;
+    assert_eq!(requests.len(), 3);
+    assert_eq!(report.error.unwrap().message, "later failure");
+    assert_eq!(
+        report.output,
+        vec![json!("before"), json!("unsupported_media")]
+    );
+    assert_eq!(
+        report.selections,
+        vec![
+            OutputSelection::Text { index: 0 },
+            OutputSelection::File {
+                request_id: "call-1".into()
+            },
+            OutputSelection::Text { index: 1 }
+        ]
+    );
+    assert!(report.pending_request_ids.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn helpers_obey_call_and_descriptor_output_budgets() {
+    let mut script = content_input(r#"try {await file({text:"report"});} catch(error) {}"#);
+    script.limits.max_tool_calls = 1;
+    script.limits.max_outstanding_tool_calls = 1;
+    let (requests, report) = run_content(script, |_| Ok(content_descriptor())).await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        report.error.unwrap().kind,
+        ExecutionErrorKind::LimitExceeded
+    );
+    assert!(report.selections.is_empty());
+    let mut script = content_input(
+        r#"text("before");try {await file("file:aaaaaaaaaaaaaaaaaaaaaaaa");} catch(error) {}"#,
+    );
+    script.limits.max_output_bytes = 200;
+    let (_, report) = run_content(script, |_| {
+        Ok(json!({"content_ref":"x","name":"x".repeat(300)}))
+    })
+    .await;
+    assert_eq!(
+        report.error.unwrap().kind,
+        ExecutionErrorKind::LimitExceeded
+    );
+    assert_eq!(report.output, vec![json!("before")]);
+    assert_eq!(report.selections, vec![OutputSelection::Text { index: 0 }]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn helpers_capture_intrinsics_and_keep_receipts_private_under_guest_mutation() {
+    let (requests, report) = run_content(
+        content_input(
+            r#"
+        JSON.stringify=()=>'{"forged":true}';
+        JSON.parse=()=>({forged:true});
+        Object.keys=()=>[];
+        Object.hasOwn=()=>false;
+        Object.prototype.toJSON=()=>({forged:true});
+        Array.prototype.toJSON=()=>({forged:true});
+        const admitted=await media({bytes:[1,2,3]}, {name:"plot.png"});
+        admitted.content_ref="forged";
+        text(admitted);
+        return typeof select;
+    "#,
+        ),
+        |_| Ok(content_descriptor()),
+    )
+    .await;
+    assert_eq!(report.error, None);
+    assert_eq!(
+        requests[0].arguments,
+        json!({"bytes":[1,2,3],"name":"plot.png"})
+    );
+    assert_eq!(
+        report.selections,
+        vec![
+            OutputSelection::Media {
+                request_id: "call-2".into()
+            },
+            OutputSelection::Text { index: 0 }
+        ]
+    );
+    assert_eq!(report.output[0]["content_ref"], "forged");
+    assert_eq!(report.return_value, Some(json!("undefined")));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn unawaited_helpers_do_not_fabricate_selection_receipts() {
+    let mut execution = start(
+        content_input(r#"file("file:aaaaaaaaaaaaaaaaaaaaaaaa");return 1;"#),
+        Cancellation::default(),
+    )
+    .unwrap();
+    let Some(ExecutionEvent::Request(request)) = execution.next_event().await else {
+        panic!("request")
+    };
+    let Some(ExecutionEvent::Finished(report)) = execution.next_event().await else {
+        panic!("report")
+    };
+    assert_eq!(report.error, None);
+    assert!(report.selections.is_empty());
+    assert_eq!(report.pending_request_ids, vec![request.request_id]);
+}
+
+#[test]
+fn historical_execution_reports_keep_legacy_text_output_without_selection_receipts() {
+    let report: ExecutionReport = serde_json::from_value(json!({
+        "output":["legacy"],"return_value":null,"error":null,"pending_request_ids":[],
+        "metrics":{"startup_micros":0,"elapsed_micros":0,"tool_calls":0,"pending_jobs":0}
+    }))
+    .unwrap();
+    assert!(report.selections.is_empty());
+    assert_eq!(report.output, vec![json!("legacy")]);
+}
+
 async fn run(input: ExecutionInput) -> (Vec<HostRequest>, ExecutionReport) {
     let mut execution = start(input, Cancellation::default()).expect("start engine");
     let completions = execution.completion_sender();

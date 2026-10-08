@@ -158,6 +158,11 @@ pub fn resolve(
             }]);
         }
         "web.fetch" => web_fetch_definition(),
+        name if crate::blobs::BlobTool::from_logical_id(name).is_some() => {
+            crate::blobs::BlobTool::from_logical_id(name)
+                .expect("blob tool identity matched")
+                .definition()?
+        }
         "code.execute" => crate::code::code_execute_tool_definition()?,
         "subagent.run" => subagent_tool_definition(SubagentToolKind::Run)?,
         "subagent.spawn" => subagent_tool_definition(SubagentToolKind::Spawn)?,

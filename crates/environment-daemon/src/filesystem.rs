@@ -91,7 +91,8 @@ impl LocalFileSystem {
         if let TransferRequest::Begin { selection, .. } = &mut request {
             let path = match selection {
                 TransferSelection::Capture { source } => source,
-                TransferSelection::Materialize { destination, .. } => {
+                TransferSelection::Materialize { destination, .. }
+                | TransferSelection::WriteFile { destination } => {
                     self.ensure_writable()?;
                     destination
                 }

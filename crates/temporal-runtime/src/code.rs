@@ -301,7 +301,7 @@ impl CodeRunner {
                         break report;
                     }
                     None => break codemode::ExecutionReport {
-                        output: Vec::new(), return_value: None,
+                        output: Vec::new(), selections: Vec::new(), return_value: None,
                         error: Some(codemode::ExecutionError {
                             kind: codemode::ExecutionErrorKind::Internal,
                             message: "interpreter stopped without a report; consult scope outcomes".into(),
