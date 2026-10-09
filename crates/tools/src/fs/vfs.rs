@@ -1459,7 +1459,8 @@ mod tests {
                 serde_json::json!({path_key:"/invalid", "content":null, "content_ref":reference}),
                 serde_json::json!({path_key:"/invalid", "content":"text", "content_ref":null}),
             ] {
-                assert!(!validator.is_valid(&arguments));
+                // Invocation enforces exclusivity even though the advertised
+                // schema omits provider-incompatible top-level combinators.
                 assert!(matches!(
                     tool.invoke_json(
                         BuiltinToolContext::Vfs {

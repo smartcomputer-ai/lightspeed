@@ -92,23 +92,6 @@
           "name": "blob_put",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -475,28 +458,6 @@
           "name": "vfs_write_file",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -676,23 +637,6 @@
           "name": "blob_put",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -1157,28 +1101,6 @@
           "name": "write_file",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -1408,23 +1330,6 @@
           "name": "blob_put",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -1882,28 +1787,6 @@
           "name": "write_file",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -2083,23 +1966,6 @@
           "name": "blob_put",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -2652,28 +2518,6 @@
           "name": "write_file",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -2834,23 +2678,6 @@
           "name": "blob_put",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -3194,23 +3021,6 @@
           "name": "blob_put",
           "parameters": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -3848,28 +3658,6 @@
           "description": "Writes a complete file using exactly one of content (UTF-8 text) or content_ref (a full blob reference, recorded handle, or descriptor). Reference writes preserve exact binary bytes. Paths are resolved within the configured filesystem scope. Accesses only session-attached VFS workspaces and snapshots; these files are not visible to environment commands.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -4010,23 +3798,6 @@
           "description": "Store immutable text, JSON, or bytes (integer array 0..255). The stored content is limited to 1048576 bytes: UTF-8 text bytes, serialized JSON bytes, or raw binary bytes. Request and code-mode argument budgets also apply to the transport representation, including array overhead. Supply exactly one of text, json, or bytes; JSON null is a valid value. Returns a full sha256 content descriptor for later reading or passing to file writers. Deduplicates identical bytes. Does not automatically attach a file or show media; use blob_info(presentation=file) or blob_read(format=media). Optional name/media_type are descriptive metadata.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -4553,28 +4324,6 @@
           "description": "Writes a complete file using exactly one of content (UTF-8 text) or content_ref (a full blob reference, recorded handle, or descriptor). Reference writes preserve exact binary bytes. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -4715,23 +4464,6 @@
           "description": "Store immutable text, JSON, or bytes (integer array 0..255). The stored content is limited to 1048576 bytes: UTF-8 text bytes, serialized JSON bytes, or raw binary bytes. Request and code-mode argument budgets also apply to the transport representation, including array overhead. Supply exactly one of text, json, or bytes; JSON null is a valid value. Returns a full sha256 content descriptor for later reading or passing to file writers. Deduplicates identical bytes. Does not automatically attach a file or show media; use blob_info(presentation=file) or blob_read(format=media). Optional name/media_type are descriptive metadata.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -5243,28 +4975,6 @@
           "description": "Writes a complete file using exactly one of content (UTF-8 text) or content_ref (a full blob reference, recorded handle, or descriptor). Reference writes preserve exact binary bytes. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -5405,23 +5115,6 @@
           "description": "Store immutable text, JSON, or bytes (integer array 0..255). The stored content is limited to 1048576 bytes: UTF-8 text bytes, serialized JSON bytes, or raw binary bytes. Request and code-mode argument budgets also apply to the transport representation, including array overhead. Supply exactly one of text, json, or bytes; JSON null is a valid value. Returns a full sha256 content descriptor for later reading or passing to file writers. Deduplicates identical bytes. Does not automatically attach a file or show media; use blob_info(presentation=file) or blob_read(format=media). Optional name/media_type are descriptive metadata.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -5712,23 +5405,6 @@
           "description": "Store immutable text, JSON, or bytes (integer array 0..255). The stored content is limited to 1048576 bytes: UTF-8 text bytes, serialized JSON bytes, or raw binary bytes. Request and code-mode argument budgets also apply to the transport representation, including array overhead. Supply exactly one of text, json, or bytes; JSON null is a valid value. Returns a full sha256 content descriptor for later reading or passing to file writers. Deduplicates identical bytes. Does not automatically attach a file or show media; use blob_info(presentation=file) or blob_read(format=media). Optional name/media_type are descriptive metadata.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -6256,28 +5932,6 @@
           "description": "Write a complete file, creating parent directories when needed. Provide exactly one of content (UTF-8 text) or content_ref (a full blob reference, recorded handle, or content descriptor). References preserve exact binary bytes. Paths are resolved within the configured filesystem scope. Accesses only the active environment filesystem; it does not read or modify attached VFS files.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "not": {
-                  "required": [
-                    "content_ref"
-                  ]
-                },
-                "required": [
-                  "content"
-                ]
-              },
-              {
-                "not": {
-                  "required": [
-                    "content"
-                  ]
-                },
-                "required": [
-                  "content_ref"
-                ]
-              }
-            ],
             "properties": {
               "content": {
                 "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -6433,23 +6087,6 @@
           "description": "Store immutable text, JSON, or bytes (integer array 0..255). The stored content is limited to 1048576 bytes: UTF-8 text bytes, serialized JSON bytes, or raw binary bytes. Request and code-mode argument budgets also apply to the transport representation, including array overhead. Supply exactly one of text, json, or bytes; JSON null is a valid value. Returns a full sha256 content descriptor for later reading or passing to file writers. Deduplicates identical bytes. Does not automatically attach a file or show media; use blob_info(presentation=file) or blob_read(format=media). Optional name/media_type are descriptive metadata.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -6762,23 +6399,6 @@
           "description": "Store immutable text, JSON, or bytes (integer array 0..255). The stored content is limited to 1048576 bytes: UTF-8 text bytes, serialized JSON bytes, or raw binary bytes. Request and code-mode argument budgets also apply to the transport representation, including array overhead. Supply exactly one of text, json, or bytes; JSON null is a valid value. Returns a full sha256 content descriptor for later reading or passing to file writers. Deduplicates identical bytes. Does not automatically attach a file or show media; use blob_info(presentation=file) or blob_read(format=media). Optional name/media_type are descriptive metadata.",
           "input_schema": {
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "text"
-                ]
-              },
-              {
-                "required": [
-                  "json"
-                ]
-              },
-              {
-                "required": [
-                  "bytes"
-                ]
-              }
-            ],
             "properties": {
               "bytes": {
                 "items": {
@@ -7216,23 +6836,6 @@
             "name": "blob_put",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "json"
-                  ]
-                },
-                {
-                  "required": [
-                    "bytes"
-                  ]
-                }
-              ],
               "properties": {
                 "bytes": {
                   "items": {
@@ -7596,28 +7199,6 @@
             "name": "vfs_write_file",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "not": {
-                    "required": [
-                      "content_ref"
-                    ]
-                  },
-                  "required": [
-                    "content"
-                  ]
-                },
-                {
-                  "not": {
-                    "required": [
-                      "content"
-                    ]
-                  },
-                  "required": [
-                    "content_ref"
-                  ]
-                }
-              ],
               "properties": {
                 "content": {
                   "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -7780,23 +7361,6 @@
             "name": "blob_put",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "json"
-                  ]
-                },
-                {
-                  "required": [
-                    "bytes"
-                  ]
-                }
-              ],
               "properties": {
                 "bytes": {
                   "items": {
@@ -8287,28 +7851,6 @@
             "name": "write_file",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "not": {
-                    "required": [
-                      "content_ref"
-                    ]
-                  },
-                  "required": [
-                    "content"
-                  ]
-                },
-                {
-                  "not": {
-                    "required": [
-                      "content"
-                    ]
-                  },
-                  "required": [
-                    "content_ref"
-                  ]
-                }
-              ],
               "properties": {
                 "content": {
                   "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -8523,23 +8065,6 @@
             "name": "blob_put",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "json"
-                  ]
-                },
-                {
-                  "required": [
-                    "bytes"
-                  ]
-                }
-              ],
               "properties": {
                 "bytes": {
                   "items": {
@@ -9023,28 +8548,6 @@
             "name": "write_file",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "not": {
-                    "required": [
-                      "content_ref"
-                    ]
-                  },
-                  "required": [
-                    "content"
-                  ]
-                },
-                {
-                  "not": {
-                    "required": [
-                      "content"
-                    ]
-                  },
-                  "required": [
-                    "content_ref"
-                  ]
-                }
-              ],
               "properties": {
                 "content": {
                   "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -9228,23 +8731,6 @@
             "name": "blob_put",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "json"
-                  ]
-                },
-                {
-                  "required": [
-                    "bytes"
-                  ]
-                }
-              ],
               "properties": {
                 "bytes": {
                   "items": {
@@ -9825,28 +9311,6 @@
             "name": "write_file",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "not": {
-                    "required": [
-                      "content_ref"
-                    ]
-                  },
-                  "required": [
-                    "content"
-                  ]
-                },
-                {
-                  "not": {
-                    "required": [
-                      "content"
-                    ]
-                  },
-                  "required": [
-                    "content_ref"
-                  ]
-                }
-              ],
               "properties": {
                 "content": {
                   "description": "Full UTF-8 file content; mutually exclusive with content_ref.",
@@ -10009,23 +9473,6 @@
             "name": "blob_put",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "json"
-                  ]
-                },
-                {
-                  "required": [
-                    "bytes"
-                  ]
-                }
-              ],
               "properties": {
                 "bytes": {
                   "items": {
@@ -10372,23 +9819,6 @@
             "name": "blob_put",
             "parameters": {
               "additionalProperties": false,
-              "oneOf": [
-                {
-                  "required": [
-                    "text"
-                  ]
-                },
-                {
-                  "required": [
-                    "json"
-                  ]
-                },
-                {
-                  "required": [
-                    "bytes"
-                  ]
-                }
-              ],
               "properties": {
                 "bytes": {
                   "items": {

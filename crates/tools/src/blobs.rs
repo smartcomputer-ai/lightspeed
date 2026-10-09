@@ -90,7 +90,6 @@ impl BlobTool {
                         "name":{"type":"string","minLength":1,"maxLength":1024},
                         "media_type":{"type":"string","minLength":1,"maxLength":256}
                     },
-                    "oneOf":[{"required":["text"]},{"required":["json"]},{"required":["bytes"]}],
                     "additionalProperties":false
                 }),
                 crate::definitions::output_schema_for::<ContentDescriptor>(),
@@ -108,6 +107,8 @@ impl BlobTool {
             Self::Info => invoke_info(resolver, decode_args(arguments)?).await,
             Self::Read => invoke_read(resolver, decode_args(arguments)?).await,
             Self::Put => {
+                // The provider-facing schema omits top-level combinators for
+                // Anthropic compatibility; enforce input exclusivity here.
                 let fields = arguments
                     .as_object()
                     .ok_or_else(|| invalid("blob_put requires an object"))?;
@@ -616,6 +617,8 @@ mod tests {
             json!({}),
             json!({"text":"a","bytes":[1]}),
             json!({"text":"a","json":null}),
+            json!({"bytes":[1],"json":null}),
+            json!({"text":"a","bytes":[1],"json":null}),
             json!({"text":"a","bytes":null}),
             json!({"bytes":[256]}),
             json!({"bytes":[-1]}),
@@ -1048,12 +1051,8 @@ mod tests {
         ] {
             assert!(validator.is_valid(&input));
         }
-        for input in [
-            json!({}),
-            json!({"text":"a","json":null}),
-            json!({"bytes":[256]}),
-            json!({"bytes":null}),
-        ] {
+        // Exclusivity is checked at invocation; the schema still checks types.
+        for input in [json!({"bytes":[256]}), json!({"bytes":null})] {
             assert!(!validator.is_valid(&input));
         }
         let schema = BlobTool::Read.definition().unwrap().input_schema;
