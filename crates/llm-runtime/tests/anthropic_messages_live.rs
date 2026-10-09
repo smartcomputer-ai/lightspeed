@@ -1752,6 +1752,61 @@ async fn anthropic_messages_live_adapter_sees_oversized_image() {
     assert!(answer.contains("blue"), "expected blue, got {answer:?}");
 }
 
+// Advertise the real built-in definitions so provider schema validation runs
+// through the same materialization and rejection mapping as a hosted session.
+// No tools are executed; each request isolates one potentially invalid schema.
+async fn assert_live_builtin_input_schema_accepted(tool_id: &str) {
+    use harness::CoreAgentLlm as _;
+
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let question = user_entry(
+        1,
+        text_blob(&blobs, "Reply with exactly OK. Do not call any tools.").await,
+    );
+    let mut request = intent_request("live-anthropic-builtin-input-schema", vec![question]);
+    request.tools = vec![tools::definitions::register(
+        tool_id,
+        Default::default(),
+        harness::ToolParallelism::ParallelSafe,
+        Default::default(),
+    )];
+    let model = request.model.model.clone();
+    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs,
+    ));
+    let runtime = llm_runtime::LlmRuntime::new(
+        llm_runtime::LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter),
+    );
+
+    let result = runtime
+        .generate(generation_request(1, request))
+        .await
+        .unwrap_or_else(|error| {
+            panic!("{model} must accept the {tool_id} input schema: {error:?}")
+        });
+    assert_eq!(result.status, LlmGenerationStatus::Succeeded, "{tool_id}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_accepts_builtin_input_schema_blob_put() {
+    assert_live_builtin_input_schema_accepted("blob.put").await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_accepts_builtin_input_schema_env_write_file() {
+    assert_live_builtin_input_schema_accepted("env.write_file").await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (costs real money)"]
+async fn anthropic_messages_live_accepts_builtin_input_schema_vfs_write_file() {
+    assert_live_builtin_input_schema_accepted("vfs.write_file").await;
+}
+
 /// A request the provider refuses crosses the runtime boundary as
 /// `Rejected`, carrying the provider's own message rather than a wrapped
 /// runtime error, so the run fails as `request_rejected`.
