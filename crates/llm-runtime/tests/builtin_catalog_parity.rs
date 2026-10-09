@@ -75,7 +75,7 @@ fn registered(case: &str, api: &ProviderApiKind) -> Vec<ToolSpec> {
     registered.tools.into_values().collect()
 }
 
-async fn fixture(api: ProviderApiKind, case: &str) -> Value {
+async fn fixture(api: ProviderApiKind, case: &str, code_mode: bool) -> Value {
     let blobs = InMemoryBlobStore::new();
     let model = ModelSelection {
         provider_id: if api == ProviderApiKind::AnthropicMessages {
@@ -92,9 +92,22 @@ async fn fixture(api: ProviderApiKind, case: &str) -> Value {
         .into(),
         api_kind: api.clone(),
     };
-    let tools = registered(case, &api);
+    let mut tools = registered(case, &api);
+    let code_mode = code_mode.then(|| {
+        let presentation = harness::CodeModePresentation {
+            allowed_tools: tools.iter().map(|tool| tool.name.clone()).collect(),
+            ..Default::default()
+        };
+        tools.push(tools::definitions::register(
+            "code.execute",
+            Default::default(),
+            harness::ToolParallelism::ParallelSafe,
+            Default::default(),
+        ));
+        presentation
+    });
     let request = LlmRequest {
-        code_mode: None,
+        code_mode,
         model,
         request_fingerprint: "sha256:catalog-parity".into(),
         context: ContextSnapshot {
@@ -143,8 +156,50 @@ async fn builtin_requests_match_captured_provider_contracts() {
     for entry in baseline {
         let api: ProviderApiKind = serde_json::from_value(entry["api"].clone()).expect("API kind");
         let case = entry["case"].as_str().expect("case");
-        let actual = fixture(api.clone(), case).await;
+        let actual = fixture(api.clone(), case, false).await;
         assert_eq!(actual, entry["request"], "{api:?}: {case}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn anthropic_builtin_inputs_avoid_top_level_combinators_with_and_without_code_mode() {
+    for case in [
+        "workspace",
+        "environment",
+        "canonical",
+        "one_shot",
+        "web",
+        "workflow",
+    ] {
+        for code_mode in [false, true] {
+            let wire = fixture(ProviderApiKind::AnthropicMessages, case, code_mode).await;
+            let tools = wire["tools"].as_array().expect("advertised tools");
+            assert!(tools.iter().any(|tool| tool["name"] == "blob_put"));
+            for tool in tools {
+                let Some(schema) = tool.get("input_schema") else {
+                    continue; // Provider-native tools have no custom input schema.
+                };
+                assert_eq!(schema["type"], "object", "{case}: {}", tool["name"]);
+                for keyword in ["oneOf", "anyOf", "allOf"] {
+                    assert!(
+                        schema.get(keyword).is_none(),
+                        "{case}, code_mode={code_mode}: {} has top-level {keyword}",
+                        tool["name"]
+                    );
+                }
+                if matches!(
+                    tool["name"].as_str(),
+                    Some("blob_put" | "Write" | "VfsWrite" | "write_file" | "vfs_write_file")
+                ) {
+                    assert!(
+                        tool["description"]
+                            .as_str()
+                            .unwrap()
+                            .contains("exactly one")
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -156,7 +211,7 @@ async fn regenerate_builtin_provider_contracts() {
         serde_json::from_str(include_str!("fixtures/builtin_catalogs.json")).expect("baseline");
     for entry in &mut baseline {
         let api = serde_json::from_value(entry["api"].clone()).expect("API kind");
-        entry["request"] = fixture(api, entry["case"].as_str().expect("case")).await;
+        entry["request"] = fixture(api, entry["case"].as_str().expect("case"), false).await;
     }
     std::fs::write(
         concat!(

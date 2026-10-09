@@ -470,7 +470,9 @@ pub(super) async fn invoke_json(
 }
 
 pub(super) fn write_file_schema(path_field: &'static str) -> Value {
-    let mut schema = object(
+    // Anthropic rejects top-level schema combinators. The description guides
+    // input selection; WriteFileArgs::validate enforces exactly one source.
+    object(
         [
             (path_field, string("File path to write.")),
             (
@@ -480,12 +482,7 @@ pub(super) fn write_file_schema(path_field: &'static str) -> Value {
             ("content_ref", crate::blobs::reference_schema()),
         ],
         [path_field],
-    );
-    schema["oneOf"] = json!([
-        {"required":["content"],"not":{"required":["content_ref"]}},
-        {"required":["content_ref"],"not":{"required":["content"]}}
-    ]);
-    schema
+    )
 }
 
 fn job_submit_schema() -> Value {
