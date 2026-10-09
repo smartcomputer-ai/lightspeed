@@ -107,6 +107,23 @@ For **OAuth sign-in**, choose **Add and connect**, then **Open the sign-in**.
 Complete the external service's consent flow and return until the connection
 shows **Connected**. The next step selects which profiles can use it.
 
+### Add Parallel Search
+
+Choose **MCP servers → Add Parallel Search** to prefill a connection to
+`https://search.parallel.ai/mcp`. The preset uses **Lightspeed connects**,
+**Show tools to the model up front**, and **No authentication**. Review the
+name and URL, choose **Continue**, then **Add server**. Registration happens
+only after you save. If the `parallel-search` server is already registered,
+the shortcut is hidden; use its existing row to edit the connection.
+
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
+provides free web search and page extraction without an API key, subject to
+anonymous rate limits. Attach the registered server under a profile or
+session's **MCP Servers** feature as described below. Its tools use that
+attachment's grants and the server's tool allowance and approval settings.
+Built-in **Web** search and its domain filters are configured separately.
+You can edit, disable, or delete the server like any other MCP connection.
+
 ## Select tools and grant the server
 
 A newly registered server initially allows all of its advertised tools.
