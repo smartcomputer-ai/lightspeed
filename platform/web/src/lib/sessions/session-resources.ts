@@ -37,6 +37,7 @@ export interface SessionResources {
   };
   agents?: { profiles: string[]; maxDepth?: number; maxConcurrent?: number };
   web?: { search: boolean; fetch: boolean };
+  codeMode?: boolean;
   timers: boolean;
 }
 
@@ -167,9 +168,11 @@ export function sessionResources(
     result.web = { search: "search" in feature, fetch: "fetch" in feature };
   }
 
+  if ("codeMode" in features) result.codeMode = true;
+
   return result;
 }
 
 export function hasResources(resources: SessionResources): boolean {
-  return Boolean(resources.environments || resources.files || resources.mcp || resources.agents || resources.web || resources.timers);
+  return Boolean(resources.environments || resources.files || resources.mcp || resources.agents || resources.web || resources.codeMode || resources.timers);
 }

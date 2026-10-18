@@ -55,6 +55,7 @@ it("names grants from the catalogs and flags what is missing or unhealthy", () =
   ]);
   expect(resources.agents).toEqual({ profiles: ["reviewer"], maxDepth: 2, maxConcurrent: 4 });
   expect(resources.web).toEqual({ search: true, fetch: false });
+  expect(resources.codeMode).toBeUndefined();
   expect(resources.timers).toBe(false);
 });
 
@@ -65,6 +66,16 @@ it("uses ids until catalogs load and reports nothing for an empty config", () =>
   expect(resources.mcp!.servers[1]).toMatchObject({ label: "linear", tone: "ok" });
   expect(hasResources(sessionResources({ model: {} }, null))).toBe(false);
   expect(hasResources(sessionResources({ features: { timers: {} } }, null))).toBe(true);
+});
+
+it("includes code mode as a resource only when its feature grant is present", () => {
+  const enabled = sessionResources({ features: { codeMode: {} } }, null);
+  const disabled = sessionResources({ features: {} }, null);
+
+  expect(enabled.codeMode).toBe(true);
+  expect(hasResources(enabled)).toBe(true);
+  expect(disabled.codeMode).toBeUndefined();
+  expect(hasResources(disabled)).toBe(false);
 });
 
 it("treats sleeping machines as idle because tools wake them", () => {

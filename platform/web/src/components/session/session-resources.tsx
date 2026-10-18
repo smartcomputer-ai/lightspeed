@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Environment } from "@/api";
 import type { McpServerOption, WorkspaceOption } from "@/components/session/session-config-editor";
-import { Clock3, FolderOpen, Globe2, Network, Server, Settings2, Wrench, type LucideIcon } from "lucide-react";
+import { Clock3, Code2, FolderOpen, Globe2, Network, Server, Settings2, Wrench, type LucideIcon } from "lucide-react";
 import { sessionResources, type ResourceTone, type SessionResources } from "@/lib/sessions/session-resources";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -65,14 +65,15 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 
 /// What the session can reach, as chips in the strip under its header:
 /// its environment, attached workspaces, MCP servers, sub-agent profiles, and
-/// web and timer tools. Each chip opens the details and where to change them.
+/// web, code-mode, and timer tools. Each chip opens the details and where to
+/// change them.
 export function SessionResourceChips({ resources, slug, onConfigure }: {
   resources: SessionResources;
   slug: string;
   /// Opens the session's settings; absent when the viewer cannot change them.
   onConfigure?: () => void;
 }) {
-  const { environments, files, mcp, agents, web, timers } = resources;
+  const { environments, files, mcp, agents, web, codeMode, timers } = resources;
   const footer = (page?: { to: string; label: string }) => (
     <Footer onConfigure={onConfigure} page={page} />
   );
@@ -164,6 +165,13 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
           {(agents.maxDepth !== undefined || agents.maxConcurrent !== undefined) && (
             <Note>{[agents.maxDepth !== undefined && `Up to ${agents.maxDepth} levels deep`, agents.maxConcurrent !== undefined && `${agents.maxConcurrent} open at once`].filter(Boolean).join(" · ")}.</Note>
           )}
+          {footer()}
+        </Chip>
+      )}
+      {codeMode && (
+        <Chip icon={Code2} label="Code mode" title="Code mode">
+          <Heading title="Code mode" detail="The agent may compose its available tools with JavaScript." />
+          <Note>Ordinary tool calls remain available alongside code execution.</Note>
           {footer()}
         </Chip>
       )}
