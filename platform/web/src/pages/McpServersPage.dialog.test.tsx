@@ -7,9 +7,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator", servers: [] as unknown[] }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
@@ -46,11 +46,13 @@ let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
 beforeEach(() => {
+  mocks.role = "operator";
+  mocks.servers = [saved];
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (method === "GET" && path.endsWith("/mcp-servers")) return [saved];
+    if (method === "GET" && path.endsWith("/mcp-servers")) return mocks.servers;
     if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/discover-auth")) return { oauth: null };
     if (path.endsWith("/tools/discover")) return { status: "success", tools: [] };
@@ -108,6 +110,118 @@ async function choose(label: string, value: string) {
 }
 const summary = () =>
   [...dialog().querySelectorAll('[data-slot="settings-disclosure"]')].at(-1)!.querySelector("p")!.textContent;
+
+it("offers neither registration action to a viewer", async () => {
+  mocks.role = "viewer";
+  await show();
+  expect(button("Add Parallel Search")).toBeUndefined();
+  expect(button("Add server")).toBeUndefined();
+});
+
+it("keeps an existing Parallel server's saved settings instead of offering to replace it", async () => {
+  mocks.servers = [{
+    ...saved,
+    serverId: "parallel-search",
+    displayName: "Team research",
+    serverUrl: "https://search.parallel.ai/mcp?mode=fast",
+    authPolicy: { type: "requiredBearer" },
+    credential: { type: "authGrant", grantId: "team-credential" },
+    approval: "always",
+    allowedTools: ["web_search"],
+  }];
+  await show();
+  expect(button("Add Parallel Search")).toBeUndefined();
+  expect(button("Add server")).toBeDefined();
+  await click(container.querySelector<HTMLButtonElement>('[aria-label="Edit parallel-search"]'));
+  expect((field("#mcp-name") as HTMLInputElement).value).toBe("Team research");
+  expect((field("#mcp-url") as HTMLInputElement).value).toBe("https://search.parallel.ai/mcp?mode=fast");
+  expect(dialog().textContent).toContain("Disabled. It stays configured");
+  expect(summary()).toContain("approval: always ask");
+  expect(mocks.api.mock.calls.some(([method, path]) => method === "PUT"
+    || (method === "POST" && (path as string).endsWith("/mcp-servers")))).toBe(false);
+});
+
+it("refuses to replace a server discovered while the preset dialog is open", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  await click(button("Continue"));
+  mocks.servers = [saved, { ...saved, serverId: "parallel-search" }];
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["mcp-servers", "universe"] });
+  });
+  await settle();
+  await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
+  expect(dialog().textContent).toContain("A server with this ID is already registered.");
+  expect(mocks.api.mock.calls.some(([method, path]) => method === "PUT"
+    || (method === "POST" && (path as string).endsWith("/mcp-servers")))).toBe(false);
+});
+
+it("waits for an in-flight registry refresh before submitting a preset", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  await click(button("Continue"));
+  let release!: (servers: unknown[]) => void;
+  const refresh = new Promise<unknown[]>((resolve) => { release = resolve; });
+  mocks.api.mockImplementationOnce(() => refresh);
+  await act(async () => {
+    void client.invalidateQueries({ queryKey: ["mcp-servers", "universe"] });
+  });
+  await settle();
+  await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
+  expect(dialog().textContent).toContain("Wait for the server list to finish refreshing");
+  expect(mocks.api.mock.calls.some(([method]) => method === "PUT")).toBe(false);
+  await act(async () => { release(mocks.servers); });
+  await settle();
+});
+
+it("registers Parallel through the ordinary server flow with native keyless settings", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  expect((field("#mcp-name") as HTMLInputElement).value).toBe("Parallel Search");
+  expect((field("#mcp-url") as HTMLInputElement).value).toBe("https://search.parallel.ai/mcp");
+  expect(mocks.api.mock.calls.filter(([method]) => method === "POST")).toHaveLength(0);
+  await click(button("Continue"));
+  expect(mocks.api).toHaveBeenCalledWith("POST", "/api/v1/universes/universe/mcp-servers/discover-auth", {
+    serverUrl: "https://search.parallel.ai/mcp",
+  });
+  expect((field('select[aria-label="Authentication"]') as HTMLSelectElement).value).toBe("none");
+  expect(summary()).toBe("Lightspeed connects · tools shown up front · no approval·Customize");
+  await click(dialog().querySelector<HTMLButtonElement>('button[type="submit"]'));
+  const create = mocks.api.mock.calls.find(([method, path]) => method === "PUT"
+    && path === "/api/v1/universes/universe/mcp-servers/parallel-search")?.[2];
+  expect(create).toEqual({
+    serverId: "parallel-search",
+    serverUrl: "https://search.parallel.ai/mcp",
+    defaultServerLabel: "parallel-search",
+    execution: "native",
+    exposure: "inject",
+    approval: "never",
+    allowPrivateNetwork: false,
+    authPolicy: { type: "none" },
+    credential: null,
+    status: "active",
+    displayName: "Parallel Search",
+    description: "Free web search and page extraction, with no API key required.",
+    allowedTools: null,
+    revision: 0,
+  });
+});
+
+it("keeps the preset editable and resets to custom defaults after closing it", async () => {
+  await show();
+  await click(button("Add Parallel Search"));
+  await type("#mcp-name", "Team research");
+  await type("#mcp-url", "https://example.test/mcp");
+  expect(dialog().textContent).toContain("team-research");
+  await click(button("Cancel"));
+  await click(button("Add server"));
+  expect((field("#mcp-name") as HTMLInputElement).value).toBe("");
+  expect((field("#mcp-url") as HTMLInputElement).value).toBe("");
+  await type("#mcp-name", "Custom");
+  await type("#mcp-url", "https://example.test/mcp");
+  await click(button("Continue"));
+  expect(summary()).toBe("Model provider connects · no approval·Customize");
+});
 
 it("names the server first, then confirms the connection with everything else behind one summary", async () => {
   await show();
