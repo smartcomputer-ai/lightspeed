@@ -1,7 +1,8 @@
 # Performance profiling and load testing
 
-**Status:** Proposed, 2026-10-19. Investigation approach and the single HTTP
-LLM-simulation boundary agreed; implementation and measurements pending.
+**Status:** First milestone measured, 2026-10-19. The HTTP simulator, public-API
+driver, initial local measurements and validation are complete. The local report
+and raw-data handoff are ready; publication remains with the Engineer owner.
 
 ## Outcome
 
@@ -306,13 +307,13 @@ explicitly selected experiment; it is not required to locate internal limits.
 
 ## Delivery and acceptance
 
-- [ ] Add `llm-simulator` with the Chat Completions protocol, scenario validation,
+- [x] Add `llm-simulator` with the Chat Completions protocol, scenario validation,
   deterministic tool sequences, delays, payload sizes and scripted failures.
-- [ ] Add `scripts/perf/` driver, scenario fixtures, effective-configuration
+- [x] Add `scripts/perf/` driver, scenario fixtures, effective-configuration
   capture and machine-readable results.
-- [ ] Add the minimum runtime/Platform, pool and Temporal instrumentation needed
+- [x] Add the minimum runtime/Platform, pool and Temporal instrumentation needed
   to distinguish queueing from execution and external delay.
-- [ ] Establish initial curves and profiles for rapid loops, event readers and
+- [x] Establish initial curves and profiles for rapid loops, event readers and
   large histories on one documented, fixed deployment.
 - [ ] Publish the first findings/data report on the owning GitHub issue and stop
   for review and selection of follow-up work, before environment profiling.
@@ -347,3 +348,74 @@ model calls.
 At proposal creation, no simulator, driver, instrumentation or load experiment
 has been implemented or run. Add implementation progress and measured results
 here as work completes.
+
+
+## Initial implementation progress — 2026-10-19
+
+The local implementation adds `crates/llm-simulator` and `scripts/perf/`. The
+simulator serves native Chat Completions through normal endpoint configuration;
+provider adapters, CAS and Temporal remain on the execution path. Scenarios
+cover deterministic text sizes, usage, delays/jitter, conversation-derived tool
+rounds and persistent 400/429/503 failures. Tests exercise native client tool
+round trips and concurrent conversations. The explicitly selected
+`simulator_local` integration test exercises the real runtime adapter.
+
+The driver uses the generated TypeScript API client, independent arrivals,
+bounded in-flight work, event following, deadlines, explicit dropped/failed/
+unfinished counts and drain accounting. Fixtures distinguish preparation and
+warm-up from measured arrivals. The VM sweep includes rapid loops, idle and
+active readers, and histories prepared through ordinary runs. It uses only
+synthetic loopback traffic and release binaries, with gateway and session roles;
+no environment capacity tests or billable model calls are involved.
+
+Minimum instrumentation consists of optional SDK Prometheus export through
+`LIGHTSPEED_TEMPORAL_METRICS_BIND`, SQLx pool acquisition timing at debug level
+(`RUST_LOG=info,sqlx::pool::acquire=debug`), query-statistics snapshots, process
+samples and generator/simulator counters. Debug acquisition logging is reserved
+for a separately identified diagnostic run. Raw data and the report draft are
+retained outside source under `/tmp/issue-121-perf` for the Engineer owner to
+publish with the implementation revision and accessible artifact links.
+
+Initial rapid-loop measurements show queueing at 10 offered runs/second on
+this development topology: 149 of 300 scheduled runs were submitted under a
+64-session bound, all submitted runs completed, and drain took 8.4 seconds.
+Median terminal latency rose from roughly 0.60 seconds at 2 offered runs/second
+to 15.05 seconds. This is a limit of the measured local topology, not a capacity
+claim for a production deployment. Attribution, remaining scenarios, validation
+and explicit coverage gaps belong in the first findings report. Follow-up
+optimization and environment work remain out of scope.
+
+
+The completed sweep also found a gateway file-descriptor limit: 512 idle reads
+per second completed cleanly, while 2,048 offered reads per second produced
+transport errors and gateway `EMFILE` accept errors with a soft descriptor
+limit of 1,024. This limit was recorded without tuning it. Mature fixtures began
+with 333 events and 528 KiB of input/output text per session; their admitted runs
+completed at all three load steps, with excess arrivals explicitly dropped.
+A rapid-loop repeat differed by about two percent in including-drain throughput.
+Direct simulator tests completed 1,000 small requests per second and 100 large
+requests per second, above the measured runtime rate.
+
+The initial curves and query profiles are collected, including raw timestamps,
+SDK metrics, resource samples, query-statistics deltas and drain results. Hardware
+CPU/allocation profiles, Platform authentication, complete CAS/cache counters
+and production Temporal persistence remain coverage gaps. The reader ceiling is
+a measured configuration limit; the source of Temporal queueing still needs
+service-side attribution. No optimizations were attempted. Final check results
+and artifact links are supplied to the Engineer owner; the issue-report and PR
+publication checkboxes remain pending that owner's publication.
+
+
+Validation passed: four simulator tests, six native endpoint/client tests, the
+explicit local adapter/CAS test, nine runtime configuration tests, seven driver
+scheduling/accounting tests, scoped TypeScript checking, the exact workspace
+Clippy gate with all targets and warnings denied, documentation checks and local
+roadmap-link validation. No credentialed provider suite or existing ignored
+Temporal suite was executed. Platform instrumentation remains an explicit gap
+in the minimum first-pass instrumentation, rather than measured coverage.
+
+The SDK metrics endpoint became unreachable during the descriptor-exhaustion
+step and recovered only after runtime restart. Later missing SDK observations
+are marked unavailable in the report. A separate pool-timing diagnostic at
+512 reads per second measured 0.31 ms p99 acquisition wait; it does not explain
+the higher-load descriptor failures or establish a production pool size.

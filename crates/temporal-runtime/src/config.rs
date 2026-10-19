@@ -394,7 +394,10 @@ pub async fn postgres_pool_from_env() -> anyhow::Result<PgPool> {
         .map_err(|_| {
             anyhow::anyhow!("LIGHTSPEED_POSTGRES_URL or LIGHTSPEED_TEST_POSTGRES_URL must be set")
         })?;
-    Ok(PgPoolOptions::new().connect(&database_url).await?)
+    Ok(PgPoolOptions::new()
+        .acquire_time_level(log::LevelFilter::Debug)
+        .connect(&database_url)
+        .await?)
 }
 
 /// Single-universe store bound to `LIGHTSPEED_PG_UNIVERSE_ID`. Used by
