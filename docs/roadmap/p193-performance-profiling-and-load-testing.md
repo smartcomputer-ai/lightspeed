@@ -484,11 +484,38 @@ The prototype and tests are retained as a separate evidence patch, not included
 in the proposed production source changes. Its mixed-workload tradeoff remains
 unresolved; no reader fast path is adopted in this follow-up.
 
-The follow-up report and raw A/B evidence are retained under
-`/workspace/artifacts/issue-121-perf-ab` for owner publication on issue #121 and
-existing PR #122. Temporal profiles still show substantial history task and
-metrics allocations. Larger workflow changes, reader notification mechanisms,
-shared-service sizing and worker scaling remain proposed experiments rather
-than authorized architecture changes. No environment profiling, production
-traffic, billable calls or additional workstream was introduced. Changes remain
-uncommitted for the Engineer owner; the PR remains open for human review.
+The follow-up report, all-step tables and raw A/B evidence are published in a
+separate update comment on issue #121 and the data-only prerelease
+`perf-issue-121-low-hanging-2026-10-19`. Temporal profiles still show substantial
+history-task and metrics allocations. Larger workflow changes, reader
+notification mechanisms, shared-service sizing and worker scaling remain
+proposed experiments, not changes made in this follow-up. No environment
+profiling, production traffic, billable calls or additional workstream was
+introduced. PR #122 remains open for human review; no merge or further tuning
+is authorized without another explicit instruction.
+
+### Session workflow boundary investigation
+
+The next explicitly reopened investigation retains the PostgreSQL/pgx baseline
+and adds offline Temporal-history attribution under `scripts/perf/temporal-postgres/`.
+Four fresh load steps completed 1,088 admitted agent runs and 15,360 idle reads
+without failures or unfinished work. Fifteen retained session histories yielded
+225 complete measured runs. Each text run used eleven activities: eight event
+appends, tool preparation, runtime projection refresh and generation. At rapid
+saturation the mean sampled cycle was 2.46 seconds, including 0.86 seconds in
+activity queues and 1.25 seconds waiting for ten intervening workflow tasks.
+Server-observed execution intervals include transport/persistence and are not
+CPU measurements. Separate source inspection identifies the append boundaries
+as Lightspeed choices; Temporal durability does not require one activity for
+every reducer transition.
+
+No workflow/runtime optimization is adopted. Combining the pre-generation
+append prefix is a candidate for a future approval-gated design experiment,
+with replay, cancellation, expected-head, public event visibility and retry
+semantics checked first. Reader polling, larger mature-history payloads and the
+previously profiled Temporal allocations remain measured costs or explicitly
+labeled follow-up hypotheses. The offline workflow-history attribution analyzer and deterministic tests are
+included in the same PR #122 workstream; the report and raw evidence accompany
+the issue #121 update. PR #122 remains the sole implementation workstream and
+is unmerged. The prior publication-status edit is preserved. No workflow/runtime
+optimization is proposed until the user reviews the boundary tradeoffs.
