@@ -1,8 +1,16 @@
 """One-second process/cgroup/SDK samples; query snapshots are taken by sweep.sh."""
-import json, os, pathlib, sys, time, urllib.request
+import json, os, pathlib, signal, sys, time, urllib.request
+running = True
+
+def stop(_signum, _frame):
+    global running
+    running = False
+
+signal.signal(signal.SIGTERM, stop)
+
 out=open(sys.argv[1], 'w', buffering=1)
 pids=list(map(int, sys.argv[2:]))
-while True:
+while running:
     row={'time':time.time(),'processes':{}}
     for pid in pids:
         try:

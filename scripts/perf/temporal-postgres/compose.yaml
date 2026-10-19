@@ -24,7 +24,9 @@ services:
         condition: service_healthy
     environment:
       TEMPORAL_ADDRESS: temporal:7233
-      DB: postgres12
+      # Supported pgx driver improved rapid-loop throughput in local A/B tests.
+      # Set postgres12 explicitly to reproduce the original control.
+      DB: ${PERF_TEMPORAL_SQL_DRIVER:-postgres12_pgx}
       DB_PORT: "5432"
       POSTGRES_USER: temporal
       POSTGRES_PWD: local-perf-only

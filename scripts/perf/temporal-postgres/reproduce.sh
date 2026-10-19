@@ -10,7 +10,8 @@ cargo build --release -p temporal-runtime -p llm-simulator --locked
 scripts/perf/temporal-postgres/prepare-runtime.sh
 source scripts/dev/env.sh >/dev/null
 source scripts/perf/temporal-postgres/env.sh
-# Terminal 1: target/release/lightspeed-runtime
+# Terminal 1: scripts/perf/temporal-postgres/runtime.sh
+# PERF_RUNTIME_NOFILE=1024 reproduces the original descriptor-limit control.
 # Terminal 2: target/release/llm-simulator scripts/perf/fixtures/simulator.json
 # Terminal 3 (same environment):
 # python3 scripts/perf/observe.py "$PERF_OUTPUT/observations.jsonl" RUNTIME_PID SIMULATOR_PID

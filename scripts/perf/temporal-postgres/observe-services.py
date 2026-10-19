@@ -2,15 +2,24 @@
 import datetime
 import json
 import pathlib
+import signal
 import subprocess
 import sys
 import time
+
+running = True
+
+def stop(_signum, _frame):
+    global running
+    running = False
+
+signal.signal(signal.SIGTERM, stop)
 
 root = pathlib.Path(sys.argv[1])
 containers = ['lightspeed-postgres', 'lightspeed-perf-temporal',
               'lightspeed-perf-temporal-postgres', 'lightspeed-minio']
 with (root / 'container-stats.jsonl').open('w', buffering=1) as stats, (root / 'pg-observations.jsonl').open('w', buffering=1) as pg:
-    while True:
+    while running:
         stats.write(datetime.datetime.now(datetime.timezone.utc).isoformat() + '\n')
         result = subprocess.run(['docker', 'stats', '--no-stream', '--format', '{{json .}}', *containers], capture_output=True, text=True)
         stats.write(result.stdout)

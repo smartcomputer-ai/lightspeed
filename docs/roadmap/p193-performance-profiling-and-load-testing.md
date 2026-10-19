@@ -457,3 +457,38 @@ optimizations. Version matching, Platform-authenticated reads and Rust CPU/
 allocation attribution remain gaps. The updated findings, reproduction commands
 and accessible raw-data links are published in a separate follow-up comment on
 issue #121. No tuning was performed; await explicit follow-up before further work.
+
+### Focused PostgreSQL baseline improvements
+
+The explicitly reopened follow-up uses the latest PostgreSQL deployment as its
+working baseline. Controlled local A/B arms preserve the same release runtime,
+workloads, worker/pool settings and VM budget while comparing Temporal's
+supported `postgres12` and `postgres12_pgx` drivers. Both history and visibility
+use the selected driver. Two unprofiled saturation pairs completed 16.42/19.09
+and 15.29/19.43 runs per second respectively, with every submitted run completing.
+Persisted sessions resumed successfully across both driver transitions. The
+performance setup now defaults to `postgres12_pgx`, retaining an explicit
+control override and all prior results.
+
+The local performance launcher also defaults to an 8,192 soft descriptor limit.
+At 2,048 offered idle reads per second, this removed the submitted-request
+failures seen with the 1,024 limit. Generator concurrency drops and scheduling
+lag remain visible, so this does not establish unrestricted reader capacity.
+A small PostgreSQL store fast-path prototype preserved the tenant-visible session
+lookup while skipping lineage resolution for caught-up readers. Two comparisons
+reduced SQL calls from twelve to seven per read and runtime CPU by 34–37% at
+512 reads per second. Selected live tests passed for tenant isolation, forks,
+subsequent appends, range fencing and deleted history. However, three rapid-loop
+comparisons, including reversed order, showed lower throughput and longer drain.
+The prototype and tests are retained as a separate evidence patch, not included
+in the proposed production source changes. Its mixed-workload tradeoff remains
+unresolved; no reader fast path is adopted in this follow-up.
+
+The follow-up report and raw A/B evidence are retained under
+`/workspace/artifacts/issue-121-perf-ab` for owner publication on issue #121 and
+existing PR #122. Temporal profiles still show substantial history task and
+metrics allocations. Larger workflow changes, reader notification mechanisms,
+shared-service sizing and worker scaling remain proposed experiments rather
+than authorized architecture changes. No environment profiling, production
+traffic, billable calls or additional workstream was introduced. Changes remain
+uncommitted for the Engineer owner; the PR remains open for human review.
