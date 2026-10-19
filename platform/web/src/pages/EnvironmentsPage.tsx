@@ -1,6 +1,6 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import {
@@ -25,6 +25,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Table, TableActionsCell, TableBody, TableCard, TableCell,
+  TableHead, TableHeader, TableRow, TableTitleCell,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,7 +53,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { EmptyState, LoadingNote, PageHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
+import { EmptyState, LoadingNote, PageHeader, SectionHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
 import { EnvironmentIdlePolicyDialog } from "@/components/environment/idle-policy-dialog";
 import {
   IdlePolicyFields,
@@ -152,14 +156,12 @@ function ProviderList({ universeId }: { universeId: string }) {
   const [showClosed, setShowClosed] = useState(false);
   const allEnvironmentRows = (environments.data ?? [])
     .slice()
-    .sort((a, b) => environmentName(a).localeCompare(environmentName(b)));
+    .sort((a, b) => environmentName(a).localeCompare(environmentName(b))
+      || a.environmentId.localeCompare(b.environmentId));
   const closedCount = allEnvironmentRows.filter((environment) => environment.status === "closed").length;
   const environmentRows = showClosed
     ? allEnvironmentRows
     : allEnvironmentRows.filter((environment) => environment.status !== "closed");
-  // One lookup for every card: configuring an environment is decided per
-  // environment, not from the universe role alone.
-  const decisions = useActionPermissions(universeId);
   const enabledBindings = new Set(
     bindingRows.filter((binding) => binding.status === "enabled").map((binding) => binding.bindingId),
   );
@@ -170,20 +172,6 @@ function ProviderList({ universeId }: { universeId: string }) {
     .slice()
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
   const keysById = new Map(keyRows.map((key) => [key.registrationKeyId, key]));
-  // Registered environments are grouped under the key that admitted them;
-  // provisioned and external ones keep their flat list.
-  const groupedRows = keyRows
-    .map((key) => ({
-      key,
-      environments: environmentRows.filter((environment) =>
-        environment.source.type === "registered"
-        && environment.source.registrationKeyId === key.registrationKeyId),
-    }))
-    .filter((group) => group.environments.length > 0);
-  const orphanRegistered = environmentRows.filter((environment) =>
-    environment.source.type === "registered"
-    && !keysById.has(environment.source.registrationKeyId));
-  const ungroupedRows = environmentRows.filter((environment) => environment.source.type !== "registered");
 
   return (
     <>
@@ -191,7 +179,7 @@ function ProviderList({ universeId }: { universeId: string }) {
         title="Environments"
         description="Computers and sandboxes agents can use in this universe."
         actions={writable && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <RegisterExternalEnvironmentDialog
               universeId={universeId}
               suggestedEndpoint={hints.data?.devEnvdEndpoint ?? null}
@@ -205,7 +193,6 @@ function ProviderList({ universeId }: { universeId: string }) {
             {creatableTemplates.length > 0 && (
               <CreateEnvironmentDialog universeId={universeId} templates={creatableTemplates} />
             )}
-            <CreateRegistrationKeyDialog universeId={universeId} />
           </div>
         )}
       />
@@ -222,57 +209,44 @@ function ProviderList({ universeId }: { universeId: string }) {
       {secrets.error && (
         <ReadError error={secrets.error} loading={!secrets.data} prefix="Access credentials unavailable" />
       )}
-      {registrationKeys.error && (
-        <ReadError error={registrationKeys.error} loading={!registrationKeys.data} prefix="Registration keys unavailable" />
-      )}
-      {bindings.data && environments.data && allEnvironmentRows.length === 0 && (
+      {environments.data && allEnvironmentRows.length === 0 && (
         <EmptyState icon={Boxes} title="No environments yet">
           Machines agents run commands on: created from a provider template, or registered by
           running <span className="font-mono">lightspeed-envd</span> on a machine of your own.
         </EmptyState>
       )}
-      {groupedRows.map((group) => (
-        <section key={group.key.registrationKeyId} className="grid gap-3">
-          <div className="flex flex-wrap items-center gap-2 pt-2">
-            <KeyRound className="size-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">{group.key.displayName}</h2>
-            <Badge variant="outline">{group.key.identityMode}</Badge>
-            <span className="text-xs text-muted-foreground">
-              {group.environments.length} registered
-              {group.key.maxActiveEnvironments ? ` · limit ${group.key.maxActiveEnvironments}` : ""}
-            </span>
-          </div>
-          {group.environments.map((environment) => (
-            <EnvironmentCard
-              key={environment.environmentId}
-              universeId={universeId}
-              environment={environment}
-              configurable={decisions.can("configure_resource")}
-              operator={writable}
-              template={undefined}
-              registrationKey={group.key}
-              secrets={secrets.data}
-            />
-          ))}
-        </section>
-      ))}
-      <div className="grid gap-3">
-        {[...ungroupedRows, ...orphanRegistered].map((environment) => (
-          <EnvironmentCard
-            key={environment.environmentId}
-            universeId={universeId}
-            environment={environment}
-            configurable={decisions.can("configure_resource")}
-            operator={writable}
-            template={templateRows.find((candidate) =>
-              candidate.bindingId === provisionedBindingId(environment)
-              && candidate.templateId === environment.incarnation.templateId
-            )}
-            registrationKey={undefined}
-            secrets={secrets.data}
-          />
-        ))}
-      </div>
+      {environmentRows.length > 0 && (
+        <TableCard>
+          <Table aria-label="Environments">
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col">Environment</TableHead>
+                <TableHead scope="col">Source</TableHead>
+                <TableHead scope="col">Status</TableHead>
+                <TableHead scope="col" className="w-0"><span className="sr-only">Details</span></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {environmentRows.map((environment) => (
+                <EnvironmentRow
+                  key={environment.environmentId}
+                  universeId={universeId}
+                  environment={environment}
+                  configurable={writable}
+                  operator={writable}
+                  template={templateRows.find((candidate) =>
+                    candidate.bindingId === provisionedBindingId(environment)
+                    && candidate.templateId === environment.incarnation.templateId
+                  )}
+                  registrationKey={environment.source.type === "registered"
+                    ? keysById.get(environment.source.registrationKeyId) : undefined}
+                  secrets={secrets.data}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </TableCard>
+      )}
       {environments.data && allEnvironmentRows.length > 0 && environmentRows.length === 0 && (
         <p className="text-sm text-muted-foreground">Every environment here is closed.</p>
       )}
@@ -284,13 +258,29 @@ function ProviderList({ universeId }: { universeId: string }) {
           onCheckedChange={setShowClosed}
         />
       </div>
-      {writable && keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
+      {writable && (
+        <section className="mt-8">
+          <SectionHeader
+            title="Enrollment"
+            description="Registration keys let daemons on your machines enroll as environments."
+            actions={<CreateRegistrationKeyDialog universeId={universeId} />}
+          />
+          {registrationKeys.isLoading && <LoadingNote />}
+          {registrationKeys.error && (
+            <ReadError error={registrationKeys.error} loading={!registrationKeys.data} prefix="Registration keys unavailable" />
+          )}
+          {registrationKeys.data && keyRows.length === 0 && (
+            <p className="text-sm text-muted-foreground">No registration keys yet.</p>
+          )}
+          {keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
+        </section>
+      )}
       {bindingRows.length > 0 && <ProviderBindings bindings={bindingRows} />}
     </>
   );
 }
 
-function EnvironmentCard({
+function EnvironmentRow({
   universeId,
   environment,
   configurable,
@@ -310,121 +300,131 @@ function EnvironmentCard({
   secrets: SecretsInventory | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const detailsId = useId();
   const [policyOpen, setPolicyOpen] = useState(false);
   const source = environment.source;
   const gone = ["closing", "closed", "failed"].includes(environment.status);
   const registered = source.type === "registered";
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <section className="rounded-xl border">
-        <div className="flex flex-wrap items-center gap-4 px-4 py-4 md:px-5">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm font-semibold">{environmentName(environment)}</h2>
-            <p className="mt-1 truncate text-sm text-muted-foreground">
+    <>
+      <TableRow>
+        <TableTitleCell title={environmentName(environment)} subtitle={environment.environmentId} />
+        <TableCell className="max-w-64 whitespace-normal">
+          <div>{source.type === "provisioned" ? "Provisioned" : registered ? "Registered" : "External"}</div>
+          {source.type !== "external" && (
+            <div className="break-words text-xs text-muted-foreground">
               {source.type === "provisioned"
-                ? template?.displayName ?? environment.incarnation.templateId ?? "Provisioned environment"
-                : source.type === "registered"
-                  ? `Registered daemon · ${registrationKey?.displayName ?? source.registrationKeyId}`
-                  : "External environment"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {registered
-                ? environment.lastSeenAtMs
-                  ? `Last seen ${relativeTime(environment.lastSeenAtMs)}`
-                  : "Never seen"
-                : environment.publicEndpoint ?? "Private environment"}
-            </p>
-          </div>
+                ? `${source.providerId} · ${template?.displayName ?? environment.incarnation.templateId ?? "Unknown template"}`
+                : registrationKey?.displayName ?? source.registrationKeyId}
+            </div>
+          )}
+        </TableCell>
+        <TableCell>
           <EnvironmentStatusBadge environment={environment} />
-          <CollapsibleTrigger className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
+          {registered && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {environment.lastSeenAtMs ? `Last seen ${relativeTime(environment.lastSeenAtMs)}` : "Never seen"}
+            </p>
+          )}
+          {source.type === "provisioned" && powerDiverges(environment) && (
+            <p className="mt-1 text-xs text-muted-foreground">Desired: {environment.desiredPower}</p>
+          )}
+        </TableCell>
+        <TableActionsCell>
+          <Button
+            variant="ghost" size="sm"
+            aria-label={`Details for ${environmentName(environment)}`}
+            aria-expanded={open} aria-controls={detailsId}
+            onClick={() => setOpen(!open)}
+          >
             Details
-            <ChevronDown className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
-          </CollapsibleTrigger>
-        </div>
-        <CollapsibleContent>
-          <div className="border-t bg-muted/15 px-4 py-4 md:px-5">
-            <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Detail label="Environment ID" value={environment.environmentId} mono />
-              <Detail
-                label="Source"
-                value={source.type === "provisioned" ? "Provisioned" : source.type === "registered" ? "Registered" : "External"}
-              />
-              {source.type === "registered" && (
-                <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
-              )}
-              {source.type === "registered" && <Detail label="Daemon" value={source.daemonId} mono />}
-              {source.type === "registered" && (
-                <Detail
-                  label="Identity"
-                  value={source.identityMode === "ephemeral"
-                    ? "Ephemeral · closes after its key's disconnect grace"
-                    : "Persistent · stays offline until closed"}
-                />
-              )}
-              {source.type === "registered" && environment.lastSeenAtMs && (
-                <Detail label="Last seen" value={relativeTime(environment.lastSeenAtMs)} />
-              )}
-              {source.type === "provisioned" && <Detail label="Binding" value={source.bindingId} mono />}
-              {source.type === "provisioned" && <Detail label="Provider" value={source.providerId} mono />}
-              {environment.incarnation.templateId && <Detail label="Template" value={environment.incarnation.templateId} mono />}
-              {environment.incarnation.providerTargetId && <Detail label="Target" value={environment.incarnation.providerTargetId} mono />}
+            <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+          </Button>
+        </TableActionsCell>
+      </TableRow>
+      <TableRow hidden={!open} className="hover:bg-transparent">
+        <TableCell colSpan={4} className="whitespace-normal p-0">
+          <div id={detailsId}>
+            {open && (
+              <div className="bg-muted/15 p-4 md:p-5">
+                <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Detail label="Name" value={environmentName(environment)} />
+                  <Detail label="Environment ID" value={environment.environmentId} mono />
+                  {!registered && <Detail label="Public endpoint" value={environment.publicEndpoint ?? "Private environment"} mono />}
+                  <Detail
+                    label="Source"
+                    value={source.type === "provisioned" ? "Provisioned" : source.type === "registered" ? "Registered" : "External"}
+                  />
+                  {source.type === "registered" && (
+                    <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
+                  )}
+                  {source.type === "registered" && <Detail label="Daemon" value={source.daemonId} mono />}
+                  {source.type === "registered" && (
+                    <Detail
+                      label="Identity"
+                      value={source.identityMode === "ephemeral"
+                        ? "Ephemeral · closes after its key's disconnect grace"
+                        : "Persistent · stays offline until closed"}
+                    />
+                  )}
+                  {source.type === "registered" && environment.lastSeenAtMs && (
+                    <Detail label="Last seen" value={relativeTime(environment.lastSeenAtMs)} />
+                  )}
+                  {source.type === "provisioned" && <Detail label="Binding" value={source.bindingId} mono />}
+                  {source.type === "provisioned" && <Detail label="Provider" value={source.providerId} mono />}
+                  {environment.incarnation.templateId && <Detail label="Template" value={environment.incarnation.templateId} mono />}
+                  {environment.incarnation.providerTargetId && <Detail label="Target" value={environment.incarnation.providerTargetId} mono />}
 
-              {source.type === "provisioned" && (
-                <Detail
-                  label="Power"
-                  value={powerDiverges(environment)
-                    ? `${observedPower(environment) ?? environment.status} → ${environment.desiredPower}`
-                    : environment.desiredPower}
+                  {source.type === "provisioned" && (
+                    <Detail
+                      label="Power"
+                      value={powerDiverges(environment)
+                        ? `${observedPower(environment) ?? environment.status} → ${environment.desiredPower}`
+                        : environment.desiredPower}
+                    />
+                  )}
+                  {source.type === "provisioned" && (
+                    <Detail label="Idle policy" value={describeIdlePolicy(environment.idlePolicy)} />
+                  )}
+                  <Detail label="Updated" value={relativeTime(environment.updatedAtMs)} />
+                </dl>
+                <EnvironmentCredentials
+                  universeId={universeId}
+                  environment={environment}
+                  secrets={secrets}
+                  enabled={open}
+                  writable={configurable && operator}
                 />
-              )}
-              {source.type === "provisioned" && (
-                <Detail label="Idle policy" value={describeIdlePolicy(environment.idlePolicy)} />
-              )}
-              <Detail label="Updated" value={relativeTime(environment.updatedAtMs)} />
-            </dl>
-            <EnvironmentCredentials
-              universeId={universeId}
-              environment={environment}
-              secrets={secrets}
-              enabled={open}
-              writable={configurable && operator}
-            />
-            {configurable && source.type === "provisioned" && (
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-                <EnvironmentPowerControls universeId={universeId} environment={environment} />
-                {!gone && (
-                  <Button variant="outline" size="xs" onClick={() => setPolicyOpen(true)}>
-                    Idle policy…
-                  </Button>
+                {configurable && source.type === "provisioned" && (
+                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
+                    <EnvironmentPowerControls universeId={universeId} environment={environment} />
+                    {!gone && (
+                      <Button variant="outline" size="xs" onClick={() => setPolicyOpen(true)}>
+                        Idle policy…
+                      </Button>
+                    )}
+                    {template?.publicIngress && (
+                      <EnvironmentIngressButton universeId={universeId} environment={environment} />
+                    )}
+                    <CloseEnvironmentButton universeId={universeId} environment={environment} />
+                  </div>
                 )}
-                {template?.publicIngress && (
-                  <EnvironmentIngressButton universeId={universeId} environment={environment} />
+                {configurable && source.type === "provisioned" && !gone && (
+                  <EnvironmentIdlePolicyDialog
+                    key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
+                    universeId={universeId}
+                    environment={environment}
+                    open={policyOpen}
+                    onOpenChange={setPolicyOpen}
+                  />
                 )}
-                <CloseEnvironmentButton universeId={universeId} environment={environment} />
               </div>
-            )}
-            {configurable && registered && !gone && (
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-                <CloseEnvironmentButton universeId={universeId} environment={environment} />
-                <span className="text-xs text-muted-foreground">
-                  Closing spends the daemon identity; the machine itself is untouched.
-                </span>
-              </div>
-            )}
-            {configurable && source.type === "provisioned" && !gone && (
-              <EnvironmentIdlePolicyDialog
-                key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
-                universeId={universeId}
-                environment={environment}
-                open={policyOpen}
-                onOpenChange={setPolicyOpen}
-              />
             )}
           </div>
-        </CollapsibleContent>
-      </section>
-    </Collapsible>
+        </TableCell>
+      </TableRow>
+    </>
   );
 }
 
@@ -746,58 +746,66 @@ function RegistrationKeys({
   universeId: string;
   keys: EnvironmentRegistrationKey[];
 }) {
+  const [open, setOpen] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
   const inactiveCount = keys.filter((key) => key.status !== "active").length;
   const rows = showInactive ? keys : keys.filter((key) => key.status === "active");
   return (
-    <section className="mt-6">
-      <h2 className="text-sm font-semibold">Registration keys</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        A key lets <span className="font-mono">lightspeed-envd</span> daemons dial in and register as
-        environments; each key is the group its environments belong to. Revoking stops new daemons
-        while registered ones keep reconnecting.
-      </p>
-      <div className="mt-3 grid gap-2">
-        {rows.map((key) => (
-          <div key={key.registrationKeyId} className="flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{key.displayName}</p>
-              <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                {key.keyPrefix}… · {key.registrationKeyId}
-              </p>
-            </div>
-            <Badge variant="outline">{key.identityMode}</Badge>
-            <span className="text-xs text-muted-foreground">
-              {key.activeEnvironmentCount} active / {key.registeredEnvironmentCount} total
-              {key.maxActiveEnvironments ? ` · limit ${key.maxActiveEnvironments}` : ""}
-              {key.identityMode === "ephemeral"
-                ? ` · grace ${Math.round(key.ephemeralDisconnectGraceMs / 60_000)} min`
-                : ""}
-              {key.expiresAtMs ? ` · expires ${relativeTime(key.expiresAtMs).replace(" ago", "")}` : ""}
-            </span>
-            {key.status === "active" ? (
-              <Badge variant="secondary">active</Badge>
-            ) : (
-              <Badge variant="outline">{key.status}</Badge>
-            )}
-            {key.status === "active" && (
-              <RevokeRegistrationKeyButton universeId={universeId} registrationKey={key} />
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <section className="rounded-xl border p-4">
+        <CollapsibleTrigger className="flex w-full items-center gap-2 text-left text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+          Registration keys ({keys.length})
+          <ChevronDown aria-hidden="true" className={`ml-auto size-4 transition-transform ${open ? "rotate-180" : ""}`} />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <p className="mt-1 text-sm text-muted-foreground">
+            A key lets <span className="font-mono">lightspeed-envd</span> daemons dial in and register as
+            environments. Revoking stops new daemons
+            while registered ones keep reconnecting.
+          </p>
+          <div className="mt-3 grid gap-2">
+            {rows.map((key) => (
+              <div key={key.registrationKeyId} className="flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{key.displayName}</p>
+                  <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                    {key.keyPrefix}… · {key.registrationKeyId}
+                  </p>
+                </div>
+                <Badge variant="outline">{key.identityMode}</Badge>
+                <span className="text-xs text-muted-foreground">
+                  {key.activeEnvironmentCount} active / {key.registeredEnvironmentCount} total
+                  {key.maxActiveEnvironments ? ` · limit ${key.maxActiveEnvironments}` : ""}
+                  {key.identityMode === "ephemeral"
+                    ? ` · grace ${Math.round(key.ephemeralDisconnectGraceMs / 60_000)} min`
+                    : ""}
+                  {key.expiresAtMs ? ` · expires ${relativeTime(key.expiresAtMs).replace(" ago", "")}` : ""}
+                </span>
+                {key.status === "active" ? (
+                  <Badge variant="secondary">active</Badge>
+                ) : (
+                  <Badge variant="outline">{key.status}</Badge>
+                )}
+                {key.status === "active" && (
+                  <RevokeRegistrationKeyButton universeId={universeId} registrationKey={key} />
+                )}
+              </div>
+            ))}
+            {rows.length === 0 && (
+              <p className="text-sm text-muted-foreground">Every registration key here is revoked or expired.</p>
             )}
           </div>
-        ))}
-        {rows.length === 0 && (
-          <p className="text-sm text-muted-foreground">Every registration key here is revoked or expired.</p>
-        )}
-      </div>
-      <div className="mt-3">
-        <ShowHiddenToggle
-          label="Show revoked and expired keys"
-          count={inactiveCount}
-          checked={showInactive}
-          onCheckedChange={setShowInactive}
-        />
-      </div>
-    </section>
+          <div className="mt-3">
+            <ShowHiddenToggle
+              label="Show revoked and expired keys"
+              count={inactiveCount}
+              checked={showInactive}
+              onCheckedChange={setShowInactive}
+            />
+          </div>
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
   );
 }
 
@@ -1050,7 +1058,7 @@ function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[]
     <Collapsible open={open} onOpenChange={setOpen}>
       <section className="mt-6 rounded-xl border">
         <CollapsibleTrigger className="flex w-full items-center gap-3 px-4 py-3 text-left outline-none hover:bg-muted/30 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 md:px-5">
-          <span className="text-sm font-medium">Provider bindings</span>
+          <span className="text-sm font-medium">Provider configuration</span>
           <span className="text-xs text-muted-foreground">
             {enabled} enabled · {bindings.length} total
           </span>
