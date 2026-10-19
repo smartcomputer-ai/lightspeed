@@ -1,8 +1,8 @@
 # Performance profiling and load testing
 
-**Status:** First milestone measured, 2026-10-19. The HTTP simulator, public-API
-driver, initial local measurements and validation are complete. The local report
-and raw-data handoff are ready; publication remains with the Engineer owner.
+**Status:** First milestone report published, 2026-10-19. The HTTP simulator,
+public-API driver, initial local measurements and validation are complete. Issue
+#121 contains the findings and raw-data links; PR #122 is open for human review.
 
 ## Outcome
 
@@ -315,7 +315,7 @@ explicitly selected experiment; it is not required to locate internal limits.
   to distinguish queueing from execution and external delay.
 - [x] Establish initial curves and profiles for rapid loops, event readers and
   large histories on one documented, fixed deployment.
-- [ ] Publish the first findings/data report on the owning GitHub issue and stop
+- [x] Publish the first findings/data report on the owning GitHub issue and stop
   for review and selection of follow-up work, before environment profiling.
 - [ ] Record measured findings, prioritize fixes, and rerun the same experiments
   for each optimization or capacity-setting change.
@@ -372,18 +372,19 @@ Minimum instrumentation consists of optional SDK Prometheus export through
 `LIGHTSPEED_TEMPORAL_METRICS_BIND`, SQLx pool acquisition timing at debug level
 (`RUST_LOG=info,sqlx::pool::acquire=debug`), query-statistics snapshots, process
 samples and generator/simulator counters. Debug acquisition logging is reserved
-for a separately identified diagnostic run. Raw data and the report draft are
-retained outside source under `/tmp/issue-121-perf` for the Engineer owner to
-publish with the implementation revision and accessible artifact links.
+for a separately identified diagnostic run. Raw data are retained outside
+source under `/tmp/issue-121-perf` and published as the data-only prerelease
+linked from the issue #121 report comment. PR #122 carries implementation for
+human review.
 
 Initial rapid-loop measurements show queueing at 10 offered runs/second on
 this development topology: 149 of 300 scheduled runs were submitted under a
 64-session bound, all submitted runs completed, and drain took 8.4 seconds.
 Median terminal latency rose from roughly 0.60 seconds at 2 offered runs/second
 to 15.05 seconds. This is a limit of the measured local topology, not a capacity
-claim for a production deployment. Attribution, remaining scenarios, validation
-and explicit coverage gaps belong in the first findings report. Follow-up
-optimization and environment work remain out of scope.
+claim for a production deployment. Full attribution, all three scenario families,
+validation and coverage gaps are documented in the issue #121 report and linked
+archive. Follow-up optimization and environment work remain out of scope.
 
 
 The completed sweep also found a gateway file-descriptor limit: 512 idle reads
@@ -402,8 +403,8 @@ CPU/allocation profiles, Platform authentication, complete CAS/cache counters
 and production Temporal persistence remain coverage gaps. The reader ceiling is
 a measured configuration limit; the source of Temporal queueing still needs
 service-side attribution. No optimizations were attempted. Final check results
-and artifact links are supplied to the Engineer owner; the issue-report and PR
-publication checkboxes remain pending that owner's publication.
+and the accessible raw-data links are published in the issue #121 report comment.
+PR #122 is open for human review; this planning issue remains open for follow-up.
 
 
 Validation passed: four simulator tests, six native endpoint/client tests, the
