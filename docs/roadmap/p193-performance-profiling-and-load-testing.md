@@ -519,3 +519,34 @@ included in the same PR #122 workstream; the report and raw evidence accompany
 the issue #121 update. PR #122 remains the sole implementation workstream and
 is unmerged. The prior publication-status edit is preserved. No workflow/runtime
 optimization is proposed until the user reviews the boundary tradeoffs.
+
+### Focused bookkeeping A/B experiment
+
+The explicitly reopened experiment combines only `turn.planned` and
+`turn.generation_requested` in one expected-head append, guarded by a Temporal
+patch marker. Both public events retain their sequence positions but become
+visible atomically. The private speculative reducer does not mutate live state
+or execute effects. This remains an uncommitted experiment for owner review,
+not an adopted workflow optimization; no broader batching is implemented.
+
+Eight PostgreSQL/pgx load steps completed 3,652 admitted runs without failures
+or unfinished work. Two rapid-loop control/variant pairs increased completion
+throughput during arrivals by about 4%, but throughput including drain changed
+by -2.2% and +3.5%. One mature-history pair improved throughput including drain
+by 6.3% and median latency by 15.1%; it is not a replicated capacity claim.
+Retained histories confirm eleven to ten activities and eight to seven appends
+per simple run; Temporal history reads fall from twelve to eleven and execution
+updates from 48 to 44. Queueing still dominates sampled cycles. Per-task queue
+latency does not improve, so the evidence supports reduced serial work, not a
+claim that persistence or worker matching has been fixed.
+
+Workflow unit tests, cancellation/event visibility, steering, queued-run checks,
+forty retained-history replays and the exact workspace Clippy gate pass. The
+queued-run fixture now explicitly requests zero tool rounds: its existing
+one-generation assertion failed in both control and variant because default
+blob tools allowed an extra tool turn. Initial failures and corrected results
+are retained. The local report and raw evidence are prepared for Engineer owner
+publication on issue #121 in the existing PR #122 workstream; nothing is
+committed, pushed, commented or merged by this experiment. Earlier publication
+status and all previous evidence remain intact. The next recommended diagnostic
+is a bounded worker-polling/matching comparison, not a broader workflow redesign.
