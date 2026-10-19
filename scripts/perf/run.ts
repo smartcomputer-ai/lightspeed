@@ -163,25 +163,40 @@ const readers = Array.from({ length: config.readers }, async (_, i) => {
     }
   }
 });
-function pgSnapshot() {
+function pgSnapshot(
+  container = "lightspeed-postgres",
+  user = "lightspeed",
+  database = process.env.PERF_PG_DATABASE ?? "lightspeed",
+) {
   return execFileSync(
     "docker",
     [
       "exec",
-      "lightspeed-postgres",
+      container,
       "psql",
       "-U",
-      "lightspeed",
+      user,
       "-d",
-      "lightspeed",
+      database,
       "--csv",
       "-c",
-      "SELECT queryid,calls,total_exec_time,rows,shared_blks_hit,shared_blks_read,query FROM pg_stat_statements ORDER BY queryid;",
+      "SELECT queryid,calls,total_exec_time,rows,shared_blks_hit,shared_blks_read,query FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY queryid;",
     ],
     { encoding: "utf8" },
   );
 }
-await writeFile(output + "/pg-before.csv", pgSnapshot());
+async function snapshots(phase: string) {
+  await writeFile(`${output}/pg-${phase}.csv`, pgSnapshot());
+  if (process.env.PERF_TEMPORAL_POSTGRES === "1") {
+    for (const db of ["temporal", "temporal_visibility"]) {
+      await writeFile(
+        `${output}/${db}-${phase}.csv`,
+        pgSnapshot("lightspeed-perf-temporal-postgres", "temporal", db),
+      );
+    }
+  }
+}
+await snapshots("before");
 const before = await (await fetch(config.simulator + "/metrics")).json();
 const lag = monitorEventLoopDelay({ resolution: 10 });
 lag.enable();
@@ -215,7 +230,7 @@ const samples = await schedule(config, async (sample, signal) => {
     sample.outcome = "completed";
   }
 });
-await writeFile(output + "/pg-after.csv", pgSnapshot());
+await snapshots("after");
 readerController.abort();
 await Promise.all(readers);
 lag.disable();

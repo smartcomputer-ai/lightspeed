@@ -420,3 +420,40 @@ step and recovered only after runtime restart. Later missing SDK observations
 are marked unavailable in the report. A separate pool-timing diagnostic at
 512 reads per second measured 0.31 ms p99 acquisition wait; it does not explain
 the higher-load descriptor failures or establish a production pool size.
+
+### PostgreSQL Temporal follow-up
+
+The same issue and PR workstream now includes an isolated PostgreSQL-backed
+Temporal setup under `scripts/perf/temporal-postgres/`. History and visibility
+use separate databases on a dedicated PostgreSQL container; Lightspeed uses a
+new database on the existing local PostgreSQL service. Named volumes and prior
+SQLite results are preserved. Images are pinned by digest, and the setup records
+schema verification, effective configuration, resource placement, per-database
+query snapshots, server/SDK metrics and PostgreSQL wait samples. Optional pprof
+collection is reserved for separately labeled diagnostic repeats.
+
+The available official server image reports Temporal 1.29.3, while the initial
+SQLite dev server reported 1.32.0. Consequently this is a topology comparison,
+not a controlled attribution of performance differences to the persistence
+engine alone. The version difference and all unavailable measurements must
+remain explicit in the follow-up report. No production behavior or optimization
+is changed. This follow-up is carried on existing PR #122, and its separate
+results report is published on issue #121.
+
+The follow-up completed nineteen measured steps, including clean repeats and a
+separately profiled rapid-loop step. All 3,921 submitted agent runs completed.
+At 40 offered rapid-loop runs per second, including-drain throughput was 16.30
+and 16.32 runs per second in two unprofiled trials, compared with 3.88 in the
+initial SQLite topology. Mature histories completed 336 runs at that offered
+rate with the unchanged sixteen-session bound. The reader descriptor ceiling
+recurred: 512 reads per second completed cleanly, while 2,048 produced transport
+failures and gateway descriptor-exhaustion errors; no unfinished work remained
+after drain. Temporal CPU/allocation profiles and database-specific query
+statistics are retained with the follow-up report under
+`/workspace/artifacts/issue-121-temporal-postgres`. The evidence identifies
+workflow queueing and persistence/RPC volume, reader polling/descriptor costs,
+and transient server allocations as investigation targets, not completed
+optimizations. Version matching, Platform-authenticated reads and Rust CPU/
+allocation attribution remain gaps. The updated findings, reproduction commands
+and accessible raw-data links are published in a separate follow-up comment on
+issue #121. No tuning was performed; await explicit follow-up before further work.

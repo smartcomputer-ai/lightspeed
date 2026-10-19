@@ -22,7 +22,7 @@ for path in sorted(root.glob('sweep/*/results.json')):
     origin=r['samples'][0]['scheduledMs']; stop=origin+r['config']['durationMs']
     item['outstandingAtArrivalStop']=sum(s.get('dispatchMs',float('inf'))<=stop and s.get('settledMs',s.get('terminalMs',float('inf')))>stop for s in r['samples'])
     item['containers']={}
-    for name in ['lightspeed-postgres','lightspeed-temporal','lightspeed-minio']:
+    for name in ['lightspeed-postgres','lightspeed-temporal','lightspeed-minio','lightspeed-perf-temporal','lightspeed-perf-temporal-postgres']:
         cs=[c for c in container_samples if c['Name']==name and start<=c['time']<=end]
         if cs:item['containers'][name]={'meanCpuPercent':sum(float(c['CPUPerc'].strip('%')) for c in cs)/len(cs),'memorySamples': [cs[0]['MemUsage'],cs[-1]['MemUsage']],'blockIOSamples':[cs[0]['BlockIO'],cs[-1]['BlockIO']]}
 

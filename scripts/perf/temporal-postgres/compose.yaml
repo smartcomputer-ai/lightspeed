@@ -1,0 +1,46 @@
+# Isolated synthetic performance deployment; never removes existing dev volumes.
+name: lightspeed-perf-postgres
+services:
+  postgres:
+    image: postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    container_name: lightspeed-perf-temporal-postgres
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: local-perf-only
+    command: [postgres, -c, shared_preload_libraries=pg_stat_statements, -c, track_io_timing=on]
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U temporal]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  temporal:
+    # Temporal 1.29.3; digest pins the measured image, including schema tools.
+    image: temporalio/auto-setup@sha256:9be7b8d98f60d00f4f2ff74731c071a17848d8182bbc8429e314a24c94ea105b
+    container_name: lightspeed-perf-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: local-perf-only
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      ENABLE_ES: "false"
+      NUM_HISTORY_SHARDS: "4"
+      SQL_MAX_CONNS: "20"
+      SQL_MAX_IDLE_CONNS: "20"
+      SQL_VIS_MAX_CONNS: "10"
+      SQL_VIS_MAX_IDLE_CONNS: "10"
+      PPROF_PORT: "7936"
+      PROMETHEUS_ENDPOINT: 0.0.0.0:8000
+    ports:
+      - 127.0.0.1:17233:7233
+      - 127.0.0.1:19093:8000
+volumes:
+  temporal-postgres-data:

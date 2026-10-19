@@ -14,4 +14,8 @@ while True:
         try:
             row[name]=urllib.request.urlopen(url,timeout=.5).read().decode()
         except Exception as e: row[name+'_error']=str(e)
+    if os.environ.get('PERF_TEMPORAL_POSTGRES') == '1':
+        try:
+            row['temporal_server']=urllib.request.urlopen('http://127.0.0.1:19093/metrics',timeout=.5).read().decode()
+        except Exception as e: row['temporal_server_error']=str(e)
     out.write(json.dumps(row)+'\n');time.sleep(1)
