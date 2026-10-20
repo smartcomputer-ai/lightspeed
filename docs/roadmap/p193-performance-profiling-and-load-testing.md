@@ -584,7 +584,7 @@ Tracing and stack capture perturb performance, and fresh fixture IDs change
 shard placement; instrumented throughput is not a new capacity claim. The next
 recommended experiment is a bounded shard-I/O-concurrency configuration A/B,
 with database conflicts, lock waits and task latency checked before adoption.
-No tuning, broader batching or runtime redesign is made here. The local short
-report, correlated rows, sanitized traces, stacks, query snapshots and commands
-are prepared for Engineer owner publication in the same issue #121 / PR #122
-workstream. Changes remain uncommitted; no push, issue comment or merge occurs.
+No tuning, broader batching or runtime redesign is made here. The concise report,
+correlated rows, sanitized traces, stacks, query snapshots and commands are
+published on issue #121. Opt-in diagnostic tooling is included in existing PR
+#122; no workflow behavior change is included, and the PR remains unmerged.
