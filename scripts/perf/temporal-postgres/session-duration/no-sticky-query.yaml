@@ -1,0 +1,8 @@
+history.shardIOConcurrency:
+  - value: 2
+matching.rps:
+  - value: 6000
+system.enableActivityEagerExecution:
+  - value: true
+system.enableStickyQuery:
+  - value: false

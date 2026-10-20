@@ -1,0 +1,7 @@
+# Opt-in synthetic session-duration experiment; production defaults are unchanged.
+services:
+  temporal:
+    environment:
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/perf-duration.yaml
+    volumes:
+      - ./session-duration/${PERF_TEMPORAL_DURATION_PROFILE:?select profile}.yaml:/etc/temporal/config/perf-duration.yaml:ro

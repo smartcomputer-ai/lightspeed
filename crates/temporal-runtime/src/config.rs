@@ -90,6 +90,29 @@ pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
 /// gateway-only deployments that want less set `LIGHTSPEED_BLOB_CACHE_BYTES`.
 pub const BLOB_CACHE_DEFAULT_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Optional fixed workflow poller count for the sessions worker. Leaving this
+/// unset preserves the SDK's default and server capability negotiation.
+pub fn session_workflow_pollers_from_env() -> anyhow::Result<Option<usize>> {
+    parse_session_workflow_pollers(optional_env("LIGHTSPEED_SESSION_WORKFLOW_POLLERS").as_deref())
+}
+
+fn parse_session_workflow_pollers(value: Option<&str>) -> anyhow::Result<Option<usize>> {
+    value
+        .map(|value| {
+            let count = value.parse::<usize>().map_err(|error| {
+                anyhow::anyhow!("invalid LIGHTSPEED_SESSION_WORKFLOW_POLLERS: {error}")
+            })?;
+            // The sessions worker caches workflows, which requires both sticky
+            // and normal queue pollers.
+            anyhow::ensure!(
+                count >= 2,
+                "LIGHTSPEED_SESSION_WORKFLOW_POLLERS must be at least 2"
+            );
+            Ok(count)
+        })
+        .transpose()
+}
+
 /// Blobs larger than this bypass the cache so one media blob cannot flush
 /// the working set of small hot blobs (context entries, schemas, prompts).
 const BLOB_CACHE_MAX_ENTRY_BYTES: usize = 2 * 1024 * 1024;
@@ -394,7 +417,10 @@ pub async fn postgres_pool_from_env() -> anyhow::Result<PgPool> {
         .map_err(|_| {
             anyhow::anyhow!("LIGHTSPEED_POSTGRES_URL or LIGHTSPEED_TEST_POSTGRES_URL must be set")
         })?;
-    Ok(PgPoolOptions::new().connect(&database_url).await?)
+    Ok(PgPoolOptions::new()
+        .acquire_time_level(log::LevelFilter::Debug)
+        .connect(&database_url)
+        .await?)
 }
 
 /// Single-universe store bound to `LIGHTSPEED_PG_UNIVERSE_ID`. Used by
@@ -457,6 +483,21 @@ fn optional_env(key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn session_workflow_pollers_preserve_default_and_require_cached_worker_minimum() {
+        assert_eq!(super::parse_session_workflow_pollers(None).unwrap(), None);
+        assert_eq!(
+            super::parse_session_workflow_pollers(Some("20")).unwrap(),
+            Some(20)
+        );
+        assert_eq!(
+            super::parse_session_workflow_pollers(Some("2")).unwrap(),
+            Some(2)
+        );
+        for value in ["0", "1", "-1", "many", "999999999999999999999999"] {
+            assert!(super::parse_session_workflow_pollers(Some(value)).is_err());
+        }
+    }
     use super::*;
 
     #[test]

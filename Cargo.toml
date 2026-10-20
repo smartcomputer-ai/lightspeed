@@ -6,6 +6,7 @@ members = [
     "crates/environment-provider-incus",
     "crates/environment-protocol",
     "crates/llm-clients",
+    "crates/llm-simulator",
     "crates/api",
     "crates/auth",
     "crates/bots",

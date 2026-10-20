@@ -55,6 +55,7 @@ tokio = { version = "1", features = ["fs", "macros", "net", "process", "rt-multi
 tonic = "0.14"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tools = { path = "../tools" }
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 thiserror = "2"

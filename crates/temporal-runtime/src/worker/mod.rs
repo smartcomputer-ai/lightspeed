@@ -64,7 +64,30 @@ pub use temporal_workflow::{
 };
 
 pub fn worker_runtime() -> anyhow::Result<Runtime> {
-    Ok(Runtime::from_current_tokio(RuntimeOptions::default())?)
+    let options = if let Ok(address) = std::env::var("LIGHTSPEED_TEMPORAL_METRICS_BIND") {
+        use temporalio_common::telemetry::{
+            PrometheusExporterOptions, TelemetryOptions, start_prometheus_metric_exporter,
+        };
+        let exporter = start_prometheus_metric_exporter(
+            PrometheusExporterOptions::builder()
+                .socket_addr(address.parse()?)
+                .build(),
+        )?;
+        RuntimeOptions::builder()
+            .telemetry_options(
+                TelemetryOptions::builder()
+                    .metrics(
+                        exporter.meter
+                            as std::sync::Arc<dyn temporalio_common::telemetry::metrics::CoreMeter>,
+                    )
+                    .build(),
+            )
+            .build()
+            .map_err(anyhow::Error::msg)?
+    } else {
+        RuntimeOptions::default()
+    };
+    Ok(Runtime::from_current_tokio(options)?)
 }
 
 /// The `sessions` worker runs session, environment-job, and sub-agent
@@ -75,7 +98,14 @@ pub fn sessions_worker(
     task_queue: String,
     activities: WorkerActivities,
 ) -> anyhow::Result<Worker> {
+    let pollers = crate::config::session_workflow_pollers_from_env()?;
+    if let Some(count) = pollers {
+        tracing::info!(workflow_pollers = count, "sessions worker poller override");
+    }
     let worker_options = WorkerOptions::new(task_queue)
+        .maybe_workflow_task_poller_behavior(
+            pollers.map(temporalio_sdk::runtime::PollerBehavior::SimpleMaximum),
+        )
         .register_workflow::<AgentSessionWorkflow>()?
         .register_workflow::<temporal_workflow::TranscriptionWorkflow>()?
         .register_workflow::<EnvironmentJobWorkflow>()?

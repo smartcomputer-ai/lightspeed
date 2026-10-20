@@ -1,0 +1,54 @@
+{
+  "perf-text": {
+    "delay_ms": 10,
+    "jitter_ms": 2,
+    "seed": 121,
+    "response_bytes": 256,
+    "prompt_tokens": 100,
+    "completion_tokens": 64
+  },
+  "perf-history": {
+    "delay_ms": 10,
+    "seed": 121,
+    "response_bytes": 8192,
+    "prompt_tokens": 8192,
+    "completion_tokens": 2048,
+    "cached_tokens": 4096
+  },
+  "perf-rate-limit": {
+    "delay_ms": 0,
+    "seed": 121,
+    "response_bytes": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "failure": {
+      "status": 429,
+      "code": "rate_limit_exceeded",
+      "retry_after_seconds": 1
+    }
+  },
+  "perf-unavailable": {
+    "delay_ms": 0,
+    "seed": 121,
+    "response_bytes": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "failure": {
+      "status": 503,
+      "code": "unavailable",
+      "retry_after_seconds": 1
+    }
+  },
+  "perf-context-limit": {
+    "delay_ms": 0,
+    "seed": 121,
+    "response_bytes": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "failure": {
+      "status": 400,
+      "code": "context_length_exceeded",
+      "retry_after_seconds": 0
+    }
+  }
+}
