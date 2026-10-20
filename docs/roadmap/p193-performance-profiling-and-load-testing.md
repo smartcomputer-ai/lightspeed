@@ -550,3 +550,41 @@ publication on issue #121 in the existing PR #122 workstream; nothing is
 committed, pushed, commented or merged by this experiment. Earlier publication
 status and all previous evidence remain intact. The next recommended diagnostic
 is a bounded worker-polling/matching comparison, not a broader workflow redesign.
+
+### Correlated Temporal handoff diagnostic
+
+The next bounded follow-up retains the unchanged session workflow and adds an
+opt-in local OTLP collector, task-ID correlation, and timed Temporal goroutine
+snapshots. PostgreSQL/pgx remains the baseline for history and visibility. Five
+accepted load steps completed 2,018 runs without failures or unfinished work.
+Two startup attempts are excluded and retained: a release-build ordering mistake
+started the prior experimental binary, and its pending patch-marked workflows
+could not replay on the unchanged worker. A dedicated diagnostic task queue
+isolates the accepted comparisons without resetting earlier state.
+
+Native RPC/persistence spans distinguish worker polling, Matching arrival and
+selection, History start, SDK activation, and completion RPC intervals. At rapid
+saturation the selected workflow poll arrives about 108–117 ms after Matching
+receives the task, but History start follows that poll within about one ms.
+Next polls continue arriving promptly. Most outstanding workflow polls are
+already assigned to other tasks; spare execution slots do not establish spare
+polling capacity. Activity waits differ across Matching partitions.
+
+The strongest new server-side evidence is shard I/O serialization: ten timed
+snapshots contain 112 handoff stacks blocked on the shard I/O semaphore before
+`UpdateWorkflowExecution`. The pinned Temporal version defaults to one such
+operation per shard. The repeat retains 28,464 updates with no within-shard
+overlap; the busiest of four shards spends about 90% of the window inside the
+persistence wrapper. Correlated RPCs spend about 10–14 ms before their first
+persistence span, while the nested persistence union is about 3–4 ms. These
+measurements support a concrete deployment constraint, not an inherent Temporal
+latency floor or proof that PostgreSQL query execution dominates every wait.
+
+Tracing and stack capture perturb performance, and fresh fixture IDs change
+shard placement; instrumented throughput is not a new capacity claim. The next
+recommended experiment is a bounded shard-I/O-concurrency configuration A/B,
+with database conflicts, lock waits and task latency checked before adoption.
+No tuning, broader batching or runtime redesign is made here. The local short
+report, correlated rows, sanitized traces, stacks, query snapshots and commands
+are prepared for Engineer owner publication in the same issue #121 / PR #122
+workstream. Changes remain uncommitted; no push, issue comment or merge occurs.

@@ -39,7 +39,9 @@ cat "/proc/$runtime_pid/limits" > "$out/runtime-limits.txt"
 printf '%s\n' "$runtime_pid" > "$out/runtime.pid"
 printf '%s\n' "$simulator_pid" > "$out/simulator.pid"
 sha256sum "${PERF_RUNTIME_BINARY:-target/release/lightspeed-runtime}" target/release/llm-simulator > "$out/binary-sha256.txt"
-printf 'driver=%s\nruntime_soft_fds=%s\n' "$driver" "$fds" > "$out/arm.txt"
+printf 'driver=%s\nruntime_soft_fds=%s\ntask_queue=%s\nserver_tracing=%s\nlog_format=%s\n' \
+  "$driver" "$fds" "$LIGHTSPEED_TASK_QUEUE" "${PERF_TEMPORAL_TRACE:-0}" \
+  "${LIGHTSPEED_LOG_FORMAT:-compact}" > "$out/arm.txt"
 docker exec lightspeed-perf-temporal cat /etc/temporal/config/docker.yaml | sed '/password:/d' > "$out/temporal-effective-redacted.yaml"
 if [[ -n "${PERF_RESUME_FIXTURE:-}" ]]; then
   npx tsx scripts/perf/resume-fixture.ts "$PERF_RESUME_FIXTURE" "$out/continuity.json" > "$out/continuity.log" 2>&1

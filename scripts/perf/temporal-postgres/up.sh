@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
-docker compose -f scripts/perf/temporal-postgres/compose.yaml up -d
+compose=(-f scripts/perf/temporal-postgres/compose.yaml)
+if [[ "${PERF_TEMPORAL_TRACE:-0}" == 1 ]]; then
+  compose+=(-f scripts/perf/temporal-postgres/handoffs/trace.compose.yaml)
+fi
+docker compose "${compose[@]}" up -d
 for attempt in {1..90}; do
   if docker exec lightspeed-perf-temporal temporal --address temporal:7233 operator namespace describe --namespace default >/dev/null 2>&1; then
     for db in temporal temporal_visibility; do
