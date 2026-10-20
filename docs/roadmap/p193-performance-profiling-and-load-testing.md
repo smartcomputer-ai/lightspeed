@@ -603,3 +603,32 @@ selects 1 or 2 without changing the default; `experiment.sh` records the effecti
 setting per arm. This configuration and the result are included in existing PR
 #122, with the concise report and raw traces linked from issue #121. A higher
 Matching RPS configuration remains a separate experiment, not adopted here.
+
+### Full session-duration diagnosis
+
+A tested PostgreSQL/pgx configuration profile combined shard I/O concurrency 2,
+Matching RPS 6,000, eager activity delivery, and 20 session-workflow pollers.
+Against the same rapid-load baseline, completed throughput rose 19.44 to 38.69
+runs/s including drain and median completion fell 2.88s to 1.20s; the combined
+profile also improved active-reader and mature-history rates. This is a bundled
+profile result, not an isolated effect estimate for each knob. Production
+settings remain unchanged.
+
+The session workflow still emits eleven serial activities per simple text run,
+including eight event appends. The measured configuration reduced queue time;
+no workflow-boundary rewrite was adopted. A Temporal 1.29.3 query-result
+registration race was reproduced with a deterministic test and a local upstream
+patch: a fast response can be rejected before its waiter is registered, causing
+a sticky-query timeout before run admission. The test patch is preserved for
+upstream review; the pinned/default Temporal image was not replaced. Faster
+admission polling and disabling sticky queries were tested and rejected on
+throughput/tail tradeoffs. The concise update report, exact A/B results and
+accessible evidence are published on issue #121 and its data-only release. PR
+#122 remains the same open, unmerged review workstream.
+
+The optional `LIGHTSPEED_SESSION_WORKFLOW_POLLERS` setting exposes the tested
+workflow-poller profile without changing the SDK default when unset. A Temporal
+1.29.3 query-result registration patch and deterministic regression test are
+retained as upstream review artifacts, not included in the pinned/default server
+image or Lightspeed runtime. Prefer an upstream Temporal release with the fix
+before carrying a forked server patch into deployment.
