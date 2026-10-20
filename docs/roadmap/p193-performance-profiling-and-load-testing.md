@@ -598,5 +598,8 @@ average, but triggered 107/125 Matching RPS-limit rejections in the two variant
 arms and raised terminal p99 to 6.6–7.0 seconds. All 2,709 submitted runs
 completed; no sampled PostgreSQL lock/deadlock/rollback increase was observed.
 The isolated performance default remains one; no production setting changed.
-The result is reported on issue #121 with raw traces and a detailed report. A
-higher Matching RPS configuration is a separate experiment, not adopted here.
+The reproducible local overlay at `scripts/perf/temporal-postgres/shard-io/`
+selects 1 or 2 without changing the default; `experiment.sh` records the effective
+setting per arm. This configuration and the result are included in existing PR
+#122, with the concise report and raw traces linked from issue #121. A higher
+Matching RPS configuration remains a separate experiment, not adopted here.
