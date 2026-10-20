@@ -1,0 +1,7 @@
+# Local synthetic A/B only; base deployment and production defaults are unchanged.
+services:
+  temporal:
+    environment:
+      DYNAMIC_CONFIG_FILE_PATH: /etc/temporal/config/perf-shard-io.yaml
+    volumes:
+      - ./shard-io/${PERF_TEMPORAL_SHARD_IO_CONCURRENCY:?select 1 or 2}.yaml:/etc/temporal/config/perf-shard-io.yaml:ro

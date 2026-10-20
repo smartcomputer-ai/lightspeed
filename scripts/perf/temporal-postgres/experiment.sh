@@ -43,6 +43,10 @@ printf 'driver=%s\nruntime_soft_fds=%s\ntask_queue=%s\nserver_tracing=%s\nlog_fo
   "$driver" "$fds" "$LIGHTSPEED_TASK_QUEUE" "${PERF_TEMPORAL_TRACE:-0}" \
   "${LIGHTSPEED_LOG_FORMAT:-compact}" > "$out/arm.txt"
 docker exec lightspeed-perf-temporal cat /etc/temporal/config/docker.yaml | sed '/password:/d' > "$out/temporal-effective-redacted.yaml"
+if [[ -n "${PERF_TEMPORAL_SHARD_IO_CONCURRENCY:-}" ]]; then
+  docker exec lightspeed-perf-temporal cat /etc/temporal/config/perf-shard-io.yaml > "$out/temporal-dynamic.yaml"
+  printf 'shard_io_concurrency=%s\n' "$PERF_TEMPORAL_SHARD_IO_CONCURRENCY" >> "$out/arm.txt"
+fi
 if [[ -n "${PERF_RESUME_FIXTURE:-}" ]]; then
   npx tsx scripts/perf/resume-fixture.ts "$PERF_RESUME_FIXTURE" "$out/continuity.json" > "$out/continuity.log" 2>&1
 fi

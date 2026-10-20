@@ -588,3 +588,15 @@ No tuning, broader batching or runtime redesign is made here. The concise report
 correlated rows, sanitized traces, stacks, query snapshots and commands are
 published on issue #121. Opt-in diagnostic tooling is included in existing PR
 #122; no workflow behavior change is included, and the PR remains unmerged.
+
+### Temporal shard-I/O concurrency A/B
+
+A bounded PostgreSQL/pgx experiment changed only the local test-server setting
+`history.shardIOConcurrency`, in order 1/2/2/1. Raising it to two reduced
+per-shard semaphore waits and improved including-drain throughput by 14.6% on
+average, but triggered 107/125 Matching RPS-limit rejections in the two variant
+arms and raised terminal p99 to 6.6–7.0 seconds. All 2,709 submitted runs
+completed; no sampled PostgreSQL lock/deadlock/rollback increase was observed.
+The isolated performance default remains one; no production setting changed.
+The result is reported on issue #121 with raw traces and a detailed report. A
+higher Matching RPS configuration is a separate experiment, not adopted here.
