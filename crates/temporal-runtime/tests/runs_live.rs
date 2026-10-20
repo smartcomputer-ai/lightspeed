@@ -176,8 +176,10 @@ async fn temporal_live_queued_runs_return_promptly_and_run_in_order() -> anyhow:
     // once, are visible in the session view, can be cancelled while queued,
     // and start in order after the active run ends. Cancelling the active
     // run leaves the queued one untouched and it runs next.
+    // This session grants no tools; keep the fake provider text-only so this
+    // test isolates queue admission instead of failing an ungranted tool call.
     let (activities, counters) =
-        fake_worker_activities_for_run_control(Duration::from_secs(5), Duration::ZERO, 1).await?;
+        fake_worker_activities_for_run_control(Duration::from_secs(5), Duration::ZERO, 0).await?;
     run_with_live_worker(activities, move |client, task_queue, session_id| {
         run_queue_live_client(client, task_queue, session_id, counters)
     })
@@ -598,7 +600,27 @@ async fn run_queue_live_client(
     assert_eq!(first.status, api::RunStatus::Running);
 
     let queued_at = std::time::Instant::now();
-    let second = start_text_run(&api, &session_id, "second").await?;
+    let queued_request = RunStartParams {
+        session_id: session_id.as_str().to_owned(),
+        source: RunStartSource::Input {
+            items: vec![InputItem::Text {
+                provenance_ref: None,
+                origin: None,
+                text: "second".to_owned(),
+            }],
+        },
+        submission_id: Some("queued-retry".to_owned()),
+        config: None,
+        notify_on_terminal: None,
+    };
+    // Admission polling must still drain concurrent retries before returning,
+    // while acknowledging a queued run without waiting for active execution.
+    let (second, retry) = tokio::join!(
+        api.start_run(queued_request.clone()),
+        api.start_run(queued_request),
+    );
+    let second = second?.result.run;
+    assert_eq!(retry?.result.run.id, second.id);
     assert_eq!(second.status, api::RunStatus::Queued);
     assert!(
         queued_at.elapsed() < Duration::from_secs(3),

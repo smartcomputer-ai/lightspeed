@@ -39,13 +39,21 @@ cat "/proc/$runtime_pid/limits" > "$out/runtime-limits.txt"
 printf '%s\n' "$runtime_pid" > "$out/runtime.pid"
 printf '%s\n' "$simulator_pid" > "$out/simulator.pid"
 sha256sum "${PERF_RUNTIME_BINARY:-target/release/lightspeed-runtime}" target/release/llm-simulator > "$out/binary-sha256.txt"
+if [[ -n "${PERF_TEMPORAL_SERVER_BINARY:-}" ]]; then
+  sha256sum "$PERF_TEMPORAL_SERVER_BINARY" > "$out/server-binary-sha256.txt"
+fi
 printf 'driver=%s\nruntime_soft_fds=%s\ntask_queue=%s\nserver_tracing=%s\nlog_format=%s\n' \
   "$driver" "$fds" "$LIGHTSPEED_TASK_QUEUE" "${PERF_TEMPORAL_TRACE:-0}" \
   "${LIGHTSPEED_LOG_FORMAT:-compact}" > "$out/arm.txt"
+printf 'session_workflow_pollers=%s\n' "${LIGHTSPEED_SESSION_WORKFLOW_POLLERS:-SDK-default}" >> "$out/arm.txt"
 docker exec lightspeed-perf-temporal cat /etc/temporal/config/docker.yaml | sed '/password:/d' > "$out/temporal-effective-redacted.yaml"
 if [[ -n "${PERF_TEMPORAL_SHARD_IO_CONCURRENCY:-}" ]]; then
   docker exec lightspeed-perf-temporal cat /etc/temporal/config/perf-shard-io.yaml > "$out/temporal-dynamic.yaml"
   printf 'shard_io_concurrency=%s\n' "$PERF_TEMPORAL_SHARD_IO_CONCURRENCY" >> "$out/arm.txt"
+fi
+if [[ -n "${PERF_TEMPORAL_DURATION_PROFILE:-}" ]]; then
+  docker exec lightspeed-perf-temporal cat /etc/temporal/config/perf-duration.yaml > "$out/temporal-dynamic.yaml"
+  printf 'duration_profile=%s\n' "$PERF_TEMPORAL_DURATION_PROFILE" >> "$out/arm.txt"
 fi
 if [[ -n "${PERF_RESUME_FIXTURE:-}" ]]; then
   npx tsx scripts/perf/resume-fixture.ts "$PERF_RESUME_FIXTURE" "$out/continuity.json" > "$out/continuity.log" 2>&1

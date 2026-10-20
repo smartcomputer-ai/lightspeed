@@ -98,7 +98,14 @@ pub fn sessions_worker(
     task_queue: String,
     activities: WorkerActivities,
 ) -> anyhow::Result<Worker> {
+    let pollers = crate::config::session_workflow_pollers_from_env()?;
+    if let Some(count) = pollers {
+        tracing::info!(workflow_pollers = count, "sessions worker poller override");
+    }
     let worker_options = WorkerOptions::new(task_queue)
+        .maybe_workflow_task_poller_behavior(
+            pollers.map(temporalio_sdk::runtime::PollerBehavior::SimpleMaximum),
+        )
         .register_workflow::<AgentSessionWorkflow>()?
         .register_workflow::<temporal_workflow::TranscriptionWorkflow>()?
         .register_workflow::<EnvironmentJobWorkflow>()?
