@@ -60,6 +60,15 @@ const runView = (
   source: { type: "input", preview: text || null, previewTruncated: false },
 });
 
+const pendingApproval: NonNullable<SessionRunView["pendingApprovals"]>[number] = {
+  approvalId: "approval_1",
+  requestedAtMs: 3,
+  subject: {
+    kind: "mcpToolCall", serverId: "mail", serverLabel: "Mail", toolName: "send",
+    argumentsRef: "sha256:args", argumentsPreview: "{}",
+  },
+};
+
 describe("transcript history windows", () => {
   it("keeps completion output identity across live pages, missing output, and prepended history", () => {
     const message = (id: string, turnId: string): SessionItem => item(id, { type: "message", role: "assistant" }, {
@@ -715,6 +724,10 @@ describe("session transcript run control", () => {
     ]);
     expect(state.activeRun).toMatchObject({ runId: "run_1", label: "cancelling", cancelling: true });
 
+    const stale = reconcileRuns(state, [runView("run_1", "parked")]);
+    expect(stale).toBe(state);
+    expect(stale.activeRun?.label).toBe("cancelling");
+
     state = applyEvents(state, [event(6, { type: "runCancelled", runId: "run_1" })]);
     expect(state.activeRun).toBeNull();
     expect(state.entries.at(-1)).toMatchObject({
@@ -730,14 +743,7 @@ describe("session transcript run control", () => {
         type: "approvalRequested",
         runId: "run_1",
         approvalId: "approval_1",
-        subject: {
-          kind: "mcpToolCall",
-          serverId: "mail",
-          serverLabel: "Mail",
-          toolName: "send",
-          argumentsRef: "sha256:args",
-          argumentsPreview: "{}",
-        },
+        subject: pendingApproval.subject,
       }),
       event(4, { type: "approvalRunParked", runId: "run_1" }),
     ]);
@@ -748,7 +754,7 @@ describe("session transcript run control", () => {
     });
     expect(runInProgress(state)).toBe(true);
 
-    state = reconcileRuns(state, [runView("run_1", "parked")]);
+    state = reconcileRuns(state, [{ ...runView("run_1", "parked"), pendingApprovals: [pendingApproval] }]);
     expect(state.activeRun?.label).toBe("approval required");
 
     state = applyEvents(state, [
@@ -761,6 +767,52 @@ describe("session transcript run control", () => {
     ]);
     expect(state.activeRun).not.toBeNull();
     expect(state.runRevision).toBeGreaterThan(2);
+  });
+
+  it.each([
+    { name: "missing", pendingApprovals: undefined },
+    { name: "empty", pendingApprovals: [] },
+  ])("restores parked tool waits with $name approvals", ({ pendingApprovals }) => {
+    const run = { ...runView("run_1", "parked"), pendingApprovals };
+    const queued = applyEvents(emptyTranscript(), [event(1, { type: "runAccepted", runId: "run_1" })]);
+    const running = applyEvents(emptyTranscript(), [event(1, { type: "runStarted", runId: "run_1" })]);
+    for (const previous of [emptyTranscript(), queued, running]) {
+      const state = reconcileRuns(previous, [run]);
+      expect(state.activeRun).toMatchObject({ runId: "run_1", label: "waiting for tools", cancelling: false });
+      expect(runInProgress(state)).toBe(true);
+      expect(state.queuedRuns).toEqual([]);
+      expect(reconcileRuns(state, [run])).toBe(state);
+    }
+  });
+
+  it("preserves a deferred environment job's waiting label across session refreshes and resumes it", () => {
+    let state = applyEvents(emptyTranscript(), [
+      event(1, { type: "runStarted", runId: "run_1" }),
+      event(2, { type: "toolBatchStarted", runId: "run_1", calls: [
+        { callId: "job", toolId: "env.job_run", toolName: "job_run", argumentsRef: "sha256:args" },
+      ] }),
+      event(3, { type: "toolBatchDeferred", runId: "run_1" }),
+    ]);
+    expect(state.activeRun?.label).toBe("waiting for tools");
+    state = reconcileRuns(state, [runView("run_1", "parked")]);
+    expect(state.activeRun?.label).toBe("waiting for tools");
+    expect(state.entries[0]).toMatchObject({ kind: "tool-group", status: "waiting" });
+
+    state = applyEvents(state, [event(4, { type: "toolBatchResumed", runId: "run_1" })]);
+    expect(state.activeRun?.label).toBe("running tools");
+    expect(state.entries[0]).toMatchObject({ kind: "tool-group", status: "running" });
+  });
+
+  it("uses pending approvals to distinguish approval waits from tool waits in snapshots", () => {
+    const run = { ...runView("run_1", "parked"), pendingApprovals: [pendingApproval] };
+    let state = reconcileRuns(emptyTranscript(), [run]);
+    expect(state.activeRun?.label).toBe("approval required");
+
+    state = reconcileRuns(state, [runView("run_1", "parked")]);
+    expect(state.activeRun?.label).toBe("waiting for tools");
+
+    state = reconcileRuns(state, [run]);
+    expect(state.activeRun?.label).toBe("approval required");
   });
 
   it("folds attachments and text into one input band, text documents as chips", () => {
