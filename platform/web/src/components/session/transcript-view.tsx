@@ -206,23 +206,26 @@ export function UserBand({
   return (
     <Message>
       <MessageContent>
-        <Bubble
-          variant="muted"
-          className={cn(
-            "w-full max-w-full",
-            event && "*:data-[slot=bubble-content]:border-l-2 *:data-[slot=bubble-content]:border-l-teal-600/60 *:data-[slot=bubble-content]:rounded-l-sm dark:*:data-[slot=bubble-content]:border-l-teal-300/50",
-          )}
-        >
+        <Bubble variant="muted" className="w-full max-w-full">
           <BubbleContent className="w-full">
             {event && (
-              <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                {event.source?.startsWith("bot:")
-                  ? <BotIcon size={14} className="shrink-0 text-teal-700 dark:text-teal-300" />
-                  : <Inbox className="size-3.5 shrink-0 text-teal-700 dark:text-teal-300" />}
-                <span className="font-medium text-foreground">{eventSourceLabel(event.source, links.botName)}</span>
-                {event.kind && <><span aria-hidden="true">·</span><span className="font-mono text-[11px]">{event.kind}</span></>}
-                {event.seq && <><span aria-hidden="true">·</span><span>#{event.seq}</span></>}
-                {event.time && <span className="ml-auto tabular-nums">{event.time}</span>}
+              <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-foreground">
+                    {event.source?.startsWith("bot:")
+                      ? <BotIcon size={14} className="shrink-0 text-teal-700 dark:text-teal-300" />
+                      : <Inbox className="size-3.5 shrink-0 text-teal-700 dark:text-teal-300" />}
+                    <span className="[overflow-wrap:anywhere]">{eventSourceLabel(event.source, links.botName)}</span>
+                  </span>
+                  {event.kind && <><span aria-hidden="true">·</span><span className="font-mono text-[11px] [overflow-wrap:anywhere]">{event.kind}</span></>}
+                </div>
+                {(event.seq || event.time) && (
+                  <span className="ml-auto inline-flex shrink-0 items-center gap-2 tabular-nums">
+                    {event.seq && <span>#{event.seq}</span>}
+                    {event.seq && event.time && <span aria-hidden="true">·</span>}
+                    {event.time && <span>{event.time}</span>}
+                  </span>
+                )}
               </div>
             )}
             <div
