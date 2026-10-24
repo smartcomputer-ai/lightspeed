@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SecretGrant, type SecretProvider, type SecretsInventory } from "@/api";
 import { subscriptionAccountLabel, subscriptionProviderOf } from "@/lib/subscriptions";
-import { modelProviderDefinition, type ModelProviderKind } from "./catalog";
+import type { ModelProviderKind } from "./catalog";
+import { modelProviderStatus, subscriptionStatus, type ResourceStatusInfo } from "@/lib/resource-status";
 
 /// One connected model provider as the list shows it. Each variant keeps its
 /// source record so the details dialog can render kind-specific content.
@@ -9,9 +10,11 @@ export type ConnectedModelProvider = {
   id: string;
   title: string;
   subtitle: string;
-  /// The list's Type column.
-  type: string;
-  status: ModelProviderStatus;
+  subtitleMono: boolean;
+  connection: string;
+  connectionDescription?: string;
+  status: ResourceStatusInfo;
+  createdAtMs: number;
   updatedAtMs: number;
 } & (
   | {
@@ -26,11 +29,9 @@ export type ConnectedModelProvider = {
     }
 );
 
-export type ModelProviderStatus = "active" | "attention" | "disabled";
-
 /// Every model provider row in the universe inventory, including legacy and
-/// OAuth-configured rows no add form creates, followed by coding-agent
-/// subscriptions that are still connected.
+/// OAuth-configured rows no add form creates, and connected coding-agent
+/// subscriptions, sorted by their displayed name.
 export function connectedModelProviders(
   inventory: SecretsInventory | undefined,
   subscriptions: SecretGrant[] | undefined,
@@ -38,7 +39,6 @@ export function connectedModelProviders(
   const grants = inventory?.grants ?? [];
   const providers = (inventory?.providers ?? [])
     .slice()
-    .sort((a, b) => a.providerId.localeCompare(b.providerId) || a.credentialId.localeCompare(b.credentialId))
     .map((provider): ConnectedModelProvider => {
       const builtIn = provider.providerId === "openai" || provider.providerId === "anthropic";
       const config = provider.config;
@@ -47,26 +47,24 @@ export function connectedModelProviders(
         : undefined;
       const common = {
         id: `model-provider:${provider.credentialId}`,
-        status: providerStatus(provider, oauthGrant),
+        status: modelProviderStatus(provider, oauthGrant),
+        connection: config.type === "modelOAuth" ? "OAuth" : config.type === "modelEndpoint" ? "No authentication" : "API key",
+        subtitleMono: true,
+        createdAtMs: provider.createdAtMs,
         updatedAtMs: provider.updatedAtMs,
         provider,
         oauthGrant,
       };
       if (builtIn && config.type === "modelApiKey") {
         const kind = provider.providerId === "openai" ? "openAiApiKey" : "anthropicApiKey";
-        const name = modelProviderDefinition(kind).name;
-        return { ...common, kind, title: name, subtitle: provider.displayName ?? provider.credentialId, type: name };
+        const name = provider.providerId === "openai" ? "OpenAI" : "Anthropic";
+        return { ...common, kind, title: provider.displayName || name, subtitle: provider.providerId };
       }
       return {
         ...common,
         kind: "openAiCompatible",
         title: provider.displayName ?? provider.providerId,
         subtitle: provider.providerId,
-        type: providerEndpoint(provider)
-          ? modelProviderDefinition("openAiCompatible").name
-          : config.type === "modelOAuth"
-            ? "OAuth connection"
-            : "API key",
       };
     });
   const connectedSubscriptions = (subscriptions ?? [])
@@ -76,29 +74,23 @@ export function connectedModelProviders(
       if (!provider) return [];
       const kind: ModelProviderKind =
         provider === "anthropic" ? "anthropicSubscription" : "openAiSubscription";
-      const name = modelProviderDefinition(kind).name;
+      const name = provider === "anthropic" ? "Claude Code" : "Codex";
+      const account = subscriptionAccountLabel(grant);
       return [{
         kind,
         id: `subscription:${grant.grantId}`,
-        title: grant.displayName ?? name,
-        subtitle: subscriptionAccountLabel(grant) || grant.grantId,
-        type: name,
-        status: grant.status === "active" ? "active" : "attention",
+        title: grant.displayName || name,
+        subtitle: account || grant.grantId,
+        subtitleMono: !account,
+        connection: "Subscription",
+        connectionDescription: name,
+        status: subscriptionStatus(grant),
+        createdAtMs: grant.createdAtMs,
         updatedAtMs: grant.updatedAtMs,
         grant,
       }];
     });
-  return [...providers, ...connectedSubscriptions];
-}
-
-/// Usable for model calls: an active row under the id the runtime reads,
-/// with its credential when it needs one.
-function providerStatus(provider: SecretProvider, oauthGrant: SecretGrant | undefined): ModelProviderStatus {
-  if (provider.status === "disabled") return "disabled";
-  const credentialed =
-    provider.config.type === "modelEndpoint"
-    || (provider.config.type === "modelOAuth" ? oauthGrant?.status === "active" : provider.hasCredential);
-  return provider.status === "active" && provider.usableForModels && credentialed ? "active" : "attention";
+  return [...providers, ...connectedSubscriptions].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
 export function providerEndpoint(provider: SecretProvider) {
@@ -118,6 +110,8 @@ export function useModelProviders(universeId: string) {
   return {
     connected: connectedModelProviders(secrets.data, subscriptions.data),
     isLoading: subscriptions.isLoading || secrets.isLoading,
+    hasData: subscriptions.data !== undefined || secrets.data !== undefined,
+    isComplete: subscriptions.data !== undefined && secrets.data !== undefined,
     error: subscriptions.error ?? secrets.error ?? null,
   };
 }

@@ -7,9 +7,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PermissionIdentityProvider } from "@/lib/permissions";
 import { McpServersPage, mcpConnectionSummary } from "./McpServersPage";
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }));
+const mocks = vi.hoisted(() => ({ api: vi.fn(), role: "operator" }));
 vi.mock("@/api", async (original) => ({ ...await original<typeof import("@/api")>(), api: mocks.api }));
-vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: "operator", slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
+vi.mock("@/lib/universes", () => ({ useActiveUniverse: () => ({ universe: { id: "universe", role: mocks.role, slug: "test", name: "Test" }, slug: "test", isLoading: false }) }));
 // Every select becomes a native control named by its trigger; jsdom cannot lay out the popup.
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
@@ -40,22 +40,32 @@ vi.mock("@/components/ui/select", async () => {
 const saved = {
   serverId: "tools", displayName: "Research tools", serverUrl: "https://example.test/mcp", defaultServerLabel: "tools",
   execution: "native", exposure: "search", approval: "never", allowPrivateNetwork: false, revision: 4,
-  authPolicy: { type: "none" }, status: "disabled", allowedTools: null,
+  authPolicy: { type: "none" }, status: "disabled", allowedTools: null, createdAtMs: 1, updatedAtMs: 2,
 };
+let servers: typeof saved[];
 let root: Root;
 let container: HTMLDivElement;
 let client: QueryClient;
 beforeEach(() => {
   vi.useFakeTimers();
+  servers = [saved];
+  mocks.role = "operator";
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("PointerEvent", MouseEvent);
-  mocks.api.mockReset().mockImplementation(async (method: string, path: string) => {
-    if (method === "GET" && path.endsWith("/mcp-servers")) return [saved];
+  mocks.api.mockReset().mockImplementation(async (method: string, path: string, body?: Partial<typeof saved>) => {
+    if (method === "GET" && path.endsWith("/mcp-servers")) return servers;
     if (path.endsWith("/auth-grants")) return [];
     if (path.endsWith("/discover-auth")) return { oauth: null };
     if (path.endsWith("/tools/discover")) return { status: "success", tools: [] };
     if (method === "POST" && path.endsWith("/mcp-servers")) return { ...saved, serverId: "github" };
-    if (method === "PUT") return saved;
+    if (method === "PUT") {
+      const next = { ...saved, ...body };
+      servers = [next];
+      return next;
+    }
+    if (method === "DELETE") { servers = []; return saved; }
+    if (path.endsWith("/oauth/start")) return { flowId: "flow", serverRevision: 4, authorizeUrl: "https://example.test/authorize", expiresAtMs: Date.now() + 60_000 };
+    if (path.endsWith("/oauth/flows/flow")) return { flowId: "flow", status: "pending" };
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -81,7 +91,7 @@ async function show() {
   ));
   await settle();
 }
-const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+const dialog = () => [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!;
 const field = (selector: string) => dialog().querySelector(selector);
 const button = (text: string) =>
   [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text);
@@ -162,7 +172,8 @@ it("names the server first, then confirms the connection with everything else be
 
 it("edits on one page with the status switch as the first row", async () => {
   await show();
-  await click(container.querySelector<HTMLButtonElement>('[aria-label="Edit tools"]'));
+  await click(container.querySelector<HTMLButtonElement>('[aria-label="Details for Research tools"]'));
+  await click(button("Edit server"));
   expect(dialog().querySelector('[aria-label="MCP server creation progress"]')).toBeNull();
   const scroller = dialog().querySelector("form")!.firstElementChild!;
   const first = scroller.firstElementChild!;
@@ -188,4 +199,82 @@ it("summarizes OAuth details and private-network access only when they differ", 
   expect(mcpConnectionSummary({
     execution: "provider", exposure: "inject", approval: "never", allowPrivateNetwork: true, customOAuthSettings: 2,
   })).toBe("Model provider connects · no approval · private network allowed · 2 custom OAuth settings");
+});
+
+it("sorts by display name and gives readers inspectable details without management controls", async () => {
+  mocks.role = "viewer";
+  servers = [{ ...saved, serverId: "a", displayName: "Zulu" }, { ...saved, serverId: "z", displayName: "Alpha" }];
+  await show();
+  const table = container.querySelector('table[aria-label="MCP servers"]')!;
+  expect([...table.querySelectorAll("thead th")].map((cell) => cell.textContent)).toEqual(["Server", "URL", "Authentication", "Status", "Details"]);
+  expect([...table.querySelectorAll("tbody tr")].map((row) => row.querySelector("td [title]")?.getAttribute("title"))).toEqual(["Alpha", "Zulu"]);
+  expect(table.querySelectorAll("button")).toHaveLength(2);
+  const trigger = table.querySelector<HTMLButtonElement>('[aria-label="Details for Alpha"]')!;
+  await click(trigger);
+  expect(dialog().textContent).toContain("https://example.test/mcp");
+  expect(dialog().textContent).toContain("All advertised tools");
+  expect(button("Edit server")).toBeUndefined();
+  expect(button("Delete server")).toBeUndefined();
+  expect(button("Connect")).toBeUndefined();
+  await click(dialog().querySelector<HTMLButtonElement>('[data-slot="dialog-close"]'));
+  expect(document.activeElement).toBe(trigger);
+  expect(mocks.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+});
+
+it("keeps deletion in details, confirms it, and removes the selected server on success", async () => {
+  await show();
+  const table = container.querySelector("table")!;
+  expect(table.querySelectorAll("button")).toHaveLength(1);
+  await click(table.querySelector("button"));
+  await click(button("Delete server"));
+  expect(mocks.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
+  const confirmation = document.body.querySelector('[role="alertdialog"]')!;
+  expect(confirmation.textContent).toContain("Profiles referencing");
+  await click([...confirmation.querySelectorAll("button")].find((item) => item.textContent === "Delete server"));
+  expect(mocks.api.mock.calls.filter(([method]) => method === "DELETE")).toHaveLength(1);
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.textContent).toContain("No MCP servers yet");
+});
+
+it("retains details and shows the error when deletion fails", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) => {
+    if (method === "DELETE") throw new Error("Server is still in use");
+    return implementation(method, path, body);
+  });
+  await show();
+  await click(container.querySelector("tbody button"));
+  await click(button("Delete server"));
+  const confirmation = document.body.querySelector('[role="alertdialog"]')!;
+  await click([...confirmation.querySelectorAll("button")].find((item) => item.textContent === "Delete server"));
+  expect(dialog().querySelector('[role="alert"]')?.textContent).toBe("Server is still in use");
+  expect(container.querySelectorAll("tbody tr")).toHaveLength(1);
+});
+
+it("connects OAuth from details and returns there after dismissing sign-in", async () => {
+  servers = [{ ...saved, authPolicy: { type: "requiredOAuth" }, status: "needsAuthConfig" }];
+  await show();
+  expect(button("Connect")).toBeUndefined();
+  expect(container.textContent).toContain("Needs sign-in");
+  await click(container.querySelector("tbody button"));
+  await click(button("Connect"));
+  expect(dialog().textContent).toContain("Connect Research tools with OAuth");
+  expect(mocks.api.mock.calls.filter(([, path]) => path.endsWith("/oauth/start"))).toHaveLength(1);
+  await click(dialog().querySelector<HTMLButtonElement>('[data-slot="dialog-close"]'));
+  expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+  expect(dialog().textContent).toContain("Edit server");
+});
+
+it("reflects refreshed server data and revokes management controls when permissions change", async () => {
+  await show();
+  await click(container.querySelector("tbody button"));
+  await act(async () => client.setQueryData(["mcp-servers", "universe"], [{ ...saved, displayName: "Renamed server", status: "active" }]));
+  await settle();
+  expect(dialog().textContent).toContain("Renamed server");
+  expect(dialog().textContent).toContain("Active");
+  mocks.role = "viewer";
+  await show();
+  expect(dialog().textContent).toContain("Renamed server");
+  expect(button("Edit server")).toBeUndefined();
+  expect(button("Delete server")).toBeUndefined();
 });

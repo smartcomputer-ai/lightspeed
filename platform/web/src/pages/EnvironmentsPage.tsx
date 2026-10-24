@@ -1,6 +1,10 @@
 import { useActionPermissions } from "@/lib/permissions";
+import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceTable, ResourceValue } from "@/components/resource-table";
+import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
+import { ConfirmDangerButton } from "@/components/confirm-danger-button";
+import { environmentStatus, resourceTimestamp } from "@/lib/resource-status";
 import { ReadError } from "@/components/read-error";
-import { useId, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
 import {
@@ -26,8 +30,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  Table, TableActionsCell, TableBody, TableCard, TableCell,
-  TableHead, TableHeader, TableRow, TableTitleCell,
+  Table, TableBody, TableCard, TableCell,
+  TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -88,7 +92,7 @@ export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <ProviderList universeId={universe.id} />;
+  return <ProviderList key={universe.id} universeId={universe.id} />;
 }
 
 const REFRESH_MS = 10_000;
@@ -154,6 +158,8 @@ function ProviderList({ universeId }: { universeId: string }) {
     .slice()
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
   const [showClosed, setShowClosed] = useState(false);
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null);
+  const detailsTriggerRef = useRef<HTMLElement | null>(null);
   const allEnvironmentRows = (environments.data ?? [])
     .slice()
     .sort((a, b) => environmentName(a).localeCompare(environmentName(b))
@@ -162,6 +168,7 @@ function ProviderList({ universeId }: { universeId: string }) {
   const environmentRows = showClosed
     ? allEnvironmentRows
     : allEnvironmentRows.filter((environment) => environment.status !== "closed");
+  const selectedEnvironment = allEnvironmentRows.find((environment) => environment.environmentId === selectedEnvironmentId);
   const enabledBindings = new Set(
     bindingRows.filter((binding) => binding.status === "enabled").map((binding) => binding.bindingId),
   );
@@ -216,36 +223,24 @@ function ProviderList({ universeId }: { universeId: string }) {
         </EmptyState>
       )}
       {environmentRows.length > 0 && (
-        <TableCard>
-          <Table aria-label="Environments">
-            <TableHeader>
-              <TableRow>
-                <TableHead scope="col">Environment</TableHead>
-                <TableHead scope="col">Source</TableHead>
-                <TableHead scope="col">Status</TableHead>
-                <TableHead scope="col" className="w-0"><span className="sr-only">Details</span></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {environmentRows.map((environment) => (
-                <EnvironmentRow
-                  key={environment.environmentId}
-                  universeId={universeId}
-                  environment={environment}
-                  configurable={writable}
-                  operator={writable}
-                  template={templateRows.find((candidate) =>
-                    candidate.bindingId === provisionedBindingId(environment)
-                    && candidate.templateId === environment.incarnation.templateId
-                  )}
-                  registrationKey={environment.source.type === "registered"
-                    ? keysById.get(environment.source.registrationKeyId) : undefined}
-                  secrets={secrets.data}
-                />
-              ))}
-            </TableBody>
-          </Table>
-        </TableCard>
+        <ResourceTable label="Environments" columns={["Environment", "Source", "Status"]}>
+          {environmentRows.map((environment) => (
+            <EnvironmentRow
+              key={environment.environmentId}
+              environment={environment}
+              onSelect={(trigger) => {
+                detailsTriggerRef.current = trigger;
+                setSelectedEnvironmentId(environment.environmentId);
+              }}
+              template={templateRows.find((candidate) =>
+                candidate.bindingId === provisionedBindingId(environment)
+                && candidate.templateId === environment.incarnation.templateId
+              )}
+              registrationKey={environment.source.type === "registered"
+                ? keysById.get(environment.source.registrationKeyId) : undefined}
+            />
+          ))}
+        </ResourceTable>
       )}
       {environments.data && allEnvironmentRows.length > 0 && environmentRows.length === 0 && (
         <p className="text-sm text-muted-foreground">Every environment here is closed.</p>
@@ -258,6 +253,26 @@ function ProviderList({ universeId }: { universeId: string }) {
           onCheckedChange={setShowClosed}
         />
       </div>
+      <ResourceDetailsDialog open={selectedEnvironment !== undefined}
+        onOpenChange={(open) => { if (!open) setSelectedEnvironmentId(null); }}
+        title={selectedEnvironment ? environmentName(selectedEnvironment) : "Environment"}
+        description="Machine details, access credentials, and power settings." finalFocus={detailsTriggerRef}>
+        {selectedEnvironment && (
+          <EnvironmentDetails
+            key={selectedEnvironment.environmentId}
+            universeId={universeId}
+            environment={selectedEnvironment}
+            configurable={writable}
+            template={templateRows.find((candidate) =>
+              candidate.bindingId === provisionedBindingId(selectedEnvironment)
+              && candidate.templateId === selectedEnvironment.incarnation.templateId
+            )}
+            registrationKey={selectedEnvironment.source.type === "registered"
+              ? keysById.get(selectedEnvironment.source.registrationKeyId) : undefined}
+            secrets={secrets.data}
+          />
+        )}
+      </ResourceDetailsDialog>
       {writable && (
         <section className="mt-8">
           <SectionHeader
@@ -281,10 +296,34 @@ function ProviderList({ universeId }: { universeId: string }) {
 }
 
 function EnvironmentRow({
+  environment,
+  onSelect,
+  template,
+  registrationKey,
+}: {
+  environment: Environment;
+  onSelect: (trigger: HTMLButtonElement | null) => void;
+  template: EnvironmentTemplate | undefined;
+  registrationKey: EnvironmentRegistrationKey | undefined;
+}) {
+  const source = environment.source;
+  const sourceName = source.type === "provisioned" ? "Provisioned" : source.type === "registered" ? "Registered" : "External";
+  const sourceDescription = source.type === "provisioned"
+    ? `${source.providerId} · ${template?.displayName ?? environment.incarnation.templateId ?? "Unknown template"}`
+    : source.type === "registered" ? registrationKey?.displayName ?? source.registrationKeyId : source.connection.endpoint;
+  return (
+    <ResourceRow name={environmentName(environment)} onOpen={onSelect}>
+      <ResourceIdentityCell name={environmentName(environment)} subtitle={environment.environmentId} mono compactDescription={`${sourceName} · ${sourceDescription}`} />
+      <TableCell className="hidden max-w-64 sm:table-cell"><ResourceValue description={sourceDescription}>{sourceName}</ResourceValue></TableCell>
+      <TableCell><ResourceStatus status={environmentStatus(environment)} /></TableCell>
+    </ResourceRow>
+  );
+}
+
+function EnvironmentDetails({
   universeId,
   environment,
   configurable,
-  operator,
   template,
   registrationKey,
   secrets,
@@ -293,138 +332,93 @@ function EnvironmentRow({
   environment: Environment;
   /** Configuring this environment: power, idle policy, ingress, close. */
   configurable: boolean;
-  /** Universe-wide configuration; publishing secrets into a machine also needs it. */
-  operator: boolean;
   template: EnvironmentTemplate | undefined;
   registrationKey: EnvironmentRegistrationKey | undefined;
   secrets: SecretsInventory | undefined;
 }) {
-  const [open, setOpen] = useState(false);
-  const detailsId = useId();
   const [policyOpen, setPolicyOpen] = useState(false);
   const source = environment.source;
   const gone = ["closing", "closed", "failed"].includes(environment.status);
-  const registered = source.type === "registered";
 
   return (
-    <>
-      <TableRow>
-        <TableTitleCell title={environmentName(environment)} subtitle={environment.environmentId} />
-        <TableCell className="max-w-64 whitespace-normal">
-          <div>{source.type === "provisioned" ? "Provisioned" : registered ? "Registered" : "External"}</div>
-          {source.type !== "external" && (
-            <div className="break-words text-xs text-muted-foreground">
-              {source.type === "provisioned"
-                ? `${source.providerId} · ${template?.displayName ?? environment.incarnation.templateId ?? "Unknown template"}`
-                : registrationKey?.displayName ?? source.registrationKeyId}
-            </div>
-          )}
-        </TableCell>
-        <TableCell>
-          <EnvironmentStatusBadge environment={environment} />
-          {registered && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {environment.lastSeenAtMs ? `Last seen ${relativeTime(environment.lastSeenAtMs)}` : "Never seen"}
-            </p>
-          )}
-          {source.type === "provisioned" && powerDiverges(environment) && (
-            <p className="mt-1 text-xs text-muted-foreground">Desired: {environment.desiredPower}</p>
-          )}
-        </TableCell>
-        <TableActionsCell>
-          <Button
-            variant="ghost" size="sm"
-            aria-label={`Details for ${environmentName(environment)}`}
-            aria-expanded={open} aria-controls={detailsId}
-            onClick={() => setOpen(!open)}
-          >
-            Details
-            <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
-          </Button>
-        </TableActionsCell>
-      </TableRow>
-      <TableRow hidden={!open} className="hover:bg-transparent">
-        <TableCell colSpan={4} className="whitespace-normal p-0">
-          <div id={detailsId}>
-            {open && (
-              <div className="bg-muted/15 p-4 md:p-5">
-                <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <Detail label="Name" value={environmentName(environment)} />
-                  <Detail label="Environment ID" value={environment.environmentId} mono />
-                  {!registered && <Detail label="Public endpoint" value={environment.publicEndpoint ?? "Private environment"} mono />}
-                  <Detail
-                    label="Source"
-                    value={source.type === "provisioned" ? "Provisioned" : source.type === "registered" ? "Registered" : "External"}
-                  />
-                  {source.type === "registered" && (
-                    <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
-                  )}
-                  {source.type === "registered" && <Detail label="Daemon" value={source.daemonId} mono />}
-                  {source.type === "registered" && (
-                    <Detail
-                      label="Identity"
-                      value={source.identityMode === "ephemeral"
-                        ? "Ephemeral · closes after its key's disconnect grace"
-                        : "Persistent · stays offline until closed"}
-                    />
-                  )}
-                  {source.type === "registered" && environment.lastSeenAtMs && (
-                    <Detail label="Last seen" value={relativeTime(environment.lastSeenAtMs)} />
-                  )}
-                  {source.type === "provisioned" && <Detail label="Binding" value={source.bindingId} mono />}
-                  {source.type === "provisioned" && <Detail label="Provider" value={source.providerId} mono />}
-                  {environment.incarnation.templateId && <Detail label="Template" value={environment.incarnation.templateId} mono />}
-                  {environment.incarnation.providerTargetId && <Detail label="Target" value={environment.incarnation.providerTargetId} mono />}
+    <div className="grid gap-6">
+      <ResourceDetailsGrid>
+        <Detail label="Environment ID" value={environment.environmentId} mono />
+        <ResourceDetail label="Status"><ResourceStatus status={environmentStatus(environment)} /></ResourceDetail>
+        {source.type === "provisioned" && <ResourceDetail label="Public endpoint" mono>
+          {environment.publicEndpoint ? <a className="text-primary underline-offset-4 hover:underline" href={environment.publicEndpoint} target="_blank" rel="noreferrer">{environment.publicEndpoint}</a> : "Private environment"}
+        </ResourceDetail>}
+        {source.type === "external" && <Detail label="Connection endpoint" value={source.connection.endpoint} mono />}
+        <Detail
+          label="Source"
+          value={source.type === "provisioned" ? "Provisioned" : source.type === "registered" ? "Registered" : "External"}
+        />
+        {source.type === "registered" && (
+          <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
+        )}
+        {source.type === "registered" && <Detail label="Daemon" value={source.daemonId} mono />}
+        {source.type === "registered" && (
+          <Detail
+            label="Identity"
+            value={source.identityMode === "ephemeral"
+              ? "Ephemeral · closes after its key's disconnect grace"
+              : "Persistent · stays offline until closed"}
+          />
+        )}
+        {source.type === "registered" && environment.lastSeenAtMs && (
+          <Detail label="Last seen" value={relativeTime(environment.lastSeenAtMs)} />
+        )}
+        {source.type === "provisioned" && <Detail label="Binding" value={source.bindingId} mono />}
+        {source.type === "provisioned" && <Detail label="Provider" value={source.providerId} mono />}
+        {environment.incarnation.templateId && <Detail label="Template" value={environment.incarnation.templateId} mono />}
+        {environment.incarnation.providerTargetId && <Detail label="Target" value={environment.incarnation.providerTargetId} mono />}
 
-                  {source.type === "provisioned" && (
-                    <Detail
-                      label="Power"
-                      value={powerDiverges(environment)
-                        ? `${observedPower(environment) ?? environment.status} → ${environment.desiredPower}`
-                        : environment.desiredPower}
-                    />
-                  )}
-                  {source.type === "provisioned" && (
-                    <Detail label="Idle policy" value={describeIdlePolicy(environment.idlePolicy)} />
-                  )}
-                  <Detail label="Updated" value={relativeTime(environment.updatedAtMs)} />
-                </dl>
-                <EnvironmentCredentials
-                  universeId={universeId}
-                  environment={environment}
-                  secrets={secrets}
-                  enabled={open}
-                  writable={configurable && operator}
-                />
-                {configurable && source.type === "provisioned" && (
-                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-                    <EnvironmentPowerControls universeId={universeId} environment={environment} />
-                    {!gone && (
-                      <Button variant="outline" size="xs" onClick={() => setPolicyOpen(true)}>
-                        Idle policy…
-                      </Button>
-                    )}
-                    {template?.publicIngress && (
-                      <EnvironmentIngressButton universeId={universeId} environment={environment} />
-                    )}
-                    <CloseEnvironmentButton universeId={universeId} environment={environment} />
-                  </div>
-                )}
-                {configurable && source.type === "provisioned" && !gone && (
-                  <EnvironmentIdlePolicyDialog
-                    key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
-                    universeId={universeId}
-                    environment={environment}
-                    open={policyOpen}
-                    onOpenChange={setPolicyOpen}
-                  />
-                )}
-              </div>
+        {source.type === "provisioned" && (
+          <Detail
+            label="Power"
+            value={powerDiverges(environment)
+              ? `${observedPower(environment) ?? environment.status} → ${environment.desiredPower}`
+              : environment.desiredPower}
+          />
+        )}
+        {source.type === "provisioned" && (
+          <Detail label="Idle policy" value={describeIdlePolicy(environment.idlePolicy)} />
+        )}
+        <Detail label="Created" value={resourceTimestamp(environment.createdAtMs)} />
+        <Detail label="Updated" value={resourceTimestamp(environment.updatedAtMs)} />
+      </ResourceDetailsGrid>
+      <EnvironmentCredentials
+        universeId={universeId}
+        environment={environment}
+        secrets={secrets}
+        writable={configurable}
+      />
+      {configurable && source.type === "provisioned" && (
+        <ResourceActions>
+          <CloseEnvironmentButton universeId={universeId} environment={environment} />
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <EnvironmentPowerControls universeId={universeId} environment={environment} size="sm" />
+            {!gone && (
+              <Button variant="outline" size="sm" onClick={() => setPolicyOpen(true)}>
+                Idle policy…
+              </Button>
+            )}
+            {template?.publicIngress && (
+              <EnvironmentIngressButton universeId={universeId} environment={environment} />
             )}
           </div>
-        </TableCell>
-      </TableRow>
-    </>
+        </ResourceActions>
+      )}
+      {configurable && source.type === "provisioned" && !gone && (
+        <EnvironmentIdlePolicyDialog
+          key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
+          universeId={universeId}
+          environment={environment}
+          open={policyOpen}
+          onOpenChange={setPolicyOpen}
+        />
+      )}
+    </div>
   );
 }
 
@@ -432,13 +426,11 @@ function EnvironmentCredentials({
   universeId,
   environment,
   secrets,
-  enabled,
   writable,
 }: {
   universeId: string;
   environment: Environment;
   secrets: SecretsInventory | undefined;
-  enabled: boolean;
   writable: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -449,7 +441,6 @@ function EnvironmentCredentials({
         "GET",
         `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}/credentials`,
       ),
-    enabled,
   });
   const unbind = useMutation({
     mutationFn: (envName: string) =>
@@ -466,7 +457,7 @@ function EnvironmentCredentials({
   const canAssign = environment.status !== "closed" && environment.status !== "closing";
 
   return (
-    <div className="mt-4 border-t pt-4">
+    <div className="border-t pt-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-medium">Secret environment variables</h3>
@@ -706,35 +697,8 @@ function AssignCredentialDialog({
   );
 }
 
-function EnvironmentStatusBadge({ environment }: { environment: Environment }) {
-  if (environment.status === "ready") {
-    return <Badge variant="secondary">ready</Badge>;
-  }
-  if (environment.status === "paused" || environment.status === "suspended") {
-    return (
-      <Badge variant="outline">
-        {environment.status}
-        {powerDiverges(environment) ? " · waking" : ""}
-      </Badge>
-    );
-  }
-  if (environment.status === "failed") {
-    return (
-      <Badge variant="outline" className="border-destructive/50 text-destructive">
-        failed
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">{environment.status}</Badge>;
-}
-
 function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-      <dd className={`mt-1 break-all text-sm ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
-    </div>
-  );
+  return <ResourceDetail label={label} mono={mono}>{value}</ResourceDetail>;
 }
 
 /// Every registration key of the universe: the policy each pool of
@@ -1119,7 +1083,7 @@ function EnvironmentIngressButton({
     <>
       <Button
         variant="outline"
-        size="xs"
+        size="sm"
         disabled={ingress.isPending || environment.status !== "ready"}
         onClick={() => ingress.mutate(!environment.publicIngressEnabled)}
       >
@@ -1127,16 +1091,6 @@ function EnvironmentIngressButton({
           ? "Updating ingress…"
           : environment.publicIngressEnabled ? "Disable public ingress" : "Enable public ingress"}
       </Button>
-      {environment.publicEndpoint && (
-        <a
-          className="break-all text-xs text-primary underline-offset-4 hover:underline"
-          href={environment.publicEndpoint}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {environment.publicEndpoint}
-        </a>
-      )}
       {ingress.error && <span className="text-xs text-destructive">{ingress.error.message}</span>}
     </>
   );
@@ -1164,40 +1118,14 @@ function CloseEnvironmentButton({
   }
   const label = environment.displayName ?? environment.environmentId;
   return (
-    <div className="ml-auto flex flex-col items-end gap-1">
-      <AlertDialog>
-        <AlertDialogTrigger
-          render={
-            <Button variant="destructive" size="sm" disabled={close.isPending} />
-          }
-        >
-          <Trash2 />
-          {close.isPending ? "Closing…" : "Close environment"}
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Close {label}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This permanently destroys the provider target
-              {environment.incarnation.providerTargetId
-                ? <> <span className="font-mono text-xs">{environment.incarnation.providerTargetId}</span></>
-                : null}
-              {" "}and everything stored on it. A closed environment cannot be
-              reopened; sessions that still select it will see it as
-              unavailable and its public endpoint stops working.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep environment</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={() => close.mutate()}
-            >
-              Close permanently
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+    <div className="flex flex-col items-start gap-1">
+      <ConfirmDangerButton
+        label={close.isPending ? "Closing…" : "Close environment"}
+        title={`Close ${label}?`}
+        description={<>This permanently destroys the provider target and everything stored on it. A closed environment cannot be reopened; sessions that select it will lose access.</>}
+        pending={close.isPending}
+        onConfirm={() => close.mutate()}
+      />
       {close.error && <span className="text-xs text-destructive">{close.error.message}</span>}
     </div>
   );
@@ -1254,6 +1182,7 @@ function CreateEnvironmentDialog({
           setOpen(true);
         }}
       >
+        <Plus data-icon="inline-start" />
         New environment
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>

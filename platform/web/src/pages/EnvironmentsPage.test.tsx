@@ -30,6 +30,7 @@ let client: QueryClient;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("PointerEvent", MouseEvent);
   mocks.role = "viewer";
   rows = [registered, external, provisioned];
   mocks.api.mockReset().mockImplementation(async (_method: string, path: string) => {
@@ -69,41 +70,99 @@ async function details(name: string) {
   await settle();
   return button;
 }
+const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+async function closeDetails() {
+  await act(async () => dialog().querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
+  await settle();
+}
 
-it("shows one sorted semantic inventory with source-specific signals and lazy details", async () => {
+it("shows one sorted semantic inventory with source-specific signals and lazy modal details", async () => {
   await show();
   const table = container.querySelector('table[aria-label="Environments"]')!;
   expect([...table.querySelectorAll("thead th")].map((cell) => cell.textContent)).toEqual(["Environment", "Source", "Status", "Details"]);
-  expect([...table.querySelectorAll("tbody tr:not([hidden])")].map((row) => row.querySelector("td")?.textContent)).toEqual([
-    "Build boxBuild box", "External boxExternal box", "RunnerRunner",
+  expect([...table.querySelectorAll("tbody tr")].map((row) => row.querySelector("td [title]")?.getAttribute("title"))).toEqual([
+    "Build box", "External box", "Runner",
   ]);
-  expect(table.textContent).toContain("Desired: running");
+  expect(table.textContent).toContain("Paused → running");
   expect(table.textContent).toContain("Never seen");
   expect(table.textContent).toContain("key-id");
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/credentials"))).toBe(false);
   expect(mocks.api.mock.calls.some(([, path]) => path.endsWith("/environment-registration-keys"))).toBe(false);
+  expect(dialog()).toBeNull();
   const button = await details("Runner");
-  expect(button.getAttribute("aria-expanded")).toBe("true");
-  expect(document.getElementById(button.getAttribute("aria-controls")!)?.textContent).toContain("daemon");
-  expect(container.textContent).not.toContain("Closing spends");
-  expect(container.textContent).not.toContain("Close environment");
-  await details("Runner");
-  expect(button.getAttribute("aria-expanded")).toBe("false");
-  expect(document.getElementById(button.getAttribute("aria-controls")!)?.closest("tr")?.hidden).toBe(true);
+  expect(button.getAttribute("aria-haspopup")).toBe("dialog");
+  expect(document.getElementById(dialog().getAttribute("aria-labelledby")!)?.textContent).toBe("Runner");
+  expect(dialog().textContent).toContain("daemon");
+  expect(dialog().closest("table")).toBeNull();
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
+  expect(table.textContent).not.toContain("Secret environment variables");
+  expect(mocks.api.mock.calls.filter(([, path]) => path.endsWith("/credentials")).map(([, path]) => path)).toEqual([
+    "/api/v1/universes/universe/environments/Runner/credentials",
+  ]);
+  expect(dialog().textContent).not.toContain("Closing spends");
+  expect(dialog().textContent).not.toContain("Close environment");
+  await closeDetails();
+  expect(dialog()).toBeNull();
+  expect(document.activeElement).toBe(button);
+  expect(table.querySelectorAll("tbody tr")).toHaveLength(3);
+});
+
+it("opens details from the row and dismisses them with Escape", async () => {
+  await show();
+  const cell = container.querySelector("tbody td")!;
+  await act(async () => (cell as HTMLElement).click());
+  await settle();
+  expect(dialog().textContent).toContain("Build box");
+  await act(async () => dialog().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await settle();
+  expect(dialog()).toBeNull();
 });
 
 it.each(["viewer", "operator"])("preserves source-specific controls for %s", async (role) => {
   mocks.role = role;
   await show();
   await details("Build box");
-  expect(container.textContent?.includes("Close environment")).toBe(role === "operator");
-  expect(container.textContent?.includes("Idle policy…")).toBe(role === "operator");
+  expect(dialog().textContent?.includes("Close environment")).toBe(role === "operator");
+  expect(dialog().textContent?.includes("Idle policy…")).toBe(role === "operator");
   expect(container.textContent?.includes("Enrollment")).toBe(role === "operator");
-  await details("Build box");
+  await closeDetails();
   await details("Runner");
+  expect(dialog().textContent).not.toContain("Close environment");
+  expect(dialog().textContent).not.toContain("Idle policy…");
+  await closeDetails();
   await details("External box");
-  expect(container.textContent).not.toContain("Close environment");
-  expect(container.textContent).not.toContain("Idle policy…");
+  expect(dialog().textContent).not.toContain("Close environment");
+  expect(dialog().textContent).not.toContain("Idle policy…");
+});
+
+it("keeps open details current as the environment changes", async () => {
+  await show();
+  await details("Build box");
+  expect(dialog().textContent).toContain("Waking");
+  await act(async () => client.setQueryData(["environments", "universe"], rows.map((row) =>
+    row.environmentId === provisioned.environmentId ? { ...row, status: "ready" } : row,
+  )));
+  await settle();
+  expect(dialog().textContent).toContain("Ready");
+  expect(dialog().textContent).not.toContain("Waking");
+});
+
+it("opens idle policy as a nested dialog and returns to environment details", async () => {
+  mocks.role = "operator";
+  await show();
+  await details("Build box");
+  const policyButton = [...dialog().querySelectorAll("button")].find((button) => button.textContent === "Idle policy…")!;
+  await act(async () => policyButton.click());
+  await settle();
+  const policy = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find((element) =>
+    document.getElementById(element.getAttribute("aria-labelledby")!)?.textContent === "Idle policy for Build box",
+  )!;
+  expect(policy).toBeTruthy();
+  const cancel = [...policy.querySelectorAll("button")].find((button) => button.textContent === "Cancel")!;
+  await act(async () => cancel.click());
+  await settle();
+  expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+  expect(dialog().textContent).toContain("Build box");
 });
 
 it("distinguishes an empty inventory from all closed and preserves the closed toggle", async () => {

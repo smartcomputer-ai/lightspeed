@@ -1,3 +1,4 @@
+import { ResourceActions } from "@/components/resource-details-dialog";
 import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -7,7 +8,6 @@ import {
   type ModelEndpointConfig,
   type ModelListResponse,
   type ModelOption,
-  type SecretGrant,
   type SecretProvider,
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { IdText } from "@/components/ui/table";
 import { ConfirmDangerButton } from "@/components/confirm-danger-button";
 import { providerEndpoint } from "./use-model-providers";
 
@@ -275,18 +274,6 @@ export function ModelApiKeyDetails({
 
   return (
     <div className="grid gap-4">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">Provider</dt>
-        <dd className="font-mono">{provider.providerId}</dd>
-        <dt className="text-muted-foreground">Credential ID</dt>
-        <dd>
-          <IdText>{provider.credentialId}</IdText>
-        </dd>
-        <dt className="text-muted-foreground">Status</dt>
-        <dd>
-          <ProviderStatusBadge provider={provider} />
-        </dd>
-      </dl>
       <p className="text-sm text-muted-foreground">
         Used by Lightspeed sessions with{" "}
         <span className="font-mono">
@@ -304,7 +291,7 @@ export function ModelApiKeyDetails({
         <p className="text-sm text-destructive">{remove.error.message}</p>
       )}
       {writable && (
-        <DialogFooter>
+        <ResourceActions>
           <ConfirmDangerButton
             label="Remove key"
             title="Remove this API key?"
@@ -319,8 +306,8 @@ export function ModelApiKeyDetails({
             pending={remove.isPending}
             onConfirm={() => remove.mutate()}
           />
-          <Button onClick={() => setReplacing(true)}>Replace key</Button>
-        </DialogFooter>
+          <Button className="ml-auto" size="sm" onClick={() => setReplacing(true)}>Replace key</Button>
+        </ResourceActions>
       )}
     </div>
   );
@@ -564,13 +551,11 @@ export function OpenAiCompatibleForm({
 export function OpenAiCompatibleDetails({
   universeId,
   provider,
-  oauthGrant,
   onChanged,
   onRemoved,
 }: {
   universeId: string;
   provider: SecretProvider;
-  oauthGrant?: SecretGrant;
   onChanged: () => void;
   onRemoved: () => void;
 }) {
@@ -600,30 +585,6 @@ export function OpenAiCompatibleDetails({
     );
   return (
     <div className="grid gap-4">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">Provider</dt>
-        <dd className="font-mono">{provider.providerId}</dd>
-        <dt className="text-muted-foreground">Credential ID</dt>
-        <dd>
-          <IdText>{provider.credentialId}</IdText>
-        </dd>
-        <dt className="text-muted-foreground">Status</dt>
-        <dd>
-          <ProviderStatusBadge provider={provider} oauthGrant={oauthGrant} />
-        </dd>
-        <dt className="text-muted-foreground">Authentication</dt>
-        <dd>
-          {provider.config.type === "modelOAuth" ? (
-            <>
-              OAuth · <IdText>{provider.config.grantId}</IdText>
-            </>
-          ) : provider.hasCredential ? (
-            "API key"
-          ) : (
-            "None"
-          )}
-        </dd>
-      </dl>
       {endpoint && <EndpointSummary endpoint={endpoint} />}
       <ProviderModelList
         universeId={universeId}
@@ -633,7 +594,7 @@ export function OpenAiCompatibleDetails({
         <p className="text-sm text-destructive">{remove.error.message}</p>
       )}
       {writable && (
-        <DialogFooter>
+        <ResourceActions>
           <ConfirmDangerButton
             label="Remove provider"
             title="Remove this model provider?"
@@ -641,39 +602,13 @@ export function OpenAiCompatibleDetails({
             pending={remove.isPending}
             onConfirm={() => remove.mutate()}
           />
-          {endpoint && <Button onClick={() => setEditing(true)}>Edit provider</Button>}
-        </DialogFooter>
+          {endpoint && <Button className="ml-auto" size="sm" onClick={() => setEditing(true)}>Edit provider</Button>}
+        </ResourceActions>
       )}
     </div>
   );
 }
 
-/// Why a provider row is or is not used for model calls.
-function ProviderStatusBadge({
-  provider,
-  oauthGrant,
-}: {
-  provider: SecretProvider;
-  oauthGrant?: SecretGrant;
-}) {
-  const attention = (label: string) => (
-    <Badge variant="outline" className="border-destructive/50 text-destructive">
-      {label}
-    </Badge>
-  );
-  if (!provider.usableForModels) return attention("legacy id — replace");
-  if (provider.status === "disabled") return <Badge variant="outline">disabled</Badge>;
-  if (provider.config.type === "modelOAuth") {
-    if (!oauthGrant || oauthGrant.status === "revoked") return attention("OAuth grant missing");
-    if (oauthGrant.status !== "active") {
-      return attention(oauthGrant.status === "needsReauth" ? "needs reauth" : oauthGrant.status);
-    }
-  } else if (provider.config.type !== "modelEndpoint" && !provider.hasCredential) {
-    return attention("needs key");
-  }
-  if (provider.status !== "active") return attention("needs configuration");
-  return <Badge variant="secondary">active</Badge>;
-}
 
 export interface ProviderModelCatalogEntry {
   model: string;

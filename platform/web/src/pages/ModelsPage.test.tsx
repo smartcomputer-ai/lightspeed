@@ -80,14 +80,57 @@ function button(label: string) {
 it("lists model providers and subscriptions with the legacy-credential warning", async () => {
   await show();
   expect(container.querySelector("h1")?.textContent).toBe("Models");
-  expect(container.textContent).toContain("Operators manage them; keys and logins are never shown again.");
+  expect(container.textContent).toContain("Provider connections and default models for agents in this universe.");
   expect(container.textContent).toContain("A legacy credential below has an incorrect internal ID");
   const rows = [...container.querySelectorAll("tbody tr")].map((row) => row.textContent);
   expect(rows).toHaveLength(2);
-  expect(rows[0]).toContain("Anthropic (API key)");
-  expect(rows[0]).toContain("needs attention");
+  expect(rows[0]).toContain("Anthropic");
+  expect(rows[0]).toContain("Needs attention");
   expect(rows[1]).toContain("Team Max");
-  expect(rows[1]).toContain("Claude Code (subscription)");
+  expect(rows[1]).toContain("Subscription");
+  expect([...container.querySelectorAll("table thead th")].map((cell) => cell.textContent)).toEqual(["Provider", "Connection", "Status", "Details"]);
+});
+
+it("reports failed inventory reads without claiming there are no providers", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) => {
+    if (path.endsWith("/secrets")) throw new Error("Inventory unavailable");
+    if (path.endsWith("/integrations/subscriptions")) return [];
+    return implementation(method, path, body);
+  });
+  await show();
+  expect(container.textContent).toContain("Model providers unavailable");
+  expect(container.textContent).not.toContain("No model providers yet");
+});
+
+it("retains providers when the subscription inventory fails", async () => {
+  const implementation = mocks.api.getMockImplementation()!;
+  mocks.api.mockImplementation(async (method, path, body) => {
+    if (path.endsWith("/integrations/subscriptions")) throw new Error("Subscriptions unavailable");
+    return implementation(method, path, body);
+  });
+  await show();
+  expect(container.querySelector("table")?.textContent).toContain("Anthropic");
+  expect(container.textContent).toContain("Subscriptions unavailable");
+  expect(container.textContent).not.toContain("No model providers yet");
+});
+
+it("lets readers inspect model connection details and restores focus on dismissal", async () => {
+  mocks.role = "viewer";
+  await show();
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label="Details for Anthropic"]')!;
+  expect(trigger.getAttribute("aria-haspopup")).toBe("dialog");
+  await act(async () => trigger.click());
+  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  const dialog = document.body.querySelector('[role="dialog"]')!;
+  expect(dialog.textContent).toContain("Credential ID");
+  expect(dialog.textContent).toContain("Updated");
+  expect(dialog.textContent).toContain("Needs attention");
+  expect(button("Replace key")).toBeUndefined();
+  expect(button("Remove key")).toBeUndefined();
+  await act(async () => dialog.querySelector<HTMLButtonElement>('[data-slot="dialog-close"]')!.click());
+  for (let step = 0; step < 5; step++) await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  expect(document.activeElement).toBe(trigger);
 });
 
 async function click(label: string) {

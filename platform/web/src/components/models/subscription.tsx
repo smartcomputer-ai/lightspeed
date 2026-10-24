@@ -1,21 +1,17 @@
+import { ResourceActions } from "@/components/resource-details-dialog";
 import { useActionPermissions } from "@/lib/permissions";
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Copy } from "lucide-react";
 import { api, type SecretGrant, type SubscriptionImportResult } from "@/api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { IdText } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { formatExpiry } from "@/lib/integrations";
 import {
   CODEX_AUTH_JSON_BOOTSTRAP,
   isCodexTokenSet,
-  subscriptionAccountLabel,
-  subscriptionBinding,
   type SubscriptionProvider,
 } from "@/lib/subscriptions";
 import { ConfirmDangerButton } from "@/components/confirm-danger-button";
@@ -155,7 +151,6 @@ export function SubscriptionDetails({
   onDisconnected: () => void;
 }) {
   const writable = useActionPermissions(universeId).can("configure_resource");
-  const binding = subscriptionBinding(grant);
   const disconnect = useMutation({
     mutationFn: () =>
       api<SecretGrant>(
@@ -167,22 +162,6 @@ export function SubscriptionDetails({
 
   return (
     <div className="grid gap-4">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">Account</dt>
-        <dd>{subscriptionAccountLabel(grant) || "—"}</dd>
-        <dt className="text-muted-foreground">Bind as</dt>
-        <dd>{binding ? <IdText>{binding.envName}</IdText> : "—"}</dd>
-        <dt className="text-muted-foreground">Expires</dt>
-        <dd>{formatExpiry(grant.expiresAtMs)}</dd>
-        <dt className="text-muted-foreground">Status</dt>
-        <dd>
-          <SubscriptionStatusBadge status={grant.status} />
-        </dd>
-        <dt className="text-muted-foreground">Credential ID</dt>
-        <dd>
-          <IdText>{grant.grantId}</IdText>
-        </dd>
-      </dl>
       <p className="text-sm text-muted-foreground">
         Used only inside environments (Environments → Assign credential; the variable name above is
         suggested automatically). Lightspeed's own sessions do not use this credential; they use
@@ -191,7 +170,7 @@ export function SubscriptionDetails({
       {isCodexTokenSet(grant) && <CodexBootstrapNote />}
       {disconnect.error && <p className="text-sm text-destructive">{disconnect.error.message}</p>}
       {writable && (
-        <DialogFooter>
+        <ResourceActions>
           <ConfirmDangerButton
             label="Disconnect"
             title="Disconnect this subscription?"
@@ -205,7 +184,7 @@ export function SubscriptionDetails({
             pending={disconnect.isPending}
             onConfirm={() => disconnect.mutate()}
           />
-        </DialogFooter>
+        </ResourceActions>
       )}
     </div>
   );
@@ -239,16 +218,4 @@ export function CodexBootstrapNote() {
       </pre>
     </div>
   );
-}
-
-function SubscriptionStatusBadge({ status }: { status: SecretGrant["status"] }) {
-  if (status === "active") return <Badge variant="secondary">connected</Badge>;
-  if (status === "needsReauth" || status === "failed") {
-    return (
-      <Badge variant="outline" className="border-destructive/50 text-destructive">
-        {status === "needsReauth" ? "reconnect" : status}
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">revoked</Badge>;
 }

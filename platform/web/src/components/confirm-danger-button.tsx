@@ -29,7 +29,7 @@ export function ConfirmDangerButton({
 }) {
   return (
     <AlertDialog>
-      <AlertDialogTrigger render={<Button variant="outline" className="text-destructive" disabled={pending} />}>
+      <AlertDialogTrigger render={<Button variant="outline" size="sm" className="text-destructive" disabled={pending} />}>
         {label}
       </AlertDialogTrigger>
       <AlertDialogContent>

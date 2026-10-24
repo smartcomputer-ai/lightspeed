@@ -35,14 +35,14 @@ it("lists every model provider row, including legacy and OAuth rows no add form 
       grant("plain-token"),
     ],
   );
-  expect(rows.map((row) => [row.kind, row.title, row.type, row.status])).toEqual([
-    ["anthropicApiKey", "Anthropic (API key)", "Anthropic (API key)", "attention"],
-    ["openAiCompatible", "deepseek", "OpenAI-compatible provider", "active"],
-    ["openAiCompatible", "ollama", "OpenAI-compatible provider", "active"],
-    ["openAiApiKey", "OpenAI (API key)", "OpenAI (API key)", "active"],
-    ["openAiCompatible", "vendor", "OAuth connection", "attention"],
-    ["anthropicSubscription", "Lukas · Max", "Claude Code (subscription)", "active"],
+  expect(rows.map((row) => [row.kind, row.title, row.connection, row.status.label])).toEqual([
+    ["anthropicApiKey", "Anthropic", "API key", "Needs attention"],
+    ["openAiCompatible", "deepseek", "API key", "Active"],
+    ["anthropicSubscription", "Lukas · Max", "Subscription", "Connected"],
+    ["openAiCompatible", "ollama", "No authentication", "Active"],
+    ["openAiApiKey", "Production", "API key", "Active"],
+    ["openAiCompatible", "vendor", "OAuth", "Needs sign-in"],
   ]);
-  expect(rows[3]).toMatchObject({ subtitle: "Production", updatedAtMs: 2 });
-  expect(rows[4]).toMatchObject({ oauthGrant: { grantId: "vendor-login" } });
+  expect(rows.find((row) => row.title === "Production")).toMatchObject({ subtitle: "openai", createdAtMs: 1, updatedAtMs: 2 });
+  expect(rows.find((row) => row.title === "vendor")).toMatchObject({ oauthGrant: { grantId: "vendor-login" } });
 });
