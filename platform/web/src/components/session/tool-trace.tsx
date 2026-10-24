@@ -41,6 +41,7 @@ import {
   type TranscriptToolGroup,
 } from "@/lib/sessions/transcript";
 import { cn } from "@/lib/utils";
+import { isEmphasizedToolFailure } from "@/lib/sessions/tool-failures";
 
 /// Every step a run takes — thinking, a tool call, a sub-agent, a bot emit,
 /// a channel send — is one row: icon · verb · target · detail · duration.
@@ -132,7 +133,7 @@ export function StepRow({
   targetTitle,
   detail,
   right,
-  failed = false,
+  highlightFailure = false,
   cancelled = false,
   note,
   extra,
@@ -146,7 +147,7 @@ export function StepRow({
   targetTitle?: string;
   detail?: string | null;
   right?: ReactNode;
-  failed?: boolean;
+  highlightFailure?: boolean;
   cancelled?: boolean;
   /// A line under the row: the first line of an error, or a link.
   note?: ReactNode;
@@ -157,7 +158,7 @@ export function StepRow({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={cn("min-w-0", failed && "rounded-md bg-destructive/5", cancelled && "opacity-60")}>
+    <div className={cn("min-w-0", highlightFailure && "rounded-md bg-destructive/5", cancelled && "opacity-60")}>
       <div className="group/step flex min-w-0 items-center gap-2 rounded-md pr-2 transition-colors hover:bg-muted/50">
         <button
           type="button"
@@ -185,7 +186,7 @@ export function StepRow({
           <span
             className={cn(
               "flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground [&_svg]:size-3",
-              failed && "text-destructive",
+              highlightFailure && "text-destructive",
             )}
           >
             {right}
@@ -230,6 +231,7 @@ export function ToolGroupTrace({
   const active = !isTerminalToolStatus(group.status);
   const completed = group.calls.filter((call) => isTerminalToolStatus(call.status)).length;
   const failed = group.calls.filter(isFailedToolCall).length;
+  const highlightFailure = group.calls.some(isEmphasizedToolFailure);
   const groups = new Set(group.calls.map((call) => call.display?.group ?? "other"));
   const single = groups.size === 1 ? [...groups][0] : undefined;
   const started = group.calls.map((call) => call.startedAtMs).filter((value): value is number => value !== undefined);
@@ -253,7 +255,7 @@ export function ToolGroupTrace({
         <span
           className={cn(
             "ml-auto flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground [&_svg]:size-3",
-            failed > 0 && !active && "text-destructive",
+            failed > 0 && !active && (highlightFailure ? "text-destructive" : "text-amber-700 dark:text-amber-300"),
           )}
         >
           {active
@@ -306,6 +308,7 @@ function ToolCallRow({
   const group = display?.group ?? "other";
   const style = groupStyle(group);
   const failed = isFailedToolCall(call);
+  const highlightFailure = isEmphasizedToolFailure(call);
   const cancelled = call.status === "cancelled";
   const terminal = isTerminalToolStatus(call.status);
   const running = !terminal && !waiting;
@@ -323,7 +326,11 @@ function ToolCallRow({
   if (cancelled) {
     right = <><CircleMinus aria-label="Cancelled" />cancelled</>;
   } else if (failed) {
-    right = <><CircleAlert aria-label="Failed" />failed{call.durationMs !== undefined ? ` · ${formatDuration(call.durationMs)}` : ""}</>;
+    right = <>
+      <CircleAlert aria-label="Failed" className={cn(!highlightFailure && "text-amber-700 dark:text-amber-300")} />
+      <span className={cn(!highlightFailure && "text-amber-700 dark:text-amber-300")}>failed</span>
+      {call.durationMs !== undefined ? ` · ${formatDuration(call.durationMs)}` : ""}
+    </>;
   } else if (waiting && !terminal) {
     right = <><Clock3 aria-label="Waiting" />waiting</>;
   } else if (running) {
@@ -332,7 +339,7 @@ function ToolCallRow({
     right = formatDuration(call.durationMs);
   }
 
-  const errorLine = failed ? firstLine(call.error ?? call.output) : null;
+  const errorLine = highlightFailure ? firstLine(call.error ?? call.output) : null;
 
   return (
     <StepRow
@@ -343,7 +350,7 @@ function ToolCallRow({
       targetTitle={rawTarget ?? undefined}
       detail={detail}
       right={right}
-      failed={failed}
+      highlightFailure={highlightFailure}
       cancelled={cancelled}
       ariaLabel={`${verb}${rawTarget ? ` ${rawTarget}` : ""}`}
       extra={childHref && (
@@ -412,6 +419,7 @@ function ToolCallDetail({
   const effects = call.effects?.length ? JSON.stringify(call.effects, null, 2) : null;
   const defaultTab = output ? "output" : input ? "input" : "effects";
   const failed = isFailedToolCall(call);
+  const highlightFailure = isEmphasizedToolFailure(call);
 
   return (
     <div className="mb-1.5 min-w-0 max-w-full space-y-1.5 pl-[1.875rem] pr-2">
@@ -440,7 +448,7 @@ function ToolCallDetail({
                 blobRef={call.outputContentRef}
                 loadFullText={loadFullText}
               >
-                {(text) => <DetailBlock value={text} tone={failed ? "warning" : "default"} />}
+                {(text) => <DetailBlock value={text} tone={highlightFailure ? "warning" : "default"} />}
               </ExpandableContent>
             </TabsContent>
           )}
