@@ -1,4 +1,9 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { RefObject } from "react";
+import { ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
+import { ResourceStatus } from "@/components/resource-table";
+import { resourceTimestamp } from "@/lib/resource-status";
+import { formatExpiry } from "@/lib/integrations";
+import { subscriptionAccountLabel, subscriptionBinding } from "@/lib/subscriptions";
 import { modelProviderDefinition } from "./catalog";
 import { ModelApiKeyDetails, OpenAiCompatibleDetails } from "./model-api-key";
 import { SubscriptionDetails } from "./subscription";
@@ -11,34 +16,43 @@ export function ModelProviderDetailsDialog({
   provider,
   onOpenChange,
   onChanged,
+  finalFocus,
 }: {
   universeId: string;
   provider: ConnectedModelProvider | null;
   onOpenChange: (open: boolean) => void;
   onChanged: () => void;
+  finalFocus?: RefObject<HTMLElement | null>;
 }) {
   const definition = provider ? modelProviderDefinition(provider.kind) : null;
   return (
-    <Dialog open={provider !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        {provider && definition && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <definition.Logo size={18} />
-                {provider.title}
-              </DialogTitle>
-            </DialogHeader>
-            <ModelProviderDetails
-              universeId={universeId}
-              provider={provider}
-              onChanged={onChanged}
-              onClose={() => onOpenChange(false)}
-            />
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+    <ResourceDetailsDialog open={provider !== null} onOpenChange={onOpenChange}
+      title={provider?.title ?? "Model provider"} description={provider?.connection === "Subscription" ? "Account access for coding agents running in environments." : "Connection settings and available models."}
+      icon={definition && <definition.Logo size={18} />} finalFocus={finalFocus}>
+      {provider && (
+        <>
+          <ResourceDetailsGrid>
+            {"provider" in provider
+              ? <ResourceDetail label="Provider ID" mono>{provider.provider.providerId}</ResourceDetail>
+              : <ResourceDetail label="Account">{subscriptionAccountLabel(provider.grant) || "—"}</ResourceDetail>}
+            <ResourceDetail label="Status"><ResourceStatus status={provider.status} /></ResourceDetail>
+            <ResourceDetail label="Credential ID" mono>{"provider" in provider ? provider.provider.credentialId : provider.grant.grantId}</ResourceDetail>
+            <ResourceDetail label="Connection">{provider.connectionDescription ? `${provider.connection} · ${provider.connectionDescription}` : provider.connection}</ResourceDetail>
+            {"provider" in provider && provider.provider.config.type === "modelOAuth" && (
+              <ResourceDetail label="OAuth grant" mono>{provider.provider.config.grantId}</ResourceDetail>
+            )}
+            {"grant" in provider && <>
+              <ResourceDetail label="Environment variable" mono>{subscriptionBinding(provider.grant)?.envName ?? "—"}</ResourceDetail>
+              <ResourceDetail label="Expires">{formatExpiry(provider.grant.expiresAtMs)}</ResourceDetail>
+            </>}
+            <ResourceDetail label="Created">{resourceTimestamp(provider.createdAtMs)}</ResourceDetail>
+            <ResourceDetail label="Updated">{resourceTimestamp(provider.updatedAtMs)}</ResourceDetail>
+          </ResourceDetailsGrid>
+          <ModelProviderDetails key={provider.id} universeId={universeId} provider={provider}
+            onChanged={onChanged} onClose={() => onOpenChange(false)} />
+        </>
+      )}
+    </ResourceDetailsDialog>
   );
 }
 
@@ -73,7 +87,6 @@ function ModelProviderDetails({
         <OpenAiCompatibleDetails
           universeId={universeId}
           provider={provider.provider}
-          oauthGrant={provider.oauthGrant}
           onChanged={onChanged}
           onRemoved={removed}
         />

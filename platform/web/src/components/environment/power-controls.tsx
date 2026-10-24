@@ -54,10 +54,12 @@ export function EnvironmentPowerControls({
   universeId,
   environment,
   onChanged,
+  size = "xs",
 }: {
   universeId: string;
   environment: Environment;
   onChanged?: () => void;
+  size?: "xs" | "sm";
 }) {
   const queryClient = useQueryClient();
   const power = useMutation({
@@ -91,7 +93,7 @@ export function EnvironmentPowerControls({
           <Button
             key={state}
             variant="outline"
-            size="xs"
+            size={size}
             disabled={busy}
             onClick={() => power.mutate(state)}
           >

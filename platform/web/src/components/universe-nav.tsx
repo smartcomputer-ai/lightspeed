@@ -68,9 +68,9 @@ export const UNIVERSE_NAV: UniverseNavGroup[] = [
     items: [
       { path: "profiles", label: "Profiles", icon: SlidersHorizontal, action: "read" },
       { path: "workspaces", label: "Workspaces", icon: FolderGit2, action: "read" },
-      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
       { path: "environments", label: "Environments", icon: Boxes, action: "read" },
       { path: "mcp-servers", label: "MCP servers", icon: Server, action: "read" },
+      { path: "models", label: "Models", icon: BrainCircuit, action: "read" },
     ],
   },
   {

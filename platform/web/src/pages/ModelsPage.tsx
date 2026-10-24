@@ -1,8 +1,9 @@
 import { useActionPermissions } from "@/lib/permissions";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ReadError } from "@/components/read-error";
 import { LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { AddModelProviderDialog } from "@/components/models/add-model-provider-dialog";
 import { ModelProviderDetailsDialog } from "@/components/models/model-provider-details-dialog";
@@ -10,7 +11,6 @@ import { ModelProviderList } from "@/components/models/model-provider-list";
 import {
   useInvalidateModelProviders,
   useModelProviders,
-  type ConnectedModelProvider,
 } from "@/components/models/use-model-providers";
 import { MODEL_PROVIDER_CATALOG, type ModelProviderKind } from "@/components/models/catalog";
 import { DefaultModelDialog, ModelDefaultsSection, type DefaultSlot } from "@/components/models/model-defaults";
@@ -45,19 +45,20 @@ function Models({ universeId }: { universeId: string }) {
       setSearchParams(next, { replace: true });
     }
   }, [requestedKind]);
-  const [selected, setSelected] = useState<ConnectedModelProvider | null>(null);
-  const { connected, isLoading, error } = useModelProviders(universeId);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const detailsTriggerRef = useRef<HTMLElement | null>(null);
+  const { connected, isLoading, hasData, isComplete, error } = useModelProviders(universeId);
   const invalidate = useInvalidateModelProviders(universeId);
 
   // Keep the details dialog on the freshest copy of its provider.
-  const current = selected ? connected.find((i) => i.id === selected.id) ?? selected : null;
+  const current = connected.find((provider) => provider.id === selectedId) ?? null;
   const legacy = connected.some((entry) => "provider" in entry && !entry.provider.usableForModels);
 
   return (
     <>
       <PageHeader
         title="Models"
-        description="Default models and provider connections for this universe. Operators manage them; keys and logins are never shown again."
+        description="Provider connections and default models for agents in this universe."
         actions={writable && (
           <Button onClick={() => setAddOpen(true)}>
             <Plus data-icon="inline-start" />
@@ -72,9 +73,12 @@ function Models({ universeId }: { universeId: string }) {
           Remove it and add the provider again.
         </p>
       )}
-      {isLoading && <LoadingNote />}
-      {error && <p className="text-sm text-destructive">{error.message}</p>}
-      {!isLoading && <ModelProviderList providers={connected} onSelect={setSelected} />}
+      {isLoading && connected.length === 0 && <LoadingNote />}
+      {error && <ReadError error={error} loading={!hasData} prefix="Model providers unavailable" />}
+      <ModelProviderList providers={connected} showEmpty={isComplete && !error} onSelect={(provider, trigger) => {
+        detailsTriggerRef.current = trigger;
+        setSelectedId(provider.id);
+      }} />
       <ModelDefaultsSection universeId={universeId} writable={writable} onEdit={(defaults, slot) => setEditingDefaults({ defaults, slot })} />
       {writable && (
         <AddModelProviderDialog
@@ -94,8 +98,9 @@ function Models({ universeId }: { universeId: string }) {
       <ModelProviderDetailsDialog
         universeId={universeId}
         provider={current}
+        finalFocus={detailsTriggerRef}
         onOpenChange={(open) => {
-          if (!open) setSelected(null);
+          if (!open) setSelectedId(null);
         }}
         onChanged={() => void invalidate()}
       />

@@ -590,6 +590,8 @@ export function reconcileRuns(
       next.runStartedAtMs.set(runId, run.startedAtMs);
     }
     const phase = next.runPhases.get(runId);
+    // Parking covers tool promises and timers as well as human approvals.
+    const parkedLabel = run.pendingApprovals?.length ? "approval required" : "waiting for tools";
     switch (run.status) {
       case "completed":
       case "failed":
@@ -607,7 +609,7 @@ export function reconcileRuns(
           if (run.status === "cancelling" && next.activeRun?.runId === runId) {
             next.activeRun = { ...next.activeRun, label: "cancelling", cancelling: true };
           } else if (run.status === "parked" && next.activeRun?.runId === runId) {
-            next.activeRun = { ...next.activeRun, label: "approval required" };
+            next.activeRun = { ...next.activeRun, label: parkedLabel };
           }
           changed = true;
         } else if (
@@ -620,9 +622,10 @@ export function reconcileRuns(
         } else if (
           run.status === "parked" &&
           next.activeRun?.runId === runId &&
-          next.activeRun.label !== "approval required"
+          !next.activeRun.cancelling &&
+          next.activeRun.label !== parkedLabel
         ) {
-          next.activeRun = { ...next.activeRun, label: "approval required" };
+          next.activeRun = { ...next.activeRun, label: parkedLabel };
           changed = true;
         }
         break;
