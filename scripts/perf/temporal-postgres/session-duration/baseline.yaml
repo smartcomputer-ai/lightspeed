@@ -1,0 +1,4 @@
+history.shardIOConcurrency:
+  - value: 1
+matching.rps:
+  - value: 1200

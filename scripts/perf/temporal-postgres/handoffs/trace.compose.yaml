@@ -1,0 +1,13 @@
+# Opt-in only: full server tracing for isolated synthetic diagnostic runs.
+services:
+  temporal:
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: grpc
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:14317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_BSP_MAX_QUEUE_SIZE: "65536"
+      OTEL_BSP_SCHEDULE_DELAY: "1000"
+      TEMPORAL_OTEL_DEBUG: "true"

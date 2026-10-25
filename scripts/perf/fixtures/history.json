@@ -1,0 +1,16 @@
+{
+  "endpoint": "http://127.0.0.1:18080/rpc",
+  "simulator": "http://127.0.0.1:19090",
+  "sessions": 16,
+  "model": "perf-history",
+  "historyTurns": 32,
+  "inputBytes": 8192,
+  "warmupTurns": 1,
+  "mode": "runs",
+  "rate": 2,
+  "durationMs": 15000,
+  "deadlineMs": 60000,
+  "concurrency": 16,
+  "readers": 0,
+  "seed": 121
+}

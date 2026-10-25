@@ -1,0 +1,5 @@
+# Local synthetic diagnostic only: compare source-built server binaries.
+services:
+  temporal:
+    volumes:
+      - ${PERF_TEMPORAL_SERVER_BINARY:?select local server binary}:/usr/local/bin/temporal-server:ro
