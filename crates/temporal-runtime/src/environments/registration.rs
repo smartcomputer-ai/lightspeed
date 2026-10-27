@@ -7,17 +7,21 @@ use std::collections::BTreeMap;
 use ::environments::{
     BeginCloseEnvironment, CreateEnvironmentRegistrationKey, EnvironmentRecord,
     EnvironmentRegistrationKeyRecord, EnvironmentRegistrationKeyStatus,
-    EnvironmentRegistrationKeyStore, EnvironmentStatus, EnvironmentStore, ListEnvironments,
-    ObserveRegisteredEnvironment, RegisteredConnectionObservation, RegisteredIdentityMode,
-    RegistrationKeyPolicy, RevokeEnvironmentRegistrationKey, mint_registration_key,
+    EnvironmentRegistrationKeyStore, EnvironmentSource, EnvironmentStatus, EnvironmentStore,
+    ListEnvironments, ObserveRegisteredEnvironment, RegisteredConnectionObservation,
+    RegisteredIdentityMode, RegistrationKeyPolicy, RevokeEnvironmentRegistrationKey,
+    mint_registration_key,
 };
 
 /// A registered environment whose heartbeat stamp is older than this is
 /// treated as disconnected even if its row still says `Ready`: the gateway
 /// that held its control connection stopped without recording the
-/// disconnect. Three missed heartbeats leaves room for one slow pong.
+/// disconnect. The registration channel's liveness rule: the same number
+/// of missed heartbeats after which either peer declares the connection
+/// dead.
 pub(crate) const REGISTERED_STALE_AFTER_MS: i64 =
-    3 * crate::gateway::registration::HEARTBEAT_INTERVAL.as_millis() as i64;
+    environment_protocol::limits::HEARTBEAT_MISSED_INTERVALS as i64
+        * crate::gateway::registration::HEARTBEAT_INTERVAL.as_millis() as i64;
 
 /// What the reconciler does with one open registered environment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +55,21 @@ pub(crate) fn registered_sweep_action(
         return Some(RegisteredSweepAction::MarkOffline);
     }
     None
+}
+
+/// Whether a daemon's `registration/goodbye` ends its environment. An
+/// ephemeral environment closes at once: its daemon stopped on purpose,
+/// so waiting out the disconnect grace would only keep a finished sandbox
+/// `Offline` and counted against its key's limit. A persistent one stays
+/// `Offline` until its daemon returns or someone closes it.
+pub(crate) fn departure_closes(environment: &EnvironmentRecord) -> bool {
+    matches!(
+        environment.source,
+        EnvironmentSource::Registered {
+            identity_mode: RegisteredIdentityMode::Ephemeral,
+            ..
+        }
+    )
 }
 
 use super::*;
@@ -190,6 +209,7 @@ impl EnvironmentService {
 
     /// One pass over open registered environments: repair stale `Ready`
     /// rows and close ephemeral environments past their disconnect grace.
+    /// One environment's failure is logged and never stops the pass.
     /// Returns how many rows changed.
     pub(crate) async fn reconcile_registered_once(&self) -> Result<usize, AgentApiError> {
         let environments = EnvironmentStore::list_open_registered_environments(self.store.as_ref())
@@ -202,64 +222,87 @@ impl EnvironmentService {
         let mut keys: BTreeMap<String, EnvironmentRegistrationKeyRecord> = BTreeMap::new();
         let mut changed = 0;
         for environment in environments {
-            let Some(key_id) = environment.registration_key_id() else {
-                continue;
-            };
-            let key = match keys.get(key_id.as_str()) {
-                Some(key) => key.clone(),
-                None => {
-                    let key = EnvironmentRegistrationKeyStore::read_registration_key(
-                        self.store.as_ref(),
-                        key_id,
-                    )
-                    .await
-                    .map_err(map_environments_error)?;
-                    keys.insert(key_id.to_string(), key.clone());
-                    key
-                }
-            };
-            match registered_sweep_action(&environment, &key, now) {
-                None => {}
-                Some(RegisteredSweepAction::MarkOffline) => {
-                    tracing::info!(
-                        target: "temporal_runtime",
-                        environment = %environment.environment_id,
-                        "registered environment heartbeat is stale; marking offline"
-                    );
-                    EnvironmentStore::observe_registered_environment(
-                        self.store.as_ref(),
-                        ObserveRegisteredEnvironment {
-                            environment_id: environment.environment_id.clone(),
-                            observation: RegisteredConnectionObservation::Disconnected,
-                            observed_at_ms: now,
-                            metadata: BTreeMap::new(),
-                        },
-                    )
-                    .await
-                    .map_err(map_environments_error)?;
-                    changed += 1;
-                }
-                Some(RegisteredSweepAction::Close) => {
-                    tracing::info!(
-                        target: "temporal_runtime",
-                        environment = %environment.environment_id,
-                        registration_key_id = %key.registration_key_id,
-                        "ephemeral registered environment exceeded its disconnect grace; closing"
-                    );
-                    EnvironmentStore::begin_close_environment(
-                        self.store.as_ref(),
-                        BeginCloseEnvironment {
-                            environment_id: environment.environment_id.clone(),
-                            updated_at_ms: now,
-                        },
-                    )
-                    .await
-                    .map_err(map_environments_error)?;
-                    changed += 1;
-                }
+            match self
+                .reconcile_registered_environment(&environment, &mut keys, now)
+                .await
+            {
+                Ok(true) => changed += 1,
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    target: "temporal_runtime",
+                    environment = %environment.environment_id,
+                    error = %error.message,
+                    "registered environment sweep failed; continuing with the next"
+                ),
             }
         }
         Ok(changed)
+    }
+
+    /// Apply the sweep decision to one registered environment; true when
+    /// its row changed.
+    async fn reconcile_registered_environment(
+        &self,
+        environment: &EnvironmentRecord,
+        keys: &mut BTreeMap<String, EnvironmentRegistrationKeyRecord>,
+        now: i64,
+    ) -> Result<bool, AgentApiError> {
+        let Some(key_id) = environment.registration_key_id() else {
+            return Ok(false);
+        };
+        let key = match keys.get(key_id.as_str()) {
+            Some(key) => key.clone(),
+            None => {
+                let key = EnvironmentRegistrationKeyStore::read_registration_key(
+                    self.store.as_ref(),
+                    key_id,
+                )
+                .await
+                .map_err(map_environments_error)?;
+                keys.insert(key_id.to_string(), key.clone());
+                key
+            }
+        };
+        match registered_sweep_action(environment, &key, now) {
+            None => Ok(false),
+            Some(RegisteredSweepAction::MarkOffline) => {
+                tracing::info!(
+                    target: "temporal_runtime",
+                    environment = %environment.environment_id,
+                    "registered environment heartbeat is stale; marking offline"
+                );
+                EnvironmentStore::observe_registered_environment(
+                    self.store.as_ref(),
+                    ObserveRegisteredEnvironment {
+                        environment_id: environment.environment_id.clone(),
+                        observation: RegisteredConnectionObservation::Disconnected,
+                        observed_at_ms: now,
+                        metadata: BTreeMap::new(),
+                    },
+                )
+                .await
+                .map_err(map_environments_error)?;
+                Ok(true)
+            }
+            Some(RegisteredSweepAction::Close) => {
+                tracing::info!(
+                    target: "temporal_runtime",
+                    environment = %environment.environment_id,
+                    registration_key_id = %key.registration_key_id,
+                    "ephemeral registered environment exceeded its disconnect grace; closing"
+                );
+                EnvironmentStore::begin_close_environment(
+                    self.store.as_ref(),
+                    BeginCloseEnvironment {
+                        environment_id: environment.environment_id.clone(),
+                        updated_at_ms: now,
+                    },
+                )
+                .await
+                .map_err(map_environments_error)?;
+                Ok(true)
+            }
+        }
     }
 
     async fn registration_key_view(
@@ -314,7 +357,7 @@ mod tests {
 
     use ::environments::{
         EnvironmentDaemonId, EnvironmentId, EnvironmentIncarnationId, EnvironmentIncarnationRecord,
-        EnvironmentProvisionRequestId, EnvironmentRegistrationKeyId, EnvironmentSource, PowerState,
+        EnvironmentProvisionRequestId, EnvironmentRegistrationKeyId, PowerState,
     };
 
     use super::*;
@@ -337,6 +380,14 @@ mod tests {
     }
 
     fn environment(status: EnvironmentStatus, last_seen_at_ms: Option<i64>) -> EnvironmentRecord {
+        environment_in_mode(status, last_seen_at_ms, RegisteredIdentityMode::Ephemeral)
+    }
+
+    fn environment_in_mode(
+        status: EnvironmentStatus,
+        last_seen_at_ms: Option<i64>,
+        identity_mode: RegisteredIdentityMode,
+    ) -> EnvironmentRecord {
         let public_key = "ab".repeat(32);
         let daemon_id = EnvironmentDaemonId::from_public_key(&[0xab; 32]);
         EnvironmentRecord {
@@ -346,7 +397,7 @@ mod tests {
                 registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
                 daemon_id,
                 daemon_public_key: public_key,
-                identity_mode: RegisteredIdentityMode::Ephemeral,
+                identity_mode,
             },
             display_name: None,
             status,
@@ -366,6 +417,7 @@ mod tests {
             public_endpoint: None,
             metadata: BTreeMap::new(),
             last_seen_at_ms,
+            lifecycle_error: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         }
@@ -437,5 +489,17 @@ mod tests {
             ),
             Some(RegisteredSweepAction::Close)
         );
+    }
+
+    #[test]
+    fn only_ephemeral_environments_close_on_departure() {
+        let ephemeral = environment(EnvironmentStatus::Ready, Some(1_000));
+        assert!(departure_closes(&ephemeral));
+        let persistent = environment_in_mode(
+            EnvironmentStatus::Ready,
+            Some(1_000),
+            RegisteredIdentityMode::Persistent,
+        );
+        assert!(!departure_closes(&persistent));
     }
 }

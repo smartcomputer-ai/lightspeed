@@ -1,0 +1,24 @@
+{
+  "params": {
+    "path": "/workspace/link",
+    "followSymlinks": true
+  },
+  "response": {
+    "metadata": {
+      "kind": "file",
+      "sizeBytes": 1024,
+      "executable": true,
+      "modifiedAtMs": 1761400000000,
+      "createdAtMs": 1761300000000,
+      "version": "v1:1761400000000000000:1024:42"
+    }
+  },
+  "error": {
+    "code": -32003,
+    "message": "/workspace/link resolves outside the filesystem root",
+    "data": {
+      "kind": "permissionDenied",
+      "reason": "outsideRoot"
+    }
+  }
+}

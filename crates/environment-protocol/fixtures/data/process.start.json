@@ -1,0 +1,38 @@
+{
+  "params": {
+    "processId": "proc-7",
+    "command": {
+      "argv": [
+        "sh",
+        "-lc",
+        "cat"
+      ],
+      "cwd": "/workspace",
+      "env": {
+        "RUST_LOG": "debug"
+      },
+      "secretEnv": {
+        "API_TOKEN": "s3cr3t"
+      },
+      "input": {
+        "kind": "bytes",
+        "data": "aGVsbG8="
+      },
+      "timeoutMs": 600000
+    },
+    "pty": {
+      "rows": 40,
+      "cols": 120
+    }
+  },
+  "response": {
+    "pid": 4242
+  },
+  "error": {
+    "code": -32009,
+    "message": "process id proc-7 is in use",
+    "data": {
+      "kind": "alreadyExists"
+    }
+  }
+}

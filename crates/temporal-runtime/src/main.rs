@@ -3,8 +3,8 @@ use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use clap::{Args, Parser, Subcommand};
 use temporal_runtime::{
     config::{
-        DeploymentStores, TaskQueues, cas_sweep_grace_from_env, environment_public_url_from_env,
-        gateway_auth_mode_from_env, postgres_pool_from_env, task_queues_from_env,
+        DeploymentStores, TaskQueues, cas_sweep_grace_from_env, gateway_auth_mode_from_env,
+        postgres_pool_from_env, task_queues_from_env,
     },
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
@@ -554,6 +554,14 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         .await?
         .with_blob_cache(temporal_runtime::config::blob_cache_from_env()?);
     let reaper_stores = stores.clone();
+    if roles.has(Role::EnvironmentGateway) {
+        // Daemons sign the gateway origin they dial; refuse to serve
+        // registration under an origin the gateway cannot name.
+        temporal_runtime::gateway::http::registration_origin(
+            args.public_base_url.as_deref(),
+            args.bind,
+        )?;
+    }
     let public_base_url = args
         .public_base_url
         .clone()
@@ -676,10 +684,7 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 api: roles.has(Role::Gateway),
                 environment: roles.has(Role::EnvironmentGateway),
             };
-            let gateway_state = Arc::new(
-                GatewayState::multi(mode, universes, public_base_url)
-                    .with_environment_public_url(environment_public_url_from_env()?),
-            );
+            let gateway_state = Arc::new(GatewayState::multi(mode, universes, public_base_url));
             let app = gateway_router(gateway_state, args.max_request_body_bytes, routes);
             let listener = tokio::net::TcpListener::bind(args.bind).await?;
             tracing::info!(

@@ -1,9 +1,10 @@
 //! Minimal live environment control-plane acceptance test.
 //!
-//! This deliberately uses the in-process provider with real Postgres and the
-//! real deployment reconciler. It covers the durable provider and ingress seams
-//! without requiring an Incus installation; the separate Incus live smoke test
-//! owns backend connectivity and topology.
+//! This deliberately uses the fake controller, served on loopback and
+//! registered like any provider, with real Postgres and the real deployment
+//! reconciler. It covers the durable provider and ingress seams without
+//! requiring an Incus installation; the separate Incus live smoke test owns
+//! backend connectivity and topology.
 
 mod support;
 
@@ -11,8 +12,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use api::{
     AgentApiService, DeploymentApiService, DeploymentEnvironmentAdoptParams,
-    DeploymentEnvironmentProviderConnection, DeploymentEnvironmentProviderDeleteParams,
-    DeploymentEnvironmentProviderPutParams, DeploymentEnvironmentProviderTransport,
+    DeploymentEnvironmentProviderDeleteParams, DeploymentEnvironmentProviderPutParams,
     DeploymentProviderBindingPutParams, DeploymentUniverseCreateParams, EnvironmentCloseParams,
     EnvironmentCreateParams, EnvironmentIngressPutParams, EnvironmentLifecycleStatusView,
     EnvironmentListParams, EnvironmentProviderBindingStatusView, EnvironmentTemplateListParams,
@@ -26,6 +26,7 @@ use support::live::{
 };
 use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
+    environments::fake_controller::{FAKE_INGRESS_ENDPOINT, FAKE_TEMPLATE_ID, FakeController},
     gateway::{GatewayAgentApi, GatewayDeploymentApi},
     pg_store_from_env,
 };
@@ -57,6 +58,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         stores,
     )?);
     let operator = GatewayDeploymentApi::new(runtime.clone());
+    let controller = FakeController::start().await?;
     let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
     // Direct service calls carry an explicit local request context.
     use temporal_runtime::gateway::request_context::{
@@ -80,16 +82,46 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
             operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
                 provider_id: provider_id.clone(),
                 display_name: Some("Live fake provider".to_owned()),
-                controller_connection: DeploymentEnvironmentProviderConnection {
-                    endpoint: "in-process".to_owned(),
-                    transport: DeploymentEnvironmentProviderTransport::Provider {
-                        provider_type: "fake".to_owned(),
-                    },
-                },
+                controller_endpoint: controller.controller_url().to_owned(),
                 metadata: BTreeMap::new(),
+                credential: Some(controller.credential().to_owned()),
             }),
         )
         .await?;
+        // Registration ran the controller handshake and recorded its facts.
+        let registered = calling(
+            deployment_caller.clone(),
+            operator.read_environment_provider(api::DeploymentEnvironmentProviderReadParams {
+                provider_id: provider_id.clone(),
+            }),
+        )
+        .await?
+        .result
+        .provider;
+        assert_eq!(
+            registered.controller_features,
+            Some(api::DeploymentEnvironmentProviderFeaturesView {
+                adopt_target: true,
+                ingress: true,
+            })
+        );
+        assert!(registered.data_route_base.is_some());
+        // A controller URL that names no controller is refused outright.
+        let mispathed = calling(
+            deployment_caller.clone(),
+            operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
+                provider_id: format!("{provider_id}-mispathed"),
+                display_name: None,
+                controller_endpoint: controller
+                    .controller_url()
+                    .replace("/control", "/elsewhere"),
+                metadata: BTreeMap::new(),
+                credential: Some(controller.credential().to_owned()),
+            }),
+        )
+        .await
+        .expect_err("a mis-pathed controller URL is refused");
+        assert_eq!(mispathed.kind, api::AgentApiErrorKind::InvalidRequest);
         for (universe_id, binding_id) in [(universe_a, "primary-a"), (universe_b, "primary-b")] {
             calling(
                 deployment_caller.clone(),
@@ -123,14 +155,15 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         )
         .await?;
         assert_eq!(templates.result.templates.len(), 1);
-        assert_eq!(templates.result.templates[0].template_id, "rust-v1");
+        assert_eq!(templates.result.templates[0].template_id, FAKE_TEMPLATE_ID);
+        assert!(templates.result.templates[0].resources.is_some());
 
         let created = calling(
             caller_a.clone(),
             state_a.api.create_environment(EnvironmentCreateParams {
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
-                template_id: "rust-v1".to_owned(),
+                template_id: FAKE_TEMPLATE_ID.to_owned(),
                 display_name: Some("Provisioned live VM".to_owned()),
                 metadata: BTreeMap::new(),
                 idle_policy: None,
@@ -144,7 +177,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
             state_a.api.create_environment(EnvironmentCreateParams {
                 request_id: format!("create-{suffix}"),
                 binding_id: "primary-a".to_owned(),
-                template_id: "rust-v1".to_owned(),
+                template_id: FAKE_TEMPLATE_ID.to_owned(),
                 display_name: None,
                 metadata: BTreeMap::new(),
                 idle_policy: None,
@@ -208,6 +241,19 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
         .await?;
         assert!(created_ready.incarnation.provider_target_id.is_some());
         assert!(adopted_ready.incarnation.provider_target_id.is_some());
+        // The Ready transition ran the data-plane handshake and recorded the
+        // daemon's protocol version.
+        assert_eq!(
+            created_ready
+                .metadata
+                .get(environments::ENVD_PROTOCOL_VERSION_METADATA_KEY)
+                .map(String::as_str),
+            Some(
+                environment_protocol::ENVD_PROTOCOL_VERSION
+                    .to_string()
+                    .as_str()
+            )
+        );
 
         let listed_a = calling(
             caller_a.clone(),
@@ -236,10 +282,17 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
                 }),
         )
         .await?;
-        assert_eq!(
-            ingress.result.environment.public_endpoint.as_deref(),
-            Some("https://fake.env.test")
-        );
+        // The put records the intent; the reconciler realizes it.
+        assert!(ingress.result.environment.public_ingress_enabled);
+        calling(
+            caller_a.clone(),
+            wait_for_public_endpoint(
+                state_a.api.as_ref(),
+                created.environment_id.as_str(),
+                Some(FAKE_INGRESS_ENDPOINT),
+            ),
+        )
+        .await?;
         calling(
             caller_a.clone(),
             state_a
@@ -248,6 +301,11 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
                     environment_id: created.environment_id.clone(),
                     enabled: false,
                 }),
+        )
+        .await?;
+        calling(
+            caller_a.clone(),
+            wait_for_public_endpoint(state_a.api.as_ref(), created.environment_id.as_str(), None),
         )
         .await?;
 
@@ -278,6 +336,7 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
 
     reconciler.abort();
     let _ = reconciler.await;
+    drop(controller);
     runtime.evict(universe_a).await;
     runtime.evict(universe_b).await;
     for universe_id in [universe_a, universe_b] {
@@ -319,6 +378,33 @@ async fn wait_for_status(
     }
 }
 
+async fn wait_for_public_endpoint(
+    api: &temporal_runtime::gateway::GatewayAgentApi,
+    environment_id: &str,
+    expected: Option<&str>,
+) -> anyhow::Result<api::EnvironmentView> {
+    let started = std::time::Instant::now();
+    loop {
+        let environment = api
+            .read_environment(api::EnvironmentReadParams {
+                environment_id: environment_id.to_owned(),
+            })
+            .await?
+            .result
+            .environment;
+        if environment.public_endpoint.as_deref() == expected {
+            return Ok(environment);
+        }
+        if started.elapsed() > Duration::from_secs(10) {
+            anyhow::bail!(
+                "timed out waiting for environment {environment_id} to report public endpoint {expected:?}; it reports {:?}",
+                environment.public_endpoint
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn require_live_env() -> anyhow::Result<()> {
     if std::env::var("LIGHTSPEED_TEST_POSTGRES_URL").is_err()
         && std::env::var("LIGHTSPEED_POSTGRES_URL").is_err()
@@ -353,9 +439,8 @@ async fn run_environment_power_live_client(
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
-    use environment_protocol::shared::EnvironmentTransport;
     use environments::{
-        EnvironmentConnectionSpec, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
+        EnvironmentEndpoint, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
         EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
         PutEnvironmentProvider, PutEnvironmentProviderBinding,
     };
@@ -369,17 +454,14 @@ async fn run_environment_power_live_client(
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let provider_id = format!("fake-power-{suffix}");
     let binding_id = format!("binding-power-{suffix}");
+    let controller = FakeController::start().await?;
     store
         .put_provider(PutEnvironmentProvider {
             provider_id: EnvironmentProviderId::new(provider_id.clone()),
             display_name: Some("Live fake provider (power)".to_owned()),
-            controller_connection: EnvironmentConnectionSpec::new(
-                "in-process",
-                EnvironmentTransport::Provider {
-                    provider_type: "fake".to_owned(),
-                },
-            ),
+            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
             metadata: BTreeMap::new(),
+            credential: Some(auth::SecretValue::new(controller.credential())),
             updated_at_ms: 1,
         })
         .await?;
@@ -405,7 +487,7 @@ async fn run_environment_power_live_client(
         .create_environment(api::EnvironmentCreateParams {
             request_id: format!("power-{suffix}"),
             binding_id: binding_id.clone(),
-            template_id: "rust-v1".to_owned(),
+            template_id: FAKE_TEMPLATE_ID.to_owned(),
             display_name: Some("Power VM".to_owned()),
             metadata: BTreeMap::new(),
             idle_policy: Some(policy.clone()),
@@ -480,8 +562,8 @@ async fn run_environment_power_live_client(
         .environment;
     assert_eq!(restored.idle_policy.as_ref(), Some(&policy));
 
-    // The reaper sees the candidate but cannot reach a daemon through the
-    // fake provider, so it leaves the environment alone.
+    // The reaper sees the candidate but no gateway serves its route here, so
+    // it cannot read an idle report and leaves the environment alone.
     let stats = api.reap_idle_environments_once().await?;
     assert_eq!(stats.candidates, 1);
     assert_eq!(stats.unreachable, 1);
@@ -660,10 +742,7 @@ async fn run_environment_power_live_client(
     let external = api
         .create_external_environment(api::EnvironmentExternalCreateParams {
             request_id: format!("power-external-{suffix}"),
-            connection: api::EnvironmentConnectionView {
-                endpoint: format!("ws://127.0.0.1:1/{suffix}"),
-                transport: api::EnvironmentConnectionTransportView::WebSocket,
-            },
+            endpoint: format!("ws://127.0.0.1:1/{suffix}"),
             display_name: None,
             metadata: BTreeMap::new(),
         })

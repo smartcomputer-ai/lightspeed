@@ -203,7 +203,8 @@ const externalEnvironmentCreateSchema = z.object({
   endpoint: z
     .string()
     .trim()
-    .regex(/^wss?:\/\/[^\s]+$/, "endpoint must be a ws:// or wss:// URL"),
+    .max(2048)
+    .regex(/^(wss?:\/\/|unix:\/\/\/)[^\s]+$/, "endpoint must be a ws://, wss:// or unix:// URL"),
   displayName: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -1813,7 +1814,7 @@ export function gatewayRoutes(ctx: AppContext) {
       const client = engineClientFor(ctx, access);
       const params: EnvironmentExternalCreateParams = {
         requestId: externalEnvironmentRequestId(body.data.endpoint),
-        connection: { endpoint: body.data.endpoint, transport: "webSocket" },
+        endpoint: body.data.endpoint,
         displayName: body.data.displayName,
       };
       const response = await client.call("environments/external/create", params);

@@ -121,7 +121,7 @@ pub fn initialize_response(caller: CallerAccess) -> api::AgentApiOutcome<api::In
             envd: EnvironmentDaemonInfo {
                 version: release_info::VERSION.to_owned(),
                 git_sha: release_info::GIT_SHA.to_owned(),
-                protocol_version: environment_protocol::shared::CURRENT_PROTOCOL_VERSION,
+                protocol_version: environment_protocol::ENVD_PROTOCOL_VERSION,
                 targets: release_info::envd_targets().map(str::to_owned).collect(),
             },
         },

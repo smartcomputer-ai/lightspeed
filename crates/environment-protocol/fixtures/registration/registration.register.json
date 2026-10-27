@@ -1,0 +1,37 @@
+{
+  "params": {
+    "protocolVersion": 3,
+    "registrationKey": "lsrk_0123456789abcdef",
+    "daemonPublicKey": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
+    "signature": "9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c",
+    "displayName": "ci-runner-7",
+    "metadata": {
+      "harbor.trialId": "trial-1"
+    },
+    "implementation": {
+      "name": "lightspeed-envd",
+      "version": "0.5.0",
+      "gitSha": "86f6adf3",
+      "target": "x86_64-unknown-linux-musl"
+    }
+  },
+  "response": {
+    "receipt": {
+      "environmentId": "env_1",
+      "incarnationId": "inc_1",
+      "daemonId": "daemon_3b3b",
+      "controlConnectionId": "connection_7",
+      "identityMode": "ephemeral",
+      "admission": "created"
+    },
+    "heartbeatIntervalMs": 30000
+  },
+  "error": {
+    "code": -32003,
+    "message": "the registration signature does not verify",
+    "data": {
+      "kind": "permissionDenied",
+      "reason": "invalidSignature"
+    }
+  }
+}

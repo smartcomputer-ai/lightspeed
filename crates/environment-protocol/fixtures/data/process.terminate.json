@@ -1,0 +1,17 @@
+{
+  "params": {
+    "processId": "proc-7",
+    "signal": "terminate"
+  },
+  "response": {
+    "running": true
+  },
+  "error": {
+    "code": -32004,
+    "message": "unknown process id: proc-7",
+    "data": {
+      "kind": "notFound",
+      "reason": "daemonRestarted"
+    }
+  }
+}

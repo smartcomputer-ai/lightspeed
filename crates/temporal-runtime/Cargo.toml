@@ -63,6 +63,7 @@ url = "2"
 
 [dev-dependencies]
 test-support = { path = "../test-support" }
+environment-client = { path = "../environment-client", features = ["conformance"] }
 dotenvy = "0.15"
 environment-daemon = { path = "../environment-daemon" }
 futures-util = "0.3"

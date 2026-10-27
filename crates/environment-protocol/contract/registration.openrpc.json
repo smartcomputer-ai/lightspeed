@@ -1,0 +1,1420 @@
+{
+  "components": {
+    "schemas": {
+      "AbortReason": {
+        "description": "Why an operation was `aborted`.",
+        "oneOf": [
+          {
+            "const": "cancelled",
+            "description": "`$/cancelRequest` named the request.",
+            "type": "string"
+          },
+          {
+            "const": "sourceChanged",
+            "description": "A file or directory changed while it was being read.",
+            "type": "string"
+          }
+        ]
+      },
+      "Admission": {
+        "description": "Whether this admission created the environment or rejoined it.",
+        "oneOf": [
+          {
+            "const": "created",
+            "description": "First admission of this daemon identity: a new environment.",
+            "type": "string"
+          },
+          {
+            "const": "reconnected",
+            "description": "A known identity reconnected to its environment.",
+            "type": "string"
+          }
+        ]
+      },
+      "ArtifactSha256": {
+        "description": "`sha256` of a published archive: 64 lowercase hex digits.",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "BuildFacts": {
+        "description": "What `lightspeed-envd --print-build` prints, as one JSON object.",
+        "properties": {
+          "gitSha": {
+            "type": "string"
+          },
+          "name": {
+            "description": "Always `lightspeed-envd`.",
+            "type": "string"
+          },
+          "protocolVersion": {
+            "description": "The binary's `ENVD_PROTOCOL_VERSION`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "target": {
+            "description": "Rust target triple.",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "gitSha",
+          "target",
+          "protocolVersion"
+        ],
+        "type": "object"
+      },
+      "BusyReason": {
+        "description": "What limit a `busy` request hit.",
+        "oneOf": [
+          {
+            "const": "requestLimit",
+            "description": "The connection's concurrent request limit.",
+            "type": "string"
+          },
+          {
+            "const": "transferCapacity",
+            "description": "The daemon's limit on active transfer operations.",
+            "type": "string"
+          },
+          {
+            "const": "rateLimited",
+            "description": "A rate limit on the caller's identity.",
+            "type": "string"
+          },
+          {
+            "const": "capacityExhausted",
+            "description": "A registration key's limit on active environments.",
+            "type": "string"
+          }
+        ]
+      },
+      "Capability": {
+        "description": "A capability a request needed and the endpoint lacks.",
+        "oneOf": [
+          {
+            "const": "filesystem",
+            "description": "The `filesystem` family.",
+            "type": "string"
+          },
+          {
+            "const": "filesystemWrite",
+            "description": "`capabilities.filesystem.write`: the filesystem is writable.",
+            "type": "string"
+          },
+          {
+            "const": "process",
+            "description": "The `process` family.",
+            "type": "string"
+          },
+          {
+            "const": "processPty",
+            "description": "`capabilities.process.pty`.",
+            "type": "string"
+          },
+          {
+            "const": "job",
+            "description": "The `job` family.",
+            "type": "string"
+          },
+          {
+            "const": "adoptTarget",
+            "description": "The controller's `adoptTarget` capability.",
+            "type": "string"
+          },
+          {
+            "const": "ingress",
+            "description": "The controller's `ingress` capability.",
+            "type": "string"
+          }
+        ]
+      },
+      "ChallengeNonce": {
+        "description": "`nonce`: the gateway's 32 random bytes for one control connection.",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "ChallengeParams": {
+        "description": "`registration/challenge` params.\n\n**Frozen.** This is the first frame of every control connection and the\nonly frame a daemon of any version must parse to learn it is stale: it\nonly ever gains fields, is decoded tolerantly (unknown members are\nignored), and a receiver reads `protocolVersion` with\n`challenge_protocol_version` before decoding anything else. The whole\nframe is\n`{\"jsonrpc\":\"2.0\",\"method\":\"registration/challenge\",\"params\":{\"protocolVersion\":N,\"nonce\":\"<64 hex>\"}}`.",
+        "properties": {
+          "nonce": {
+            "$ref": "#/components/schemas/ChallengeNonce"
+          },
+          "protocolVersion": {
+            "description": "The gateway's `ENVD_PROTOCOL_VERSION`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "nonce"
+        ],
+        "type": "object"
+      },
+      "ClosedParams": {
+        "additionalProperties": false,
+        "description": "`registration/closed` params: the gateway ends the session for good and\ncloses the socket after this frame. The daemon exits and does not\nreconnect.",
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DescriptiveText"
+              }
+            ]
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ClosedReason"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ClosedReason": {
+        "description": "Why the gateway ended the session for good.",
+        "oneOf": [
+          {
+            "const": "superseded",
+            "description": "Another process with this daemon identity connected; the newest\nconnection wins and this daemon exits with its own status naming the\nshared identity.",
+            "type": "string"
+          },
+          {
+            "const": "environmentClosed",
+            "description": "The identity's environment was closed; the identity is spent.",
+            "type": "string"
+          }
+        ]
+      },
+      "ControlConnectionId": {
+        "description": "`controlConnectionId` the gateway assigns to one control connection.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        "type": "string"
+      },
+      "DaemonId": {
+        "description": "`daemonId` the gateway assigns to an admitted daemon identity.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        "type": "string"
+      },
+      "DaemonPublicKey": {
+        "description": "`daemonPublicKey`: a raw Ed25519 public key.",
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "DescriptiveText": {
+        "description": "A short human-readable text: 1 to 1024 bytes without control characters\nother than line feed and tab. Never parsed.",
+        "maxLength": 1024,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "DiscoveryArtifact": {
+        "description": "One published envd archive.",
+        "properties": {
+          "file": {
+            "description": "Archive file name.",
+            "type": "string"
+          },
+          "sha256": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactSha256"
+              }
+            ],
+            "description": "Digest of the archive's bytes."
+          },
+          "url": {
+            "description": "Absolute download URL; absent (or null) when the archive is served\nnext to the document.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "DiscoveryDocument": {
+        "description": "The discovery document.",
+        "properties": {
+          "artifacts": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DiscoveryArtifact"
+            },
+            "description": "Archives by Rust target triple.",
+            "type": "object"
+          },
+          "builtAtMs": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "channel": {
+            "description": "Release channel, such as `stable` or `snapshot`.",
+            "type": "string"
+          },
+          "gitSha": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "description": "The published envd's `ENVD_PROTOCOL_VERSION`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "description": "Release version of the published envd.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "gitSha",
+          "protocolVersion",
+          "artifacts"
+        ],
+        "type": "object"
+      },
+      "DisplayName": {
+        "description": "A display name: 1 to 128 bytes without control characters.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "Ed25519Signature": {
+        "description": "`signature`: an Ed25519 signature over\n`signed_registration_message`.",
+        "pattern": "^[0-9a-f]{128}$",
+        "type": "string"
+      },
+      "EnvironmentId": {
+        "description": "`environmentId` of a Lightspeed environment.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        "type": "string"
+      },
+      "ErrorData": {
+        "description": "The `data` member of an error object: the kind and its typed fields.\n\nKinds without fields are empty struct variants rather than unit\nvariants: serde does not apply `deny_unknown_fields` to the unit\nvariants of an internally tagged enum, and every kind must refuse\nunknown members.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "parseError",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "invalidRequest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "methodNotFound",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ceiling": {
+                "description": "The advertised ceiling the value exceeded.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "field": {
+                "description": "Wire path of the offending field, such as `limits.maxDurationMs`.",
+                "type": "string"
+              },
+              "kind": {
+                "const": "invalidParams",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "notInitialized",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expected": {
+                "description": "The version of the peer that sent this error.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "versionMismatch",
+                "type": "string"
+              },
+              "received": {
+                "description": "The version the requester stated.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "received"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "notFound",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NotFoundReason"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "alreadyExists",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "failedPrecondition",
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/PreconditionReason"
+              }
+            },
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "permissionDenied",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PermissionReason"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "capability": {
+                "$ref": "#/components/schemas/Capability"
+              },
+              "kind": {
+                "const": "capabilityUnavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "capability"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "busy",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BusyReason"
+                  }
+                ]
+              },
+              "retryAfterMs": {
+                "description": "Earliest useful retry, when the server knows it.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "deadlineExceeded",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "aborted",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AbortReason"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "payloadTooLarge",
+                "type": "string"
+              },
+              "limitBytes": {
+                "description": "The byte limit the payload exceeded.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "limitEntries": {
+                "description": "The entry-count limit the result exceeded.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "processFailed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              },
+              "retryAfterMs": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "internal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "GoodbyeParams": {
+        "additionalProperties": false,
+        "description": "`registration/goodbye` params: the daemon is stopping deliberately.",
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/GoodbyeReason"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "GoodbyeReason": {
+        "description": "Why the daemon is leaving.",
+        "oneOf": [
+          {
+            "const": "shutdown",
+            "description": "`SIGTERM` or `SIGINT`.",
+            "type": "string"
+          }
+        ]
+      },
+      "ImplementationInfo": {
+        "additionalProperties": false,
+        "description": "What a peer says about its own build: `clientInfo`, `serverInfo` and a\ndaemon's registration `implementation`. Descriptive only; the protocol\nversion alone decides whether two peers can talk, and nothing here\nselects, authenticates or gates. Every field is 1 to 256 bytes without control characters,\nchecked on decode and by every constructor, so a value that would be\nrefused can never be built or sent.",
+        "properties": {
+          "gitSha": {
+            "description": "Full or abbreviated git commit of the build.",
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Product name, such as `lightspeed-envd`.",
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+            "type": "string"
+          },
+          "target": {
+            "description": "Rust target triple of the build.",
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+            "type": "string"
+          },
+          "version": {
+            "description": "Release version, such as `0.5.0`.",
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "IncarnationId": {
+        "description": "`incarnationId` of one incarnation of an environment.",
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        "type": "string"
+      },
+      "Metadata": {
+        "additionalProperties": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "description": "Descriptive key-value metadata: at most 32 entries, keys 1 to 64 bytes outside the reserved `lightspeed.` prefix, values 1 to 256 bytes, no control characters.",
+        "maxProperties": 32,
+        "propertyNames": {
+          "maxLength": 64,
+          "minLength": 1,
+          "not": {
+            "pattern": "^lightspeed\\."
+          },
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+        },
+        "type": "object"
+      },
+      "NotFoundReason": {
+        "description": "Why a handle, path or identity was not found.",
+        "oneOf": [
+          {
+            "const": "expired",
+            "description": "Its retention window ended; a tombstone remembers it.",
+            "type": "string"
+          },
+          {
+            "const": "daemonRestarted",
+            "description": "It belonged to an earlier daemon instance (see `daemonInstanceId`).",
+            "type": "string"
+          },
+          {
+            "const": "unknownDaemon",
+            "description": "A daemon identity the gateway has never admitted presented no\nregistration key.",
+            "type": "string"
+          }
+        ]
+      },
+      "OpenStreamParams": {
+        "additionalProperties": false,
+        "description": "`registration/openStream` params: the gateway asks the daemon to dial\none stream.",
+        "properties": {
+          "stream": {
+            "$ref": "#/components/schemas/StreamSpec"
+          },
+          "token": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecretString"
+              }
+            ],
+            "description": "One-time bearer token for the stream dial; short-lived."
+          }
+        },
+        "required": [
+          "token",
+          "stream"
+        ],
+        "type": "object"
+      },
+      "OpenStreamResponse": {
+        "additionalProperties": false,
+        "description": "`registration/openStream` response, sent once the stream socket is\nupgraded and served. A failed dial answers `unavailable`; the gateway\nfails the waiting route at once.",
+        "type": "object"
+      },
+      "PermissionReason": {
+        "description": "Why a `permissionDenied` request was refused.",
+        "oneOf": [
+          {
+            "const": "outsideRoot",
+            "description": "The path, or a symlink it passes through, resolves outside the\ndaemon's filesystem root.",
+            "type": "string"
+          },
+          {
+            "const": "daemonState",
+            "description": "The path names or contains the daemon's state directory.",
+            "type": "string"
+          },
+          {
+            "const": "filePermission",
+            "description": "The operating system refused access.",
+            "type": "string"
+          },
+          {
+            "const": "invalidSignature",
+            "description": "The registration signature does not verify.",
+            "type": "string"
+          },
+          {
+            "const": "invalidRegistrationKey",
+            "description": "The registration key is unknown.",
+            "type": "string"
+          },
+          {
+            "const": "registrationKeyRevoked",
+            "description": "The registration key was revoked.",
+            "type": "string"
+          }
+        ]
+      },
+      "PreconditionReason": {
+        "description": "The state that forbids a `failedPrecondition` request.",
+        "oneOf": [
+          {
+            "const": "inputClosed",
+            "description": "The process has no open input: started without `pipe` or `pty`,\ninput already closed, or exited.",
+            "type": "string"
+          },
+          {
+            "const": "ifMatchFailed",
+            "description": "The file's current `version` differs from `ifMatch`.",
+            "type": "string"
+          },
+          {
+            "const": "createCondition",
+            "description": "`create: ifAbsent` met an existing file, or `create: ifPresent` a\nmissing one.",
+            "type": "string"
+          },
+          {
+            "const": "notEmpty",
+            "description": "The directory is not empty and `recursive` was not set.",
+            "type": "string"
+          },
+          {
+            "const": "isDirectory",
+            "description": "The path names a directory where a file is required.",
+            "type": "string"
+          },
+          {
+            "const": "notDirectory",
+            "description": "A path component or the path names a non-directory where a directory\nis required.",
+            "type": "string"
+          },
+          {
+            "const": "notRegularFile",
+            "description": "The path names a device, FIFO, socket or other non-regular file.",
+            "type": "string"
+          },
+          {
+            "const": "symlinkLoop",
+            "description": "A symlink chain loops.",
+            "type": "string"
+          },
+          {
+            "const": "symlinkRejected",
+            "description": "A capture met a symlink that leaves the selection, or one the\nselection's symlink policy rejects.",
+            "type": "string"
+          },
+          {
+            "const": "filesystemRoot",
+            "description": "The filesystem root itself cannot be replaced or removed.",
+            "type": "string"
+          },
+          {
+            "const": "crossDevice",
+            "description": "Rename across filesystems.",
+            "type": "string"
+          },
+          {
+            "const": "noSpace",
+            "description": "No space left on the device.",
+            "type": "string"
+          },
+          {
+            "const": "jobIdInUse",
+            "description": "A job id is in use by a job with another `requestId` or spec; choose\na new job id.",
+            "type": "string"
+          },
+          {
+            "const": "operationIdInUse",
+            "description": "A transfer `operationId` is in use for different input.",
+            "type": "string"
+          },
+          {
+            "const": "transferPhase",
+            "description": "The transfer action is not valid in the operation's current phase.",
+            "type": "string"
+          },
+          {
+            "const": "transferOffset",
+            "description": "A transfer write's `offset` is not the digest's next expected offset.",
+            "type": "string"
+          },
+          {
+            "const": "digestMismatch",
+            "description": "Uploaded bytes do not hash to their digest.",
+            "type": "string"
+          },
+          {
+            "const": "environmentClosed",
+            "description": "The environment is closed; its identity or target is spent.",
+            "type": "string"
+          },
+          {
+            "const": "identityInUse",
+            "description": "The daemon identity is bound to another universe.",
+            "type": "string"
+          },
+          {
+            "const": "ownerMismatch",
+            "description": "The target belongs to another owner, or (`target/adopt`) the owner\nalready holds a different target.",
+            "type": "string"
+          },
+          {
+            "const": "templateDeprecated",
+            "description": "The template is deprecated and creates no new targets.",
+            "type": "string"
+          },
+          {
+            "const": "ingressUnsupported",
+            "description": "`ingress/ensure` on a target whose template has no public ingress.",
+            "type": "string"
+          },
+          {
+            "const": "targetNotActive",
+            "description": "A power change on a target whose `phase` is not `active`\n(provisioning, closing, closed or failed).",
+            "type": "string"
+          },
+          {
+            "const": "notAdoptable",
+            "description": "`target/adopt`: the source target exists but the provider cannot take\nit over, for example an instance of a kind it does not manage.",
+            "type": "string"
+          }
+        ]
+      },
+      "ProtocolError": {
+        "additionalProperties": false,
+        "description": "A protocol error: one kind, its typed data and a message.\n\nSerializes as an `ErrorObject`. Displays as `{kind}: {message}`.",
+        "properties": {
+          "code": {
+            "description": "Fixed by `data.kind`; see `ProtocolErrorKind::code`.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ErrorData"
+          },
+          "message": {
+            "description": "Human-readable description. Never parsed.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data"
+        ],
+        "type": "object"
+      },
+      "RegisterParams": {
+        "additionalProperties": false,
+        "description": "`registration/register` params. `registrationKey`, `displayName` and\n`metadata` are read only at a daemon identity's first admission; a\ndaemon sends the key until it is admitted once and never afterwards.\n\nThe gateway decodes them with `RegisterParams::decode`: build facts,\na display name or metadata out of bounds refuse admission with\n`invalidRequest`; anything else that does not decode is\n`invalidParams`.",
+        "properties": {
+          "daemonPublicKey": {
+            "$ref": "#/components/schemas/DaemonPublicKey"
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisplayName"
+              }
+            ]
+          },
+          "implementation": {
+            "$ref": "#/components/schemas/ImplementationInfo"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          },
+          "protocolVersion": {
+            "description": "The daemon's `ENVD_PROTOCOL_VERSION`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "registrationKey": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecretString"
+              }
+            ]
+          },
+          "signature": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ed25519Signature"
+              }
+            ],
+            "description": "Over `signed_registration_message` of the challenge nonce and the\ncanonical origin of the URL the daemon dialed."
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "daemonPublicKey",
+          "signature",
+          "implementation"
+        ],
+        "type": "object"
+      },
+      "RegisterResponse": {
+        "additionalProperties": false,
+        "description": "`registration/register` response: the daemon is admitted.",
+        "properties": {
+          "heartbeatIntervalMs": {
+            "description": "How often the gateway pings; see the liveness rule.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/RegistrationReceipt"
+          }
+        },
+        "required": [
+          "receipt",
+          "heartbeatIntervalMs"
+        ],
+        "type": "object"
+      },
+      "RegistrationIdentityMode": {
+        "description": "Registration-key policy for the daemon's environment.",
+        "oneOf": [
+          {
+            "const": "persistent",
+            "description": "The environment outlives disconnects.",
+            "type": "string"
+          },
+          {
+            "const": "ephemeral",
+            "description": "The environment closes after it stays disconnected past its grace.",
+            "type": "string"
+          }
+        ]
+      },
+      "RegistrationReceipt": {
+        "additionalProperties": false,
+        "description": "What the daemon learns about the environment it serves. Written to the\nreceipt file as is; contains no secret.",
+        "properties": {
+          "admission": {
+            "$ref": "#/components/schemas/Admission"
+          },
+          "controlConnectionId": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ControlConnectionId"
+              }
+            ],
+            "description": "The gateway's id for this control connection."
+          },
+          "daemonId": {
+            "$ref": "#/components/schemas/DaemonId"
+          },
+          "environmentId": {
+            "$ref": "#/components/schemas/EnvironmentId"
+          },
+          "identityMode": {
+            "$ref": "#/components/schemas/RegistrationIdentityMode"
+          },
+          "incarnationId": {
+            "$ref": "#/components/schemas/IncarnationId"
+          }
+        },
+        "required": [
+          "environmentId",
+          "incarnationId",
+          "daemonId",
+          "controlConnectionId",
+          "identityMode",
+          "admission"
+        ],
+        "type": "object"
+      },
+      "SecretString": {
+        "description": "A secret value carried on the wire, such as a `secretEnv` value, a\nregistration key or a stream token. It serializes as a plain string;\n`Debug` is redacted so structured logging never prints it.",
+        "type": "string"
+      },
+      "StreamSpec": {
+        "description": "What the dialed stream carries.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The data plane, served by the daemon as on any data connection.",
+            "properties": {
+              "kind": {
+                "const": "dataProtocol",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    }
+  },
+  "info": {
+    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 3. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
+    "title": "Lightspeed environment registration channel",
+    "version": "3"
+  },
+  "methods": [
+    {
+      "name": "registration/register",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "daemonPublicKey",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/DaemonPublicKey"
+          }
+        },
+        {
+          "name": "displayName",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisplayName"
+              }
+            ]
+          }
+        },
+        {
+          "name": "implementation",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ImplementationInfo"
+          }
+        },
+        {
+          "name": "metadata",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/Metadata"
+          }
+        },
+        {
+          "name": "protocolVersion",
+          "required": true,
+          "schema": {
+            "description": "The daemon's `ENVD_PROTOCOL_VERSION`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "name": "registrationKey",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecretString"
+              }
+            ]
+          }
+        },
+        {
+          "name": "signature",
+          "required": true,
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Ed25519Signature"
+              }
+            ],
+            "description": "Over `signed_registration_message` of the challenge nonce and the\ncanonical origin of the URL the daemon dialed."
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RegisterResponse"
+        }
+      },
+      "summary": "Prove the daemon identity and be admitted to its environment.",
+      "x-lightspeed-direction": "clientToServer",
+      "x-lightspeed-family": "registration",
+      "x-lightspeed-kind": "request",
+      "x-lightspeed-params-type": "RegisterParams",
+      "x-lightspeed-result-type": "RegisterResponse"
+    },
+    {
+      "name": "registration/openStream",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "stream",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/StreamSpec"
+          }
+        },
+        {
+          "name": "token",
+          "required": true,
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SecretString"
+              }
+            ],
+            "description": "One-time bearer token for the stream dial; short-lived."
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/OpenStreamResponse"
+        }
+      },
+      "summary": "Ask the daemon to dial one reverse stream.",
+      "x-lightspeed-direction": "serverToClient",
+      "x-lightspeed-family": "registration",
+      "x-lightspeed-kind": "request",
+      "x-lightspeed-params-type": "OpenStreamParams",
+      "x-lightspeed-result-type": "OpenStreamResponse"
+    },
+    {
+      "name": "registration/challenge",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "nonce",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ChallengeNonce"
+          }
+        },
+        {
+          "name": "protocolVersion",
+          "required": true,
+          "schema": {
+            "description": "The gateway's `ENVD_PROTOCOL_VERSION`.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        }
+      ],
+      "summary": "The frozen first frame: the gateway's version and nonce.",
+      "x-lightspeed-direction": "serverToClient",
+      "x-lightspeed-family": "registration",
+      "x-lightspeed-kind": "notification",
+      "x-lightspeed-params-type": "ChallengeParams"
+    },
+    {
+      "name": "registration/goodbye",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "reason",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/GoodbyeReason"
+          }
+        }
+      ],
+      "summary": "The daemon is stopping deliberately.",
+      "x-lightspeed-direction": "clientToServer",
+      "x-lightspeed-family": "registration",
+      "x-lightspeed-kind": "notification",
+      "x-lightspeed-params-type": "GoodbyeParams"
+    },
+    {
+      "name": "registration/closed",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "message",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DescriptiveText"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reason",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ClosedReason"
+          }
+        }
+      ],
+      "summary": "The gateway ends the session for good.",
+      "x-lightspeed-direction": "serverToClient",
+      "x-lightspeed-family": "registration",
+      "x-lightspeed-kind": "notification",
+      "x-lightspeed-params-type": "ClosedParams"
+    }
+  ],
+  "openrpc": "1.3.2",
+  "x-lightspeed-bootstrap": {
+    "buildFacts": {
+      "$ref": "#/components/schemas/BuildFacts"
+    },
+    "discoveryDocument": {
+      "$ref": "#/components/schemas/DiscoveryDocument"
+    }
+  },
+  "x-lightspeed-error": {
+    "$ref": "#/components/schemas/ProtocolError"
+  },
+  "x-lightspeed-error-kinds": [
+    {
+      "code": -32700,
+      "kind": "parseError",
+      "retryable": false
+    },
+    {
+      "code": -32600,
+      "kind": "invalidRequest",
+      "retryable": false
+    },
+    {
+      "code": -32601,
+      "kind": "methodNotFound",
+      "retryable": false
+    },
+    {
+      "code": -32602,
+      "kind": "invalidParams",
+      "retryable": false
+    },
+    {
+      "code": -32002,
+      "kind": "notInitialized",
+      "retryable": false
+    },
+    {
+      "code": -32005,
+      "kind": "versionMismatch",
+      "retryable": false
+    },
+    {
+      "code": -32004,
+      "kind": "notFound",
+      "retryable": false
+    },
+    {
+      "code": -32009,
+      "kind": "alreadyExists",
+      "retryable": false
+    },
+    {
+      "code": -32007,
+      "kind": "failedPrecondition",
+      "retryable": false
+    },
+    {
+      "code": -32003,
+      "kind": "permissionDenied",
+      "retryable": false
+    },
+    {
+      "code": -32006,
+      "kind": "capabilityUnavailable",
+      "retryable": false
+    },
+    {
+      "code": -32008,
+      "kind": "busy",
+      "retryable": true
+    },
+    {
+      "code": -32015,
+      "kind": "deadlineExceeded",
+      "retryable": false
+    },
+    {
+      "code": -32016,
+      "kind": "expired",
+      "retryable": false
+    },
+    {
+      "code": -32017,
+      "kind": "aborted",
+      "retryable": true
+    },
+    {
+      "code": -32013,
+      "kind": "payloadTooLarge",
+      "retryable": false
+    },
+    {
+      "code": -32018,
+      "kind": "processFailed",
+      "retryable": false
+    },
+    {
+      "code": -32019,
+      "kind": "unavailable",
+      "retryable": true
+    },
+    {
+      "code": -32603,
+      "kind": "internal",
+      "retryable": false
+    }
+  ],
+  "x-lightspeed-plane": "registration"
+}

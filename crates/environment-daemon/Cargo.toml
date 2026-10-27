@@ -6,13 +6,12 @@ edition = "2024"
 [dependencies]
 hex = "0.4"
 anyhow = "1"
-api = { path = "../api" }
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 release-info = { path = "../release-info" }
 futures-util = "0.3"
 flate2 = "1"
-glob = "0.3"
+globset = "0.4"
 grep-regex = "0.1"
 grep-searcher = "0.1"
 environment-protocol = { path = "../environment-protocol" }
@@ -25,7 +24,8 @@ sha2 = "0.11"
 tar = { version = "0.4", default-features = false }
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = "0.7"
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 ed25519-dalek = { version = "3", features = ["rand_core"] }
 rand = "0.10"
@@ -40,7 +40,6 @@ rustix = { version = "1", features = ["fs", "process"] }
 libc = "0.2"
 
 [dev-dependencies]
-async-trait = "0.1"
 store-fs = { path = "../store-fs" }
 vfs = { path = "../vfs" }
 harness = { path = "../harness" }

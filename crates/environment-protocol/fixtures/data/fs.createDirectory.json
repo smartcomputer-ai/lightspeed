@@ -1,0 +1,15 @@
+{
+  "params": {
+    "path": "/workspace/build/out",
+    "recursive": true
+  },
+  "response": {},
+  "error": {
+    "code": -32006,
+    "message": "the filesystem is read-only",
+    "data": {
+      "kind": "capabilityUnavailable",
+      "capability": "filesystemWrite"
+    }
+  }
+}

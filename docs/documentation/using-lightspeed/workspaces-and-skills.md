@@ -305,8 +305,12 @@ preparation for new work. Installing a skill during a run does not refresh the
 catalog during that run. Switching environments removes the old machine's
 catalog; the new machine is scanned at the next eligible refresh.
 
-The machine must be online and support filesystem scanning. Discovery does
-not wake it. If a scan fails or is incomplete, Lightspeed can retain the last
+The machine must be online. Discovery does not wake it, and it does not count
+as use of the machine, so it never keeps an idle machine from pausing. Each
+root is scanned on its own. A file the scan has to skip, such as an oversized
+`SKILL.md`, produces a warning naming its root while the root's other skills
+still appear, and a root that cannot be scanned at all does not hide the
+skills of other roots. If a scan fails or is incomplete, Lightspeed can retain the last
 successful catalog for the same environment and discovery scope, marking it
 stale with a warning in the API. The model's menu continues to list discovered
 paths; reading a skill still accesses the machine's current file.

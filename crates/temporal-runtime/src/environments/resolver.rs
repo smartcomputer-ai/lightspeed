@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use environment_client::{ClientError, DataClient};
 use environments::{
     EnvironmentId, EnvironmentProviderStore, EnvironmentRecord, EnvironmentRegistryError,
     EnvironmentSource, EnvironmentStatus, EnvironmentStore, PowerState, SetEnvironmentPower,
@@ -70,9 +71,9 @@ impl EnvironmentResolver {
             EnvironmentStatus::Failed => Err(EnvironmentResolveError::Failed {
                 environment_id: environment.environment_id.to_string(),
                 message: environment
-                    .metadata
-                    .get(LIFECYCLE_ERROR_METADATA_KEY)
-                    .cloned()
+                    .lifecycle_error
+                    .as_ref()
+                    .map(|error| error.message.clone())
                     .unwrap_or_else(|| "environment provisioning failed".to_owned()),
             }),
             EnvironmentStatus::Closing | EnvironmentStatus::Closed => {
@@ -85,29 +86,43 @@ impl EnvironmentResolver {
     }
 
     /// Check readiness for actual use, requesting wake-up where supported and
-    /// probing the data route. Selection itself uses only registry validation.
+    /// running the data-plane handshake over the route. A daemon of another
+    /// protocol version is a typed blocker, never a Ready environment whose
+    /// calls all fail. Selection itself uses only registry validation.
     pub(crate) async fn ready_for_use(
         &self,
         environment_id: &EnvironmentId,
         now_ms: i64,
     ) -> Result<EnvironmentRecord, EnvironmentResolveError> {
         let environment = self.resolve_for_connection(environment_id, now_ms).await?;
-        if let Some(gateway) = &self.gateway {
-            let connection = gateway.connection_for(self.universe_id, &environment);
-            if let Ok(mut client) = environment_client::EnvironmentDataClient::connect(
-                &connection.endpoint,
-                gateway.connect_options("lightspeed-environment-readiness"),
-            )
-            .await
-            {
-                let _ = client.close().await;
-                return Ok(environment);
-            }
-        }
-        Err(EnvironmentResolveError::EnvironmentUnavailable {
+        let unavailable = |status: String| EnvironmentResolveError::EnvironmentUnavailable {
             environment_id: environment.environment_id.as_str().to_owned(),
-            status: "environment endpoint is not reachable".to_owned(),
-        })
+            status,
+        };
+        let Some(gateway) = &self.gateway else {
+            return Err(unavailable(
+                "environment endpoint is not reachable".to_owned(),
+            ));
+        };
+        let endpoint = gateway.endpoint_for(self.universe_id, &environment);
+        match DataClient::connect_initialized(&endpoint, gateway.connect_options(READINESS_CLIENT))
+            .await
+        {
+            Ok((client, _)) => {
+                let _ = client.close().await;
+                Ok(environment)
+            }
+            Err(ClientError::VersionMismatch { local, remote, .. }) => {
+                Err(EnvironmentResolveError::VersionMismatch {
+                    environment_id: environment.environment_id.as_str().to_owned(),
+                    local,
+                    remote,
+                })
+            }
+            Err(error) => Err(unavailable(format!(
+                "environment endpoint is not reachable: {error}"
+            ))),
+        }
     }
 
     /// Validate lifecycle and policy immediately before opening a real
@@ -198,11 +213,21 @@ pub(crate) enum EnvironmentResolveError {
 
     #[error("environment is closed: {environment_id}")]
     Closed { environment_id: String },
+
+    /// The environment's envd speaks another data-plane protocol version;
+    /// it cannot serve this runtime until it is replaced or upgraded.
+    #[error(
+        "environment {environment_id} runs envd protocol version {remote}; this runtime requires {local}"
+    )]
+    VersionMismatch {
+        environment_id: String,
+        local: u32,
+        remote: u32,
+    },
 }
 
-/// Metadata key under which the lifecycle reconciler records the provider's
-/// failure message on a `failed` environment.
-pub(crate) const LIFECYCLE_ERROR_METADATA_KEY: &str = "lifecycleError";
+/// `clientInfo.name` of readiness handshakes.
+const READINESS_CLIENT: &str = "lightspeed-environment-readiness";
 
 /// A powered-down provisioned environment wakes on use when its provider
 /// reported that it can be moved back to `running`. External environments and
@@ -220,9 +245,10 @@ pub(crate) fn wake_on_use_applies(environment: &EnvironmentRecord) -> bool {
 mod tests {
     use std::collections::BTreeMap;
 
-    use environment_protocol::shared::{EnvironmentTransport, ProviderTargetId};
+    use auth::SecretValue;
+    use environment_protocol::ids::ProviderTargetId;
     use environments::{
-        CreateEnvironment, EnvironmentConnectionSpec, EnvironmentIncarnationId,
+        CreateEnvironment, EnvironmentEndpoint, EnvironmentIncarnationId,
         EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
         EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProvisionRequestId,
         EnvironmentStatus, EnvironmentTemplateId, ObserveProvisionedEnvironment,
@@ -231,6 +257,26 @@ mod tests {
 
     use super::*;
 
+    fn target_id() -> Option<ProviderTargetId> {
+        Some(ProviderTargetId::new("target-1").unwrap())
+    }
+
+    fn observation(
+        environment_id: &EnvironmentId,
+        status: EnvironmentStatus,
+        power_states: Vec<PowerState>,
+        observed_at_ms: i64,
+    ) -> ObserveProvisionedEnvironment {
+        ObserveProvisionedEnvironment {
+            environment_id: environment_id.clone(),
+            provider_target_id: target_id(),
+            status,
+            power_states,
+            daemon_build: None,
+            observed_at_ms,
+        }
+    }
+
     async fn resolver() -> (EnvironmentResolver, EnvironmentId) {
         let store = Arc::new(environments::InMemoryEnvironmentRegistryStore::new());
         let provider_id = EnvironmentProviderId::new("allowed");
@@ -238,11 +284,10 @@ mod tests {
             .put_provider(PutEnvironmentProvider {
                 provider_id: provider_id.clone(),
                 display_name: None,
-                controller_connection: EnvironmentConnectionSpec::new(
-                    "http://controller.test",
-                    EnvironmentTransport::Http,
-                ),
+                controller_endpoint: EnvironmentEndpoint::parse("ws://controller.test/control")
+                    .unwrap(),
                 metadata: BTreeMap::new(),
+                credential: Some(SecretValue::new("provider-credential")),
                 updated_at_ms: 10,
             })
             .await
@@ -260,7 +305,6 @@ mod tests {
             .await
             .expect("binding");
         let environment_id = EnvironmentId::new("environment-1");
-        let target_id = ProviderTargetId::new("target-1");
         store
             .create_environment(CreateEnvironment {
                 request_id: EnvironmentProvisionRequestId::new("request-1"),
@@ -270,20 +314,18 @@ mod tests {
                 template_id: EnvironmentTemplateId::new("test-template"),
                 display_name: None,
                 metadata: BTreeMap::new(),
-
                 idle_policy: None,
                 created_at_ms: 10,
             })
             .await
             .expect("create environment");
         store
-            .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                environment_id: environment_id.clone(),
-                provider_target_id: target_id.clone(),
-                status: EnvironmentStatus::Offline,
-                power_states: Vec::new(),
-                observed_at_ms: 10,
-            })
+            .observe_provisioned_environment(observation(
+                &environment_id,
+                EnvironmentStatus::Offline,
+                Vec::new(),
+                10,
+            ))
             .await
             .expect("environment");
         (
@@ -292,146 +334,161 @@ mod tests {
         )
     }
 
+    /// Counters and switches of the fake gateway route below.
+    #[derive(Clone, Default)]
+    struct Route {
+        connections: Arc<std::sync::atomic::AtomicUsize>,
+        initializations: Arc<std::sync::atomic::AtomicUsize>,
+        scans: Arc<std::sync::atomic::AtomicUsize>,
+        unchanged_roots: Arc<std::sync::atomic::AtomicUsize>,
+        stall_skills: Arc<std::sync::atomic::AtomicBool>,
+        stall: Arc<std::sync::atomic::AtomicBool>,
+        unsupported: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Route {
+        fn counts(&self) -> (usize, usize, usize) {
+            use std::sync::atomic::Ordering::SeqCst;
+            (
+                self.connections.load(SeqCst),
+                self.initializations.load(SeqCst),
+                self.scans.load(SeqCst),
+            )
+        }
+    }
+
+    /// Serve a gateway data route that answers with a real envd's handlers
+    /// over `root`, counting connections, handshakes and scans.
+    async fn serve_route(
+        root: std::path::PathBuf,
+        state_dir: std::path::PathBuf,
+        route: Route,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use environment_protocol::{data::scan::ScanResponse, jsonrpc, paths::EnvironmentPath};
+        use futures_util::{SinkExt, StreamExt};
+        use std::sync::atomic::Ordering::SeqCst;
+        let runtime =
+            environment_daemon::DaemonRuntime::new(environment_daemon::config::DaemonConfig {
+                listen: None,
+                cwd: root.clone(),
+                fs_root: root.clone(),
+                state_dir,
+                read_only_fs: true,
+                registration: None,
+                scrubbed_env: Vec::new(),
+            })
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let mut clients = tokio::task::JoinSet::new();
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                route.connections.fetch_add(1, SeqCst);
+                while let Some(result) = clients.try_join_next() {
+                    result.unwrap();
+                }
+                let route = route.clone();
+                let runtime = runtime.clone();
+                let root = root.clone();
+                clients.spawn(async move {
+                    let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+                    let context = environment_daemon::dispatch::RequestContext::detached();
+                    while let Some(Ok(message)) = socket.next().await {
+                        let Ok(text) = message.to_text() else {
+                            continue;
+                        };
+                        let Ok(jsonrpc::Message::Request(request)) = jsonrpc::parse(text) else {
+                            continue;
+                        };
+                        if route.stall.load(SeqCst) {
+                            std::future::pending::<()>().await;
+                        }
+                        let response = if request.method == "initialize" {
+                            route.initializations.fetch_add(1, SeqCst);
+                            let mut initialized = runtime.initialize_response();
+                            initialized.home_directory =
+                                Some(EnvironmentPath::new(root.to_str().unwrap()).unwrap());
+                            if route.unsupported.load(SeqCst) {
+                                initialized.capabilities.filesystem = None;
+                            }
+                            jsonrpc::Response::success(request.id, &initialized)
+                        } else {
+                            if request.method == "fs/scan" {
+                                route.scans.fetch_add(1, SeqCst);
+                                let skills = request.params["filter"]["include"]
+                                    .as_array()
+                                    .is_some_and(|include| include.iter().any(|p| p == "SKILL.md"));
+                                if skills && route.stall_skills.load(SeqCst) {
+                                    std::future::pending::<()>().await;
+                                }
+                            }
+                            let result = environment_daemon::dispatch::handle_request(
+                                &runtime,
+                                &context,
+                                &request.method,
+                                request.params.clone(),
+                            )
+                            .await
+                            .map(|reply| reply.value);
+                            if let Ok(value) = &result
+                                && let Ok(scan) = serde_json::from_value::<ScanResponse>(value.clone())
+                            {
+                                let unchanged = scan
+                                    .roots
+                                    .iter()
+                                    .filter(|root| {
+                                        matches!(
+                                            root,
+                                            environment_protocol::data::scan::ScanRootResult::Unchanged { .. }
+                                        )
+                                    })
+                                    .count();
+                                route.unchanged_roots.fetch_add(unchanged, SeqCst);
+                            }
+                            jsonrpc::Response::from_result(request.id, result)
+                        };
+                        if socket
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                response.to_text().into(),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        (base_url, task)
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn environment_discovery_shares_connection_preserves_freshness_and_never_wakes() {
-        use futures_util::{SinkExt, StreamExt};
         use harness::{
             CoreAgentCommand,
             storage::{BlobStore, InMemoryBlobStore},
         };
-        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::atomic::Ordering::SeqCst;
         use tools::skills::environment::{EnvironmentSkillAvailability, EnvironmentSkillCatalog};
         let (resolver, environment_id) = resolver().await;
         let store = resolver.environments.clone();
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
+        let root = temp.path().canonicalize().unwrap().join("root");
         std::fs::create_dir_all(root.join(".agents/skills/review")).unwrap();
         let doc = "---\nname: review\ndescription: Review code.\n---\nbody";
         let skill_path = root.join(".agents/skills/review/SKILL.md");
         std::fs::write(&skill_path, doc).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let gateway = crate::environments::gateway::EnvironmentGatewayClientConfig::new(
-            format!("http://{}", listener.local_addr().unwrap()),
-            "test",
-        );
-        let connections = Arc::new(AtomicUsize::new(0));
-        let initializations = Arc::new(AtomicUsize::new(0));
-        let metadata_reads = Arc::new(AtomicUsize::new(0));
-        let stall_skills = Arc::new(AtomicBool::new(false));
-        let scans = Arc::new(AtomicUsize::new(0));
-        let unchanged = Arc::new(AtomicUsize::new(0));
-        let supported = Arc::new(AtomicBool::new(true));
-        let stall = Arc::new(AtomicBool::new(false));
-        let task = {
-            let connections = connections.clone();
-            let initializations = initializations.clone();
-            let metadata_reads = metadata_reads.clone();
-            let stall_skills = stall_skills.clone();
-            let scans = scans.clone();
-            let unchanged = unchanged.clone();
-            let supported = supported.clone();
-            let stall = stall.clone();
-            let root = root.clone();
-            tokio::spawn(async move {
-                let mut clients = tokio::task::JoinSet::new();
-                loop {
-                    let (socket, _) = listener.accept().await.unwrap();
-                    connections.fetch_add(1, Ordering::SeqCst);
-                    while let Some(result) = clients.try_join_next() {
-                        result.unwrap();
-                    }
-                    let initializations = initializations.clone();
-                    let metadata_reads = metadata_reads.clone();
-                    let stall_skills = stall_skills.clone();
-                    let scans = scans.clone();
-                    let unchanged = unchanged.clone();
-                    let supported = supported.clone();
-                    let stall = stall.clone();
-                    let root = root.clone();
-                    clients.spawn(async move {
-                        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
-                        while let Some(Ok(message)) = socket.next().await {
-                            let Ok(text) = message.to_text() else {
-                                continue;
-                            };
-                            let Ok(request) = serde_json::from_str::<serde_json::Value>(text) else {
-                                continue;
-                            };
-                            let Some(id) = request.get("id") else {
-                                continue;
-                            };
-                            if stall.load(Ordering::SeqCst) {
-                                std::future::pending::<()>().await;
-                            }
-                            let result = match request["method"].as_str().unwrap() {
-                                "initialize" => {
-                                    initializations.fetch_add(1, Ordering::SeqCst);
-                                    serde_json::json!({ "protocolVersion": environment_protocol::shared::CURRENT_PROTOCOL_VERSION, "connectionId": "test", "capabilities": {"filesystemRead": true, "filesystemScan": supported.load(Ordering::SeqCst)}, "defaultCwd": root, "homeDirectory": root, "implementation": {"name": "test", "version": "1"} })
-                                }
-                                "fs/getMetadata" => {
-                                    metadata_reads.fetch_add(1, Ordering::SeqCst);
-                                    let fs = environment_daemon::filesystem::LocalFileSystem::new(
-                                        root.clone(),
-                                        root.clone(),
-                                        false,
-                                    );
-                                    serde_json::to_value(
-                                        fs.get_metadata(
-                                            serde_json::from_value(request["params"].clone()).unwrap(),
-                                        )
-                                        .await
-                                        .unwrap(),
-                                    )
-                                    .unwrap()
-                                }
-                                "fs/scan" => {
-                                    scans.fetch_add(1, Ordering::SeqCst);
-                                    if stall_skills.load(Ordering::SeqCst)
-                                        && request["params"]["includePatterns"].as_array().unwrap().iter().any(|p| p == "SKILL.md") {
-                                        std::future::pending::<()>().await;
-                                    }
-                                    let fs = environment_daemon::filesystem::LocalFileSystem::new(
-                                        root.clone(),
-                                        root.clone(),
-                                        false,
-                                    );
-                                    let result = fs
-                                        .scan(
-                                            serde_json::from_value(request["params"].clone()).unwrap(),
-                                        )
-                                        .await
-                                        .unwrap();
-                                    if result.unchanged {
-                                        unchanged.fetch_add(1, Ordering::SeqCst);
-                                    }
-                                    serde_json::to_value(result).unwrap()
-                                }
-                                other => panic!("unexpected discovery RPC: {other}"),
-                            };
-                            if socket
-                                .send(tokio_tungstenite::tungstenite::Message::Text(
-                                    serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result})
-                                        .to_string()
-                                        .into(),
-                                ))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                    });
-                }
-            })
-        };
-        let counts = || {
-            (
-                connections.load(Ordering::SeqCst),
-                initializations.load(Ordering::SeqCst),
-                metadata_reads.load(Ordering::SeqCst),
-                scans.load(Ordering::SeqCst),
-            )
-        };
+        let route = Route::default();
+        let (base_url, task) = serve_route(
+            root.clone(),
+            temp.path().canonicalize().unwrap().join("state"),
+            route.clone(),
+        )
+        .await;
+        let gateway =
+            crate::environments::gateway::EnvironmentGatewayClientConfig::new(base_url, "test");
         let blobs = InMemoryBlobStore::new();
         let session_id = harness::SessionId::new(uuid::Uuid::new_v4().to_string());
         let feature = harness::EnvironmentsFeature {
@@ -461,40 +518,46 @@ mod tests {
             Some(CoreAgentCommand::UpsertContext { entry, .. }) => entry,
             other => panic!("expected publication: {other:?}"),
         };
+        let catalog_of = async |entry: &harness::ContextEntryInput| -> EnvironmentSkillCatalog {
+            serde_json::from_slice(
+                &blobs
+                    .read_bytes(entry.provenance_ref.as_ref().unwrap())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap()
+        };
         // Offline inspection never changes desired power and never opens a data route.
         let before = store.read_environment(&environment_id).await.unwrap();
         let unavailable = entry(refresh(None).await.unwrap());
-        assert_eq!(scans.load(Ordering::SeqCst), 0);
+        assert_eq!(route.counts(), (0, 0, 0));
         assert_eq!(
             store.read_environment(&environment_id).await.unwrap(),
             before
         );
         assert!(refresh(Some(&unavailable)).await.unwrap().is_none());
         store
-            .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                environment_id: environment_id.clone(),
-                provider_target_id: ProviderTargetId::new("target-1"),
-                status: EnvironmentStatus::Ready,
-                power_states: vec![PowerState::Running, PowerState::Paused],
-                observed_at_ms: 20,
-            })
+            .observe_provisioned_environment(observation(
+                &environment_id,
+                EnvironmentStatus::Ready,
+                vec![PowerState::Running, PowerState::Paused],
+                20,
+            ))
             .await
             .unwrap();
         let available = entry(refresh(Some(&unavailable)).await.unwrap());
-        let catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(available.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let catalog = catalog_of(&available).await;
         assert_eq!(
             catalog.availability,
             EnvironmentSkillAvailability::Available
         );
         assert_eq!(catalog.skills.len(), 1);
+        // The working directory is proven by the scan's probe root, not by
+        // a separate metadata call: one connection, one handshake, one scan.
+        assert_eq!(route.counts(), (1, 1, 1));
+        // An unchanged root answers by fingerprint and reuses the cached skills.
         assert!(refresh(Some(&available)).await.unwrap().is_none());
-        assert_eq!(unchanged.load(Ordering::SeqCst), 1);
+        assert_eq!(route.unchanged_roots.load(SeqCst), 1);
         std::fs::write(&skill_path, doc.replace("body", "edit")).unwrap();
         assert!(
             refresh(Some(&available)).await.unwrap().is_none(),
@@ -526,13 +589,10 @@ mod tests {
         };
         for text in ["First instructions", "Updated instructions"] {
             std::fs::write(&prompt_path, text).unwrap();
-            let before = counts();
+            let before = route.counts();
             let result = refresh_sources(&both, Some(&edited)).await;
             assert!(result.skill_command.is_none());
-            assert_eq!(
-                counts(),
-                (before.0 + 1, before.1 + 1, before.2 + 1, before.3 + 2)
-            );
+            assert_eq!(route.counts(), (before.0 + 1, before.1 + 1, before.2 + 2));
             assert_eq!(
                 blobs
                     .read_bytes(&result.prompt_entries[&prompt_key].content.content_ref)
@@ -541,7 +601,7 @@ mod tests {
                 text.as_bytes()
             );
         }
-        let before = counts();
+        let before = route.counts();
         let prompts_only = harness::EnvironmentsFeature {
             prompts: Some(Default::default()),
             environments: feature.environments.clone(),
@@ -550,12 +610,9 @@ mod tests {
         let result = refresh_sources(&prompts_only, None).await;
         assert!(result.skill_command.is_none());
         assert!(result.prompt_entries.contains_key(&prompt_key));
-        assert_eq!(
-            counts(),
-            (before.0 + 1, before.1 + 1, before.2 + 1, before.3 + 1)
-        );
+        assert_eq!(route.counts(), (before.0 + 1, before.1 + 1, before.2 + 1));
 
-        let before = counts();
+        let before = route.counts();
         let disabled_feature = harness::EnvironmentsFeature::default();
         let disabled = refresh_sources(&disabled_feature, None).await;
         assert!(disabled.skill_command.is_none());
@@ -569,30 +626,22 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            counts(),
+            route.counts(),
             before,
             "disabled and controller-owned sources need no connection"
         );
         let result = refresh_sources(&both, Some(&controller_owned)).await;
         assert!(result.skill_command.is_none());
         assert!(result.prompt_entries.contains_key(&prompt_key));
-        assert_eq!(
-            counts(),
-            (before.0 + 1, before.1 + 1, before.2 + 1, before.3 + 1)
-        );
+        assert_eq!(route.counts(), (before.0 + 1, before.1 + 1, before.2 + 1));
 
-        // A timed-out skill RPC must not poison the prompt scan with an unread response.
-        stall_skills.store(true, Ordering::SeqCst);
-        let before = counts();
+        // A timed-out skill scan does not delay the prompt scan, which runs
+        // on a fresh connection.
+        route.stall_skills.store(true, SeqCst);
+        let before = route.counts();
         let result = refresh_sources(&both, Some(&edited)).await;
         let failed_skills = entry(result.skill_command);
-        let failed_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(failed_skills.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let failed_catalog = catalog_of(&failed_skills).await;
         assert_eq!(
             failed_catalog.availability,
             EnvironmentSkillAvailability::Stale
@@ -606,79 +655,58 @@ mod tests {
                 .unwrap(),
             b"Updated instructions"
         );
-        assert_eq!(
-            counts(),
-            (before.0 + 2, before.1 + 2, before.2 + 2, before.3 + 2)
-        );
-        stall_skills.store(false, Ordering::SeqCst);
+        assert_eq!(route.counts(), (before.0 + 2, before.1 + 2, before.2 + 2));
+        route.stall_skills.store(false, SeqCst);
 
-        // An incomplete scan retains the last observation without appending a menu.
+        // One oversized skill is skipped and reported under its root; the
+        // root's other skills are still listed.
+        std::fs::create_dir_all(root.join(".agents/skills/other")).unwrap();
+        std::fs::write(
+            root.join(".agents/skills/other/SKILL.md"),
+            "---\nname: other\ndescription: Other skill.\n---\nbody",
+        )
+        .unwrap();
         std::fs::write(&skill_path, vec![b'x'; 65537]).unwrap();
-        let stale = entry(refresh(Some(&edited)).await.unwrap());
-        let catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(stale.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(catalog.availability, EnvironmentSkillAvailability::Stale);
-        assert_eq!(catalog.skills.len(), 1);
-        assert_eq!(stale.content, edited.content);
-        assert!(refresh(Some(&stale)).await.unwrap().is_none());
-        let result = refresh_sources(&both, Some(&edited)).await;
-        assert!(result.skill_command.is_some());
+        let degraded = entry(refresh(Some(&edited)).await.unwrap());
+        let catalog = catalog_of(&degraded).await;
         assert_eq!(
-            blobs
-                .read_bytes(&result.prompt_entries[&prompt_key].content.content_ref)
-                .await
-                .unwrap(),
-            b"Updated instructions"
-        );
-        std::fs::write(&skill_path, doc).unwrap();
-        std::fs::write(&prompt_path, vec![b'x'; 65537]).unwrap();
-        let result = refresh_sources(&both, Some(&stale)).await;
-        let recovered = entry(result.skill_command);
-        let recovered_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(recovered.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            recovered_catalog.availability,
+            catalog.availability,
             EnvironmentSkillAvailability::Available
         );
-        let prompt_report: tools::prompts::environment::EnvironmentPromptReport =
-            serde_json::from_slice(
-                &blobs
-                    .read_bytes(
-                        result.prompt_entries[&prompt_key]
-                            .provenance_ref
-                            .as_ref()
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap(),
-            )
-            .unwrap();
-        assert!(!prompt_report.available);
-        // Missing fs/scan is explicit unavailable discovery, with no RPC fallback.
-        supported.store(false, Ordering::SeqCst);
-        let before = scans.load(Ordering::SeqCst);
-        assert!(refresh(Some(&stale)).await.unwrap().is_none());
-        assert_eq!(scans.load(Ordering::SeqCst), before);
-        supported.store(true, Ordering::SeqCst);
+        assert_eq!(
+            catalog
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other"]
+        );
+        let skills_root = root.join(".agents/skills");
+        assert!(
+            catalog
+                .warnings
+                .iter()
+                .any(|warning| warning.starts_with(skills_root.to_str().unwrap())),
+            "{:?}",
+            catalog.warnings
+        );
+        std::fs::remove_dir_all(root.join(".agents/skills/other")).unwrap();
+        std::fs::write(&skill_path, doc).unwrap();
+
+        // Without the filesystem family discovery is explicitly
+        // unavailable, with no scan.
+        route.unsupported.store(true, SeqCst);
+        let before = route.counts().2;
+        let unsupported = entry(refresh(Some(&degraded)).await.unwrap());
+        assert_eq!(route.counts().2, before);
+        assert_eq!(
+            catalog_of(&unsupported).await.availability,
+            EnvironmentSkillAvailability::Stale
+        );
+        route.unsupported.store(false, SeqCst);
         std::fs::remove_file(&skill_path).unwrap();
-        let empty = entry(refresh(Some(&stale)).await.unwrap());
-        let catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(empty.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let empty = entry(refresh(Some(&unsupported)).await.unwrap());
+        let catalog = catalog_of(&empty).await;
         assert!(catalog.skills.is_empty());
         assert_eq!(
             catalog.availability,
@@ -715,13 +743,7 @@ mod tests {
             .unwrap()
             .skill_command,
         );
-        let denied_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(denied_entry.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
+        let denied_catalog = catalog_of(&denied_entry).await;
         assert_eq!(
             denied_catalog.availability,
             EnvironmentSkillAvailability::Unavailable
@@ -730,22 +752,15 @@ mod tests {
             denied_catalog.skills.is_empty(),
             "a revoked domain grant cannot retain advertised paths"
         );
-        stall.store(true, Ordering::SeqCst);
+        route.stall.store(true, SeqCst);
         let start = std::time::Instant::now();
         let timed_out = entry(refresh(Some(&available)).await.unwrap());
         assert!(
             start.elapsed() < std::time::Duration::from_secs(6),
             "unresponsive endpoint must remain bounded"
         );
-        let timed_out_catalog: EnvironmentSkillCatalog = serde_json::from_slice(
-            &blobs
-                .read_bytes(timed_out.provenance_ref.as_ref().unwrap())
-                .await
-                .unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            timed_out_catalog.availability,
+            catalog_of(&timed_out).await.availability,
             EnvironmentSkillAvailability::Stale
         );
         assert_eq!(timed_out.content, available.content);
@@ -770,6 +785,65 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn readiness_reports_a_daemon_of_another_protocol_version() {
+        use environment_protocol::{error::ProtocolError, jsonrpc};
+        use futures_util::{SinkExt, StreamExt};
+        let (resolver, environment_id) = resolver().await;
+        resolver
+            .environments
+            .observe_provisioned_environment(observation(
+                &environment_id,
+                EnvironmentStatus::Ready,
+                vec![PowerState::Running],
+                20,
+            ))
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let remote = environment_protocol::ENVD_PROTOCOL_VERSION + 1;
+        let task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+            while let Some(Ok(message)) = socket.next().await {
+                let Ok(text) = message.to_text() else {
+                    continue;
+                };
+                let Ok(jsonrpc::Message::Request(request)) = jsonrpc::parse(text) else {
+                    continue;
+                };
+                let response = jsonrpc::Response::failure(
+                    Some(request.id),
+                    ProtocolError::version_mismatch(
+                        remote,
+                        environment_protocol::ENVD_PROTOCOL_VERSION,
+                    ),
+                );
+                let _ = socket
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        response.to_text().into(),
+                    ))
+                    .await;
+            }
+        });
+        let resolver = resolver.with_gateway(
+            crate::environments::gateway::EnvironmentGatewayClientConfig::new(base_url, "test"),
+        );
+        match resolver.ready_for_use(&environment_id, 30).await {
+            Err(EnvironmentResolveError::VersionMismatch {
+                local,
+                remote: reported,
+                ..
+            }) => {
+                assert_eq!(local, environment_protocol::ENVD_PROTOCOL_VERSION);
+                assert_eq!(reported, remote);
+            }
+            other => panic!("expected a version mismatch, got {other:?}"),
+        }
+        task.abort();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn selection_preserves_power_and_needs_no_gateway_in_any_nonterminal_state() {
         let (resolver, environment_id) = resolver().await;
         let store = resolver.environments.clone();
@@ -791,13 +865,12 @@ mod tests {
             EnvironmentStatus::Unknown,
         ] {
             store
-                .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                    environment_id: environment_id.clone(),
-                    provider_target_id: ProviderTargetId::new("target-1"),
+                .observe_provisioned_environment(observation(
+                    &environment_id,
                     status,
-                    power_states: vec![PowerState::Running, PowerState::Paused],
-                    observed_at_ms: 30,
-                })
+                    vec![PowerState::Running, PowerState::Paused],
+                    30,
+                ))
                 .await
                 .unwrap();
             let before = store.read_environment(&environment_id).await.unwrap();
@@ -830,6 +903,7 @@ mod tests {
             .fail_environment_lifecycle(environments::FailEnvironmentLifecycle {
                 environment_id: environment_id.clone(),
                 message: "no capacity".into(),
+                daemon_build: None,
                 observed_at_ms: 40,
             })
             .await
@@ -856,13 +930,12 @@ mod tests {
         let (resolver, environment_id) = resolver().await;
         let store = resolver.environments.clone();
         store
-            .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                environment_id: environment_id.clone(),
-                provider_target_id: ProviderTargetId::new("target-1"),
-                status: EnvironmentStatus::Ready,
-                power_states: vec![PowerState::Running, PowerState::Paused],
-                observed_at_ms: 20,
-            })
+            .observe_provisioned_environment(observation(
+                &environment_id,
+                EnvironmentStatus::Ready,
+                vec![PowerState::Running, PowerState::Paused],
+                20,
+            ))
             .await
             .expect("observe");
         // The reaper decided to pause; the reconciler has not acted yet.
@@ -896,13 +969,12 @@ mod tests {
             let environment_id = environment_id.clone();
             async move {
                 store
-                    .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                        environment_id,
-                        provider_target_id: ProviderTargetId::new("target-1"),
+                    .observe_provisioned_environment(observation(
+                        &environment_id,
                         status,
-                        power_states: vec![PowerState::Running, PowerState::Paused],
-                        observed_at_ms: at,
-                    })
+                        vec![PowerState::Running, PowerState::Paused],
+                        at,
+                    ))
                     .await
                     .expect("observe");
             }
@@ -948,13 +1020,12 @@ mod tests {
         // A stopped environment whose provider offers no power control keeps
         // the old behaviour: no wake, plain unavailability.
         store
-            .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                environment_id: environment_id.clone(),
-                provider_target_id: ProviderTargetId::new("target-1"),
-                status: EnvironmentStatus::Offline,
-                power_states: Vec::new(),
-                observed_at_ms: 60,
-            })
+            .observe_provisioned_environment(observation(
+                &environment_id,
+                EnvironmentStatus::Offline,
+                Vec::new(),
+                60,
+            ))
             .await
             .expect("observe offline without power control");
         assert!(matches!(
@@ -980,13 +1051,12 @@ mod tests {
             let environment_id = environment_id.clone();
             async move {
                 store
-                    .observe_provisioned_environment(ObserveProvisionedEnvironment {
-                        environment_id,
-                        provider_target_id: ProviderTargetId::new("target-1"),
+                    .observe_provisioned_environment(observation(
+                        &environment_id,
                         status,
-                        power_states: Vec::new(),
-                        observed_at_ms: 20,
-                    })
+                        Vec::new(),
+                        20,
+                    ))
                     .await
                     .expect("observe");
             }
@@ -1020,6 +1090,7 @@ mod tests {
             .fail_environment_lifecycle(environments::FailEnvironmentLifecycle {
                 environment_id: environment_id.clone(),
                 message: "no capacity".to_owned(),
+                daemon_build: None,
                 observed_at_ms: 40,
             })
             .await

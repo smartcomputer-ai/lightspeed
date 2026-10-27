@@ -20,4 +20,5 @@ pub use write_file::{WriteFileArgs, WriteFileResult, invoke_write_file};
 
 pub(crate) use shared::{
     collect_file_paths_bounded, invalid_request, relative_path_string, resolve_path,
+    root_relative_pattern,
 };

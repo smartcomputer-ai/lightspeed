@@ -9,6 +9,7 @@ pub mod apply_patch;
 pub mod local;
 pub mod memory;
 pub mod path;
+pub mod pattern;
 pub mod read_only;
 pub mod scoped;
 pub mod scoped_local;
@@ -41,6 +42,9 @@ pub enum FsError {
 
     #[error("filesystem path already exists: {path}")]
     AlreadyExists { path: FsPath },
+
+    #[error("file changed since it was read: {path}; read it again before writing")]
+    Conflict { path: FsPath },
 
     #[error("filesystem permission denied for path: {path}")]
     PermissionDenied { path: FsPath },
@@ -111,19 +115,43 @@ impl RemoveOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct CopyOptions {
-    pub recursive: bool,
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RenameOptions {
+    /// Replace an existing destination file; otherwise an existing
+    /// destination is [`FsError::AlreadyExists`].
+    pub overwrite: bool,
 }
 
-impl CopyOptions {
-    pub const fn file() -> Self {
-        Self { recursive: false }
+/// Opaque token naming one version of a file's content, as the backend
+/// reported it on a read. Equal tokens for one path mean unchanged content.
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct FsVersion(String);
+
+impl FsVersion {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
     }
 
-    pub const fn recursive() -> Self {
-        Self { recursive: true }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
+}
+
+/// A whole-file read together with the version it observed, when the
+/// backend tracks versions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VersionedRead {
+    pub bytes: Vec<u8>,
+    pub version: Option<FsVersion>,
+}
+
+/// Preconditions of a write.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WriteOptions {
+    /// Write only while the file still has this version; otherwise the write
+    /// fails with [`FsError::Conflict`]. Only versions the same backend
+    /// returned from [`FileSystem::read_file_versioned`] are meaningful.
+    pub if_match: Option<FsVersion>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -152,9 +180,11 @@ pub struct FsTextSearchRequest {
     /// generic fallback compiles, so a pattern cannot succeed on one path and
     /// fail on the other.
     pub pattern: String,
-    /// Optional glob matched against the root-relative path or file name.
+    /// Optional path pattern in the [`pattern`] grammar selecting the files
+    /// searched.
     pub include: Option<String>,
     pub case_sensitive: bool,
+    /// Deepest entry depth searched; the root's direct children are depth 1.
     pub max_depth: Option<usize>,
     pub limits: FsSearchLimits,
 }
@@ -172,6 +202,8 @@ pub struct FsTextSearchMatch {
     pub path: FsPath,
     pub line_number: u64,
     pub line: String,
+    /// The line was cut at the backend's line length bound.
+    pub line_truncated: bool,
 }
 
 /// Why a bounded search stopped before exhausting the tree.
@@ -182,6 +214,8 @@ pub enum FsSearchStop {
     FileLimit,
     ByteLimit,
     TimeLimit,
+    /// The matches filled the backend's response budget.
+    ResponseLimit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,6 +223,9 @@ pub struct FsTextSearchResponse {
     pub matches: Vec<FsTextSearchMatch>,
     pub files_searched: u64,
     pub bytes_searched: u64,
+    /// Files left out because they exceeded the remaining byte budget, were
+    /// binary or could not be read; none of them ends the search.
+    pub skipped_files: u64,
     pub stopped: Option<FsSearchStop>,
 }
 
@@ -197,7 +234,9 @@ pub struct FsTextSearchResponse {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FsGlobRequest {
     pub root: FsPath,
+    /// A path pattern in the [`pattern`] grammar.
     pub pattern: String,
+    /// Deepest entry depth visited; the root's direct children are depth 1.
     pub max_depth: Option<usize>,
     pub limits: FsGlobLimits,
 }
@@ -223,7 +262,7 @@ pub struct FsGlobResponse {
 pub struct FsRangedRead {
     pub bytes: Vec<u8>,
     pub file_size: u64,
-    /// True when `bytes` is a strict prefix range of the file.
+    /// Bytes exist after `offset` plus the length of `bytes`.
     pub truncated: bool,
 }
 
@@ -265,6 +304,31 @@ pub trait FileSystem: Send + Sync {
 
     async fn write_file(&self, path: &FsPath, contents: Vec<u8>) -> FsResult<()>;
 
+    /// Read a whole file together with its version. Backends without
+    /// versions report none, and their writes need no precondition.
+    async fn read_file_versioned(&self, path: &FsPath) -> FsResult<VersionedRead> {
+        Ok(VersionedRead {
+            bytes: self.read_file(path).await?,
+            version: None,
+        })
+    }
+
+    /// Write a whole file under `options`. Backends without versions never
+    /// hand out a version, so the default is only reached without one.
+    async fn write_file_with(
+        &self,
+        path: &FsPath,
+        contents: Vec<u8>,
+        options: WriteOptions,
+    ) -> FsResult<()> {
+        if options.if_match.is_some() {
+            return Err(FsError::Unsupported {
+                message: "filesystem does not track file versions".into(),
+            });
+        }
+        self.write_file(path, contents).await
+    }
+
     /// Link existing immutable content without loading its bytes into the tool worker.
     async fn write_file_ref(
         &self,
@@ -288,12 +352,36 @@ pub trait FileSystem: Send + Sync {
 
     async fn remove(&self, path: &FsPath, options: RemoveOptions) -> FsResult<()>;
 
-    async fn copy(
+    /// Move a file to `destination_path`, keeping its mode. The default
+    /// writes the destination and removes the source; backends with a
+    /// native rename override it to move atomically.
+    async fn rename(
         &self,
         source_path: &FsPath,
         destination_path: &FsPath,
-        options: CopyOptions,
-    ) -> FsResult<()>;
+        options: RenameOptions,
+    ) -> FsResult<()> {
+        let metadata = self.get_metadata(source_path).await?;
+        if !metadata.is_file {
+            return Err(FsError::Unsupported {
+                message: format!("{source_path} is not a file; only files can be moved"),
+            });
+        }
+        if !options.overwrite {
+            match self.get_metadata(destination_path).await {
+                Ok(_) => {
+                    return Err(FsError::AlreadyExists {
+                        path: destination_path.clone(),
+                    });
+                }
+                Err(FsError::NotFound { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let contents = self.read_file(source_path).await?;
+        self.write_file(destination_path, contents).await?;
+        self.remove(source_path, RemoveOptions::file()).await
+    }
 
     /// Execute a bounded text search natively when the backend supports it.
     ///
@@ -313,6 +401,12 @@ pub trait FileSystem: Send + Sync {
     async fn glob_files(&self, request: &FsGlobRequest) -> FsResult<Option<FsGlobResponse>> {
         let _ = request;
         Ok(None)
+    }
+
+    /// Largest range one [`read_file_range`](Self::read_file_range) returns,
+    /// when the backend bounds it; longer requests come back `truncated`.
+    fn max_read_bytes(&self) -> Option<u64> {
+        None
     }
 
     /// Read at most `max_bytes` starting at `offset`, reporting the true file

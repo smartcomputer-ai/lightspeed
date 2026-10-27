@@ -74,9 +74,8 @@ callers:
 | `LIGHTSPEED_GATEWAY_BIND` | `0.0.0.0:18080` | Address inside the runtime's network namespace where HTTP listens. |
 | `LIGHTSPEED_API_URL` on Platform | `http://lightspeed-runtime:18080/rpc` | Private Platform-to-runtime JSON-RPC route. |
 | `LIGHTSPEED_PLATFORM_BASE_URL` | `https://lightspeed.example.com` | Public browser origin used for Platform authentication. |
-| `LIGHTSPEED_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | Public runtime origin used for OAuth callbacks, bot hooks, and environment addresses. |
+| `LIGHTSPEED_PUBLIC_BASE_URL` | `https://lightspeed.example.com` | Public runtime origin used for OAuth callbacks, bot hooks, and environment addresses. Registered daemons must dial this origin, because they sign it when they register. |
 | `LIGHTSPEED_ENVIRONMENT_GATEWAY_URL` | `http://lightspeed-runtime:18080` | Private base URL workers use for environment routes; omit `/rpc`. |
-| `LIGHTSPEED_ENVIRONMENT_PUBLIC_URL` | `https://compute.example.com` | Optional separate public base for daemon data connections. |
 
 An address containing `localhost` is relative to the process using it. Inside
 a container it refers to that container. Conversely, binding to `0.0.0.0`

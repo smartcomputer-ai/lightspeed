@@ -19,26 +19,27 @@ use api::{
     DeploymentApiKeyListParams, DeploymentApiKeyListResponse, DeploymentApiKeyRevokeParams,
     DeploymentApiKeyRevokeResponse, DeploymentApiKeyRotateParams, DeploymentApiKeyView,
     DeploymentApiService, DeploymentEnvironmentAdoptParams, DeploymentEnvironmentAdoptResponse,
-    DeploymentEnvironmentProviderConnection, DeploymentEnvironmentProviderDeleteParams,
-    DeploymentEnvironmentProviderDeleteResponse, DeploymentEnvironmentProviderListParams,
+    DeploymentEnvironmentProviderDeleteParams, DeploymentEnvironmentProviderDeleteResponse,
+    DeploymentEnvironmentProviderFeaturesView, DeploymentEnvironmentProviderListParams,
     DeploymentEnvironmentProviderListResponse, DeploymentEnvironmentProviderPutParams,
     DeploymentEnvironmentProviderPutResponse, DeploymentEnvironmentProviderReadParams,
-    DeploymentEnvironmentProviderReadResponse, DeploymentEnvironmentProviderTransport,
-    DeploymentEnvironmentProviderView, DeploymentProviderBindingDeleteParams,
-    DeploymentProviderBindingDeleteResponse, DeploymentProviderBindingPutParams,
-    DeploymentProviderBindingPutResponse, DeploymentUniverseCreateParams,
-    DeploymentUniverseCreateResponse, DeploymentUniverseDeleteParams,
-    DeploymentUniverseDeleteResponse, DeploymentUniverseListParams, DeploymentUniverseListResponse,
-    DeploymentUniverseReadParams, DeploymentUniverseReadResponse, DeploymentUniverseView,
+    DeploymentEnvironmentProviderReadResponse, DeploymentEnvironmentProviderView,
+    DeploymentProviderBindingDeleteParams, DeploymentProviderBindingDeleteResponse,
+    DeploymentProviderBindingPutParams, DeploymentProviderBindingPutResponse,
+    DeploymentUniverseCreateParams, DeploymentUniverseCreateResponse,
+    DeploymentUniverseDeleteParams, DeploymentUniverseDeleteResponse, DeploymentUniverseListParams,
+    DeploymentUniverseListResponse, DeploymentUniverseReadParams, DeploymentUniverseReadResponse,
+    DeploymentUniverseView,
 };
 use async_trait::async_trait;
-use environment_protocol::shared::EnvironmentTransport;
+use auth::SecretValue;
 use environments::{
-    AdoptEnvironment, EnvironmentConnectionSpec, EnvironmentId, EnvironmentIncarnationId,
+    AdoptEnvironment, EnvironmentEndpoint, EnvironmentId, EnvironmentIncarnationId,
     EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
     EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderRecord,
-    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentStore,
-    ListEnvironmentProviders, PutEnvironmentProvider, PutEnvironmentProviderBinding,
+    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentRegistryError,
+    EnvironmentStore, ListEnvironmentProviders, PutEnvironmentProvider,
+    PutEnvironmentProviderBinding, RecordProviderController,
 };
 use harness::SessionId;
 use object_store::ObjectStoreExt as _;
@@ -47,7 +48,12 @@ use temporal_workflow::{AgentSessionWorkflow, compose_workflow_id};
 use temporalio_client::{Client, WorkflowTerminateOptions, errors::WorkflowInteractionError};
 use uuid::Uuid;
 
-use crate::universe::UniverseRuntime;
+use crate::{
+    environments::provider_controllers::{
+        ControllerFeature, WebSocketProviderControllerConnector, probe_controller,
+    },
+    universe::UniverseRuntime,
+};
 
 pub struct GatewayDeploymentApi {
     runtime: Arc<UniverseRuntime>,
@@ -262,19 +268,65 @@ impl DeploymentApiService for GatewayDeploymentApi {
     ) -> Result<AgentApiOutcome<DeploymentEnvironmentProviderPutResponse>, AgentApiError> {
         self.admitted(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT, async {
             let store = self.runtime.stores().store_for(Uuid::nil());
+            let provider_id = parse_environment_provider_id(params.provider_id)?;
+            let controller_endpoint = EnvironmentEndpoint::parse(&params.controller_endpoint)
+                .map_err(|error| {
+                    AgentApiError::invalid_request(format!("invalid controller endpoint: {error}"))
+                })?;
+            let credential = params.credential.map(SecretValue::new);
+            if let Some(credential) = &credential {
+                environments::validate_provider_credential(credential)
+                    .map_err(super::service::environment_providers::map_environments_error)?;
+            }
+            // The handshake presents the credential the provider will hold:
+            // the new one, else the stored one.
+            let presented = match &credential {
+                Some(credential) => Some(credential.clone()),
+                None => match store.read_provider_credential(&provider_id).await {
+                    Ok(stored) => Some(stored),
+                    Err(EnvironmentRegistryError::NotFound { .. }) => None,
+                    Err(error) => {
+                        return Err(
+                            super::service::environment_providers::map_environments_error(error),
+                        );
+                    }
+                },
+            };
+            let facts = match &presented {
+                Some(credential) => {
+                    probe_controller(
+                        &WebSocketProviderControllerConnector,
+                        &controller_endpoint,
+                        credential,
+                    )
+                    .await?
+                }
+                None => None,
+            };
             let provider = store
                 .put_provider(PutEnvironmentProvider {
-                    provider_id: parse_environment_provider_id(params.provider_id)?,
+                    provider_id: provider_id.clone(),
                     display_name: params.display_name,
-                    controller_connection: provider_connection_from_api(
-                        params.controller_connection,
-                    ),
+                    controller_endpoint: controller_endpoint.clone(),
                     metadata: params.metadata,
+                    credential,
                     updated_at_ms: i64::try_from(current_time_ms()?)
                         .map_err(|_| AgentApiError::internal("current timestamp exceeds i64"))?,
                 })
                 .await
                 .map_err(super::service::environment_providers::map_environments_error)?;
+            let provider = match facts {
+                Some((features, data_route_base)) => store
+                    .record_provider_controller(RecordProviderController {
+                        provider_id,
+                        controller_endpoint,
+                        features,
+                        data_route_base,
+                    })
+                    .await
+                    .map_err(super::service::environment_providers::map_environments_error)?,
+                None => provider,
+            };
             Ok(AgentApiOutcome::new(
                 DeploymentEnvironmentProviderPutResponse {
                     provider: environment_provider_view(provider),
@@ -441,6 +493,20 @@ impl DeploymentApiService for GatewayDeploymentApi {
             })?;
         validate_adoption_source(&params.source_target)?;
         let store = self.runtime.stores().store_for(universe_id);
+        // Refuse up front when the binding's provider cannot adopt, instead
+        // of failing the environment after its record exists.
+        let binding = store
+            .read_provider_binding(universe_id, &binding_id)
+            .await
+            .map_err(super::service::environment_providers::map_environments_error)?;
+        self.runtime
+            .state_for(universe_id, false)
+            .await
+            .map_err(|error| AgentApiError::internal(error.to_string()))?
+            .api
+            .environment_service()
+            .require_controller_feature(&binding.provider_id, ControllerFeature::AdoptTarget)
+            .await?;
         let environment = EnvironmentStore::adopt_environment(
             store.as_ref(),
             AdoptEnvironment {
@@ -784,44 +850,21 @@ fn parse_environment_provider_id(value: String) -> Result<EnvironmentProviderId,
         .map_err(|error| AgentApiError::invalid_request(format!("invalid provider id: {error}")))
 }
 
-fn provider_connection_from_api(
-    connection: DeploymentEnvironmentProviderConnection,
-) -> EnvironmentConnectionSpec {
-    EnvironmentConnectionSpec {
-        endpoint: connection.endpoint,
-        transport: match connection.transport {
-            DeploymentEnvironmentProviderTransport::WebSocket => EnvironmentTransport::WebSocket,
-            DeploymentEnvironmentProviderTransport::Http => EnvironmentTransport::Http,
-            DeploymentEnvironmentProviderTransport::Stdio => EnvironmentTransport::Stdio,
-            DeploymentEnvironmentProviderTransport::Ssh => EnvironmentTransport::Ssh,
-            DeploymentEnvironmentProviderTransport::Provider { provider_type } => {
-                EnvironmentTransport::Provider { provider_type }
-            }
-        },
-    }
-}
-
 fn environment_provider_view(
     record: EnvironmentProviderRecord,
 ) -> DeploymentEnvironmentProviderView {
     DeploymentEnvironmentProviderView {
         provider_id: record.provider_id.to_string(),
         display_name: record.display_name,
-        controller_connection: DeploymentEnvironmentProviderConnection {
-            endpoint: record.controller_connection.endpoint,
-            transport: match record.controller_connection.transport {
-                EnvironmentTransport::WebSocket => {
-                    DeploymentEnvironmentProviderTransport::WebSocket
-                }
-                EnvironmentTransport::Http => DeploymentEnvironmentProviderTransport::Http,
-                EnvironmentTransport::Stdio => DeploymentEnvironmentProviderTransport::Stdio,
-                EnvironmentTransport::Ssh => DeploymentEnvironmentProviderTransport::Ssh,
-                EnvironmentTransport::Provider { provider_type } => {
-                    DeploymentEnvironmentProviderTransport::Provider { provider_type }
-                }
-            },
-        },
+        controller_endpoint: record.controller_endpoint.as_str().to_owned(),
         metadata: record.metadata,
+        controller_features: record.controller_features.map(|features| {
+            DeploymentEnvironmentProviderFeaturesView {
+                adopt_target: features.adopt_target,
+                ingress: features.ingress,
+            }
+        }),
+        data_route_base: record.data_route_base.map(|base| base.as_str().to_owned()),
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }

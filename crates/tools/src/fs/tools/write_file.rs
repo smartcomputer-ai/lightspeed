@@ -41,7 +41,7 @@ pub struct WriteFileResult {
     pub resolved_path: FsPath,
     pub bytes_written: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub receipt: Option<environment_protocol::data::transfer_session::TransferStatus>,
+    pub receipt: Option<crate::transfer::TransferReceipt>,
 }
 
 impl WriteFileArgs {

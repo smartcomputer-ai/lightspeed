@@ -21,7 +21,7 @@ node -e '
   if (build.target !== target) throw new Error(`envd target ${build.target} is not ${target}`);
   if (build.protocolVersion !== Number(protocol)) throw new Error("envd protocol version mismatch");
 ' "$(dist/bin/lightspeed-envd --print-build)" "$expected_sha" \
-  "$LIGHTSPEED_ENVD_TARGET" "$LIGHTSPEED_ENVIRONMENT_PROTOCOL_VERSION"
+  "$LIGHTSPEED_ENVD_TARGET" "$LIGHTSPEED_ENVD_PROTOCOL_VERSION"
 
 for archive in dist/archives/*.tar.gz; do
   if [[ "$archive" != *-demo-* && "$archive" != *-docs-* ]]; then

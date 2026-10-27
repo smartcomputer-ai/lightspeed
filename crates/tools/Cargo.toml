@@ -8,9 +8,10 @@ api = { path = "../api" }
 async-trait = "0.1"
 harness = { path = "../harness", features = ["contract"] }
 futures-util = "0.3"
-glob = "0.3"
+globset = "0.4"
+ignore = "0.4"
 environment-client = { path = "../environment-client" }
-environment-protocol = { path = "../environment-protocol", features = ["schema"] }
+environment-protocol = { path = "../environment-protocol" }
 jsonschema = { version = "0.58", default-features = false }
 regex = "1"
 schemars = "1"

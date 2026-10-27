@@ -484,7 +484,7 @@ Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint,
 
 **Configure environment public ingress**
 
-Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
+Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -588,7 +588,7 @@ Starts a dependency-aware job group on one environment instance, injecting the e
 
 **Read environment jobs**
 
-Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.
+Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -1747,7 +1747,7 @@ Revokes the key with this display prefix; revoking a revoked key keeps its first
 
 **Put an environment provider**
 
-Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
+Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1760,7 +1760,7 @@ Registers or replaces one deployment provider and its controller connection. The
 
 **List environment providers**
 
-Returns every deployment-registered deployment provider and its controller connection.
+Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1773,7 +1773,7 @@ Returns every deployment-registered deployment provider and its controller conne
 
 **Read an environment provider**
 
-Returns one deployment-registered deployment provider and its controller connection.
+Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`

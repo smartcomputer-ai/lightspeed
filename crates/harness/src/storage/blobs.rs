@@ -126,19 +126,26 @@ pub trait BlobSource: Send {
     async fn read_chunk(&mut self, max_bytes: usize) -> Result<Vec<u8>, BlobStoreError>;
 }
 
+/// Largest range one [`BlobStore::read_blob_range`] call may request; stores
+/// refuse larger ranges, so callers moving bigger chunks read several ranges.
+pub const MAX_BLOB_RANGE_BYTES: usize = 1024 * 1024;
+
 #[async_trait]
 pub trait BlobStore: Send + Sync {
     async fn put_bytes(&self, bytes: Vec<u8>) -> Result<BlobRef, BlobStoreError>;
 
-    /// Bounded range access for transfer. Ranges are verified by the receiving whole-file
-    /// hasher. The fallback deliberately rejects large blobs instead of buffering them.
+    /// Bounded range access for transfer, at most [`MAX_BLOB_RANGE_BYTES`] per call. Ranges
+    /// are verified by the receiving whole-file hasher. The fallback deliberately rejects
+    /// large blobs instead of buffering them.
     async fn read_blob_range(
         &self,
         blob_ref: &BlobRef,
         offset: u64,
         max_bytes: usize,
     ) -> Result<Vec<u8>, BlobStoreError> {
-        if max_bytes > 1024 * 1024 || self.stat_blob(blob_ref).await?.byte_len > 8 * 1024 * 1024 {
+        if max_bytes > MAX_BLOB_RANGE_BYTES
+            || self.stat_blob(blob_ref).await?.byte_len > 8 * 1024 * 1024
+        {
             return Err(BlobStoreError::Store {
                 message: "streaming blob reads unsupported by this store".into(),
             });

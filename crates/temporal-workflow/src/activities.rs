@@ -9,10 +9,11 @@ use crate::{
     AppendEventsRequest, AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
     AwaitMaterializationRequest, AwaitMaterializationResult, ContextCompactActivityRequest,
     CreateOrLoadSessionRequest, CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest,
-    EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
-    EnvironmentJobPrepareWorkflowToolRequest, EnvironmentJobStartActivityRequest,
-    EnvironmentJobStartActivityResult, JoinedContextPreparationRequest, LlmGenerateActivityRequest,
-    PutBlobRequest, ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
+    EnvironmentJobCancelActivityResult, EnvironmentJobPollActivityRequest,
+    EnvironmentJobPollActivityResult, EnvironmentJobPrepareWorkflowToolRequest,
+    EnvironmentJobStartActivityRequest, EnvironmentJobStartActivityResult,
+    JoinedContextPreparationRequest, LlmGenerateActivityRequest, PutBlobRequest, ReadBlobRequest,
+    ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
     RuntimeProjectionRefreshActivityResult, SubagentCloseActivityRequest,
     SubagentPrepareActivityRequest, SubagentPrepareActivityResult, SubagentResolveActivityRequest,
     ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest, ToolInvokeCallActivityResult,
@@ -270,7 +271,7 @@ impl WorkflowActivities {
     pub async fn environment_job_cancel(
         _ctx: ActivityContext,
         _request: EnvironmentJobCancelActivityRequest,
-    ) -> Result<Vec<environment_protocol::data::jobs::JobSummary>, ActivityError> {
+    ) -> Result<EnvironmentJobCancelActivityResult, ActivityError> {
         unimplemented!("workflow activity definition only")
     }
 

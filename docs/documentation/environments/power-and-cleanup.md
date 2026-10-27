@@ -75,7 +75,15 @@ of the environment. During a transition, they can differ.
 | Offline | A provisioned machine may be stopped; a borrowed machine may have lost its daemon connection. The source determines whether Lightspeed can wake it. |
 | Closing | Cleanup is in progress. Do not submit new work. |
 | Closed | This environment can no longer be used. |
-| Failed or unknown | Inspect provider or gateway diagnostics instead of assuming readiness. |
+| Failed or unknown | Inspect the environment's lifecycle error and provider or gateway diagnostics instead of assuming readiness. |
+
+Provider trouble does not fail an environment at once. While a provider is
+unreachable or answers with a temporary error, the environment keeps its
+status and records the latest problem as its lifecycle error, shown in its
+details. An environment that is still provisioning, booting, or unknown
+fails with that error once the problem has lasted 30 minutes. An environment also fails when its machine disappears outside
+Lightspeed, or when its daemon speaks a different environment protocol
+version than the runtime; the error names both versions.
 
 A session can retain the ID of an environment that has closed or become
 unavailable. The runtime reports that failure; it does not silently select a
@@ -111,8 +119,10 @@ target/debug/lightspeed environment idle-policy "<environment-id>" --clear
 
 Idle time comes from daemon activity, not time since the last chat message.
 Filesystem, process, and job operations affect that activity clock. Running
-processes and jobs prevent automatic idle action. Initialization and idle
-polling do not keep the machine busy by themselves.
+processes and jobs prevent automatic idle action. Initialization, idle
+polling, and the prompt and skill discovery that runs before each agent run do
+not keep the machine busy by themselves, so a chat-only session does not hold
+an idle machine awake.
 
 The runtime checks periodically, so a threshold is not an exact wall-clock
 deadline. To verify the policy, leave the VM without tracked work and without
@@ -171,17 +181,20 @@ target/debug/lightspeed environment close "<environment-id>"
 target/debug/lightspeed environment read "<environment-id>"
 ```
 
-For Incus, closing disables ingress, requests guest shutdown, and deletes the
-VM and disk. The operation is asynchronous. A provider error can leave it
-closing while reconciliation retries, so inspect the final status and provider
-diagnostics when cleanup does not finish.
+Closing asks the provider to destroy everything the environment's machine
+holds, public ingress included. For Incus, that is a guest shutdown of up to
+30 seconds, then a forced stop, then deletion of the VM and disk. The
+operation is asynchronous. Lightspeed closes by the environment's identity,
+so a machine whose creation failed midway is still found and removed. A
+provider error can leave it closing while reconciliation retries, so inspect
+the final status and provider diagnostics when cleanup does not finish.
 
 For an individual registered or external environment, use the CLI or
 `environments/close` API. Closing their records removes access
 through Lightspeed while leaving the computer and files under your control.
-An outbound registered daemon exits when it receives the terminal rejection
-for its closed identity; an external passive daemon is not terminated by the
-logical close. Neither path is a comprehensive cleanup of programs started
+An outbound registered daemon is told its environment closed and exits with
+status 4; an external passive daemon is not terminated by the logical
+close. Neither path is a comprehensive cleanup of programs started
 on the machine. Inspect and manage those processes and files explicitly.
 
 Environment closure does not delete the independent VFS workspace or revoke

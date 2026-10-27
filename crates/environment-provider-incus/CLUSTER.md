@@ -49,7 +49,10 @@ incus cluster unset member-a scheduler.instance
 
 ## Verification
 
-The non-destructive live topology/reconciliation test is opt-in:
+The live tests are opt-in. The topology and reconciliation test is
+non-destructive; `the_controller_conforms_on_live_incus` runs the controller
+conformance suite and creates and deletes one VM in the universe
+`lightspeed-conformance`, binding `incus-live`:
 
 ```bash
 LIGHTSPEED_INCUS_PROVIDER_CONFIG=/absolute/path/provider.json \

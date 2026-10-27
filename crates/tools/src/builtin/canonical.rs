@@ -498,7 +498,7 @@ fn job_submit_schema() -> Value {
                         "job_id": {
                             "type": "string",
                             "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
-                            "description": "Your name for the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read."
+                            "description": "Your name for this run of the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read. An id names one run: to run a command again, choose a new id."
                         },
                         "argv": { "type": "array", "items": { "type": "string" } },
                         "cwd": { "type": ["string", "null"] },
@@ -578,9 +578,16 @@ fn job_read_schema() -> Value {
         "type": "object",
         "properties": {
             "jobs": { "type": "array", "items": job_handle_schema() },
-            "output_bytes": { "type": ["integer", "null"], "minimum": 0 },
-            "after_seq": { "type": ["integer", "null"], "minimum": 0 },
-            "include_artifacts": { "type": "boolean" }
+            "output_bytes": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Output bytes to show per job. Without `after`, half come from the start of the output and half from its end."
+            },
+            "after": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+                "description": "Byte offset to read forward from, such as a result's `output_next` or its omitted range's `offset`."
+            }
         },
         "required": ["jobs"],
         "additionalProperties": false,

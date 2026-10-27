@@ -1,7 +1,10 @@
 //! Shared machine source scope, resolved from the session's effective directory.
 use environment_protocol::{
-    data::inventory::{InventoryLimits, ScanParams},
-    shared::EnvironmentPath,
+    data::{
+        fs::TreeFilter,
+        scan::{ScanLimits, ScanParams, ScanRoot},
+    },
+    paths::EnvironmentPath,
 };
 use std::{
     collections::BTreeSet,
@@ -61,30 +64,77 @@ pub fn scan_query(
             }
         }
     }
-    if roots.len() > 32 {
-        return Err("discovery exceeds 32 roots".into());
+    // One root slot of the protocol's 32 stays free for the working
+    // directory probe.
+    if roots.len() > 31 {
+        return Err("discovery exceeds 31 roots".into());
     }
+    // Discovery roots are often hidden (`.agents`) or ignored by a project's
+    // ignore files, so both defaults are opted out of below each root.
     Ok(ScanParams {
         roots: roots
             .into_iter()
-            .map(|p| EnvironmentPath::new(p.to_string_lossy()).map_err(|e| e.to_string()))
-            .collect::<Result<_, _>>()?,
-        include_patterns: if source == "prompts" {
-            vec!["*.md".into(), "*.txt".into()]
-        } else {
-            vec!["SKILL.md".into(), "**/SKILL.md".into()]
+            .map(|path| {
+                Ok(ScanRoot {
+                    path: EnvironmentPath::new(path.to_string_lossy())
+                        .map_err(|e| e.to_string())?,
+                    if_none_match: None,
+                    max_depth: None,
+                })
+            })
+            .collect::<Result<_, String>>()?,
+        filter: TreeFilter {
+            include: if source == "prompts" {
+                vec!["*.md".into(), "*.txt".into()]
+            } else {
+                vec!["SKILL.md".into()]
+            },
+            include_hidden: true,
+            include_ignored: true,
+            max_depth: Some(if source == "prompts" { 1 } else { 8 }),
+            ..TreeFilter::default()
         },
         read_content: true,
+        include_digests: false,
         follow_symlinks: true,
-        digest_algorithm: None,
-        if_none_match: None,
-        limits: InventoryLimits {
+        limits: ScanLimits {
             max_entries: 4096,
-            max_depth: if source == "prompts" { 1 } else { 8 },
             max_file_bytes: 64 * 1024,
             max_total_bytes: 2 * 1024 * 1024,
-            max_manifest_bytes: 4 * 1024 * 1024,
             max_duration_ms: 2000,
         },
     })
+}
+
+/// Add the working-directory probe to a discovery scan: a root examined at
+/// depth 0, so the same observation proves `cwd` is an existing directory
+/// (`complete` without entries) instead of a separate `fs/getMetadata`.
+/// The probe is the last root of the response.
+pub fn with_working_directory_probe(params: &mut ScanParams, cwd: &EnvironmentPath) {
+    params.roots.push(ScanRoot {
+        path: cwd.clone(),
+        if_none_match: None,
+        max_depth: Some(0),
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_scans_select_by_name_and_probe_the_working_directory() {
+        let mut params = scan_query(None, "/project", Some("/home/dev"), "skills").unwrap();
+        assert_eq!(params.filter.include, vec!["SKILL.md"]);
+        assert!(params.filter.include_hidden && params.filter.include_ignored);
+        let cwd = EnvironmentPath::new("/project").unwrap();
+        with_working_directory_probe(&mut params, &cwd);
+        let probe = params.roots.last().unwrap();
+        assert_eq!(
+            (probe.path.as_str(), probe.max_depth),
+            ("/project", Some(0))
+        );
+        let prompts = scan_query(None, "/project", Some("/home/dev"), "prompts").unwrap();
+        assert_eq!(prompts.filter.max_depth, Some(1));
+    }
 }

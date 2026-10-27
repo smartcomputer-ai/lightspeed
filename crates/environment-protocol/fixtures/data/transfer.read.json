@@ -1,0 +1,18 @@
+{
+  "params": {
+    "operationId": "op-1",
+    "digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "offset": 0,
+    "maxBytes": 4194304
+  },
+  "response": {
+    "data": "aGVsbG8="
+  },
+  "error": {
+    "code": -32004,
+    "message": "digest is not part of the inventory",
+    "data": {
+      "kind": "notFound"
+    }
+  }
+}

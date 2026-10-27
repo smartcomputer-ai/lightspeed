@@ -10,17 +10,19 @@ use super::providers::map_environments_error;
 use super::*;
 
 use ::environments::{
-    BeginCloseEnvironment, EnvironmentRecord, EnvironmentStore, IdleAction, PowerState,
-    SetEnvironmentPower,
+    BeginCloseEnvironment, EnvironmentProviderId, EnvironmentRecord, EnvironmentStore, IdleAction,
+    PowerState, SetEnvironmentPower,
 };
-use environment_client::EnvironmentDataClient;
-use environment_protocol::{
-    data::{
-        handshake::{InitializeParams, InitializedParams},
-        idle::{IdleParams, IdleResponse},
-    },
-    shared::CURRENT_PROTOCOL_VERSION,
-};
+use environment_client::{ClientError, DataClient};
+use environment_protocol::data::idle::{GetIdleParams, GetIdleResponse};
+use std::{collections::HashSet, time::Duration};
+
+/// `clientInfo.name` of the reaper's data-plane connections.
+const POWER_REAPER_CLIENT: &str = "lightspeed-power-reaper";
+
+/// Deadline of one `env/getIdle`, on top of the connect and `initialize`
+/// bounds.
+const IDLE_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Outcome of one reaper pass for reporting/tests.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -32,15 +34,20 @@ pub struct PowerReaperStats {
     pub closed: usize,
 }
 
+/// No process or job is running.
+fn is_quiescent(report: &GetIdleResponse) -> bool {
+    report.running_process_count == 0 && report.running_job_count == 0
+}
+
 /// Decide the idle action for one environment from the daemon's report.
 /// Pure so it can be tested without a daemon: nothing is due while work
 /// runs, while a power change is already pending, or before the first
 /// supported stage threshold.
 pub(crate) fn decide_idle_action(
     environment: &EnvironmentRecord,
-    report: &IdleResponse,
+    report: &GetIdleResponse,
 ) -> Option<IdleAction> {
-    if !report.is_quiescent() {
+    if !is_quiescent(report) {
         return None;
     }
     if environment.desired_power != PowerState::Running {
@@ -50,15 +57,27 @@ pub(crate) fn decide_idle_action(
     policy.due_action(report.idle_for_ms, &environment.incarnation.power_states)
 }
 
+/// Why an idle report could not be read.
+enum IdleReportFailure {
+    /// The daemon did not answer within its deadlines: its provider's
+    /// remaining environments are skipped for the rest of the pass.
+    TimedOut,
+    Unavailable,
+}
+
 impl EnvironmentService {
     /// Public entry point for one reaper pass; used by acceptance tests that
     /// drive the reaper deterministically instead of running the loop.
     pub async fn reap_idle_environments_once(&self) -> Result<PowerReaperStats, AgentApiError> {
-        self.reconcile_idle_power_once().await
+        self.reconcile_idle_power_pass(&mut HashSet::new()).await
     }
 
-    pub(crate) async fn reconcile_idle_power_once(
+    /// One reaper pass over this universe. `unhealthy` names providers
+    /// whose daemons timed out earlier in the deployment pass; their
+    /// environments are left for the next pass.
+    pub(crate) async fn reconcile_idle_power_pass(
         &self,
+        unhealthy: &mut HashSet<EnvironmentProviderId>,
     ) -> Result<PowerReaperStats, AgentApiError> {
         let candidates = EnvironmentStore::list_environments_with_idle_policy(self.store.as_ref())
             .await
@@ -69,15 +88,27 @@ impl EnvironmentService {
         };
         let universe_id = self.store.config().universe_id;
         for environment in candidates {
+            let provider_id = environment.provider_id().cloned();
+            if provider_id
+                .as_ref()
+                .is_some_and(|provider_id| unhealthy.contains(provider_id))
+            {
+                stats.unreachable += 1;
+                continue;
+            }
             let report = match self.read_idle_report(universe_id, &environment).await {
-                Some(report) => report,
-                None => {
+                Ok(report) => report,
+                Err(failure) => {
+                    if let (IdleReportFailure::TimedOut, Some(provider_id)) = (failure, provider_id)
+                    {
+                        unhealthy.insert(provider_id);
+                    }
                     stats.unreachable += 1;
                     continue;
                 }
             };
             let Some(action) = decide_idle_action(&environment, &report) else {
-                if !report.is_quiescent() {
+                if !is_quiescent(&report) {
                     stats.busy += 1;
                 }
                 continue;
@@ -132,37 +163,33 @@ impl EnvironmentService {
     }
 
     /// Ask the environment's daemon for its idle report through the ordinary
-    /// on-demand route. `None` when the daemon is unreachable or predates
-    /// `env/idle`; the reaper then leaves the environment alone.
+    /// on-demand route, within the connect, `initialize` and report
+    /// deadlines, and close the connection again. The handshake and the
+    /// report are observations: reading them never resets the idle clock.
     async fn read_idle_report(
         &self,
         universe_id: uuid::Uuid,
         environment: &EnvironmentRecord,
-    ) -> Option<IdleResponse> {
-        let connection = self
+    ) -> Result<GetIdleResponse, IdleReportFailure> {
+        let endpoint = self
             .environment_gateway
-            .connection_for(universe_id, environment);
-        let mut client = EnvironmentDataClient::connect(
-            &connection.endpoint,
-            self.environment_gateway
-                .connect_options("lightspeed-power-reaper"),
-        )
-        .await
-        .ok()?;
-        let response = client
-            .initialize(&InitializeParams {
-                protocol_version: CURRENT_PROTOCOL_VERSION,
-                client_name: "lightspeed-power-reaper".to_owned(),
-                scope: connection.scope.clone(),
-                resume_connection_id: None,
-            })
+            .endpoint_for(universe_id, environment);
+        let options = self
+            .environment_gateway
+            .connect_options(POWER_REAPER_CLIENT)
+            .with_request_timeout(IDLE_REPORT_TIMEOUT);
+        let failure = |error: &ClientError| match error {
+            ClientError::ConnectTimeout { .. } | ClientError::DeadlineExceeded { .. } => {
+                IdleReportFailure::TimedOut
+            }
+            _ => IdleReportFailure::Unavailable,
+        };
+        let (client, _) = DataClient::connect_initialized(&endpoint, options)
             .await
-            .ok()?;
-        if response.protocol_version != CURRENT_PROTOCOL_VERSION {
-            return None;
-        }
-        client.initialized(&InitializedParams {}).await.ok()?;
-        client.idle(&IdleParams {}).await.ok()
+            .map_err(|error| failure(&error))?;
+        let report = client.get_idle(&GetIdleParams {}).await;
+        let _ = client.close().await;
+        report.map_err(|error| failure(&error))
     }
 }
 
@@ -196,7 +223,9 @@ mod tests {
             incarnation: EnvironmentIncarnationRecord {
                 incarnation_id: EnvironmentIncarnationId::new("incarnation-1"),
                 provision_request_id: Some(EnvironmentProvisionRequestId::new("request-1")),
-                provider_target_id: Some("target-1".into()),
+                provider_target_id: Some(
+                    environment_protocol::ids::ProviderTargetId::new("target-1").unwrap(),
+                ),
                 template_id: Some(EnvironmentTemplateId::new("dev")),
                 adoption_source_target: None,
                 power_states,
@@ -207,17 +236,18 @@ mod tests {
             public_endpoint: None,
             metadata: BTreeMap::new(),
             last_seen_at_ms: None,
+            lifecycle_error: None,
             created_at_ms: 1,
             updated_at_ms: 1,
         }
     }
 
-    fn report(idle_for_ms: u64, running_processes: u32, running_jobs: u32) -> IdleResponse {
-        IdleResponse {
+    fn report(idle_for_ms: u64, running_processes: u32, running_jobs: u32) -> GetIdleResponse {
+        GetIdleResponse {
             idle_for_ms,
-            running_processes,
-            running_jobs,
-            leftover_process_groups: 0,
+            running_process_count: running_processes,
+            running_job_count: running_jobs,
+            leftover_process_group_count: 0,
         }
     }
 
@@ -238,6 +268,13 @@ mod tests {
         );
         // Running work blocks every stage regardless of the clock.
         assert_eq!(decide_idle_action(&env, &report(10_000, 1, 0)), None);
+        // Leftover process groups are services left behind, not running work.
+        let mut leftovers = report(1_500, 0, 0);
+        leftovers.leftover_process_group_count = 3;
+        assert_eq!(
+            decide_idle_action(&env, &leftovers),
+            Some(IdleAction::Pause)
+        );
         assert_eq!(decide_idle_action(&env, &report(10_000, 0, 2)), None);
         // Suspend is due but unsupported by Incus: pause remains.
         assert_eq!(

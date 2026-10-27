@@ -1,6 +1,6 @@
 //! Shared byte redaction for captured process and job output.
 
-use environment_protocol::shared::SecretString;
+use environment_protocol::bytes::SecretString;
 use std::collections::BTreeMap;
 
 pub(crate) fn redactions_for_secret_env(

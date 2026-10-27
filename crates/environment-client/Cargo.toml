@@ -3,15 +3,20 @@ name = "environment-client"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# `conformance::controller`: a suite that drives any controller endpoint
+# through `ControllerClient` and checks the controller-plane contract.
+conformance = []
+
 [dependencies]
-async-trait = "0.1"
-futures-util = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
 environment-protocol = { path = "../environment-protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["net"] }
-tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+environment-client = { path = ".", features = ["conformance"] }
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }

@@ -272,24 +272,14 @@ pub struct DeploymentApiKeyRevokeResponse {
     pub api_key: DeploymentApiKeyView,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum DeploymentEnvironmentProviderTransport {
-    WebSocket,
-    Http,
-    Stdio,
-    Ssh,
-    Provider {
-        #[serde(rename = "providerType")]
-        provider_type: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Optional controller methods the provider's controller advertised.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct DeploymentEnvironmentProviderConnection {
-    pub endpoint: String,
-    pub transport: DeploymentEnvironmentProviderTransport,
+pub struct DeploymentEnvironmentProviderFeaturesView {
+    /// Existing targets can be adopted (`environment/adopt`).
+    pub adopt_target: bool,
+    /// Public ingress can be enabled on environments.
+    pub ingress: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -298,22 +288,54 @@ pub struct DeploymentEnvironmentProviderView {
     pub provider_id: EnvironmentProviderId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub controller_connection: DeploymentEnvironmentProviderConnection,
+    /// `ws://`, `wss://` or `unix://` URL of the provider controller.
+    pub controller_endpoint: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+    /// What the controller advertised at its last successful handshake;
+    /// absent until Lightspeed first reached it at this endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_features: Option<DeploymentEnvironmentProviderFeaturesView>,
+    /// Base URL of the provider's data routes, as its controller advertised
+    /// it; absent until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_route_base: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Register or replace a provider. `credential` is the bearer token
+/// Lightspeed presents to the provider's controller and data routes: it is
+/// sealed on receipt and never returned by any method. `Debug` output
+/// redacts it; request logging must never echo these params.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentEnvironmentProviderPutParams {
     pub provider_id: EnvironmentProviderId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub controller_connection: DeploymentEnvironmentProviderConnection,
+    /// `ws://`, `wss://` or `unix://` URL of the provider controller.
+    pub controller_endpoint: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+    /// Required when the provider is new; omit to keep the stored one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+}
+
+impl fmt::Debug for DeploymentEnvironmentProviderPutParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DeploymentEnvironmentProviderPutParams")
+            .field("provider_id", &self.provider_id)
+            .field("display_name", &self.display_name)
+            .field("controller_endpoint", &self.controller_endpoint)
+            .field("metadata", &self.metadata)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -663,11 +685,11 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
         ["Revoke a scoped API key", "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::Deployment,
+        ["Put an environment provider", "Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>
-        ["List environment providers", "Returns every deployment-registered deployment provider and its controller connection."], access: MethodAccess::Deployment,
+        ["List environment providers", "Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(DeploymentEnvironmentProviderReadParams) -> DeploymentEnvironmentProviderReadResponse =>
-        ["Read an environment provider", "Returns one deployment-registered deployment provider and its controller connection."], access: MethodAccess::Deployment,
+        ["Read an environment provider", "Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(DeploymentEnvironmentProviderDeleteParams) -> DeploymentEnvironmentProviderDeleteResponse =>
         ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(DeploymentProviderBindingPutParams) -> DeploymentProviderBindingPutResponse =>

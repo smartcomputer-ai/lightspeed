@@ -13,8 +13,8 @@ use harness::{
 };
 
 use crate::fs::{
-    CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
-    FsPath, FsResult, ReadDirectoryEntry, RemoveOptions,
+    CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsPath, FsResult,
+    ReadDirectoryEntry, RemoveOptions,
 };
 
 #[derive(Clone)]
@@ -349,73 +349,6 @@ impl AttachedVfsFileSystem {
         }
         Ok(Some(directory_metadata()))
     }
-
-    async fn copy_generic(
-        &self,
-        source_path: &FsPath,
-        destination_path: &FsPath,
-        options: CopyOptions,
-    ) -> FsResult<()> {
-        let source_path = fs_path_key(source_path)?;
-        let destination_path = fs_path_key(destination_path)?;
-        let source_metadata = self.get_metadata(&source_path).await?;
-        if source_metadata.is_file {
-            let bytes = self.read_file(&source_path).await?;
-            return self.write_file(&destination_path, bytes).await;
-        }
-        if !source_metadata.is_directory {
-            return Err(FsError::InvalidInput {
-                message: format!("path is neither a file nor a directory: {source_path}"),
-            });
-        }
-        if !options.recursive {
-            return Err(FsError::InvalidInput {
-                message: "copy requires recursive: true when source is a directory".to_owned(),
-            });
-        }
-        if destination_path.starts_with(&source_path) {
-            return Err(FsError::InvalidInput {
-                message: "cannot copy a directory to itself or one of its descendants".to_owned(),
-            });
-        }
-        self.copy_directory_generic(&source_path, &destination_path)
-            .await
-    }
-
-    async fn copy_directory_generic(
-        &self,
-        source_path: &FsPath,
-        destination_path: &FsPath,
-    ) -> FsResult<()> {
-        let mut stack = vec![(source_path.clone(), destination_path.clone(), false)];
-        while let Some((source, destination, visited)) = stack.pop() {
-            if visited {
-                let bytes = self.read_file(&source).await?;
-                self.write_file(&destination, bytes).await?;
-                continue;
-            }
-
-            let metadata = self.get_metadata(&source).await?;
-            if metadata.is_file {
-                stack.push((source, destination, true));
-                continue;
-            }
-
-            self.remove(&destination, RemoveOptions::recursive().force())
-                .await?;
-            self.create_directory(&destination, CreateDirectoryOptions::single())
-                .await?;
-
-            let mut entries = self.read_directory(&source).await?;
-            entries.sort_by(|left, right| right.file_name.cmp(&left.file_name));
-            for entry in entries {
-                let source_child = source.join(&entry.file_name)?;
-                let destination_child = destination.join(&entry.file_name)?;
-                stack.push((source_child, destination_child, entry.is_file));
-            }
-        }
-        Ok(())
-    }
 }
 
 fn selected_entry(
@@ -519,15 +452,6 @@ impl FileSystem for VfsSnapshotFileSystem {
 
     async fn remove(&self, path: &FsPath, _options: RemoveOptions) -> FsResult<()> {
         Err(self.deny_write(path))
-    }
-
-    async fn copy(
-        &self,
-        _source_path: &FsPath,
-        destination_path: &FsPath,
-        _options: CopyOptions,
-    ) -> FsResult<()> {
-        Err(self.deny_write(destination_path))
     }
 }
 
@@ -668,20 +592,6 @@ impl FileSystem for VfsWorkspaceFileSystem {
         .await
     }
 
-    async fn copy(
-        &self,
-        source_path: &FsPath,
-        destination_path: &FsPath,
-        options: CopyOptions,
-    ) -> FsResult<()> {
-        let source = fs_path_to_vfs_path(source_path)?;
-        let destination = fs_path_to_vfs_path(destination_path)?;
-        self.update_head(destination_path, |manifest| {
-            ::vfs::copy_manifest_path(manifest, &source, &destination, options.recursive)
-        })
-        .await
-    }
-
     fn drain_tool_effects(&self) -> Vec<ToolEffect> {
         self.effects.drain()
     }
@@ -814,27 +724,6 @@ impl FileSystem for AttachedVfsFileSystem {
         };
         let fs = self.writable_workspace_for_attachment(&resolved.attachment, path)?;
         fs.remove(&resolved.inner_path, options).await
-    }
-
-    async fn copy(
-        &self,
-        source_path: &FsPath,
-        destination_path: &FsPath,
-        options: CopyOptions,
-    ) -> FsResult<()> {
-        if let (Some(source), Some(destination)) = (
-            self.route_attachment(source_path)?,
-            self.route_attachment(destination_path)?,
-        ) && source.attachment.path == destination.attachment.path
-        {
-            let fs =
-                self.writable_workspace_for_attachment(&destination.attachment, destination_path)?;
-            return fs
-                .copy(&source.inner_path, &destination.inner_path, options)
-                .await;
-        }
-        self.copy_generic(source_path, destination_path, options)
-            .await
     }
 
     fn drain_tool_effects(&self) -> Vec<ToolEffect> {
@@ -1076,12 +965,12 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::fs::FsToolContext;
     use crate::fs::tools::{
         ApplyPatchArgs, EditFileArgs, GlobArgs, GrepArgs, ListDirArgs, ReadFileArgs, WriteFileArgs,
         invoke_apply_patch, invoke_edit_file, invoke_glob, invoke_grep, invoke_list_dir,
         invoke_read_file, invoke_write_file,
     };
+    use crate::fs::{FsToolContext, RenameOptions};
     use crate::runtime::InlineToolRuntime;
     use crate::runtime::ToolTarget;
     use crate::toolset::{ToolsetConfig, register_toolset};
@@ -1955,7 +1844,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn vfs_workspace_file_system_removes_and_copies_paths() {
+    async fn vfs_workspace_file_system_removes_and_renames_paths() {
         let store = Arc::new(TestWorkspaceStore::default());
         let (_blobs, fs, _workspace_id, _base_snapshot_ref) = test_workspace_fs(
             store,
@@ -1963,27 +1852,22 @@ mod tests {
         )
         .await;
 
-        fs.copy(
-            &FsPath::new("/src").unwrap(),
-            &FsPath::new("/copy").unwrap(),
-            CopyOptions::recursive(),
+        fs.rename(
+            &FsPath::new("/src/lib.rs").unwrap(),
+            &FsPath::new("/src/moved.rs").unwrap(),
+            RenameOptions::default(),
         )
         .await
-        .expect("copy dir");
+        .expect("rename file");
         assert_eq!(
-            fs.read_file_text(&FsPath::new("/copy/lib.rs").unwrap())
+            fs.read_file_text(&FsPath::new("/src/moved.rs").unwrap())
                 .await
-                .expect("read copied file"),
+                .expect("read moved file"),
             "pub fn f() {}\n"
         );
         assert!(matches!(
-            fs.copy(
-                &FsPath::new("/copy/lib.rs").unwrap(),
-                &FsPath::new("/copy").unwrap(),
-                CopyOptions::file()
-            )
-            .await,
-            Err(FsError::InvalidInput { .. })
+            fs.read_file(&FsPath::new("/src/lib.rs").unwrap()).await,
+            Err(FsError::NotFound { .. })
         ));
 
         assert!(matches!(
@@ -2387,42 +2271,34 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn attached_vfs_file_system_copies_across_attachments() {
+    async fn attached_vfs_file_system_renames_within_writable_attachments() {
         let (_blobs, _store, fs, _workspace_id) = test_attached_fs().await;
 
-        fs.copy(
-            &FsPath::new("/skills/rust/SKILL.md").unwrap(),
-            &FsPath::new("/workspace/SKILL-copy.md").unwrap(),
-            CopyOptions::file(),
+        fs.write_file(
+            &FsPath::new("/workspace/draft.md").unwrap(),
+            b"draft\n".to_vec(),
         )
         .await
-        .expect("copy file across mounts");
-        assert_eq!(
-            fs.read_file_text(&FsPath::new("/workspace/SKILL-copy.md").unwrap())
-                .await
-                .expect("read copied skill"),
-            "# Rust Skill\n"
-        );
-
-        fs.copy(
-            &FsPath::new("/skills/rust").unwrap(),
-            &FsPath::new("/workspace/skill-copy").unwrap(),
-            CopyOptions::recursive(),
+        .expect("write draft");
+        fs.rename(
+            &FsPath::new("/workspace/draft.md").unwrap(),
+            &FsPath::new("/workspace/final.md").unwrap(),
+            RenameOptions::default(),
         )
         .await
-        .expect("copy directory across mounts");
+        .expect("rename within the workspace");
         assert_eq!(
-            fs.read_file_text(&FsPath::new("/workspace/skill-copy/references/info.md").unwrap())
+            fs.read_file_text(&FsPath::new("/workspace/final.md").unwrap())
                 .await
-                .expect("read copied reference"),
-            "reference\n"
+                .expect("read renamed file"),
+            "draft\n"
         );
 
         assert!(matches!(
-            fs.copy(
-                &FsPath::new("/workspace/SKILL-copy.md").unwrap(),
+            fs.rename(
+                &FsPath::new("/workspace/final.md").unwrap(),
                 &FsPath::new("/skills/rust/generated.md").unwrap(),
-                CopyOptions::file(),
+                RenameOptions::default(),
             )
             .await,
             Err(FsError::PermissionDenied { .. })

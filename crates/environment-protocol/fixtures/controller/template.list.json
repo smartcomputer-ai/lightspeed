@@ -1,0 +1,34 @@
+{
+  "params": {
+    "binding": {
+      "universeId": "u1",
+      "bindingId": "primary"
+    }
+  },
+  "response": {
+    "templates": [
+      {
+        "templateId": "ubuntu-24.04-small",
+        "displayName": "Ubuntu 24.04 (small)",
+        "description": "2 vCPU, 4 GiB",
+        "publicIngress": true,
+        "deprecated": true,
+        "resources": {
+          "vcpus": 2,
+          "memoryBytes": 4294967296,
+          "diskBytes": 21474836480
+        },
+        "metadata": {
+          "imageFingerprint": "a1b2c3"
+        }
+      }
+    ]
+  },
+  "error": {
+    "code": -32019,
+    "message": "the Incus API is unreachable",
+    "data": {
+      "kind": "unavailable"
+    }
+  }
+}

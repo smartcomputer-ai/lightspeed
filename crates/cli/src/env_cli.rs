@@ -556,7 +556,7 @@ struct CreateArgs {
 struct RegisterArgs {
     #[command(flatten)]
     common: ResourceArgs,
-    /// A ws:// or wss:// endpoint reachable from the runtime.
+    /// A ws://, wss:// or unix:// endpoint of envd reachable from the runtime.
     endpoint: String,
     /// Supply the same request ID when retrying registration.
     #[arg(long)]
@@ -639,20 +639,18 @@ async fn create(args: CreateArgs) -> Result<()> {
     crate::output::show(args.common.json, &response.environment)
 }
 async fn register(args: RegisterArgs) -> Result<()> {
-    let endpoint = reqwest::Url::parse(&args.endpoint)?;
     anyhow::ensure!(
-        matches!(endpoint.scheme(), "ws" | "wss"),
-        "envd endpoint must use ws:// or wss://"
+        ["ws://", "wss://", "unix://"]
+            .iter()
+            .any(|scheme| args.endpoint.starts_with(scheme)),
+        "envd endpoint must use ws://, wss:// or unix://"
     );
     let response: api::EnvironmentExternalCreateResponse = HttpAgentApi::new(args.common.api_url)
         .request(
             api::METHOD_ENVIRONMENTS_EXTERNAL_CREATE,
             api::EnvironmentExternalCreateParams {
                 request_id: args.request_id,
-                connection: api::EnvironmentConnectionView {
-                    endpoint: args.endpoint,
-                    transport: api::EnvironmentConnectionTransportView::WebSocket,
-                },
+                endpoint: args.endpoint,
                 display_name: args.display_name,
                 metadata: args.metadata.map(),
             },

@@ -904,7 +904,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+      "description": "Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.",
       "group": "environments",
       "method": "environments/ingress/put",
       "params": {
@@ -1104,7 +1104,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
+      "description": "Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.",
       "group": "environments",
       "method": "environments/jobs/read",
       "params": {
@@ -3289,7 +3289,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
+      "description": "Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/put",
       "params": {
@@ -3313,7 +3313,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns every deployment-registered deployment provider and its controller connection.",
+      "description": "Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/list",
       "params": {
@@ -3337,7 +3337,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns one deployment-registered deployment provider and its controller connection.",
+      "description": "Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/read",
       "params": {

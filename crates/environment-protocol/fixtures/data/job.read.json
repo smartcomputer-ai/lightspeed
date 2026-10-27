@@ -1,0 +1,115 @@
+{
+  "params": {
+    "jobs": [
+      {
+        "jobId": "build",
+        "tailBytes": 8192,
+        "maxBytes": 8192
+      },
+      {
+        "jobId": "setup",
+        "after": 512
+      },
+      {
+        "jobId": "gone"
+      }
+    ],
+    "maxBytes": 16384,
+    "waitMs": 0,
+    "returnOn": "exit"
+  },
+  "response": {
+    "jobs": [
+      {
+        "kind": "job",
+        "summary": {
+          "jobId": "build",
+          "requestId": "jobreq-run1-turn2-call3",
+          "name": "build",
+          "status": "failed",
+          "dependsOn": [
+            "setup"
+          ],
+          "queueKey": "cargo",
+          "createdAtMs": 1761400000000,
+          "queuedAtMs": 1761400000100,
+          "startedAtMs": 1761400000200,
+          "finishedAtMs": 1761400009200,
+          "durationMs": 9000,
+          "exit": {
+            "kind": "code",
+            "code": 101
+          },
+          "leftovers": {
+            "disposition": "swept",
+            "processes": [
+              {
+                "pid": 4242,
+                "command": "sleep 600"
+              }
+            ]
+          },
+          "error": {
+            "code": -32018,
+            "message": "output capture failed",
+            "data": {
+              "kind": "processFailed"
+            }
+          }
+        },
+        "output": {
+          "chunks": [
+            {
+              "offset": 3000000,
+              "stream": "stderr",
+              "data": "ZXJyb3I="
+            }
+          ],
+          "next": 3000005,
+          "end": 3000005
+        }
+      },
+      {
+        "kind": "job",
+        "summary": {
+          "jobId": "setup",
+          "requestId": "jobreq-run1-turn2-call3",
+          "name": "setup",
+          "status": "succeeded",
+          "createdAtMs": 1761400000000,
+          "startedAtMs": 1761400000050,
+          "finishedAtMs": 1761400003050,
+          "durationMs": 3000,
+          "exit": {
+            "kind": "code",
+            "code": 0
+          }
+        },
+        "output": {
+          "next": 512,
+          "end": 512
+        }
+      },
+      {
+        "kind": "error",
+        "jobId": "gone",
+        "error": {
+          "code": -32004,
+          "message": "unknown job id: gone",
+          "data": {
+            "kind": "notFound"
+          }
+        }
+      }
+    ]
+  },
+  "error": {
+    "code": -32602,
+    "message": "waitMs is 3600000; the ceiling is 1800000",
+    "data": {
+      "kind": "invalidParams",
+      "field": "waitMs",
+      "ceiling": 1800000
+    }
+  }
+}

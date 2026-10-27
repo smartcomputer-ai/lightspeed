@@ -234,7 +234,11 @@ observe the deferred work that follows.
 
 An outbound daemon and its gateway must agree on the environment protocol.
 The release metadata records that protocol, and the gateway reports a mismatch
-when an incompatible daemon connects.
+when an incompatible daemon connects. Provider controllers have their own
+protocol number: redeploy every provider together with a runtime release that
+changes it. A provisioned machine whose baked-in daemon speaks another version
+fails when it becomes ready, with an error naming both versions, so recreate
+such machines from an updated image.
 
 `lightspeed-envd upgrade` installs the build named by the deployment's discovery
 document. It verifies the archive checksum and checks the candidate's version,
@@ -251,8 +255,10 @@ relying on daemon upgrades.
 `LIGHTSPEED_ENVD_AUTO_UPGRADE=true` opts an outbound daemon into upgrading on a
 protocol mismatch. It does not update on every version or source change. The
 daemon replaces its executable and re-executes with its arguments, working
-directory, state directory, and identity retained. An attempt limit prevents
-a stale discovery document from causing an upgrade loop. See the
+directory, state directory, and identity retained. The daemon attempts one
+upgrade per protocol version the gateway names, so a stale discovery document
+cannot cause an upgrade loop. Network failures while fetching the document or
+archive are retried; a checksum or build-fact mismatch stops the daemon. See the
 [daemon reference](../reference/environment-variables.md#environment-daemon)
 for discovery URL and private-CA settings.
 
@@ -263,9 +269,11 @@ it can write, so an in-place executable replacement may require administrator
 action.
 
 Daemon identity persistence and process persistence are different. On daemon
-restart, persisted nonterminal jobs become `Interrupted`; interactive process
-handles were held in memory. Retaining the state directory preserves identity
-and recorded output, not a running operating-system execution. See
+restart, persisted nonterminal jobs become `Interrupted` and their surviving
+processes are stopped. Earlier process handles report that the daemon
+restarted; process groups they left running are reported as leftovers and
+are not killed. Retaining the state directory preserves identity and recorded
+output, not a running operating-system execution. See
 [Processes and jobs](../environments/processes-and-jobs.md) before scheduling a
 machine update around active work.
 

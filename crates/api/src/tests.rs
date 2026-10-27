@@ -172,6 +172,22 @@ fn auth_provider_create_params_redact_credential_in_debug_output() {
 }
 
 #[test]
+fn environment_provider_put_params_redact_credential_in_debug_output() {
+    let params: DeploymentEnvironmentProviderPutParams = serde_json::from_value(json!({
+        "providerId": "incus-local",
+        "controllerEndpoint": "wss://incus.example.com/control",
+        "credential": "provider-bearer-secret"
+    }))
+    .expect("deserialize environment provider put params");
+
+    let debug = format!("{params:?}");
+
+    assert!(!debug.contains("provider-bearer-secret"), "{debug}");
+    assert!(debug.contains("<redacted>"));
+    assert_eq!(params.credential.as_deref(), Some("provider-bearer-secret"));
+}
+
+#[test]
 fn request_ids_accept_number_or_string() {
     let numeric: JsonRpcRequest = serde_json::from_value(json!({
         "id": 7,
@@ -3262,6 +3278,7 @@ fn test_environment_instance() -> EnvironmentView {
         public_endpoint: None,
         metadata: BTreeMap::new(),
         last_seen_at_ms: None,
+        lifecycle_error: None,
         created_at_ms: 10,
         updated_at_ms: 10,
     }
@@ -3303,10 +3320,7 @@ fn test_external_environment() -> EnvironmentView {
         environment_id: "evi_enrolled".to_owned(),
         request_id: "request-enrolled".to_owned(),
         source: EnvironmentSourceView::External {
-            connection: EnvironmentConnectionView {
-                endpoint: "ws://envd.test:19091".to_owned(),
-                transport: EnvironmentConnectionTransportView::WebSocket,
-            },
+            endpoint: "ws://envd.test:19091".to_owned(),
         },
         display_name: Some("External".to_owned()),
         status: EnvironmentLifecycleStatusView::Ready,
@@ -3325,6 +3339,7 @@ fn test_external_environment() -> EnvironmentView {
         public_endpoint: None,
         metadata: BTreeMap::new(),
         last_seen_at_ms: None,
+        lifecycle_error: None,
         created_at_ms: 10,
         updated_at_ms: 10,
     }
@@ -3403,11 +3418,13 @@ fn test_deployment_environment_provider(provider_id: &str) -> DeploymentEnvironm
     DeploymentEnvironmentProviderView {
         provider_id: provider_id.to_owned(),
         display_name: Some("Local Incus".to_owned()),
-        controller_connection: DeploymentEnvironmentProviderConnection {
-            endpoint: "ws://127.0.0.1:19090/control".to_owned(),
-            transport: DeploymentEnvironmentProviderTransport::WebSocket,
-        },
+        controller_endpoint: "ws://127.0.0.1:19090/control".to_owned(),
         metadata: BTreeMap::new(),
+        controller_features: Some(DeploymentEnvironmentProviderFeaturesView {
+            adopt_target: true,
+            ingress: true,
+        }),
+        data_route_base: Some("ws://127.0.0.1:19090/data".to_owned()),
         created_at_ms: 10,
         updated_at_ms: 20,
     }
@@ -3572,10 +3589,7 @@ async fn deployment_environment_provider_methods_dispatch() {
             json!({
                 "providerId": "incus-local",
                 "displayName": "Local Incus",
-                "controllerConnection": {
-                    "endpoint": "ws://127.0.0.1:19090/control",
-                    "transport": { "type": "webSocket" }
-                }
+                "controllerEndpoint": "ws://127.0.0.1:19090/control"
             }),
         ),
         (METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST, json!({})),

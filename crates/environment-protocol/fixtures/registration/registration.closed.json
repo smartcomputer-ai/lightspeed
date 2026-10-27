@@ -1,0 +1,6 @@
+{
+  "params": {
+    "reason": "superseded",
+    "message": "another process with this daemon identity connected"
+  }
+}

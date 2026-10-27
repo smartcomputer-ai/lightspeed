@@ -1,16 +1,26 @@
 //! Durable environment job capability boundary.
+//!
+//! The model-facing argument and result types here are this crate's own:
+//! they map to and from the environment protocol's job wire types at this
+//! boundary, so a protocol change never silently reshapes what the model
+//! reads or writes.
 
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use environment_protocol::{
-    data::jobs::{
-        CancelJobsParams, CancelJobsResponse, JobArtifact, JobCancelScope,
-        JobDependency as ProtocolJobDependency, JobDependencyPolicy, JobOutputChunk, JobStartSpec,
-        JobStatus, JobSummary, ReadJobsParams, ReadJobsResponse, StartJobsParams,
-        StartJobsResponse,
+    bytes::ByteChunk,
+    data::{
+        exec::{CommandSpec, ExecInput, ExitStatus, StoppedBy},
+        handshake::JobLimits,
+        job::{
+            CancelJobsParams, CancelJobsResponse, JobDependency, JobDependencyPolicy, JobReadEntry,
+            JobReadRequest, JobSpec, JobStatus, JobSummary, ReadJobsParams, ReadJobsResponse,
+            StartJobsParams, StartJobsResponse,
+        },
     },
-    shared::{ByteChunk, EnvironmentPath, JobId},
+    ids::{JobId, JobName, QueueKey},
+    paths::EnvironmentPath,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -20,7 +30,13 @@ use harness::{
     storage::{BlobEdge, BlobGraphStore, BlobStore, BlobStoreError},
 };
 
-use crate::fs::FsPath;
+use crate::{
+    environment::{
+        output::{ShownOutput, is_stderr},
+        process::LeftoverProcess,
+    },
+    fs::FsPath,
+};
 
 pub const JOB_SUBMIT_TOOL_NAME: &str = "job_submit";
 pub const JOB_RUN_TOOL_NAME: &str = "job_run";
@@ -32,11 +48,19 @@ pub const JOB_RUN_WORKFLOW_SEMANTIC_TYPE: &str = "lightspeed.environment.job.run
 pub const JOB_RUN_DEFAULT_TIMEOUT_MS: u64 = 30 * 60 * 1_000;
 pub const JOB_RUN_MAX_TIMEOUT_MS: u64 = 60 * 60 * 1_000;
 pub const JOB_RUN_DEADLINE_AFTER_MS: u64 = 65 * 60 * 1_000;
+/// Output a job result shows when the reader names no budget: the first
+/// half from the start of the output, the second half from its end.
+pub const DEFAULT_JOB_OUTPUT_BYTES: u64 = 16 * 1024;
 
 pub type JobExecResult<T> = Result<T, JobError>;
 
 #[async_trait]
 pub trait JobExecutor: Send + Sync {
+    /// The endpoint's job ceilings, when known; reads stay within them.
+    fn limits(&self) -> Option<JobLimits> {
+        None
+    }
+
     async fn start_jobs(&self, request: StartJobsParams) -> JobExecResult<StartJobsResponse>;
 
     async fn read_jobs(&self, request: ReadJobsParams) -> JobExecResult<ReadJobsResponse>;
@@ -51,6 +75,10 @@ pub enum JobError {
 
     #[error("invalid environment job request: {message}")]
     InvalidRequest { message: String },
+
+    /// A job id is taken by another run; the model must choose a new id.
+    #[error("environment job id in use: {message}")]
+    JobIdInUse { message: String },
 
     #[error("environment job execution failed: {message}")]
     Failed { message: String },
@@ -69,6 +97,7 @@ pub struct JobHandleArg {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JobHandle {
     pub environment_id: String,
+    #[schemars(with = "String")]
     pub job_id: JobId,
 }
 
@@ -97,7 +126,13 @@ pub struct JobRunArgs {
 }
 
 impl JobRunArgs {
-    pub fn into_protocol_spec(self, job_id: JobId) -> JobExecResult<JobStartSpec> {
+    /// The wire spec of this single job. A relative `cwd` resolves against
+    /// `working_directory`, which is also the default `cwd`.
+    pub fn into_job_spec(
+        self,
+        job_id: JobId,
+        working_directory: Option<&str>,
+    ) -> JobExecResult<JobSpec> {
         let timeout_ms = self.timeout_ms.unwrap_or(JOB_RUN_DEFAULT_TIMEOUT_MS);
         if timeout_ms > JOB_RUN_MAX_TIMEOUT_MS {
             return Err(JobError::InvalidRequest {
@@ -113,10 +148,10 @@ impl JobRunArgs {
             stdin: self.stdin,
             timeout_ms: Some(timeout_ms),
             depends_on: Vec::new(),
-            dependency_policy: JobDependencyPolicy::AllSucceeded,
+            dependency_policy: JobDependencyPolicyArg::AllSucceeded,
             queue_key: self.queue_key,
         }
-        .into_protocol_spec(job_id)
+        .into_job_spec(job_id, working_directory)
     }
 }
 
@@ -150,22 +185,18 @@ impl JobSubmitExecutionContextV1 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobDependencyArg {
-    #[serde(default, alias = "jobId", skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<JobId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
 impl JobDependencyArg {
-    fn into_protocol_dependency(self) -> JobExecResult<ProtocolJobDependency> {
+    fn into_job_dependency(self) -> JobExecResult<JobDependency> {
         match (self.job_id, self.name) {
-            (Some(job_id), None) => Ok(ProtocolJobDependency {
-                job_id: Some(job_id),
-                name: None,
-            }),
-            (None, Some(name)) if !name.is_empty() => Ok(ProtocolJobDependency {
-                job_id: None,
-                name: Some(name),
+            (Some(job_id), None) => Ok(JobDependency::JobId { job_id }),
+            (None, Some(name)) if !name.is_empty() => Ok(JobDependency::Name {
+                name: job_name(name)?,
             }),
             (Some(_), Some(_)) => Err(JobError::InvalidRequest {
                 message: "job dependency must specify job_id or name, not both".to_owned(),
@@ -173,6 +204,26 @@ impl JobDependencyArg {
             _ => Err(JobError::InvalidRequest {
                 message: "job dependency must specify job_id or name".to_owned(),
             }),
+        }
+    }
+}
+
+/// What a job waits for from its `depends_on` jobs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JobDependencyPolicyArg {
+    /// Run once every dependency succeeded.
+    #[default]
+    AllSucceeded,
+    /// Run once every dependency finished, whatever its outcome.
+    AllTerminal,
+}
+
+impl From<JobDependencyPolicyArg> for JobDependencyPolicy {
+    fn from(policy: JobDependencyPolicyArg) -> Self {
+        match policy {
+            JobDependencyPolicyArg::AllSucceeded => Self::AllSucceeded,
+            JobDependencyPolicyArg::AllTerminal => Self::AllTerminal,
         }
     }
 }
@@ -194,13 +245,21 @@ pub struct JobSubmitSpecArgs {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<JobDependencyArg>,
     #[serde(default)]
-    pub dependency_policy: JobDependencyPolicy,
+    pub dependency_policy: JobDependencyPolicyArg,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_key: Option<String>,
 }
 
 impl JobSubmitSpecArgs {
-    pub fn into_protocol_spec(self, job_id: JobId) -> JobExecResult<JobStartSpec> {
+    /// The wire spec of this job. A relative `cwd` resolves against
+    /// `working_directory`, which is also the default `cwd`; without one a
+    /// relative `cwd` is refused and an absent one means the environment's
+    /// default.
+    pub fn into_job_spec(
+        self,
+        job_id: JobId,
+        working_directory: Option<&str>,
+    ) -> JobExecResult<JobSpec> {
         if self.argv.is_empty() {
             return Err(JobError::InvalidRequest {
                 message: "job argv must not be empty".to_owned(),
@@ -217,42 +276,50 @@ impl JobSubmitSpecArgs {
         let depends_on = self
             .depends_on
             .into_iter()
-            .map(JobDependencyArg::into_protocol_dependency)
+            .map(JobDependencyArg::into_job_dependency)
             .collect::<JobExecResult<Vec<_>>>()?;
-        Ok(JobStartSpec {
+        Ok(JobSpec {
             job_id,
-            name: self.name,
-            argv: self.argv,
-            cwd: self.cwd.as_ref().map(environment_path).transpose()?,
-            env: self.env,
-            secret_env: BTreeMap::new(),
-            stdin: self.stdin.map(|value| ByteChunk::from(value.into_bytes())),
-            timeout_ms: self.timeout_ms,
+            name: self.name.map(job_name).transpose()?,
+            command: CommandSpec {
+                argv: self.argv,
+                cwd: job_cwd(self.cwd.as_ref(), working_directory)?,
+                env: self.env,
+                secret_env: BTreeMap::new(),
+                input: match self.stdin {
+                    Some(stdin) => ExecInput::Bytes {
+                        data: ByteChunk::from(stdin.into_bytes()),
+                    },
+                    None => ExecInput::None {},
+                },
+                timeout_ms: self.timeout_ms,
+            },
             depends_on,
-            dependency_policy: self.dependency_policy,
-            queue_key: self.queue_key,
+            dependency_policy: self.dependency_policy.into(),
+            queue_key: self
+                .queue_key
+                .map(|key| {
+                    QueueKey::new(key).map_err(|error| JobError::InvalidRequest {
+                        message: format!("queue_key is invalid: {error}"),
+                    })
+                })
+                .transpose()?,
         })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JobReadArgs {
     pub jobs: Vec<JobHandleArg>,
+    /// Output bytes to show per job. Without `after`, half come from the
+    /// start of the output and half from its end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_bytes: Option<usize>,
+    pub output_bytes: Option<u64>,
+    /// Byte offset to page forward from, such as a previous result's
+    /// `output_next` or its omitted range's `offset`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after_seq: Option<u64>,
-    #[serde(default)]
-    pub include_artifacts: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobCancelArgs {
-    pub jobs: Vec<JobHandleArg>,
-    #[serde(default)]
-    pub scope: JobCancelScope,
-    #[serde(default)]
-    pub force: bool,
+    pub after: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -264,10 +331,12 @@ pub struct JobSubmitResult {
 pub struct JobSubmitted {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[schemars(with = "String")]
     pub job_id: JobId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<JobHandle>,
-    pub status: JobStatus,
+    pub status: ModelJobStatus,
+    #[schemars(with = "Vec<String>")]
     pub dependencies: Vec<JobId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_key: Option<String>,
@@ -276,33 +345,216 @@ pub struct JobSubmitted {
     pub promise: Option<String>,
 }
 
+impl JobSubmitted {
+    pub fn from_summary(summary: &JobSummary, handle: Option<JobHandle>) -> Self {
+        Self {
+            name: summary.name.as_ref().map(|name| name.as_str().to_owned()),
+            job_id: summary.job_id.clone(),
+            handle,
+            status: summary.status.into(),
+            dependencies: summary.depends_on.clone(),
+            queue_key: summary
+                .queue_key
+                .as_ref()
+                .map(|key| key.as_str().to_owned()),
+            promise: None,
+        }
+    }
+}
+
+/// Where a job stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelJobStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    TimedOut,
+    Cancelled,
+    DependencyFailed,
+    Interrupted,
+}
+
+impl ModelJobStatus {
+    pub fn is_terminal(self) -> bool {
+        !matches!(self, Self::Queued | Self::Running)
+    }
+}
+
+impl From<JobStatus> for ModelJobStatus {
+    fn from(status: JobStatus) -> Self {
+        match status {
+            JobStatus::Queued => Self::Queued,
+            JobStatus::Running => Self::Running,
+            JobStatus::Succeeded => Self::Succeeded,
+            JobStatus::Failed => Self::Failed,
+            JobStatus::TimedOut => Self::TimedOut,
+            JobStatus::Cancelled => Self::Cancelled,
+            JobStatus::DependencyFailed => Self::DependencyFailed,
+            JobStatus::Interrupted => Self::Interrupted,
+        }
+    }
+}
+
+/// Why the environment stopped a job that did not end on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStoppedBy {
+    Timeout,
+    Terminate,
+    Kill,
+}
+
+impl From<StoppedBy> for ModelStoppedBy {
+    fn from(stopped_by: StoppedBy) -> Self {
+        match stopped_by {
+            StoppedBy::Timeout => Self::Timeout,
+            StoppedBy::Terminate => Self::Terminate,
+            StoppedBy::Kill => Self::Kill,
+        }
+    }
+}
+
+/// What a job is and how it ended.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
+pub struct ModelJobSummary {
+    #[schemars(with = "String")]
+    pub job_id: JobId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub status: ModelJobStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(with = "Vec<String>")]
+    pub depends_on: Vec<JobId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_key: Option<String>,
+    pub created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    /// The signal that killed the job's command, such as `SIGSEGV`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub core_dumped: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_by: Option<ModelStoppedBy>,
+    /// Processes the job left running, which the environment stopped when
+    /// the job finished; the job's script should shut them down itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub swept_processes: Vec<LeftoverProcess>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl From<JobSummary> for ModelJobSummary {
+    fn from(summary: JobSummary) -> Self {
+        let (exit_code, signal, core_dumped) = match summary.exit {
+            Some(ExitStatus::Code { code }) => (Some(code), None, false),
+            Some(ExitStatus::Signal {
+                signal,
+                core_dumped,
+            }) => (None, Some(signal.as_str().to_owned()), core_dumped),
+            None => (None, None, false),
+        };
+        Self {
+            job_id: summary.job_id,
+            name: summary.name.map(JobName::into_string),
+            status: summary.status.into(),
+            depends_on: summary.depends_on,
+            queue_key: summary.queue_key.map(QueueKey::into_string),
+            created_at_ms: summary.created_at_ms,
+            started_at_ms: summary.started_at_ms,
+            finished_at_ms: summary.finished_at_ms,
+            duration_ms: summary.duration_ms,
+            exit_code,
+            signal,
+            core_dumped,
+            stopped_by: summary.stopped_by.map(Into::into),
+            swept_processes: summary
+                .leftovers
+                .map(|report| {
+                    report
+                        .processes
+                        .into_iter()
+                        .map(|process| LeftoverProcess {
+                            pid: process.pid,
+                            command: process.command.unwrap_or_default(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            error: summary.error.map(|error| error.to_string()),
+        }
+    }
+}
+
+/// A range of output the result leaves out. Read it with `job_read`
+/// `after: offset`; the `lost_bytes` of it that the environment dropped to
+/// bound retained output read back as a gap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ModelOutputOmission {
+    /// Byte offset of the first omitted byte.
+    pub offset: u64,
+    pub bytes: u64,
+    /// Omitted bytes that are gone for good; reading them again does not
+    /// return them.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lost_bytes: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelJobResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<JobHandle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<JobSummary>,
+    pub summary: Option<ModelJobSummary>,
+    /// Output from the requested position, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output: Vec<ModelJobOutputSegment>,
-    pub output_next_seq: u64,
-    pub truncated: bool,
+    /// Output between `output` and `tail` that is not shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omitted: Option<ModelOutputOmission>,
+    /// The last output bytes, after the omitted range.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub artifacts: Vec<JobArtifact>,
+    pub tail: Vec<ModelJobOutputSegment>,
+    /// Byte offset after the last output shown; pass it as `after` to read
+    /// on.
+    pub output_next: u64,
+    /// Output bytes the job produced so far.
+    pub output_end: u64,
+    /// More output exists after `output_next`.
+    pub truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ModelJobResultSet {
     pub jobs: Vec<ModelJobResult>,
 }
 
+/// Which stream produced an output segment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelOutputStream {
+    Stdout,
+    Stderr,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ModelJobOutputSegment {
-    pub stream: environment_protocol::data::jobs::JobOutputStream,
+    pub stream: ModelOutputStream,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,21 +565,6 @@ pub struct ModelJobOutputSegment {
     pub byte_len: Option<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobCancelResultSet {
-    pub jobs: Vec<JobCancelResultEntry>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JobCancelResultEntry {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub handle: Option<JobHandle>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summary: Option<JobSummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
 pub fn visible_job_read_output(jobs: &[ModelJobResult]) -> String {
     serde_json::to_string_pretty(&ModelJobResultSet {
         jobs: jobs.to_vec(),
@@ -335,15 +572,107 @@ pub fn visible_job_read_output(jobs: &[ModelJobResult]) -> String {
     .unwrap_or_else(|error| format!("failed to encode job results: {error}"))
 }
 
+/// The `job/read` entries that show one job: a page forward from `after`,
+/// or, without it, the head and the tail of the output, each half of
+/// `output_bytes`. [`NormalizeJobResultInput::from_entries`] reassembles the
+/// answer.
+pub fn job_output_requests(
+    job_id: &JobId,
+    after: Option<u64>,
+    output_bytes: u64,
+) -> Vec<JobReadRequest> {
+    match after {
+        Some(after) => vec![JobReadRequest {
+            job_id: job_id.clone(),
+            after: Some(after),
+            tail_bytes: None,
+            max_bytes: Some(output_bytes),
+        }],
+        None => {
+            let head = output_bytes / 2;
+            vec![
+                JobReadRequest {
+                    job_id: job_id.clone(),
+                    after: Some(0),
+                    tail_bytes: None,
+                    max_bytes: Some(head),
+                },
+                JobReadRequest {
+                    job_id: job_id.clone(),
+                    after: None,
+                    tail_bytes: Some(output_bytes - head),
+                    max_bytes: Some(output_bytes - head),
+                },
+            ]
+        }
+    }
+}
+
+/// A complete `job/read` for `jobs`, each shown as [`job_output_requests`]
+/// describes, waiting for nothing.
+pub fn job_output_read(jobs: &[JobId], after: Option<u64>, output_bytes: u64) -> ReadJobsParams {
+    let entries = jobs
+        .iter()
+        .flat_map(|job_id| job_output_requests(job_id, after, output_bytes))
+        .collect::<Vec<_>>();
+    ReadJobsParams {
+        max_bytes: output_bytes.saturating_mul(jobs.len() as u64),
+        jobs: entries,
+        wait_ms: 0,
+        return_on: environment_protocol::data::exec::ReturnOn::AnyOutput,
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct NormalizeJobResultInput {
     pub handle: Option<JobHandle>,
     pub summary: Option<JobSummary>,
-    pub output_chunks: Vec<JobOutputChunk>,
-    pub output_next_seq: u64,
-    pub artifacts: Vec<JobArtifact>,
+    /// Output shown from the requested position: `output`, then `omitted`
+    /// and `tail`.
+    pub output: ShownOutput,
     pub error: Option<String>,
-    pub output_bytes: Option<usize>,
+}
+
+impl NormalizeJobResultInput {
+    /// Reassemble the entries [`job_output_requests`] asked for one job: a
+    /// summary and its pages, or the entry's error (`notFound` for a job the
+    /// environment does not know).
+    pub fn from_entries(
+        handle: Option<JobHandle>,
+        entries: impl IntoIterator<Item = JobReadEntry>,
+    ) -> Self {
+        let mut summary = None;
+        let mut pages = Vec::new();
+        let mut error = None;
+        for entry in entries {
+            match entry {
+                JobReadEntry::Job {
+                    summary: entry_summary,
+                    output,
+                } => {
+                    summary = Some(*entry_summary);
+                    pages.push(output);
+                }
+                JobReadEntry::Error {
+                    job_id,
+                    error: cause,
+                } => {
+                    error.get_or_insert_with(|| format!("job {job_id}: {cause}"));
+                }
+            }
+        }
+        let mut pages = pages.into_iter();
+        let output = pages
+            .next()
+            .map(|head| ShownOutput::from_pages(head, pages.next()))
+            .unwrap_or_default();
+        Self {
+            handle,
+            summary,
+            output,
+            error,
+        }
+    }
 }
 
 pub async fn normalize_job_result(
@@ -353,46 +682,76 @@ pub async fn normalize_job_result(
     let NormalizeJobResultInput {
         handle,
         summary,
-        output_chunks,
-        output_next_seq,
-        artifacts,
+        output,
         error,
-        output_bytes,
     } = input;
-    let observed_bytes = output_chunks
-        .iter()
-        .map(|chunk| chunk.chunk.as_slice().len())
-        .sum::<usize>();
-    let truncated = output_bytes.is_some_and(|limit| observed_bytes >= limit);
+    let truncated = output.next < output.end;
+    let omitted = output.omitted.map(|omission| ModelOutputOmission {
+        offset: omission.offset,
+        bytes: omission.bytes,
+        lost_bytes: omission.lost_bytes,
+    });
+    let head = segments(blobs, output.head).await?;
+    let tail = segments(blobs, output.tail).await?;
+    Ok(ModelJobResult {
+        handle: handle.map(|mut handle| {
+            handle.environment_id = super::handles::environment_handle(&handle.environment_id);
+            handle
+        }),
+        summary: summary.map(Into::into),
+        output: head,
+        omitted,
+        tail,
+        output_next: output.next,
+        output_end: output.end,
+        truncated,
+        error,
+    })
+}
+
+/// A result that carries only an error, such as an unknown job.
+pub fn model_job_error(handle: Option<JobHandle>, error: String) -> ModelJobResult {
+    ModelJobResult {
+        handle: handle.map(|mut handle| {
+            handle.environment_id = super::handles::environment_handle(&handle.environment_id);
+            handle
+        }),
+        summary: None,
+        output: Vec::new(),
+        omitted: None,
+        tail: Vec::new(),
+        output_next: 0,
+        output_end: 0,
+        truncated: false,
+        error: Some(error),
+    }
+}
+
+/// Merge consecutive chunks of one stream; text stays inline, bytes that
+/// are not UTF-8 go to CAS and are referenced.
+async fn segments(
+    blobs: &dyn BlobStore,
+    chunks: Vec<environment_protocol::data::exec::OutputChunk>,
+) -> Result<Vec<ModelJobOutputSegment>, BlobStoreError> {
     let mut output = Vec::new();
     let mut index = 0;
-    while index < output_chunks.len() {
-        let stream = output_chunks[index].stream;
+    while index < chunks.len() {
+        let stream = model_stream(chunks[index].stream);
         let mut bytes = Vec::new();
-        while index < output_chunks.len() && output_chunks[index].stream == stream {
-            bytes.extend_from_slice(output_chunks[index].chunk.as_slice());
+        while index < chunks.len() && model_stream(chunks[index].stream) == stream {
+            bytes.extend_from_slice(chunks[index].data.as_slice());
             index += 1;
         }
         match String::from_utf8(bytes) {
             Ok(text) => {
                 if !text.is_empty() {
-                    if let Some(ModelJobOutputSegment {
-                        stream: previous_stream,
-                        text: Some(previous),
-                        ..
-                    }) = output.last_mut()
-                        && *previous_stream == stream
-                    {
-                        previous.push_str(&text);
-                    } else {
-                        output.push(ModelJobOutputSegment {
-                            stream,
-                            text: Some(text),
-                            blob_ref: None,
-                            media_type: None,
-                            byte_len: None,
-                        });
-                    }
+                    output.push(ModelJobOutputSegment {
+                        stream,
+                        text: Some(text),
+                        blob_ref: None,
+                        media_type: None,
+                        byte_len: None,
+                    });
                 }
             }
             Err(error) => {
@@ -409,18 +768,15 @@ pub async fn normalize_job_result(
             }
         }
     }
-    Ok(ModelJobResult {
-        handle: handle.map(|mut handle| {
-            handle.environment_id = super::handles::environment_handle(&handle.environment_id);
-            handle
-        }),
-        summary,
-        output,
-        output_next_seq,
-        truncated,
-        artifacts,
-        error,
-    })
+    Ok(output)
+}
+
+fn model_stream(stream: environment_protocol::data::exec::OutputStream) -> ModelOutputStream {
+    if is_stderr(stream) {
+        ModelOutputStream::Stderr
+    } else {
+        ModelOutputStream::Stdout
+    }
 }
 
 pub async fn store_model_job_result(
@@ -438,6 +794,7 @@ pub async fn store_model_job_result(
     let edges = result
         .output
         .iter()
+        .chain(&result.tail)
         .filter_map(|segment| {
             segment
                 .blob_ref
@@ -453,10 +810,36 @@ pub async fn store_model_job_result(
     Ok(root)
 }
 
-fn environment_path(path: &FsPath) -> JobExecResult<EnvironmentPath> {
-    EnvironmentPath::new(path.as_str()).map_err(|error| JobError::InvalidRequest {
-        message: error.to_string(),
+fn job_name(name: String) -> JobExecResult<JobName> {
+    JobName::new(name).map_err(|error| JobError::InvalidRequest {
+        message: format!("job name is invalid: {error}"),
     })
+}
+
+fn job_cwd(
+    cwd: Option<&FsPath>,
+    working_directory: Option<&str>,
+) -> JobExecResult<Option<EnvironmentPath>> {
+    let invalid = |message: String| JobError::InvalidRequest { message };
+    let resolved = match (cwd, working_directory) {
+        (Some(cwd), _) if cwd.is_absolute() => cwd.as_str().to_owned(),
+        (cwd, Some(base)) => crate::environment::sources::absolute(
+            std::path::Path::new(base),
+            cwd.map_or(".", FsPath::as_str),
+        )
+        .map_err(invalid)?
+        .to_string_lossy()
+        .into_owned(),
+        (Some(cwd), None) => {
+            return Err(invalid(format!(
+                "job cwd {cwd} is relative and the environment has no working directory"
+            )));
+        }
+        (None, None) => return Ok(None),
+    };
+    EnvironmentPath::new(resolved)
+        .map(Some)
+        .map_err(|error| invalid(error.to_string()))
 }
 
 #[cfg(test)]
@@ -464,13 +847,17 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use environment_protocol::data::jobs::{JobOutputStream, JobStatus};
+    use environment_protocol::data::exec::{OutputChunk, OutputPage, OutputStream, SignalName};
     use harness::storage::{
         BlobEdge, BlobGraphStore, BlobStore, BlobStoreError, InMemoryBlobStore,
     };
     use serde_json::json;
 
     use super::*;
+
+    fn job_id(value: &str) -> JobId {
+        JobId::new(value).unwrap()
+    }
 
     #[test]
     fn job_submit_arguments_do_not_accept_an_environment_override() {
@@ -491,13 +878,63 @@ mod tests {
         }))
         .expect("decode job_run");
         let spec = args
-            .into_protocol_spec(JobId::new("job-derived"))
+            .into_job_spec(job_id("job-derived"), None)
             .expect("materialize job_run");
 
-        assert_eq!(spec.job_id, JobId::new("job-derived"));
-        assert_eq!(spec.argv, vec!["cargo", "test"]);
-        assert_eq!(spec.timeout_ms, Some(JOB_RUN_DEFAULT_TIMEOUT_MS));
+        assert_eq!(spec.job_id, job_id("job-derived"));
+        assert_eq!(spec.command.argv, vec!["cargo", "test"]);
+        assert_eq!(spec.command.timeout_ms, Some(JOB_RUN_DEFAULT_TIMEOUT_MS));
         assert!(spec.depends_on.is_empty());
+    }
+
+    #[test]
+    fn job_cwd_resolves_against_the_working_directory() {
+        let spec = |cwd: Option<&str>, base: Option<&str>| {
+            JobSubmitSpecArgs {
+                name: None,
+                job_id: job_id("build"),
+                argv: vec!["true".to_owned()],
+                cwd: cwd.map(|cwd| FsPath::new(cwd).unwrap()),
+                env: BTreeMap::new(),
+                stdin: Some("input".to_owned()),
+                timeout_ms: None,
+                depends_on: Vec::new(),
+                dependency_policy: JobDependencyPolicyArg::AllSucceeded,
+                queue_key: None,
+            }
+            .into_job_spec(job_id("build"), base)
+        };
+        let resolved = spec(Some("sub"), Some("/srv")).unwrap();
+        assert_eq!(resolved.command.cwd.unwrap().as_str(), "/srv/sub");
+        assert_eq!(
+            resolved.command.input,
+            ExecInput::Bytes {
+                data: b"input".to_vec().into()
+            }
+        );
+        assert_eq!(
+            spec(None, Some("/srv"))
+                .unwrap()
+                .command
+                .cwd
+                .unwrap()
+                .as_str(),
+            "/srv"
+        );
+        assert_eq!(
+            spec(Some("/abs"), Some("/srv"))
+                .unwrap()
+                .command
+                .cwd
+                .unwrap()
+                .as_str(),
+            "/abs"
+        );
+        assert!(spec(None, None).unwrap().command.cwd.is_none());
+        assert!(matches!(
+            spec(Some("sub"), None),
+            Err(JobError::InvalidRequest { .. })
+        ));
     }
 
     #[test]
@@ -509,7 +946,8 @@ mod tests {
             }, {
                 "job_id": "test",
                 "argv": ["true"],
-                "depends_on": [{"job_id": "build"}]
+                "depends_on": [{"job_id": "build"}, {"name": "lint"}],
+                "dependency_policy": "allTerminal"
             }]
         }))
         .expect("decode job_submit with snake_case dependency id");
@@ -519,41 +957,23 @@ mod tests {
             .into_iter()
             .map(|spec| {
                 let job_id = spec.job_id.clone();
-                spec.into_protocol_spec(job_id)
+                spec.into_job_spec(job_id, None)
             })
             .collect::<JobExecResult<Vec<_>>>()
             .expect("materialize protocol specs");
 
         assert_eq!(
             specs[1].depends_on,
-            vec![ProtocolJobDependency::job_id("build")]
+            vec![
+                JobDependency::JobId {
+                    job_id: job_id("build")
+                },
+                JobDependency::Name {
+                    name: JobName::new("lint").unwrap()
+                }
+            ]
         );
-    }
-
-    #[test]
-    fn job_submit_accepts_camel_case_dependency_alias_for_compatibility() {
-        let args = serde_json::from_value::<JobSubmitArgs>(json!({
-            "jobs": [{
-                "job_id": "build",
-                "argv": ["true"]
-            }, {
-                "job_id": "test",
-                "argv": ["true"],
-                "depends_on": [{"jobId": "build"}]
-            }]
-        }))
-        .expect("decode job_submit with camelCase dependency id alias");
-
-        let spec = args.jobs.into_iter().nth(1).expect("dependent job");
-        let job_id = spec.job_id.clone();
-        let spec = spec
-            .into_protocol_spec(job_id)
-            .expect("materialize protocol spec");
-
-        assert_eq!(
-            spec.depends_on,
-            vec![ProtocolJobDependency::job_id("build")]
-        );
+        assert_eq!(specs[1].dependency_policy, JobDependencyPolicy::AllTerminal);
     }
 
     #[test]
@@ -570,7 +990,7 @@ mod tests {
         let spec = args.jobs.into_iter().next().expect("job");
         let job_id = spec.job_id.clone();
         let error = spec
-            .into_protocol_spec(job_id)
+            .into_job_spec(job_id, None)
             .expect_err("empty dependency must be rejected locally");
 
         assert!(matches!(error, JobError::InvalidRequest { .. }));
@@ -593,43 +1013,34 @@ mod tests {
         }))
         .expect("timeout range is a domain validation");
         let error = args
-            .into_protocol_spec(JobId::new("job-derived"))
+            .into_job_spec(job_id("job-derived"), None)
             .expect_err("timeout above maximum must fail");
         assert!(matches!(error, JobError::InvalidRequest { .. }));
     }
 
     #[test]
     fn job_ids_must_fit_the_completion_key_shape() {
-        for job_id in ["build:1", "", "-lead", &"x".repeat(65)] {
+        for value in ["build:1", "-lead", &"x".repeat(65)] {
+            let Ok(id) = JobId::new(value) else {
+                continue;
+            };
             let error = JobSubmitSpecArgs {
                 name: None,
-                job_id: JobId::new(if job_id.is_empty() {
-                    "placeholder"
-                } else {
-                    job_id
-                }),
+                job_id: id.clone(),
                 argv: vec!["true".to_owned()],
                 cwd: None,
                 env: BTreeMap::new(),
                 stdin: None,
                 timeout_ms: None,
                 depends_on: Vec::new(),
-                dependency_policy: JobDependencyPolicy::AllSucceeded,
+                dependency_policy: JobDependencyPolicyArg::AllSucceeded,
                 queue_key: None,
             }
-            .into_protocol_spec(JobId::new(if job_id.is_empty() {
-                "placeholder"
-            } else {
-                job_id
-            }));
-            if job_id.is_empty() {
-                error.expect("placeholder id is valid");
-            } else {
-                assert!(
-                    matches!(error, Err(JobError::InvalidRequest { .. })),
-                    "{job_id:?} must be rejected"
-                );
-            }
+            .into_job_spec(id, None);
+            assert!(
+                matches!(error, Err(JobError::InvalidRequest { .. })),
+                "{value:?} must be rejected"
+            );
         }
     }
 
@@ -643,6 +1054,88 @@ mod tests {
         assert_eq!(context.working_directory.as_deref(), Some("/srv"));
     }
 
+    #[test]
+    fn head_and_tail_requests_split_the_budget() {
+        let requests = job_output_requests(&job_id("build"), None, 16);
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            (requests[0].after, requests[0].max_bytes),
+            (Some(0), Some(8))
+        );
+        assert_eq!(
+            (requests[1].tail_bytes, requests[1].max_bytes),
+            (Some(8), Some(8))
+        );
+        let paged = job_output_requests(&job_id("build"), Some(40), 16);
+        assert_eq!((paged[0].after, paged[0].max_bytes), (Some(40), Some(16)));
+        let read = job_output_read(&[job_id("a"), job_id("b")], None, 16);
+        assert_eq!(read.jobs.len(), 4);
+        assert_eq!(read.max_bytes, 32);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn job_results_show_head_and_tail_with_the_skipped_count() {
+        let blobs = InMemoryBlobStore::new();
+        let entries = vec![
+            JobReadEntry::Job {
+                summary: Box::new(test_summary()),
+                output: page(
+                    vec![chunk(0, OutputStream::Stdout, b"compiling\n")],
+                    10,
+                    1000,
+                ),
+            },
+            JobReadEntry::Job {
+                summary: Box::new(test_summary()),
+                output: page(
+                    vec![chunk(990, OutputStream::Stderr, b"FAILED: 3\n")],
+                    1000,
+                    1000,
+                ),
+            },
+        ];
+        let result =
+            normalize_job_result(&blobs, NormalizeJobResultInput::from_entries(None, entries))
+                .await
+                .expect("normalize");
+
+        assert_eq!(result.output[0].text.as_deref(), Some("compiling\n"));
+        assert_eq!(result.tail[0].text.as_deref(), Some("FAILED: 3\n"));
+        assert_eq!(result.tail[0].stream, ModelOutputStream::Stderr);
+        assert_eq!(
+            result.omitted,
+            Some(ModelOutputOmission {
+                offset: 10,
+                bytes: 980,
+                lost_bytes: 0,
+            })
+        );
+        assert!(!result.truncated);
+        let value = serde_json::to_value(&result).expect("semantic JSON");
+        assert_eq!(value["output_end"], 1000);
+        assert_eq!(value["summary"]["status"], "failed");
+        assert_eq!(value["summary"]["signal"], "SIGSEGV");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unknown_jobs_read_as_errors() {
+        let blobs = InMemoryBlobStore::new();
+        let result = normalize_job_result(
+            &blobs,
+            NormalizeJobResultInput::from_entries(
+                None,
+                vec![JobReadEntry::Error {
+                    job_id: job_id("gone"),
+                    error: environment_protocol::error::ProtocolError::not_found("unknown job"),
+                }],
+            ),
+        )
+        .await
+        .expect("normalize");
+        assert!(result.summary.is_none());
+        assert!(result.error.as_deref().is_some_and(|e| e.contains("gone")));
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn normalizer_reassembles_utf8_and_preserves_stream_order() {
         let blobs = InMemoryBlobStore::new();
@@ -650,14 +1143,19 @@ mod tests {
             &blobs,
             NormalizeJobResultInput {
                 summary: Some(test_summary()),
-                output_chunks: vec![
-                    output_chunk(0, JobOutputStream::Stdout, vec![b'a', 0xe2]),
-                    output_chunk(1, JobOutputStream::Stdout, vec![0x82, 0xac, b'\n']),
-                    output_chunk(2, JobOutputStream::Stderr, b"warning\n".to_vec()),
-                    output_chunk(3, JobOutputStream::Stdout, b"done\n".to_vec()),
-                ],
-                output_next_seq: 4,
-                output_bytes: Some(1024),
+                output: ShownOutput::from_pages(
+                    page(
+                        vec![
+                            chunk(0, OutputStream::Stdout, &[b'a', 0xe2]),
+                            chunk(2, OutputStream::Stdout, &[0x82, 0xac, b'\n']),
+                            chunk(5, OutputStream::Stderr, b"warning\n"),
+                            chunk(13, OutputStream::Stdout, b"done\n"),
+                        ],
+                        18,
+                        18,
+                    ),
+                    None,
+                ),
                 ..Default::default()
             },
         )
@@ -666,12 +1164,10 @@ mod tests {
 
         assert_eq!(result.output.len(), 3);
         assert_eq!(result.output[0].text.as_deref(), Some("a€\n"));
-        assert_eq!(result.output[1].stream, JobOutputStream::Stderr);
+        assert_eq!(result.output[1].stream, ModelOutputStream::Stderr);
         assert_eq!(result.output[2].text.as_deref(), Some("done\n"));
         assert!(!result.truncated);
-        let value = serde_json::to_value(&result).expect("semantic JSON");
-        assert!(value.get("outputChunks").is_none());
-        assert_eq!(value["outputNextSeq"], 4);
+        assert_eq!(result.output_next, 18);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -681,16 +1177,17 @@ mod tests {
             &blobs,
             NormalizeJobResultInput {
                 summary: Some(test_summary()),
-                output_chunks: vec![output_chunk(0, JobOutputStream::Stdout, vec![0xff, 0x00])],
-                output_next_seq: 1,
-                output_bytes: Some(2),
+                output: ShownOutput::from_pages(
+                    page(vec![chunk(0, OutputStream::Stdout, &[0xff, 0x00])], 2, 4),
+                    None,
+                ),
                 ..Default::default()
             },
         )
         .await
         .expect("normalize binary");
 
-        assert!(result.truncated);
+        assert!(result.truncated, "output continues after output_next");
         let segment = &result.output[0];
         assert!(segment.text.is_none());
         assert_eq!(
@@ -715,8 +1212,10 @@ mod tests {
             &blobs,
             NormalizeJobResultInput {
                 summary: Some(test_summary()),
-                output_chunks: vec![output_chunk(0, JobOutputStream::Stdout, vec![0xff])],
-                output_next_seq: 1,
+                output: ShownOutput::from_pages(
+                    page(vec![chunk(0, OutputStream::Stdout, &[0xff])], 1, 1),
+                    None,
+                ),
                 ..Default::default()
             },
         )
@@ -746,29 +1245,44 @@ mod tests {
         }
     }
 
-    fn output_chunk(seq: u64, stream: JobOutputStream, bytes: Vec<u8>) -> JobOutputChunk {
-        JobOutputChunk {
-            seq,
+    fn chunk(offset: u64, stream: OutputStream, bytes: &[u8]) -> OutputChunk {
+        OutputChunk {
+            offset,
             stream,
-            chunk: ByteChunk::from(bytes),
+            data: bytes.to_vec().into(),
+        }
+    }
+
+    fn page(chunks: Vec<OutputChunk>, next: u64, end: u64) -> OutputPage {
+        OutputPage {
+            chunks,
+            next,
+            end,
+            gaps: Vec::new(),
         }
     }
 
     fn test_summary() -> JobSummary {
         JobSummary {
-            namespace: "environment-a".to_owned(),
-            job_id: JobId::new("job-a"),
+            job_id: job_id("job-a"),
+            request_id: environment_protocol::ids::JobRequestId::new("request-a").unwrap(),
             name: None,
-            status: JobStatus::Succeeded,
-            dependencies: Vec::new(),
+            status: JobStatus::Failed,
+            depends_on: Vec::new(),
+            queue_key: None,
             created_at_ms: 1,
             queued_at_ms: Some(1),
             started_at_ms: Some(2),
             finished_at_ms: Some(3),
-            exit_code: Some(0),
-            orphaned_descendants: false,
-            failure: None,
-            queue_key: None,
+            cancel_requested_at_ms: None,
+            duration_ms: Some(1),
+            exit: Some(ExitStatus::Signal {
+                signal: SignalName::new("SIGSEGV").unwrap(),
+                core_dumped: false,
+            }),
+            stopped_by: None,
+            leftovers: None,
+            error: None,
         }
     }
 }

@@ -1,12 +1,18 @@
 //! Environment discovery consumes generic endpoint observations independently of VFS.
 use super::{SkillId, parse_skill_frontmatter};
-use environment_protocol::data::inventory::{ScanParams, ScanResponse};
+use environment_protocol::data::{
+    fs::TreeContent,
+    scan::{ScanFingerprint, ScanParams, ScanResponse, ScanRootResult, ScanSkip},
+};
 use harness::{
     BlobRef, ContextEntryInput, CoreAgentCommand, EnvironmentSkillsConfig,
     storage::{BlobStore, BlobStoreError},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub const ENVIRONMENT_SKILL_CATALOG_CONTEXT_KEY: &str = "runtime.catalog.skills.environment";
 
@@ -20,6 +26,8 @@ pub enum EnvironmentSkillAvailability {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentSkill {
+    /// The discovery root the skill was found under, as requested.
+    pub root: String,
     pub skill_id: SkillId,
     pub name: String,
     pub description: String,
@@ -39,6 +47,13 @@ pub struct EnvironmentSkillCatalog {
     /// Configured discovery scope, used only to validate last-observation fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery_scope: Option<String>,
+    /// Fingerprint of each scanned root's selection, by root path; a later
+    /// scan sends them as `ifNoneMatch` and reuses this catalog's skills for
+    /// roots that answer `unchanged`. Process-local scan accounting: it is
+    /// never part of the published snapshot, so an edit that leaves every
+    /// skill's metadata as it was (a body change) does not republish.
+    #[serde(skip)]
+    pub root_fingerprints: BTreeMap<String, String>,
 }
 impl EnvironmentSkillCatalog {
     pub fn unavailable(environment_id: &str) -> Self {
@@ -49,6 +64,7 @@ impl EnvironmentSkillCatalog {
             skills: vec![],
             warnings: vec![],
             discovery_scope: None,
+            root_fingerprints: BTreeMap::new(),
         }
     }
 }
@@ -66,40 +82,111 @@ pub fn environment_skill_scan_query(
     )
 }
 
+/// Send `previous`'s per-root fingerprints, so unchanged roots answer
+/// without entries.
+pub fn apply_cached_fingerprints(query: &mut ScanParams, previous: &EnvironmentSkillCatalog) {
+    for root in &mut query.roots {
+        root.if_none_match = previous
+            .root_fingerprints
+            .get(root.path.as_str())
+            .and_then(|fingerprint| ScanFingerprint::new(fingerprint.clone()).ok());
+    }
+}
+
+/// Build the catalog from per-root scan results. A root that failed is
+/// reported in `warnings` by its path and contributes nothing; every other
+/// root still contributes its skills. An `unchanged` root reuses the skills
+/// `previous` recorded for it, so it requires that catalog.
 pub fn environment_skill_catalog(
     environment_id: &str,
     scan: &ScanResponse,
+    previous: Option<&EnvironmentSkillCatalog>,
 ) -> Result<EnvironmentSkillCatalog, String> {
-    if !scan.complete || scan.unchanged {
-        return Err("catalog requires a complete changed observation".into());
-    }
     let mut catalog = EnvironmentSkillCatalog::unavailable(environment_id);
     catalog.availability = EnvironmentSkillAvailability::Available;
+    let mut documents = Vec::new();
+    for root in &scan.roots {
+        match root {
+            ScanRootResult::Complete {
+                path,
+                canonical_path,
+                fingerprint,
+                entries,
+                skipped,
+                skipped_entry_count,
+            } => {
+                catalog
+                    .root_fingerprints
+                    .insert(path.to_string(), fingerprint.as_str().to_owned());
+                let base = canonical_path.as_ref().unwrap_or(path);
+                for entry in entries {
+                    if matches!(entry.content, TreeContent::File { .. })
+                        && entry.path.segments().last() == Some("SKILL.md")
+                    {
+                        let doc = base.join(&entry.path).map_err(|error| error.to_string())?;
+                        documents.push((path.to_string(), doc.to_string(), entry.data.clone()));
+                    }
+                }
+                if *skipped_entry_count > 0 {
+                    catalog.warnings.push(skipped_warning(
+                        path.as_str(),
+                        skipped,
+                        *skipped_entry_count,
+                    ));
+                }
+            }
+            ScanRootResult::Unchanged { path, fingerprint } => {
+                let previous = previous
+                    .filter(|previous| {
+                        previous.root_fingerprints.get(path.as_str())
+                            == Some(&fingerprint.as_str().to_owned())
+                    })
+                    .ok_or_else(|| {
+                        format!(
+                            "skill root {path} is unchanged but no matching observation is cached"
+                        )
+                    })?;
+                catalog
+                    .root_fingerprints
+                    .insert(path.to_string(), fingerprint.as_str().to_owned());
+                catalog.skills.extend(
+                    previous
+                        .skills
+                        .iter()
+                        .filter(|skill| skill.root == path.as_str())
+                        .cloned(),
+                );
+                catalog.warnings.extend(
+                    previous
+                        .warnings
+                        .iter()
+                        .filter(|warning| warning.starts_with(&format!("{path}:")))
+                        .cloned(),
+                );
+            }
+            ScanRootResult::Missing { .. } => {}
+            ScanRootResult::Failed { path, error } => catalog
+                .warnings
+                .push(format!("{path}: skill root could not be scanned: {error}")),
+        }
+    }
+    documents.sort_by(|left, right| left.1.cmp(&right.1));
     let mut seen = BTreeSet::new();
-    let mut entries: Vec<_> = scan.entries.iter().collect();
-    entries.sort_by_key(|entry| entry.canonical_path.as_str());
-    for entry in entries {
-        if !matches!(
-            entry.content,
-            environment_protocol::data::inventory::ScanContent::File { .. }
-        ) {
-            continue;
-        }
-        let path = Path::new(entry.canonical_path.as_str());
-        if path.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
-            continue;
-        }
+    for (root, doc, data) in documents {
+        let path = Path::new(&doc);
         let Some(dir) = path.parent() else {
             continue;
         };
         if !seen.insert(dir.to_owned()) {
             continue;
         }
-        let data = entry
-            .data
-            .as_ref()
-            .ok_or("scan omitted requested file content")?;
-        let parsed = std::str::from_utf8(&data.0)
+        let Some(data) = data else {
+            catalog
+                .warnings
+                .push(format!("{root}: scan omitted the content of {doc}"));
+            continue;
+        };
+        let parsed = std::str::from_utf8(data.as_slice())
             .map_err(|error| error.to_string())
             .and_then(|text| parse_skill_frontmatter(text).map_err(|e| e.to_string()));
         match parsed {
@@ -108,20 +195,42 @@ pub fn environment_skill_catalog(
                     &serde_json::to_vec(&(environment_id, dir)).expect("serialize identity"),
                 );
                 catalog.skills.push(EnvironmentSkill {
+                    root,
                     skill_id: SkillId::new(format!("environment:{}", identity.as_str())),
                     name: metadata.name,
                     description: metadata.description,
                     short_description: metadata.short_description,
                     skill_dir_path: dir.to_string_lossy().into_owned(),
-                    skill_doc_path: entry.canonical_path.to_string(),
+                    skill_doc_path: doc,
                 });
             }
-            Err(message) => catalog
-                .warnings
-                .push(format!("{}: {message}", entry.canonical_path)),
+            Err(message) => catalog.warnings.push(format!("{root}: {doc}: {message}")),
         }
     }
+    catalog
+        .skills
+        .sort_by(|left, right| left.skill_doc_path.cmp(&right.skill_doc_path));
     Ok(catalog)
+}
+
+fn skipped_warning(root: &str, skipped: &[ScanSkip], total: u32) -> String {
+    let listed = skipped
+        .iter()
+        .filter_map(|skip| {
+            skip.path
+                .as_ref()
+                .map(|path| format!("{path} ({:?})", skip.reason))
+        })
+        .take(5)
+        .collect::<Vec<_>>();
+    if listed.is_empty() {
+        format!("{root}: {total} entries skipped")
+    } else {
+        format!(
+            "{root}: {total} entries skipped, such as {}",
+            listed.join(", ")
+        )
+    }
 }
 
 pub async fn publish_environment_skill_catalog(
@@ -165,17 +274,113 @@ mod tests {
         skills::*,
     };
     use environment_protocol::{
-        data::inventory::{ScanContent, ScanEntry},
-        shared::EnvironmentPath,
+        data::scan::{ScanEntry, ScanSkipReason},
+        error::ProtocolError,
+        paths::{EnvironmentPath, TreePath},
     };
     use harness::storage::InMemoryBlobStore;
+
+    fn fingerprint(value: &str) -> ScanFingerprint {
+        ScanFingerprint::new(format!("scan:v1:{value}")).unwrap()
+    }
+
+    fn skill_entry(path: &str, doc: &[u8]) -> ScanEntry {
+        ScanEntry {
+            path: TreePath::new(path).unwrap(),
+            content: TreeContent::File {
+                size_bytes: doc.len() as u64,
+                executable: false,
+                digest: None,
+            },
+            data: Some(doc.to_vec().into()),
+        }
+    }
+
+    fn complete(root: &str, entries: Vec<ScanEntry>, skipped: Vec<ScanSkip>) -> ScanRootResult {
+        ScanRootResult::Complete {
+            path: EnvironmentPath::new(root).unwrap(),
+            canonical_path: None,
+            fingerprint: fingerprint(root),
+            skipped_entry_count: skipped.len() as u32,
+            entries,
+            skipped,
+        }
+    }
+
+    #[test]
+    fn one_bad_root_or_entry_never_hides_the_other_skills() {
+        let doc = b"---\nname: review\ndescription: Review changes.\n---\nbody";
+        let scan = ScanResponse {
+            roots: vec![
+                complete(
+                    "/project/.agents/skills",
+                    vec![skill_entry("review/SKILL.md", doc)],
+                    vec![ScanSkip {
+                        path: Some(TreePath::new("huge/SKILL.md").unwrap()),
+                        reason: ScanSkipReason::FileTooLarge,
+                    }],
+                ),
+                ScanRootResult::Failed {
+                    path: EnvironmentPath::new("/user/.agents/skills").unwrap(),
+                    error: ProtocolError::deadline_exceeded("walk took too long"),
+                },
+                ScanRootResult::Missing {
+                    path: EnvironmentPath::new("/user/.lightspeed/skills").unwrap(),
+                },
+            ],
+        };
+        let catalog = environment_skill_catalog("machine", &scan, None).unwrap();
+        assert_eq!(
+            catalog.availability,
+            EnvironmentSkillAvailability::Available
+        );
+        assert_eq!(catalog.skills.len(), 1);
+        assert_eq!(
+            catalog.skills[0].skill_doc_path,
+            "/project/.agents/skills/review/SKILL.md"
+        );
+        assert!(catalog.warnings.iter().any(|warning| {
+            warning.starts_with("/project/.agents/skills:") && warning.contains("huge/SKILL.md")
+        }));
+        assert!(
+            catalog
+                .warnings
+                .iter()
+                .any(|warning| warning.starts_with("/user/.agents/skills:"))
+        );
+
+        let mut query = environment_skill_scan_query(
+            &EnvironmentSkillsConfig::default(),
+            Some("/project"),
+            Some("/user"),
+        )
+        .unwrap();
+        apply_cached_fingerprints(&mut query, &catalog);
+        assert_eq!(
+            query.roots[0].if_none_match,
+            Some(fingerprint("/project/.agents/skills"))
+        );
+        let rescan = ScanResponse {
+            roots: vec![ScanRootResult::Unchanged {
+                path: EnvironmentPath::new("/project/.agents/skills").unwrap(),
+                fingerprint: fingerprint("/project/.agents/skills"),
+            }],
+        };
+        let reused = environment_skill_catalog("machine", &rescan, Some(&catalog)).unwrap();
+        assert_eq!(reused.skills, catalog.skills);
+        assert!(environment_skill_catalog("machine", &rescan, None).is_err());
+    }
 
     #[test]
     fn scope_defaults_and_overrides_are_independent_of_home() {
         let config = EnvironmentSkillsConfig::default();
         let query = environment_skill_scan_query(&config, Some("/project"), Some("/user")).unwrap();
         assert_eq!(
-            query.roots.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            query
+                .roots
+                .iter()
+                .map(|p| p.path.as_str())
+                .collect::<Vec<_>>(),
             vec![
                 "/project/.agents/skills",
                 "/project/.lightspeed/skills",
@@ -188,7 +393,11 @@ mod tests {
         };
         let query = environment_skill_scan_query(&config, Some("/project"), None).unwrap();
         assert_eq!(
-            query.roots.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            query
+                .roots
+                .iter()
+                .map(|p| p.path.as_str())
+                .collect::<Vec<_>>(),
             vec!["/project/custom", "/user/.codex/skills"]
         );
         assert_eq!(
@@ -242,23 +451,13 @@ mod tests {
         .await
         .unwrap();
         let scan = ScanResponse {
-            fingerprint: Some("observation".into()),
-            unchanged: false,
-            complete: true,
-            diagnostics: vec![],
-            entries: vec![ScanEntry {
-                root: EnvironmentPath::new("/skills").unwrap(),
-                path: "review/SKILL.md".into(),
-                canonical_path: EnvironmentPath::new("/skills/review/SKILL.md").unwrap(),
-                content: ScanContent::File {
-                    size_bytes: doc.len() as u64,
-                    executable: false,
-                    digest: None,
-                },
-                data: Some(doc.as_slice().into()),
-            }],
+            roots: vec![complete(
+                "/skills",
+                vec![skill_entry("review/SKILL.md", doc)],
+                vec![],
+            )],
         };
-        let environment = environment_skill_catalog("machine", &scan).unwrap();
+        let environment = environment_skill_catalog("machine", &scan, None).unwrap();
         assert_eq!(vfs.build.catalog.skills[0].name, environment.skills[0].name);
         assert_ne!(
             vfs.build.catalog.skills[0].skill_id,

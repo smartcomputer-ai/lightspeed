@@ -16,7 +16,7 @@ before choosing an exporter or changing a version.
 | --- | --- | --- |
 | Public JSON-RPC API | DTOs, method metadata, and service interfaces in `crates/api/src/` | Rust-exported schema, method manifest, OpenRPC, and API reference; TypeScript client, Configurator tools, Platform method-role map, and profile-editor reference. |
 | Workflow integration | Harness emission types, workflow recipes and recovery types, Channels DTOs, and `crates/temporal-workflow/src/workflow_contract.rs` | Workflow schema, manifest, reference, TypeScript types, and known-answer vectors used by client helpers. |
-| Environment control and data | `crates/environment-protocol` | Rust serde fixtures, daemon and provider implementations, and explicit protocol versions. There is no schema exporter for this boundary today. |
+| Environment protocol | Wire types and the method manifest in `crates/environment-protocol` | Per-plane JSON Schema bundles and OpenRPC documents, per-method fixtures, the daemon, client, and provider implementations, both exact-match protocol versions, and the [protocol reference](../reference/environment-protocol.md). |
 | Runtime database | SQL migrations and their embedded registry in `crates/store-pg` | Migration ledger, required schema revision, table ownership list, and release metadata. |
 | Platform database | Schema modules and Drizzle configuration in `platform/db` | SQL migrations, snapshots, journal, and the separate Platform release revision and upgrade baseline. |
 
@@ -209,26 +209,49 @@ regenerating TypeScript shapes does not prove they accept the same versions.
 
 ## Change the environment protocol
 
-The environment protocol belongs to `crates/environment-protocol`. Its serde
-fixtures establish the serialized controller and data-plane messages, and
-`CURRENT_PROTOCOL_VERSION` defines the handshake version. Daemon and
-controller handshakes check exact version equality.
+The environment protocol belongs to `crates/environment-protocol`. Its wire
+types carry the field documentation, and its
+[method manifest](../../../crates/environment-protocol/src/manifest.rs) binds
+every method to its params and response types, plane, capability, and idle
+classification. A method exists exactly when it has a manifest entry. Every
+method also has a fixture under `crates/environment-protocol/fixtures/<plane>/`
+with a valid params object, response, and typed error. Follow the conventions
+in the crate's [module documentation](../../../crates/environment-protocol/src/lib.rs):
+strict decoding, typed error kinds, no `null`, and wire names in doc comments.
 
-A protocol-version change therefore affects which existing
-daemons and providers can connect. Update the corresponding implementations
-and fixtures, align `LIGHTSPEED_ENVIRONMENT_PROTOCOL_VERSION` in
-`release/metadata.env`, and plan the rollout across those components. Product
-version strings and matching Git revisions do not substitute for this
-compatibility check.
+Two numbers version the protocol. `ENVD_PROTOCOL_VERSION` covers the data
+plane and the registration channel; `CONTROLLER_PROTOCOL_VERSION` covers
+provider controllers. Every handshake checks exact equality. A change to a
+plane's wire shape, or to the meaning of an existing field or method, needs a
+new number for that plane, which affects which existing daemons and providers
+can connect. Bump the constant in
+[`version.rs`](../../../crates/environment-protocol/src/version.rs), align
+`LIGHTSPEED_ENVD_PROTOCOL_VERSION` or `LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION`
+in `release/metadata.env`, update the implementations and fixtures, and plan
+the rollout across those components. Product version strings and matching Git
+revisions do not substitute for this compatibility check. The gateway's
+`registration/challenge` notification, the daemon discovery document, and the
+`--print-build` output are the frozen bootstrap surface: only add fields to
+them.
 
-Run the wire fixtures and the affected implementation tests:
+After changing a wire type or a manifest entry, regenerate the committed
+contract documents:
 
 ```bash
-cargo test -p environment-protocol --test serde
+cargo run -p environment-protocol --features schema --bin export-contract
+```
+
+Then run the fixtures, the contract check, and the release metadata check:
+
+```bash
+cargo test -p environment-protocol
 scripts/release/verify-metadata.sh
 ```
 
-The [environment-provider guide](../integrating-and-extending/environment-providers.md)
+`cargo test -p environment-protocol --test contract` fails while the
+committed contract is stale. Update the
+[protocol reference](../reference/environment-protocol.md) when a rule
+changes. The [environment-provider guide](../integrating-and-extending/environment-providers.md)
 covers the controller, daemon, and gateway responsibilities in more detail.
 
 ## Database migrations

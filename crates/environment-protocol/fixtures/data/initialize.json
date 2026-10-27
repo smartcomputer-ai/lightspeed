@@ -1,0 +1,97 @@
+{
+  "params": {
+    "protocolVersion": 3,
+    "clientInfo": {
+      "name": "lightspeed-runtime",
+      "version": "0.5.0"
+    }
+  },
+  "response": {
+    "protocolVersion": 3,
+    "plane": "data",
+    "daemonInstanceId": "envd_01jb8x7k2m",
+    "serverInfo": {
+      "name": "lightspeed-envd",
+      "version": "0.5.0",
+      "gitSha": "86f6adf3",
+      "target": "x86_64-unknown-linux-musl"
+    },
+    "capabilities": {
+      "filesystem": {
+        "write": true
+      },
+      "process": {
+        "pty": true
+      },
+      "job": {}
+    },
+    "limits": {
+      "maxConcurrentRequests": 32,
+      "maxWaitMs": 1800000,
+      "process": {
+        "maxReadBytes": 4194304,
+        "maxRetainedOutputBytes": 1048576,
+        "retentionAfterExitMs": 60000,
+        "unreadRetentionMs": 7200000,
+        "maxExitedRetainedBytes": 67108864,
+        "terminateGraceMs": 5000,
+        "maxInputQueueBytes": 1048576
+      },
+      "job": {
+        "maxReadBytes": 4194304,
+        "maxRequestJobs": 64,
+        "maxRetainedOutputBytes": 2097152,
+        "recordRetentionMs": 604800000,
+        "cancelGraceMs": 5000
+      },
+      "filesystem": {
+        "maxReadFileBytes": 8388608,
+        "maxWriteFileBytes": 8388608,
+        "maxDirectoryEntries": 1000,
+        "search": {
+          "maxMatches": 10000,
+          "maxFiles": 100000,
+          "maxBytes": 1073741824,
+          "maxDurationMs": 60000,
+          "maxLineBytes": 4096
+        },
+        "glob": {
+          "maxMatches": 100000,
+          "maxFiles": 1000000,
+          "maxDurationMs": 60000
+        },
+        "scan": {
+          "maxRoots": 32,
+          "maxPatterns": 32,
+          "maxEntries": 10000,
+          "maxFileBytes": 262144,
+          "maxTotalBytes": 4194304,
+          "maxDurationMs": 30000
+        },
+        "transfer": {
+          "maxActiveOperations": 8,
+          "maxContentChunkBytes": 4194304,
+          "maxInventoryPageEntries": 1000,
+          "receiptRetentionMs": 86400000,
+          "maxEntries": 100000,
+          "maxDepth": 64,
+          "maxFileBytes": 1099511627776,
+          "maxTotalBytes": 1099511627776,
+          "maxManifestBytes": 33554432,
+          "maxDurationMs": 86400000
+        }
+      }
+    },
+    "defaultCwd": "/workspace",
+    "homeDirectory": "/home/dev"
+  },
+  "error": {
+    "code": -32005,
+    "message": "protocol version 2 is not supported; this peer speaks 3",
+    "data": {
+      "kind": "versionMismatch",
+      "expected": 3,
+      "received": 2
+    }
+  }
+}

@@ -50,12 +50,12 @@ async fn run_profile_environment_selection_live_client(
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
-    use environment_protocol::shared::EnvironmentTransport;
     use environments::{
-        EnvironmentConnectionSpec, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
+        EnvironmentEndpoint, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
         EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
         PutEnvironmentProvider, PutEnvironmentProviderBinding,
     };
+    use temporal_runtime::environments::fake_controller::{FAKE_TEMPLATE_ID, FakeController};
 
     let store = pg_store_from_env().await?;
     let model = support::live::openai_live_model();
@@ -68,20 +68,17 @@ async fn run_profile_environment_selection_live_client(
     let binding_id = format!("binding-profile-{suffix}");
     let profile_id = ProfileId::new(format!("live_selection_{suffix}"));
 
-    // Register the in-process fake provider and bind it to this universe
-    // directly through the store: the deployment API is deployment-scoped and
-    // this test drives one universe's gateway.
+    // Serve a fake controller on loopback, register it and bind it to this
+    // universe directly through the store: the deployment API is
+    // deployment-scoped and this test drives one universe's gateway.
+    let controller = FakeController::start().await?;
     store
         .put_provider(PutEnvironmentProvider {
             provider_id: EnvironmentProviderId::new(provider_id.clone()),
             display_name: Some("Live fake provider".to_owned()),
-            controller_connection: EnvironmentConnectionSpec::new(
-                "in-process",
-                EnvironmentTransport::Provider {
-                    provider_type: "fake".to_owned(),
-                },
-            ),
+            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
             metadata: BTreeMap::new(),
+            credential: Some(auth::SecretValue::new(controller.credential())),
             updated_at_ms: 1,
         })
         .await?;
@@ -101,7 +98,7 @@ async fn run_profile_environment_selection_live_client(
         .create_environment(api::EnvironmentCreateParams {
             request_id: format!("independent-{suffix}"),
             binding_id: binding_id.clone(),
-            template_id: "rust-v1".into(),
+            template_id: FAKE_TEMPLATE_ID.into(),
             display_name: None,
             metadata: BTreeMap::new(),
             idle_policy: None,

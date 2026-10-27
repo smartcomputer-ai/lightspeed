@@ -1,0 +1,33 @@
+{
+  "params": {
+    "protocolVersion": 3,
+    "clientInfo": {
+      "name": "lightspeed-runtime",
+      "version": "0.5.0"
+    }
+  },
+  "response": {
+    "protocolVersion": 3,
+    "plane": "controller",
+    "serverInfo": {
+      "name": "lightspeed-provider-incus",
+      "version": "0.5.0"
+    },
+    "capabilities": {
+      "adoptTarget": true,
+      "ingress": true
+    },
+    "routes": {
+      "data": "wss://incus.example.com:19090/routes"
+    }
+  },
+  "error": {
+    "code": -32005,
+    "message": "protocol version 4 is not supported; this peer speaks 3",
+    "data": {
+      "kind": "versionMismatch",
+      "expected": 3,
+      "received": 4
+    }
+  }
+}

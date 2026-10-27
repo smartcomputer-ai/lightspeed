@@ -1,4 +1,6 @@
 pub mod config;
+pub mod dispatch;
+mod exec;
 pub mod filesystem;
 pub mod identity;
 pub mod jobs;
@@ -6,7 +8,6 @@ pub mod process;
 mod process_group;
 mod redaction;
 pub mod registration;
-pub mod rpc;
 pub mod server;
 pub mod upgrade;
 
@@ -18,27 +19,59 @@ use std::{
     time::Instant,
 };
 
+use anyhow::Context as _;
 use environment_protocol::{
-    data::idle::IdleResponse,
-    shared::{
-        CURRENT_PROTOCOL_VERSION, EnvironmentCapabilities, EnvironmentConnectionId,
-        ImplementationInfo,
+    ENVD_PROTOCOL_VERSION,
+    bootstrap::BuildFacts,
+    bytes::encode_hex,
+    data::{
+        handshake::{
+            DataCapabilities, DataLimits, FilesystemCapabilities, FilesystemLimits, GlobCeilings,
+            InitializeResponse, JobCapabilities, JobLimits, ProcessCapabilities, ProcessLimits,
+            ScanCeilings, SearchCeilings, TransferCeilings,
+        },
+        idle::GetIdleResponse,
     },
+    error::{Capability, ProtocolError},
+    handshake::{ImplementationInfo, Plane},
+    ids::DaemonInstanceId,
+    paths::EnvironmentPath,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::DaemonConfig, filesystem::LocalFileSystem, jobs::JobManager, process::ProcessManager,
+    config::DaemonConfig,
+    filesystem::{Confinement, FilesystemConfig, LocalFileSystem},
+    jobs::{JobConfig, JobManager},
+    process::{ProcessConfig, ProcessManager},
 };
 
+/// Product name in `serverInfo`, the registration `implementation` and
+/// `--print-build`.
+pub const DAEMON_NAME: &str = "lightspeed-envd";
+
+/// Everything one daemon serves. Cheap to clone; every clone shares the
+/// same managers, activity clock and shutdown token.
 #[derive(Clone)]
 pub struct DaemonRuntime {
-    config: Arc<DaemonConfig>,
-    capabilities: EnvironmentCapabilities,
+    inner: Arc<RuntimeInner>,
+}
+
+struct RuntimeInner {
+    config: DaemonConfig,
+    instance_id: DaemonInstanceId,
+    server_info: ImplementationInfo,
+    capabilities: DataCapabilities,
+    limits: DataLimits,
+    default_cwd: EnvironmentPath,
+    home_directory: Option<EnvironmentPath>,
+    confinement: Arc<Confinement>,
     filesystem: LocalFileSystem,
     processes: ProcessManager,
     jobs: JobManager,
-    next_connection_id: Arc<AtomicU64>,
-    activity: Arc<ActivityClock>,
+    next_connection_id: AtomicU64,
+    activity: ActivityClock,
+    shutdown: CancellationToken,
 }
 
 /// Monotonic record of the last data-plane activity. Deliberately not a
@@ -56,11 +89,17 @@ impl ActivityClock {
     }
 
     pub fn touch(&self) {
-        *self.last.lock().expect("activity clock poisoned") = Instant::now();
+        *self
+            .last
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Instant::now();
     }
 
     pub fn idle_for(&self) -> std::time::Duration {
-        self.last.lock().expect("activity clock poisoned").elapsed()
+        self.last
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .elapsed()
     }
 }
 
@@ -80,304 +119,502 @@ pub fn install_crypto_provider() {
 }
 
 impl DaemonRuntime {
-    pub fn new(config: DaemonConfig) -> anyhow::Result<Self> {
+    /// Build the managers over one shared [`Confinement`]. A missing state
+    /// directory is created `0700`.
+    pub fn new(mut config: DaemonConfig) -> anyhow::Result<Self> {
         install_crypto_provider();
-        let capabilities = environment_capabilities(&config);
-        let filesystem = LocalFileSystem::new(
-            config.fs_root.clone(),
-            config.cwd.clone(),
-            !config.read_only_fs,
-        )
-        .with_transfer_state_dir(config.state_dir.join("transfers"))
-        .map_err(|e| anyhow::anyhow!("transfer state: {e:?}"))?;
-        let processes = ProcessManager::new(config.cwd.clone(), config.fs_root.clone())
-            .with_scrubbed_env(config.scrubbed_env.clone());
-        let jobs = JobManager::new(
-            config.cwd.clone(),
-            config.fs_root.clone(),
-            config.state_dir.clone(),
-        )?
-        .with_scrubbed_env(config.scrubbed_env.clone());
+        config.state_dir = config::prepare_state_dir(&config.state_dir)?;
+        let default_cwd = environment_path(&config.cwd).context("cwd")?;
+        let home_directory = home_directory(&config);
+        let instance_id = mint_instance_id()?;
+        let capabilities = data_capabilities(&config);
+        let limits = data_limits();
+        let confinement = Arc::new(
+            Confinement::new(config.fs_root.clone(), config.state_dir.clone())
+                .map_err(|error| anyhow::anyhow!("filesystem confinement: {error}"))?,
+        );
+        let filesystem = LocalFileSystem::new(FilesystemConfig {
+            confinement: confinement.clone(),
+            cwd: config.cwd.clone(),
+            writable: !config.read_only_fs,
+            limits: limits.filesystem.clone(),
+        })
+        .map_err(|error| anyhow::anyhow!("filesystem: {error}"))?;
+        let processes = ProcessManager::new(ProcessConfig {
+            cwd: config.cwd.clone(),
+            confinement: confinement.clone(),
+            state_dir: config.state_dir.clone(),
+            scrubbed_env: config.scrubbed_env.clone(),
+            instance_id: instance_id.clone(),
+            limits: limits.process.clone(),
+            max_wait_ms: limits.max_wait_ms,
+            pty_supported: PTY_SUPPORTED,
+        })
+        .context("process manager")?;
+        let jobs = JobManager::new(JobConfig {
+            cwd: config.cwd.clone(),
+            confinement: confinement.clone(),
+            state_dir: config.state_dir.clone(),
+            scrubbed_env: config.scrubbed_env.clone(),
+            instance_id: instance_id.clone(),
+            limits: limits.job.clone(),
+            max_wait_ms: limits.max_wait_ms,
+        })
+        .context("job manager")?;
         Ok(Self {
-            config: Arc::new(config),
-            capabilities,
-            filesystem,
-            processes,
-            jobs,
-            next_connection_id: Arc::new(AtomicU64::new(1)),
-            activity: Arc::new(ActivityClock::new()),
+            inner: Arc::new(RuntimeInner {
+                config,
+                instance_id,
+                server_info: server_info(),
+                capabilities,
+                limits,
+                default_cwd,
+                home_directory,
+                confinement,
+                filesystem,
+                processes,
+                jobs,
+                next_connection_id: AtomicU64::new(1),
+                activity: ActivityClock::new(),
+                shutdown: CancellationToken::new(),
+            }),
         })
     }
 
     /// Record one unit of data-plane activity.
     pub fn touch_activity(&self) {
-        self.activity.touch();
+        self.inner.activity.touch();
     }
 
-    /// Idle report for the power reaper: zero idle time while any process or
-    /// job is still executing, otherwise the time since the last request.
-    /// Live work keeps the clock fresh so a long-running job that finishes
+    /// `env/getIdle`: zero idle time while any process or job is still
+    /// executing, otherwise the time since the last `use` request. Live
+    /// work keeps the clock fresh so a long-running job that finishes
     /// starts the idle countdown from its end, not its start. Leftover
     /// process groups are counted but are not work: a server waiting for
     /// requests must not keep the environment awake.
-    pub async fn idle_report(&self) -> IdleResponse {
-        let running_processes = self.processes.running_count().await;
-        let running_jobs = self.jobs.running_count().await;
-        let leftover_process_groups = self.processes.leftover_group_count();
-        if running_processes > 0 || running_jobs > 0 {
-            self.activity.touch();
-            return IdleResponse {
-                idle_for_ms: 0,
-                running_processes,
-                running_jobs,
-                leftover_process_groups,
-            };
+    pub async fn idle_report(&self) -> GetIdleResponse {
+        let running_process_count = self.inner.processes.running_count().await;
+        let running_job_count = self.inner.jobs.running_count().await;
+        let leftover_process_group_count = self.inner.processes.leftover_group_count();
+        if running_process_count > 0 || running_job_count > 0 {
+            self.inner.activity.touch();
         }
-        IdleResponse {
-            idle_for_ms: u64::try_from(self.activity.idle_for().as_millis()).unwrap_or(u64::MAX),
-            running_processes,
-            running_jobs,
-            leftover_process_groups,
+        let idle_for_ms = if running_process_count > 0 || running_job_count > 0 {
+            0
+        } else {
+            u64::try_from(self.inner.activity.idle_for().as_millis()).unwrap_or(u64::MAX)
+        };
+        GetIdleResponse {
+            idle_for_ms,
+            running_process_count,
+            running_job_count,
+            leftover_process_group_count,
         }
+    }
+
+    /// The data-plane `initialize` response; identical on every connection
+    /// of this daemon instance.
+    pub fn initialize_response(&self) -> InitializeResponse {
+        InitializeResponse {
+            protocol_version: ENVD_PROTOCOL_VERSION,
+            plane: Plane::Data,
+            daemon_instance_id: self.inner.instance_id.clone(),
+            server_info: self.inner.server_info.clone(),
+            capabilities: self.inner.capabilities.clone(),
+            limits: self.inner.limits.clone(),
+            default_cwd: self.inner.default_cwd.clone(),
+            home_directory: self.inner.home_directory.clone(),
+        }
+    }
+
+    /// `capabilityUnavailable` unless this daemon serves `capability`.
+    pub fn require_capability(&self, capability: Capability) -> Result<(), ProtocolError> {
+        if dispatch::has_capability(&self.inner.capabilities, capability) {
+            return Ok(());
+        }
+        Err(ProtocolError::capability_unavailable(
+            capability,
+            format!("this daemon does not serve {}", capability_name(capability)),
+        ))
     }
 
     pub fn config(&self) -> &DaemonConfig {
-        &self.config
+        &self.inner.config
     }
 
-    pub fn implementation(&self) -> ImplementationInfo {
-        build_info().into()
+    pub fn instance_id(&self) -> &DaemonInstanceId {
+        &self.inner.instance_id
     }
 
-    pub fn capabilities(&self) -> EnvironmentCapabilities {
-        self.capabilities.clone()
+    pub fn server_info(&self) -> &ImplementationInfo {
+        &self.inner.server_info
     }
 
-    pub fn next_connection_id(&self) -> EnvironmentConnectionId {
-        let id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
-        EnvironmentConnectionId::new(format!("envd-{id}"))
+    pub fn capabilities(&self) -> &DataCapabilities {
+        &self.inner.capabilities
+    }
+
+    pub fn limits(&self) -> &DataLimits {
+        &self.inner.limits
+    }
+
+    pub fn confinement(&self) -> &Arc<Confinement> {
+        &self.inner.confinement
+    }
+
+    /// Daemon-unique, increasing connection number.
+    pub fn next_connection_id(&self) -> u64 {
+        self.inner
+            .next_connection_id
+            .fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Cancelled when the daemon begins a deliberate shutdown: listeners stop
+    /// accepting, data connections end and the registration channel says
+    /// goodbye.
+    pub fn shutdown(&self) -> &CancellationToken {
+        &self.inner.shutdown
     }
 
     pub fn filesystem(&self) -> &LocalFileSystem {
-        &self.filesystem
+        &self.inner.filesystem
     }
 
     pub fn processes(&self) -> &ProcessManager {
-        &self.processes
+        &self.inner.processes
     }
 
     pub fn jobs(&self) -> &JobManager {
-        &self.jobs
+        &self.inner.jobs
     }
 }
 
-fn environment_capabilities(config: &DaemonConfig) -> EnvironmentCapabilities {
-    EnvironmentCapabilities {
-        filesystem_read: true,
-        filesystem_write: !config.read_only_fs,
-        filesystem_search: true,
-        filesystem_glob: true,
-        filesystem_ranged_read: true,
-        filesystem_transfer: cfg!(any(target_os = "linux", target_os = "macos")),
-        filesystem_scan: cfg!(any(target_os = "linux", target_os = "macos")),
-        filesystem_capture: cfg!(any(target_os = "linux", target_os = "macos")),
-        filesystem_materialize: cfg!(any(target_os = "linux", target_os = "macos"))
-            && !config.read_only_fs,
-        process_start: true,
-        process_stdin: true,
-        process_terminate: true,
-        process_output_polling: true,
-        process_output_notifications: false,
-        process_pty: true,
-        job_start: true,
-        job_list: true,
-        job_read: true,
-        job_cancel: true,
-        job_wait_hint: false,
-        job_dependencies: true,
-        job_queue_keys: true,
-        network: true,
+/// PTYs are served wherever `portable-pty` has a Unix backend.
+const PTY_SUPPORTED: bool = cfg!(unix);
+
+fn data_capabilities(config: &DaemonConfig) -> DataCapabilities {
+    DataCapabilities {
+        filesystem: Some(FilesystemCapabilities {
+            write: !config.read_only_fs,
+        }),
+        process: Some(ProcessCapabilities { pty: PTY_SUPPORTED }),
+        job: Some(JobCapabilities {}),
     }
 }
 
-pub fn protocol_version() -> u32 {
-    CURRENT_PROTOCOL_VERSION
-}
+const KIB: u64 = 1024;
+const MIB: u64 = 1024 * KIB;
+const GIB: u64 = 1024 * MIB;
+const TIB: u64 = 1024 * GIB;
 
-/// The facts this binary reports about itself: to the gateway in every
-/// handshake, and to an operator through `--print-build`. The protocol
-/// version is the one that decides whether a gateway admits the daemon; the
-/// rest is provenance.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildInfo {
-    pub name: &'static str,
-    pub version: &'static str,
-    pub git_sha: &'static str,
-    pub target: &'static str,
-    pub protocol_version: u32,
-}
-
-pub fn build_info() -> BuildInfo {
-    BuildInfo {
-        name: "lightspeed-envd",
-        version: release_info::VERSION,
-        git_sha: release_info::GIT_SHA,
-        target: release_info::TARGET,
-        protocol_version: CURRENT_PROTOCOL_VERSION,
+/// The ceilings envd enforces and advertises. Every response they allow
+/// fits below `MAX_MESSAGE_BYTES` after base64.
+pub fn data_limits() -> DataLimits {
+    DataLimits {
+        max_concurrent_requests: 32,
+        max_wait_ms: 1_800_000,
+        process: ProcessLimits {
+            max_read_bytes: 4 * MIB,
+            max_retained_output_bytes: MIB,
+            retention_after_exit_ms: 60_000,
+            unread_retention_ms: 7_200_000,
+            max_exited_retained_bytes: 64 * MIB,
+            terminate_grace_ms: 5_000,
+            max_input_queue_bytes: MIB,
+        },
+        job: JobLimits {
+            max_read_bytes: 4 * MIB,
+            max_request_jobs: 64,
+            max_retained_output_bytes: 2 * MIB,
+            record_retention_ms: 604_800_000,
+            cancel_grace_ms: 5_000,
+        },
+        filesystem: FilesystemLimits {
+            max_read_file_bytes: 8 * MIB,
+            max_write_file_bytes: 8 * MIB,
+            max_directory_entries: 1_000,
+            search: SearchCeilings {
+                max_matches: 10_000,
+                max_files: 100_000,
+                max_bytes: GIB,
+                max_duration_ms: 60_000,
+                max_line_bytes: 4_096,
+            },
+            glob: GlobCeilings {
+                max_matches: 100_000,
+                max_files: 1_000_000,
+                max_duration_ms: 60_000,
+            },
+            scan: ScanCeilings {
+                max_roots: 32,
+                max_patterns: 32,
+                max_entries: 10_000,
+                max_file_bytes: 256 * KIB,
+                max_total_bytes: 4 * MIB,
+                max_duration_ms: 30_000,
+            },
+            transfer: TransferCeilings {
+                max_active_operations: 8,
+                max_content_chunk_bytes: 4 * MIB,
+                max_inventory_page_entries: 1_000,
+                receipt_retention_ms: 86_400_000,
+                max_entries: 100_000,
+                max_depth: 64,
+                max_file_bytes: TIB,
+                max_total_bytes: TIB,
+                max_manifest_bytes: 32 * MIB,
+                max_duration_ms: 86_400_000,
+            },
+        },
     }
 }
 
-impl From<BuildInfo> for ImplementationInfo {
-    fn from(build: BuildInfo) -> Self {
-        ImplementationInfo {
-            name: build.name.to_owned(),
-            version: Some(build.version.to_owned()),
-            git_sha: Some(build.git_sha.to_owned()),
-            target: Some(build.target.to_owned()),
-        }
+fn capability_name(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Filesystem => "the filesystem family",
+        Capability::FilesystemWrite => "filesystem writes",
+        Capability::Process => "the process family",
+        Capability::ProcessPty => "process PTYs",
+        Capability::Job => "the job family",
+        Capability::AdoptTarget => "target adoption",
+        Capability::Ingress => "ingress",
+    }
+}
+
+/// `daemonInstanceId`: `envd_` and 32 random hex digits, minted per start.
+fn mint_instance_id() -> anyhow::Result<DaemonInstanceId> {
+    let mut bytes = [0u8; 16];
+    rand::TryRng::try_fill_bytes(&mut rand::rngs::SysRng, &mut bytes)
+        .context("generate daemon instance id")?;
+    Ok(DaemonInstanceId::new(format!(
+        "envd_{}",
+        encode_hex(&bytes)
+    ))?)
+}
+
+fn environment_path(path: &std::path::Path) -> anyhow::Result<EnvironmentPath> {
+    let text = path
+        .to_str()
+        .with_context(|| format!("{} is not UTF-8", path.display()))?;
+    Ok(EnvironmentPath::new(text)?)
+}
+
+/// `$HOME` when it is a valid path inside the filesystem root.
+fn home_directory(config: &DaemonConfig) -> Option<EnvironmentPath> {
+    let home = std::env::var_os("HOME")?;
+    let home = std::path::PathBuf::from(home);
+    if !home.starts_with(&config.fs_root) {
+        return None;
+    }
+    environment_path(&home).ok()
+}
+
+/// `serverInfo` and the registration `implementation`: this build's facts,
+/// leaving out any the build left empty.
+pub fn server_info() -> ImplementationInfo {
+    let info = ImplementationInfo::new(DAEMON_NAME).expect("the daemon name is a valid field");
+    let info = match info.clone().with_version(release_info::VERSION) {
+        Ok(with) => with,
+        Err(_) => info,
+    };
+    let info = match info.clone().with_git_sha(release_info::GIT_SHA) {
+        Ok(with) => with,
+        Err(_) => info,
+    };
+    match info.clone().with_target(release_info::TARGET) {
+        Ok(with) => with,
+        Err(_) => info,
+    }
+}
+
+/// What `--print-build` prints: the facts an orchestrator checks a
+/// downloaded daemon against the deployment's discovery document with.
+pub fn build_facts() -> BuildFacts {
+    BuildFacts {
+        name: DAEMON_NAME.to_owned(),
+        version: release_info::VERSION.to_owned(),
+        git_sha: release_info::GIT_SHA.to_owned(),
+        target: release_info::TARGET.to_owned(),
+        protocol_version: ENVD_PROTOCOL_VERSION,
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// A runtime rooted in a fresh temporary directory, its state dir
+    /// beside the root rather than inside it.
+    pub(crate) fn runtime() -> (tempfile::TempDir, DaemonRuntime) {
+        runtime_with(|_| {})
+    }
+
+    pub(crate) fn runtime_with(
+        adjust: impl FnOnce(&mut DaemonConfig),
+    ) -> (tempfile::TempDir, DaemonRuntime) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let base = temp.path().canonicalize().expect("canonical temp");
+        let root = base.join("root");
+        let state = base.join("state");
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::create_dir_all(&state).expect("state");
+        let mut config = DaemonConfig {
+            listen: None,
+            cwd: root.clone(),
+            fs_root: root,
+            state_dir: state,
+            read_only_fs: false,
+            registration: None,
+            scrubbed_env: vec!["LIGHTSPEED_ENVD_REGISTRATION_KEY".to_owned()],
+        };
+        adjust(&mut config);
+        let runtime = DaemonRuntime::new(config).expect("runtime");
+        (temp, runtime)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use environment_protocol::{
-        data::process::{
-            ProcessSignal, ReadProcessParams, StartProcessParams, TerminateProcessParams,
-        },
-        shared::ProcessId,
+        data::handshake::DataLimits,
+        error::ProtocolErrorKind,
+        limits::{MAX_MESSAGE_BYTES, MIN_CONCURRENT_REQUESTS},
+        manifest::{EnvGetIdle, ProcessStart, ProcessTerminate},
     };
+    use serde_json::json;
 
-    use super::*;
+    use super::{test_support::runtime, *};
+    use crate::dispatch::{RequestContext, handle_request};
 
-    fn runtime() -> (tempfile::TempDir, DaemonRuntime) {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let runtime = DaemonRuntime::new(DaemonConfig {
-            listen: Some("127.0.0.1:0".parse().expect("listen")),
-            cwd: root.clone(),
-            fs_root: root.clone(),
-            state_dir: root.join("state"),
-            read_only_fs: false,
-            registration: None,
-            scrubbed_env: vec!["LIGHTSPEED_ENVD_REGISTRATION_KEY".to_owned()],
-        })
-        .expect("runtime");
-        (temp, runtime)
+    async fn call(
+        runtime: &DaemonRuntime,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        handle_request(runtime, &RequestContext::detached(), method, params)
+            .await
+            .unwrap_or_else(|error| panic!("{method}: {error}"))
+            .value
+    }
+
+    #[test]
+    fn instance_ids_are_random_per_start_and_use_the_general_grammar() {
+        let first = mint_instance_id().unwrap();
+        let second = mint_instance_id().unwrap();
+        assert_ne!(first, second);
+        assert!(first.as_str().starts_with("envd_"));
+        assert_eq!(first.as_str().len(), "envd_".len() + 32);
+    }
+
+    /// Every advertised ceiling keeps its worst-case response, base64
+    /// included, below the message limit.
+    #[test]
+    fn advertised_payload_ceilings_fit_the_message_limit() {
+        let limits: DataLimits = data_limits();
+        let base64 = |bytes: u64| bytes.div_ceil(3) * 4;
+        for (name, bytes) in [
+            ("fs.readFile", limits.filesystem.max_read_file_bytes),
+            ("fs.writeFile", limits.filesystem.max_write_file_bytes),
+            (
+                "transfer.chunk",
+                limits.filesystem.transfer.max_content_chunk_bytes,
+            ),
+            ("process.read", limits.process.max_read_bytes),
+            ("job.read", limits.job.max_read_bytes),
+        ] {
+            assert!(base64(bytes) < MAX_MESSAGE_BYTES * 3 / 4, "{name}");
+        }
+        assert!(limits.max_concurrent_requests >= MIN_CONCURRENT_REQUESTS);
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn idle_report_counts_running_work_and_resets_on_activity() {
+    async fn initialize_reports_the_instance_cwd_and_capability_families() {
+        let (_temp, runtime) = runtime();
+        let response = runtime.initialize_response();
+        assert_eq!(response.protocol_version, ENVD_PROTOCOL_VERSION);
+        assert_eq!(response.plane, Plane::Data);
+        assert_eq!(&response.daemon_instance_id, runtime.instance_id());
+        assert_eq!(
+            response.default_cwd.as_str(),
+            runtime.config().cwd.to_str().unwrap()
+        );
+        let filesystem = response.capabilities.filesystem.expect("filesystem");
+        assert!(filesystem.write);
+        assert!(response.capabilities.process.is_some());
+        assert!(response.capabilities.job.is_some());
+        assert_eq!(response.limits.job.max_request_jobs, 64);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_read_only_daemon_refuses_writes_before_any_side_effect() {
+        let (_temp, runtime) = super::test_support::runtime_with(|config| {
+            config.read_only_fs = true;
+        });
+        let path = runtime.config().cwd.join("written");
+        let error = handle_request(
+            &runtime,
+            &RequestContext::detached(),
+            "fs/writeFile",
+            json!({"path": path.to_str().unwrap(), "data": "aGk="}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), ProtocolErrorKind::CapabilityUnavailable);
+        assert!(!path.exists());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn idle_report_holds_zero_while_a_process_runs_and_resets_on_use() {
         let (_temp, runtime) = runtime();
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        let quiet = runtime.idle_report().await;
-        assert!(quiet.is_quiescent());
+        let quiet: GetIdleResponse =
+            serde_json::from_value(call(&runtime, EnvGetIdle::NAME, json!({})).await).unwrap();
         assert!(quiet.idle_for_ms >= 30, "idle_for_ms={}", quiet.idle_for_ms);
+        assert_eq!(quiet.running_process_count, 0);
 
-        runtime.touch_activity();
-        let touched = runtime.idle_report().await;
-        assert!(
-            touched.idle_for_ms < 30,
-            "idle_for_ms={}",
-            touched.idle_for_ms
-        );
-
-        let process_id = ProcessId::new("sleeper");
-        runtime
-            .processes()
-            .start_process(StartProcessParams {
-                process_id: process_id.clone(),
-                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), "sleep 30".to_owned()],
-                cwd: None,
-                env: BTreeMap::new(),
-                secret_env: BTreeMap::new(),
-                stdin: None,
-                timeout_ms: Some(60_000),
-                tty: false,
-            })
-            .await
-            .expect("start");
+        call(
+            &runtime,
+            ProcessStart::NAME,
+            json!({
+                "processId": "sleeper",
+                "command": {"argv": ["/bin/sh", "-c", "sleep 30"], "timeoutMs": 60000},
+            }),
+        )
+        .await;
         let busy = runtime.idle_report().await;
-        assert_eq!(busy.running_processes, 1);
+        assert_eq!(busy.running_process_count, 1);
         assert_eq!(busy.idle_for_ms, 0);
-        assert!(!busy.is_quiescent());
 
-        runtime
-            .processes()
-            .terminate_process(TerminateProcessParams {
-                process_id,
-                signal: ProcessSignal::Kill,
-            })
-            .await
-            .expect("terminate");
+        call(
+            &runtime,
+            ProcessTerminate::NAME,
+            json!({"processId": "sleeper", "signal": "kill"}),
+        )
+        .await;
         for _ in 0..100 {
-            if runtime.idle_report().await.running_processes == 0 {
+            if runtime.idle_report().await.running_process_count == 0 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         let after = runtime.idle_report().await;
-        assert_eq!(after.running_processes, 0);
+        assert_eq!(after.running_process_count, 0);
         assert!(after.idle_for_ms < 5_000);
     }
 
-    #[cfg(unix)]
     #[tokio::test(flavor = "current_thread")]
-    async fn idle_report_counts_leftover_groups_without_treating_them_as_busy() {
+    async fn observation_methods_leave_the_idle_clock_alone() {
         let (_temp, runtime) = runtime();
-        let process_id = ProcessId::new("service");
-        runtime
-            .processes()
-            .start_process(StartProcessParams {
-                process_id: process_id.clone(),
-                argv: vec![
-                    "/bin/sh".to_owned(),
-                    "-c".to_owned(),
-                    "nohup sleep 30 >/dev/null 2>&1 & exit 0".to_owned(),
-                ],
-                cwd: None,
-                env: BTreeMap::new(),
-                secret_env: BTreeMap::new(),
-                stdin: None,
-                timeout_ms: Some(60_000),
-                tty: false,
-            })
-            .await
-            .expect("start");
-        let output = runtime
-            .processes()
-            .read_process(ReadProcessParams {
-                process_id: process_id.clone(),
-                after_seq: None,
-                max_bytes: None,
-                wait_ms: None,
-            })
-            .await
-            .expect("read");
-        assert!(output.exited);
-        assert_eq!(output.leftover_processes.len(), 1);
-
-        let report = runtime.idle_report().await;
-        assert_eq!(report.running_processes, 0);
-        assert_eq!(report.leftover_process_groups, 1);
-        assert!(report.is_quiescent(), "leftovers are not running work");
-
-        runtime
-            .processes()
-            .terminate_process(TerminateProcessParams {
-                process_id,
-                signal: ProcessSignal::Kill,
-            })
-            .await
-            .expect("kill leftovers");
-        for _ in 0..100 {
-            if runtime.idle_report().await.leftover_process_groups == 0 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        assert_eq!(runtime.idle_report().await.leftover_process_groups, 0);
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+        call(&runtime, EnvGetIdle::NAME, json!({})).await;
+        let cwd = runtime.config().cwd.to_str().unwrap().to_owned();
+        let _ = handle_request(
+            &runtime,
+            &RequestContext::detached(),
+            "fs/scan",
+            json!({"roots": [{"path": cwd, "maxDepth": 0}]}),
+        )
+        .await;
+        assert!(runtime.idle_report().await.idle_for_ms >= 40);
     }
 }

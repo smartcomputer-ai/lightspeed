@@ -14,7 +14,8 @@ pub use crate::session::{
 pub use blobs::{
     BlobCacheLimits, BlobCacheStats, BlobEdge, BlobGraphStore, BlobInfo, BlobSource, BlobStore,
     BlobStoreError, CachedBlobStore, ENGINE_BLOB_CONTENTS, InMemoryBlobCache, InMemoryBlobStore,
-    collect_blob_refs, ensure_harness_blobs, harness_blob_refs, record_contains_edges,
+    MAX_BLOB_RANGE_BYTES, collect_blob_refs, ensure_harness_blobs, harness_blob_refs,
+    record_contains_edges,
 };
 pub use session::{
     AdvanceSessionCheckpoint, AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession,

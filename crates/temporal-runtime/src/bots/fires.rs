@@ -363,10 +363,7 @@ pub(crate) fn exec_request_id(trigger_id: &BotTriggerId, scheduled_at_ms: i64) -
 pub(crate) fn is_terminal_job_status(status: SessionJobStatusView) -> bool {
     !matches!(
         status,
-        SessionJobStatusView::Accepted
-            | SessionJobStatusView::Queued
-            | SessionJobStatusView::Running
-            | SessionJobStatusView::CancelRequested
+        SessionJobStatusView::Queued | SessionJobStatusView::Running
     )
 }
 
@@ -808,16 +805,16 @@ async fn fetch_exec_payload(
     };
     let deadline =
         Instant::now() + Duration::from_millis(budget_ms.saturating_add(EXEC_DEADLINE_SLACK_MS));
-    let mut after_seq = None;
+    let mut after = None;
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr_tail: Vec<u8> = Vec::new();
     loop {
         let read = api
             .read_environment_jobs(EnvironmentJobReadParams {
                 jobs: vec![handle.clone()],
-                output_bytes: None,
-                after_seq,
-                include_artifacts: false,
+                max_bytes: None,
+                after,
+                tail_bytes: None,
             })
             .await
             .map_err(|error| map_job_api_error("read poll command", error))?;
@@ -842,11 +839,13 @@ async fn fetch_exec_payload(
                 }
             }
         }
-        if stdout.len() > MAX_POLL_PAYLOAD_BYTES {
+        // A gap means the environment dropped output it could not retain,
+        // so stdout can no longer be a complete payload.
+        if stdout.len() > MAX_POLL_PAYLOAD_BYTES || !entry.output_gaps.is_empty() {
             cancel_job(api, &handle).await;
             return Err(payload_too_large("stdout"));
         }
-        after_seq = Some(entry.output_next_seq);
+        after = Some(entry.output_next);
         if let Some(summary) = entry.summary
             && is_terminal_job_status(summary.status)
         {
@@ -1172,12 +1171,7 @@ mod tests {
 
     #[test]
     fn job_statuses_split_into_running_and_terminal() {
-        for status in [
-            SessionJobStatusView::Accepted,
-            SessionJobStatusView::Queued,
-            SessionJobStatusView::Running,
-            SessionJobStatusView::CancelRequested,
-        ] {
+        for status in [SessionJobStatusView::Queued, SessionJobStatusView::Running] {
             assert!(!is_terminal_job_status(status), "{status:?}");
         }
         for status in [
@@ -1187,7 +1181,6 @@ mod tests {
             SessionJobStatusView::TimedOut,
             SessionJobStatusView::DependencyFailed,
             SessionJobStatusView::Interrupted,
-            SessionJobStatusView::Lost,
         ] {
             assert!(is_terminal_job_status(status), "{status:?}");
         }

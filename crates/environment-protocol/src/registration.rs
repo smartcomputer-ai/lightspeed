@@ -1,306 +1,471 @@
-//! Key-based outbound registration: the control-channel messages an `envd`
-//! exchanges with the environment gateway after dialing out.
+//! The registration channel: the control connection an envd dials to the
+//! gateway at [`CONNECT_PATH`](crate::routes::CONNECT_PATH) to register and
+//! to be asked for reverse-dialed streams. It runs the shared JSON-RPC
+//! envelope; the daemon is the client (it dialed), the gateway the server.
+//! Both directions carry requests and notifications. It never carries
+//! data-plane messages: every stream is a separate socket the daemon dials
+//! on request.
 //!
-//! The control connection carries registration, liveness, and requests to
-//! open data connections. It never carries environment-protocol frames:
-//! every worker route is served by a separate, reverse-dialed data socket
-//! that runs the ordinary data protocol.
+//! Sequence:
+//!
+//! 1. Gateway → daemon, notification [`registration/challenge`]: always the
+//!    first frame (see [`ChallengeParams`]).
+//! 2. Daemon → gateway, request `registration/register`: signs the nonce
+//!    bound to the gateway origin. The response carries the receipt and
+//!    `heartbeatIntervalMs`; an error refuses admission and the gateway
+//!    closes the socket.
+//! 3. Gateway → daemon, request `registration/openStream`, any number of
+//!    times: the daemon dials
+//!    [`gateway_stream_url`](crate::routes::gateway_stream_url) with the
+//!    token and answers once the stream socket is upgraded, or with an
+//!    error.
+//! 4. Daemon → gateway, notification `registration/goodbye` before a
+//!    deliberate shutdown; gateway → daemon, notification
+//!    `registration/closed` before the gateway ends the session for good.
+//!
+//! **Frame rules.**
+//!
+//! - Text frames only. The gateway answers a binary frame as the envelope
+//!   says (`invalidRequest`, null id); the daemon closes the connection on
+//!   one.
+//! - An unknown request is answered with `methodNotFound`; an unknown
+//!   notification is ignored and logged. A response to an id the receiver
+//!   never sent is ignored and logged.
+//! - Before admission the gateway accepts only `registration/register`:
+//!   any other request is answered with `notInitialized` and the gateway
+//!   closes the connection; any notification closes it without an answer.
+//!   A `registration/register` after admission is `invalidRequest`, and
+//!   the connection stays open.
+//! - Before it has the register response, the daemon accepts only the
+//!   challenge (first) and that response. Any request or other
+//!   notification from the gateway in that window is a protocol violation:
+//!   the daemon closes the connection and reconnects with backoff. The
+//!   gateway sends `registration/openStream` and `registration/closed` only
+//!   after it sent the register response.
+//!
+//! **Liveness.** The gateway pings every `heartbeatIntervalMs`; the daemon
+//! answers. A peer that receives no frame for
+//! [`HEARTBEAT_MISSED_INTERVALS`](crate::limits::HEARTBEAT_MISSED_INTERVALS)
+//! intervals treats the connection as dead and closes it; the daemon then
+//! reconnects with backoff.
+//!
+//! [`registration/challenge`]: CHALLENGE_METHOD
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest as _, Sha256};
+use thiserror::Error;
 
-use crate::shared::{CURRENT_PROTOCOL_VERSION, ImplementationInfo, SecretString};
+use crate::{
+    bytes::{SecretString, hex_value},
+    error::ProtocolError,
+    handshake::ImplementationInfo,
+    ids::{ControlConnectionId, DaemonId, EnvironmentId, IncarnationId},
+    jsonrpc::decode_params,
+    metadata::{
+        DescriptiveText, DisplayName, Metadata, validate_caller_metadata, validate_display_name,
+    },
+    routes::CanonicalOrigin,
+};
 
-/// Public route an `envd` dials to register and hold its control connection.
-pub const CONNECT_PATH: &str = "/environment-gateway/connect";
+/// Method name of the frozen first frame.
+pub const CHALLENGE_METHOD: &str = "registration/challenge";
 
-/// Public route an `envd` dials, presenting a one-time token as a bearer
-/// header, to serve one worker route.
-pub const DATA_PATH: &str = "/environment-gateway/data";
+/// Domain separator of the signed registration message. Its suffix numbers
+/// the signed-message layout, not the protocol.
+pub const REGISTRATION_SIGNATURE_DOMAIN: &[u8] = b"lightspeed-envd-registration/v2";
 
-/// Domain separator the daemon signs together with the gateway's nonce, so a
-/// signature over a nonce can never be confused with any other Ed25519 use
-/// of the same key.
-pub const REGISTRATION_SIGNATURE_DOMAIN: &[u8] = b"lightspeed-envd-registration/v1";
+hex_value!(
+    /// `nonce`: the gateway's 32 random bytes for one control connection.
+    ChallengeNonce,
+    32,
+    "^[0-9a-f]{64}$"
+);
+hex_value!(
+    /// `daemonPublicKey`: a raw Ed25519 public key.
+    DaemonPublicKey,
+    32,
+    "^[0-9a-f]{64}$"
+);
+hex_value!(
+    /// `signature`: an Ed25519 signature over
+    /// [`signed_registration_message`].
+    Ed25519Signature,
+    64,
+    "^[0-9a-f]{128}$"
+);
 
-/// Bytes of the gateway's per-connection challenge nonce.
-pub const REGISTRATION_NONCE_BYTES: usize = 32;
-
-pub const MAX_DISPLAY_NAME_BYTES: usize = 128;
-pub const MAX_METADATA_ENTRIES: usize = 32;
-pub const MAX_METADATA_KEY_BYTES: usize = 64;
-pub const MAX_METADATA_VALUE_BYTES: usize = 256;
-/// Metadata keys under this prefix are written by Lightspeed only.
-pub const RESERVED_METADATA_PREFIX: &str = "lightspeed.";
-
-/// Messages the gateway sends on the control connection.
+/// `registration/challenge` params.
+///
+/// **Frozen.** This is the first frame of every control connection and the
+/// only frame a daemon of any version must parse to learn it is stale: it
+/// only ever gains fields, is decoded tolerantly (unknown members are
+/// ignored), and a receiver reads `protocolVersion` with
+/// [`challenge_protocol_version`] before decoding anything else. The whole
+/// frame is
+/// `{"jsonrpc":"2.0","method":"registration/challenge","params":{"protocolVersion":N,"nonce":"<64 hex>"}}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum GatewayControlMessage {
-    /// First frame after the upgrade. `nonce` is hex; the daemon signs
-    /// [`signed_registration_message`] of its raw bytes.
-    Challenge {
-        protocol_version: u32,
-        nonce: String,
-    },
-    /// The daemon is admitted; the receipt identifies the environment it
-    /// now serves. `heartbeatIntervalMs` tells the daemon how often the
-    /// gateway pings.
-    Accepted {
-        #[serde(flatten)]
-        receipt: RegistrationReceipt,
-        heartbeat_interval_ms: u64,
-    },
-    /// Registration failed. The gateway closes the socket after this frame.
-    Rejected {
-        code: RegistrationRejectionCode,
-        message: String,
-    },
-    /// A worker route is waiting: dial `dataUrl` with `token` as a bearer
-    /// header and run the data protocol on that socket.
-    OpenData {
-        token: SecretString,
-        data_url: String,
-    },
-}
-
-/// Messages the daemon sends on the control connection.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum DaemonControlMessage {
-    Register(RegisterParams),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
-pub struct RegisterParams {
-    #[serde(default = "default_protocol_version")]
+pub struct ChallengeParams {
+    /// The gateway's `ENVD_PROTOCOL_VERSION`.
     pub protocol_version: u32,
-    /// Required for a first-seen daemon public key; ignored for a known one.
+    pub nonce: ChallengeNonce,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum BootstrapError {
+    #[error("first frame is not JSON")]
+    NotJson,
+    #[error("first frame is not a registration/challenge notification")]
+    NotChallenge,
+    #[error("challenge carries no integer protocolVersion")]
+    NoVersion,
+}
+
+/// Read the gateway's protocol version from a first frame without
+/// decoding anything else, so a daemon of any version can tell it is stale
+/// before it fails on fields it does not know.
+pub fn challenge_protocol_version(frame: &str) -> Result<u32, BootstrapError> {
+    let value: Value = serde_json::from_str(frame).map_err(|_| BootstrapError::NotJson)?;
+    if value.get("method").and_then(Value::as_str) != Some(CHALLENGE_METHOD) {
+        return Err(BootstrapError::NotChallenge);
+    }
+    value
+        .get("params")
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+        .ok_or(BootstrapError::NoVersion)
+}
+
+/// `registration/register` params. `registrationKey`, `displayName` and
+/// `metadata` are read only at a daemon identity's first admission; a
+/// daemon sends the key until it is admitted once and never afterwards.
+///
+/// The gateway decodes them with [`RegisterParams::decode`]: build facts,
+/// a display name or metadata out of bounds refuse admission with
+/// `invalidRequest`; anything else that does not decode is
+/// `invalidParams`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegisterParams {
+    /// The daemon's `ENVD_PROTOCOL_VERSION`.
+    pub protocol_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration_key: Option<SecretString>,
-    /// Lowercase hex of the raw 32-byte Ed25519 public key.
-    pub daemon_public_key: String,
-    /// Lowercase hex of the 64-byte Ed25519 signature over
-    /// [`signed_registration_message`] of the challenge nonce.
-    pub signature: String,
+    pub daemon_public_key: DaemonPublicKey,
+    /// Over [`signed_registration_message`] of the challenge nonce and the
+    /// canonical origin of the URL the daemon dialed.
+    pub signature: Ed25519Signature,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
+    pub display_name: Option<DisplayName>,
+    #[serde(default, skip_serializing_if = "Metadata::is_empty")]
+    pub metadata: Metadata,
     pub implementation: ImplementationInfo,
 }
 
-/// What the daemon learns about the environment it serves. Written to the
-/// receipt file and logged once; contains no secret material.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegistrationReceipt {
-    pub environment_id: String,
-    pub incarnation_id: String,
-    pub daemon_id: String,
-    pub connection_id: String,
-    pub identity_mode: String,
+impl RegisterParams {
+    /// Decode `registration/register` params the way the gateway answers
+    /// them. Descriptive values that have the right shape but break their
+    /// bounds (`implementation`, `displayName`, `metadata`) are
+    /// `invalidRequest`, naming the member in the message: admission is
+    /// refused, never granted with the value dropped. Every other decode
+    /// failure is `invalidParams` naming the field.
+    pub fn decode(params: &Value) -> Result<Self, ProtocolError> {
+        if let Some(implementation) = params.get("implementation")
+            && let Some(error) = ImplementationInfo::bounds_violation(implementation)
+        {
+            return Err(ProtocolError::invalid_request(format!(
+                "implementation.{error}"
+            )));
+        }
+        if let Some(Value::String(name)) = params.get("displayName")
+            && let Err(error) = validate_display_name(name)
+        {
+            return Err(ProtocolError::invalid_request(format!(
+                "displayName: {error}"
+            )));
+        }
+        if let Some(metadata) = params.get("metadata")
+            && let Ok(entries) = BTreeMap::<String, String>::deserialize(metadata)
+            && let Err(error) = validate_caller_metadata(&entries)
+        {
+            return Err(ProtocolError::invalid_request(format!("metadata: {error}")));
+        }
+        decode_params(params)
+    }
 }
 
-/// Why a registration was refused. Terminal codes mean the daemon must not
-/// retry with the same identity and configuration; the others are transient.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `registration/register` response: the daemon is admitted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegisterResponse {
+    pub receipt: RegistrationReceipt,
+    /// How often the gateway pings; see the liveness rule.
+    pub heartbeat_interval_ms: u64,
+}
+
+/// What the daemon learns about the environment it serves. Written to the
+/// receipt file as is; contains no secret.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistrationReceipt {
+    pub environment_id: EnvironmentId,
+    pub incarnation_id: IncarnationId,
+    pub daemon_id: DaemonId,
+    /// The gateway's id for this control connection.
+    pub control_connection_id: ControlConnectionId,
+    pub identity_mode: RegistrationIdentityMode,
+    pub admission: Admission,
+}
+
+/// Registration-key policy for the daemon's environment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
-pub enum RegistrationRejectionCode {
-    UnsupportedProtocol,
-    InvalidRequest,
-    InvalidSignature,
-    InvalidRegistrationKey,
-    RegistrationKeyRevoked,
-    RegistrationKeyExpired,
-    /// A daemon identity the gateway has never seen presented no key.
-    UnknownDaemon,
+pub enum RegistrationIdentityMode {
+    /// The environment outlives disconnects.
+    Persistent,
+    /// The environment closes after it stays disconnected past its grace.
+    Ephemeral,
+}
+
+/// Whether this admission created the environment or rejoined it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub enum Admission {
+    /// First admission of this daemon identity: a new environment.
+    Created,
+    /// A known identity reconnected to its environment.
+    Reconnected,
+}
+
+/// `registration/openStream` params: the gateway asks the daemon to dial
+/// one stream.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenStreamParams {
+    /// One-time bearer token for the stream dial; short-lived.
+    pub token: SecretString,
+    pub stream: StreamSpec,
+}
+
+/// What the dialed stream carries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum StreamSpec {
+    /// The data plane, served by the daemon as on any data connection.
+    DataProtocol {},
+}
+
+/// `registration/openStream` response, sent once the stream socket is
+/// upgraded and served. A failed dial answers `unavailable`; the gateway
+/// fails the waiting route at once.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenStreamResponse {}
+
+/// `registration/goodbye` params: the daemon is stopping deliberately.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GoodbyeParams {
+    pub reason: GoodbyeReason,
+}
+
+/// Why the daemon is leaving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub enum GoodbyeReason {
+    /// `SIGTERM` or `SIGINT`.
+    Shutdown,
+}
+
+/// `registration/closed` params: the gateway ends the session for good and
+/// closes the socket after this frame. The daemon exits and does not
+/// reconnect.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClosedParams {
+    pub reason: ClosedReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<DescriptiveText>,
+}
+
+/// Why the gateway ended the session for good.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub enum ClosedReason {
+    /// Another process with this daemon identity connected; the newest
+    /// connection wins and this daemon exits with its own status naming the
+    /// shared identity.
+    Superseded,
     /// The identity's environment was closed; the identity is spent.
     EnvironmentClosed,
-    /// The identity is already bound in another universe.
-    IdentityInUse,
-    CapacityExhausted,
-    RateLimited,
-    Unavailable,
 }
 
-impl RegistrationRejectionCode {
-    pub fn is_terminal(self) -> bool {
-        !matches!(
-            self,
-            Self::CapacityExhausted | Self::RateLimited | Self::Unavailable
-        )
-    }
-}
-
-/// The bytes a daemon signs for one challenge.
-pub fn signed_registration_message(nonce: &[u8]) -> Vec<u8> {
-    let mut message = Vec::with_capacity(REGISTRATION_SIGNATURE_DOMAIN.len() + nonce.len());
+/// The bytes a daemon signs for one challenge:
+/// [`REGISTRATION_SIGNATURE_DOMAIN`] ‖ nonce ‖ sha256(origin), where
+/// `origin` is the [`canonical_origin`](crate::routes::canonical_origin) of
+/// the gateway URL the daemon dialed; the gateway verifies against the
+/// canonical origin of each public URL it is configured with. Binding the
+/// origin stops a gateway the daemon was pointed at from relaying another
+/// gateway's nonce.
+pub fn signed_registration_message(nonce: &ChallengeNonce, origin: &CanonicalOrigin) -> Vec<u8> {
+    let origin_hash = Sha256::digest(origin.as_str().as_bytes());
+    let mut message = Vec::with_capacity(REGISTRATION_SIGNATURE_DOMAIN.len() + 32 + 32);
     message.extend_from_slice(REGISTRATION_SIGNATURE_DOMAIN);
-    message.extend_from_slice(nonce);
+    message.extend_from_slice(nonce.as_bytes());
+    message.extend_from_slice(&origin_hash);
     message
-}
-
-/// Check the bounds on caller-supplied correlation metadata and display
-/// name. Metadata is descriptive only; it never selects or authenticates.
-/// Caller-supplied maps may not use the reserved prefix; stored records
-/// may, because Lightspeed annotates them itself (see
-/// [`validate_metadata_bounds`]). Sessions share this validator so a
-/// session and the environment it ran in accept the same keys.
-pub fn validate_registration_metadata(
-    display_name: Option<&str>,
-    metadata: &BTreeMap<String, String>,
-) -> Result<(), String> {
-    if let Some(name) = display_name
-        && (name.is_empty()
-            || name.len() > MAX_DISPLAY_NAME_BYTES
-            || name.chars().any(char::is_control))
-    {
-        return Err(format!(
-            "display name must be 1..={MAX_DISPLAY_NAME_BYTES} bytes without control characters"
-        ));
-    }
-    validate_metadata_bounds(metadata)?;
-    if let Some(key) = metadata
-        .keys()
-        .find(|key| key.starts_with(RESERVED_METADATA_PREFIX))
-    {
-        return Err(format!(
-            "metadata key {key:?} uses the reserved {RESERVED_METADATA_PREFIX} prefix"
-        ));
-    }
-    Ok(())
-}
-
-/// Entry count, key and value bytes, and control characters: the bounds
-/// every stored metadata map obeys, including the keys under the reserved
-/// prefix that Lightspeed writes itself.
-pub fn validate_metadata_bounds(metadata: &BTreeMap<String, String>) -> Result<(), String> {
-    if metadata.len() > MAX_METADATA_ENTRIES {
-        return Err(format!(
-            "metadata has more than {MAX_METADATA_ENTRIES} entries"
-        ));
-    }
-    for (key, value) in metadata {
-        validate_metadata_entry(key, value)?;
-    }
-    Ok(())
-}
-
-/// Key and value bytes and control characters for one entry, independent of
-/// how many entries a map may hold.
-pub fn validate_metadata_entry(key: &str, value: &str) -> Result<(), String> {
-    if key.is_empty() || key.len() > MAX_METADATA_KEY_BYTES || key.chars().any(char::is_control) {
-        return Err(format!(
-            "metadata key {key:?} must be 1..={MAX_METADATA_KEY_BYTES} bytes without control characters"
-        ));
-    }
-    if value.is_empty()
-        || value.len() > MAX_METADATA_VALUE_BYTES
-        || value.chars().any(char::is_control)
-    {
-        return Err(format!(
-            "metadata value for {key:?} must be 1..={MAX_METADATA_VALUE_BYTES} bytes without control characters"
-        ));
-    }
-    Ok(())
-}
-
-pub fn encode_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
-}
-
-pub fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    if !value.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..value.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).ok())
-        .collect()
-}
-
-fn default_protocol_version() -> u32 {
-    CURRENT_PROTOCOL_VERSION
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
-    fn control_messages_are_tagged_and_flatten_the_receipt() {
-        let accepted = GatewayControlMessage::Accepted {
-            receipt: RegistrationReceipt {
-                environment_id: "environment_a".to_owned(),
-                incarnation_id: "incarnation_a".to_owned(),
-                daemon_id: "daemon_a".to_owned(),
-                connection_id: "connection_a".to_owned(),
-                identity_mode: "ephemeral".to_owned(),
-            },
-            heartbeat_interval_ms: 30_000,
+    fn the_challenge_version_is_read_before_anything_else() {
+        let future = json!({
+            "jsonrpc": "2.0",
+            "method": CHALLENGE_METHOD,
+            "params": {"protocolVersion": 9, "nonce": 7, "newField": {"x": 1}},
+        });
+        assert_eq!(challenge_protocol_version(&future.to_string()), Ok(9));
+        assert_eq!(
+            challenge_protocol_version("{\"method\":\"other\"}"),
+            Err(BootstrapError::NotChallenge)
+        );
+        assert_eq!(
+            challenge_protocol_version("garbage"),
+            Err(BootstrapError::NotJson)
+        );
+    }
+
+    #[test]
+    fn the_challenge_decodes_tolerantly() {
+        let params: ChallengeParams = serde_json::from_value(json!({
+            "protocolVersion": 3,
+            "nonce": "00".repeat(32),
+            "addedLater": true,
+        }))
+        .unwrap();
+        assert_eq!(params.protocol_version, 3);
+    }
+
+    #[test]
+    fn crypto_values_are_canonical_hex() {
+        let key = format!("\"{}\"", "ab".repeat(32));
+        assert!(serde_json::from_str::<DaemonPublicKey>(&key).is_ok());
+        for bad in [
+            format!("\"{}\"", "AB".repeat(32)),
+            format!("\"{}\"", "ab".repeat(31)),
+            format!("\"{}\u{e9}\"", "a".repeat(62)),
+        ] {
+            assert!(
+                serde_json::from_str::<DaemonPublicKey>(&bad).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_signed_message_binds_the_origin() {
+        let nonce = ChallengeNonce::from_bytes([9; 32]);
+        let origin = |url| crate::routes::canonical_origin(url).unwrap();
+        let first = signed_registration_message(&nonce, &origin("wss://a.example/x"));
+        let second = signed_registration_message(&nonce, &origin("wss://b.example"));
+        assert_eq!(
+            first,
+            signed_registration_message(&nonce, &origin("WSS://A.example:443/y"))
+        );
+        assert!(first.starts_with(REGISTRATION_SIGNATURE_DOMAIN));
+        assert_ne!(first, second);
+        assert_eq!(first.len(), REGISTRATION_SIGNATURE_DOMAIN.len() + 64);
+    }
+
+    #[test]
+    fn stream_tokens_are_redacted_in_debug_output() {
+        let params = OpenStreamParams {
+            token: SecretString::new("secret-token"),
+            stream: StreamSpec::DataProtocol {},
         };
-        let json = serde_json::to_value(&accepted).expect("serialize");
-        assert_eq!(json["type"], "accepted");
-        assert_eq!(json["environmentId"], "environment_a");
-        assert_eq!(json["heartbeatIntervalMs"], 30_000);
-        let parsed: GatewayControlMessage = serde_json::from_value(json).expect("parse");
-        assert_eq!(parsed, accepted);
+        assert!(!format!("{params:?}").contains("secret-token"));
+        assert_eq!(
+            serde_json::to_value(&params).unwrap(),
+            json!({"token": "secret-token", "stream": {"kind": "dataProtocol"}})
+        );
+    }
 
-        let open = serde_json::json!({"type": "openData", "token": "t", "dataUrl": "wss://g/d"});
-        let parsed: GatewayControlMessage = serde_json::from_value(open).expect("parse");
-        assert!(matches!(parsed, GatewayControlMessage::OpenData { .. }));
-        assert!(!format!("{parsed:?}").contains("\"t\""));
+    fn register_params() -> Value {
+        json!({
+            "protocolVersion": 3,
+            "daemonPublicKey": "ab".repeat(32),
+            "signature": "cd".repeat(64),
+            "implementation": {"name": "lightspeed-envd", "version": "0.5.0"},
+        })
     }
 
     #[test]
-    fn rejection_codes_split_terminal_from_retryable() {
-        assert!(RegistrationRejectionCode::EnvironmentClosed.is_terminal());
-        assert!(RegistrationRejectionCode::InvalidSignature.is_terminal());
-        assert!(RegistrationRejectionCode::RegistrationKeyRevoked.is_terminal());
-        assert!(!RegistrationRejectionCode::CapacityExhausted.is_terminal());
-        assert!(!RegistrationRejectionCode::RateLimited.is_terminal());
-        assert!(!RegistrationRejectionCode::Unavailable.is_terminal());
+    fn out_of_bounds_descriptive_values_refuse_admission() {
+        assert!(RegisterParams::decode(&register_params()).is_ok());
+        let mut implementation = register_params();
+        implementation["implementation"]["version"] = json!("v\u{7}");
+        let mut name = register_params();
+        name["displayName"] = json!("x".repeat(200));
+        let mut metadata = register_params();
+        metadata["metadata"] = json!({"lightspeed.daemon": "spoofed"});
+        for params in [implementation, name, metadata] {
+            assert_eq!(
+                RegisterParams::decode(&params).unwrap_err().kind(),
+                crate::error::ProtocolErrorKind::InvalidRequest,
+                "{params}"
+            );
+        }
     }
 
     #[test]
-    fn metadata_bounds_and_reserved_prefix_are_enforced() {
-        let mut metadata = BTreeMap::new();
-        metadata.insert("harbor.trialId".to_owned(), "trial-1".to_owned());
-        assert!(validate_registration_metadata(Some("worker"), &metadata).is_ok());
-        metadata.insert("lightspeed.x".to_owned(), "y".to_owned());
-        assert!(validate_registration_metadata(None, &metadata).is_err());
-        metadata.clear();
-        metadata.insert("k".to_owned(), "a".repeat(MAX_METADATA_VALUE_BYTES + 1));
-        assert!(validate_registration_metadata(None, &metadata).is_err());
-        assert!(validate_registration_metadata(Some("bad\nname"), &BTreeMap::new()).is_err());
-        assert!(validate_registration_metadata(Some(""), &BTreeMap::new()).is_err());
+    fn other_register_decode_failures_are_invalid_params() {
+        let mut key = register_params();
+        key["daemonPublicKey"] = json!("AB".repeat(32));
+        let mut extra = register_params();
+        extra["dataUrl"] = json!("wss://elsewhere");
+        let mut shape = register_params();
+        shape["implementation"] = json!({"name": 7});
+        for params in [key, extra, shape] {
+            assert_eq!(
+                RegisterParams::decode(&params).unwrap_err().kind(),
+                crate::error::ProtocolErrorKind::InvalidParams,
+                "{params}"
+            );
+        }
     }
 
     #[test]
-    fn hex_round_trips_and_signed_message_is_domain_separated() {
-        let bytes = [0u8, 1, 0xab, 0xff];
-        assert_eq!(encode_hex(&bytes), "0001abff");
-        assert_eq!(decode_hex("0001abff").as_deref(), Some(&bytes[..]));
-        assert_eq!(decode_hex("abc"), None);
-        assert_eq!(decode_hex("zz"), None);
-        let message = signed_registration_message(&[9u8; 4]);
-        assert!(message.starts_with(REGISTRATION_SIGNATURE_DOMAIN));
-        assert!(message.ends_with(&[9u8; 4]));
+    fn fieldless_stream_kinds_reject_unknown_members() {
+        assert!(serde_json::from_value::<StreamSpec>(json!({"kind": "dataProtocol"})).is_ok());
+        assert!(
+            serde_json::from_value::<StreamSpec>(json!({"kind": "dataProtocol", "x": 1})).is_err()
+        );
     }
 }

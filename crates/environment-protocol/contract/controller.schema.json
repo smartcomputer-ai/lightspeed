@@ -1,0 +1,1324 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AbortReason": {
+      "description": "Why an operation was `aborted`.",
+      "oneOf": [
+        {
+          "const": "cancelled",
+          "description": "`$/cancelRequest` named the request.",
+          "type": "string"
+        },
+        {
+          "const": "sourceChanged",
+          "description": "A file or directory changed while it was being read.",
+          "type": "string"
+        }
+      ]
+    },
+    "AdoptTargetParams": {
+      "additionalProperties": false,
+      "description": "`target/adopt` params: take ownership of an existing provider target.\nIdempotent per owner. Requires `capabilities.adoptTarget`. A source that\nbelongs to another owner, or an owner that already holds a different\ntarget, is `failedPrecondition` (`ownerMismatch`); a source the provider\ncannot take over is `failedPrecondition` (`notAdoptable`).",
+      "properties": {
+        "owner": {
+          "$ref": "#/definitions/TargetOwner"
+        },
+        "sourceTarget": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProviderNativeRef"
+            }
+          ],
+          "description": "Provider-native reference to the existing target; the provider\ndefines its format."
+        }
+      },
+      "required": [
+        "owner",
+        "sourceTarget"
+      ],
+      "type": "object"
+    },
+    "BindingId": {
+      "description": "`bindingId` of a provider binding within a universe.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "BindingRef": {
+      "additionalProperties": false,
+      "description": "The provider binding a call is scoped to, for calls that concern no\nparticular target.",
+      "properties": {
+        "bindingId": {
+          "$ref": "#/definitions/BindingId"
+        },
+        "universeId": {
+          "$ref": "#/definitions/UniverseId"
+        }
+      },
+      "required": [
+        "universeId",
+        "bindingId"
+      ],
+      "type": "object"
+    },
+    "BusyReason": {
+      "description": "What limit a `busy` request hit.",
+      "oneOf": [
+        {
+          "const": "requestLimit",
+          "description": "The connection's concurrent request limit.",
+          "type": "string"
+        },
+        {
+          "const": "transferCapacity",
+          "description": "The daemon's limit on active transfer operations.",
+          "type": "string"
+        },
+        {
+          "const": "rateLimited",
+          "description": "A rate limit on the caller's identity.",
+          "type": "string"
+        },
+        {
+          "const": "capacityExhausted",
+          "description": "A registration key's limit on active environments.",
+          "type": "string"
+        }
+      ]
+    },
+    "Capability": {
+      "description": "A capability a request needed and the endpoint lacks.",
+      "oneOf": [
+        {
+          "const": "filesystem",
+          "description": "The `filesystem` family.",
+          "type": "string"
+        },
+        {
+          "const": "filesystemWrite",
+          "description": "`capabilities.filesystem.write`: the filesystem is writable.",
+          "type": "string"
+        },
+        {
+          "const": "process",
+          "description": "The `process` family.",
+          "type": "string"
+        },
+        {
+          "const": "processPty",
+          "description": "`capabilities.process.pty`.",
+          "type": "string"
+        },
+        {
+          "const": "job",
+          "description": "The `job` family.",
+          "type": "string"
+        },
+        {
+          "const": "adoptTarget",
+          "description": "The controller's `adoptTarget` capability.",
+          "type": "string"
+        },
+        {
+          "const": "ingress",
+          "description": "The controller's `ingress` capability.",
+          "type": "string"
+        }
+      ]
+    },
+    "CloseTargetParams": {
+      "additionalProperties": false,
+      "description": "`target/close` params: destroy the owner's target and every resource it\nholds, public ingress included. Graceful within the provider's own bound,\nthen forced. Answers `closing` until the target is gone, then `closed`;\n`closed` also when the provider holds no target for the owner.",
+      "properties": {
+        "target": {
+          "$ref": "#/definitions/TargetRef"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "ControllerCapabilities": {
+      "additionalProperties": false,
+      "description": "Optional controller methods. Calling an absent one is\n`capabilityUnavailable`.",
+      "properties": {
+        "adoptTarget": {
+          "description": "`target/adopt` is served.",
+          "type": "boolean"
+        },
+        "ingress": {
+          "description": "`ingress/ensure` and `ingress/remove` are served.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ControllerInitializeParams": {
+      "additionalProperties": false,
+      "description": "`initialize` params on the controller plane.",
+      "properties": {
+        "clientInfo": {
+          "$ref": "#/definitions/ImplementationInfo"
+        },
+        "protocolVersion": {
+          "description": "The client's `CONTROLLER_PROTOCOL_VERSION`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "clientInfo"
+      ],
+      "type": "object"
+    },
+    "ControllerInitializeResponse": {
+      "additionalProperties": false,
+      "description": "`initialize` response on the controller plane.",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/definitions/ControllerCapabilities"
+        },
+        "plane": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Plane"
+            }
+          ],
+          "description": "Always `controller`."
+        },
+        "protocolVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "routes": {
+          "$ref": "#/definitions/ControllerRoutes"
+        },
+        "serverInfo": {
+          "$ref": "#/definitions/ImplementationInfo"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "plane",
+        "serverInfo",
+        "capabilities",
+        "routes"
+      ],
+      "type": "object"
+    },
+    "ControllerRoutes": {
+      "additionalProperties": false,
+      "description": "Where Lightspeed reaches a target's data plane through this provider.",
+      "properties": {
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DataRouteBase"
+            }
+          ],
+          "description": "Base URL of the data routes. A target's data route is this base\nfollowed by\n`/{universeId}/{bindingId}/{environmentId}/{incarnationId}/{targetId}`,\neach segment percent-encoded\n(`provider_data_route`), and is\ndialed with the same bearer credential as the controller. A\ncontroller reached over `wss` must advertise a `wss` base."
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
+    "CreateTargetParams": {
+      "additionalProperties": false,
+      "description": "`target/create` params. Idempotent per owner: when the owner already\nhas a target, the provider returns its observation and applies no\ncreation policy (template deprecation, binding or image checks).",
+      "properties": {
+        "owner": {
+          "$ref": "#/definitions/TargetOwner"
+        },
+        "templateId": {
+          "$ref": "#/definitions/TemplateId"
+        }
+      },
+      "required": [
+        "owner",
+        "templateId"
+      ],
+      "type": "object"
+    },
+    "DataRouteBase": {
+      "description": "`routes.data` of a controller's `initialize`: the absolute `ws://` or\n`wss://` base URL of the provider's data routes, validated on decode and\nnever rewritten. Lowercase scheme, a host and optional port, an optional\npath that does not end with `/`, no user information, query or\nfragment, at most 2048 bytes. A controller reached over `wss` must\nadvertise a `wss` base, so the provider credential never travels in\ncleartext; the runtime checks it with\n`DataRouteBase::check_for_controller`.",
+      "maxLength": 2048,
+      "minLength": 1,
+      "pattern": "^wss?://[^/?#@\\s]+(/[^?#\\s]*[^/?#\\s])?$",
+      "type": "string"
+    },
+    "DescriptiveText": {
+      "description": "A short human-readable text: 1 to 1024 bytes without control characters\nother than line feed and tab. Never parsed.",
+      "maxLength": 1024,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "DisplayName": {
+      "description": "A display name: 1 to 128 bytes without control characters.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "EnsureIngressParams": {
+      "additionalProperties": false,
+      "description": "`ingress/ensure` params: route the template's public ingress to the\ntarget. Idempotent. A target whose template has no `publicIngress` is\n`failedPrecondition` (`ingressUnsupported`).",
+      "properties": {
+        "target": {
+          "$ref": "#/definitions/TargetRef"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "EnvironmentId": {
+      "description": "`environmentId` of a Lightspeed environment.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "EnvironmentTemplate": {
+      "additionalProperties": false,
+      "description": "A template targets are created from.",
+      "properties": {
+        "deprecated": {
+          "description": "Creates no new targets; existing targets keep working.",
+          "type": "boolean"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DescriptiveText"
+            }
+          ]
+        },
+        "displayName": {
+          "$ref": "#/definitions/DisplayName"
+        },
+        "metadata": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Metadata"
+            }
+          ],
+          "description": "Provider-specific display facts, such as an image fingerprint."
+        },
+        "publicIngress": {
+          "description": "Targets of this template can serve public ingress.",
+          "type": "boolean"
+        },
+        "resources": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TemplateResources"
+            }
+          ]
+        },
+        "templateId": {
+          "$ref": "#/definitions/TemplateId"
+        }
+      },
+      "required": [
+        "templateId",
+        "displayName"
+      ],
+      "type": "object"
+    },
+    "ErrorData": {
+      "description": "The `data` member of an error object: the kind and its typed fields.\n\nKinds without fields are empty struct variants rather than unit\nvariants: serde does not apply `deny_unknown_fields` to the unit\nvariants of an internally tagged enum, and every kind must refuse\nunknown members.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "parseError",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "invalidRequest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "methodNotFound",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ceiling": {
+              "description": "The advertised ceiling the value exceeded.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "field": {
+              "description": "Wire path of the offending field, such as `limits.maxDurationMs`.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "invalidParams",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "notInitialized",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected": {
+              "description": "The version of the peer that sent this error.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "versionMismatch",
+              "type": "string"
+            },
+            "received": {
+              "description": "The version the requester stated.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "expected",
+            "received"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "notFound",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/NotFoundReason"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "alreadyExists",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "failedPrecondition",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/PreconditionReason"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "permissionDenied",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/PermissionReason"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "capability": {
+              "$ref": "#/definitions/Capability"
+            },
+            "kind": {
+              "const": "capabilityUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "capability"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "busy",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BusyReason"
+                }
+              ]
+            },
+            "retryAfterMs": {
+              "description": "Earliest useful retry, when the server knows it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "deadlineExceeded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "expired",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "aborted",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AbortReason"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "payloadTooLarge",
+              "type": "string"
+            },
+            "limitBytes": {
+              "description": "The byte limit the payload exceeded.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "limitEntries": {
+              "description": "The entry-count limit the result exceeded.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "processFailed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "retryAfterMs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GetTargetParams": {
+      "additionalProperties": false,
+      "description": "`target/get` params. A pure read: it never creates or changes anything.\nA target that no longer exists is `notFound`.",
+      "properties": {
+        "target": {
+          "$ref": "#/definitions/TargetRef"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "ImplementationInfo": {
+      "additionalProperties": false,
+      "description": "What a peer says about its own build: `clientInfo`, `serverInfo` and a\ndaemon's registration `implementation`. Descriptive only; the protocol\nversion alone decides whether two peers can talk, and nothing here\nselects, authenticates or gates. Every field is 1 to 256 bytes without control characters,\nchecked on decode and by every constructor, so a value that would be\nrefused can never be built or sent.",
+      "properties": {
+        "gitSha": {
+          "description": "Full or abbreviated git commit of the build.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "name": {
+          "description": "Product name, such as `lightspeed-envd`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "target": {
+          "description": "Rust target triple of the build.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "version": {
+          "description": "Release version, such as `0.5.0`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "IncarnationId": {
+      "description": "`incarnationId` of one incarnation of an environment.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "IngressObservation": {
+      "additionalProperties": false,
+      "description": "Realized public ingress of a target.",
+      "properties": {
+        "endpoint": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicUrl"
+            }
+          ],
+          "description": "Public URL that reaches the target's application."
+        }
+      },
+      "required": [
+        "endpoint"
+      ],
+      "type": "object"
+    },
+    "ListTemplatesParams": {
+      "additionalProperties": false,
+      "description": "`template/list` params.",
+      "properties": {
+        "binding": {
+          "$ref": "#/definitions/BindingRef"
+        }
+      },
+      "required": [
+        "binding"
+      ],
+      "type": "object"
+    },
+    "ListTemplatesResponse": {
+      "additionalProperties": false,
+      "description": "`template/list` response.",
+      "properties": {
+        "templates": {
+          "items": {
+            "$ref": "#/definitions/EnvironmentTemplate"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "description": "Descriptive key-value metadata: at most 32 entries, keys 1 to 64 bytes outside the reserved `lightspeed.` prefix, values 1 to 256 bytes, no control characters.",
+      "maxProperties": 32,
+      "propertyNames": {
+        "maxLength": 64,
+        "minLength": 1,
+        "not": {
+          "pattern": "^lightspeed\\."
+        },
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+      },
+      "type": "object"
+    },
+    "NotFoundReason": {
+      "description": "Why a handle, path or identity was not found.",
+      "oneOf": [
+        {
+          "const": "expired",
+          "description": "Its retention window ended; a tombstone remembers it.",
+          "type": "string"
+        },
+        {
+          "const": "daemonRestarted",
+          "description": "It belonged to an earlier daemon instance (see `daemonInstanceId`).",
+          "type": "string"
+        },
+        {
+          "const": "unknownDaemon",
+          "description": "A daemon identity the gateway has never admitted presented no\nregistration key.",
+          "type": "string"
+        }
+      ]
+    },
+    "PermissionReason": {
+      "description": "Why a `permissionDenied` request was refused.",
+      "oneOf": [
+        {
+          "const": "outsideRoot",
+          "description": "The path, or a symlink it passes through, resolves outside the\ndaemon's filesystem root.",
+          "type": "string"
+        },
+        {
+          "const": "daemonState",
+          "description": "The path names or contains the daemon's state directory.",
+          "type": "string"
+        },
+        {
+          "const": "filePermission",
+          "description": "The operating system refused access.",
+          "type": "string"
+        },
+        {
+          "const": "invalidSignature",
+          "description": "The registration signature does not verify.",
+          "type": "string"
+        },
+        {
+          "const": "invalidRegistrationKey",
+          "description": "The registration key is unknown.",
+          "type": "string"
+        },
+        {
+          "const": "registrationKeyRevoked",
+          "description": "The registration key was revoked.",
+          "type": "string"
+        }
+      ]
+    },
+    "Plane": {
+      "description": "The plane a connection serves. Each `initialize` response names its\nplane, so a client that reached the wrong socket fails at the handshake.",
+      "oneOf": [
+        {
+          "const": "data",
+          "description": "envd's data plane, versioned by `ENVD_PROTOCOL_VERSION`.",
+          "type": "string"
+        },
+        {
+          "const": "controller",
+          "description": "A provider controller, versioned by `CONTROLLER_PROTOCOL_VERSION`.",
+          "type": "string"
+        },
+        {
+          "const": "registration",
+          "description": "The registration channel between a daemon and the gateway, versioned\nby `ENVD_PROTOCOL_VERSION`.",
+          "type": "string"
+        }
+      ]
+    },
+    "PowerState": {
+      "description": "Steady power state of an active target, in provider-neutral terms.",
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "Execution halted, memory retained; resuming is fast.",
+          "type": "string"
+        },
+        {
+          "const": "suspended",
+          "description": "Execution state persisted, compute released; resuming restores it.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Powered off; disks retained.",
+          "type": "string"
+        }
+      ]
+    },
+    "PreconditionReason": {
+      "description": "The state that forbids a `failedPrecondition` request.",
+      "oneOf": [
+        {
+          "const": "inputClosed",
+          "description": "The process has no open input: started without `pipe` or `pty`,\ninput already closed, or exited.",
+          "type": "string"
+        },
+        {
+          "const": "ifMatchFailed",
+          "description": "The file's current `version` differs from `ifMatch`.",
+          "type": "string"
+        },
+        {
+          "const": "createCondition",
+          "description": "`create: ifAbsent` met an existing file, or `create: ifPresent` a\nmissing one.",
+          "type": "string"
+        },
+        {
+          "const": "notEmpty",
+          "description": "The directory is not empty and `recursive` was not set.",
+          "type": "string"
+        },
+        {
+          "const": "isDirectory",
+          "description": "The path names a directory where a file is required.",
+          "type": "string"
+        },
+        {
+          "const": "notDirectory",
+          "description": "A path component or the path names a non-directory where a directory\nis required.",
+          "type": "string"
+        },
+        {
+          "const": "notRegularFile",
+          "description": "The path names a device, FIFO, socket or other non-regular file.",
+          "type": "string"
+        },
+        {
+          "const": "symlinkLoop",
+          "description": "A symlink chain loops.",
+          "type": "string"
+        },
+        {
+          "const": "symlinkRejected",
+          "description": "A capture met a symlink that leaves the selection, or one the\nselection's symlink policy rejects.",
+          "type": "string"
+        },
+        {
+          "const": "filesystemRoot",
+          "description": "The filesystem root itself cannot be replaced or removed.",
+          "type": "string"
+        },
+        {
+          "const": "crossDevice",
+          "description": "Rename across filesystems.",
+          "type": "string"
+        },
+        {
+          "const": "noSpace",
+          "description": "No space left on the device.",
+          "type": "string"
+        },
+        {
+          "const": "jobIdInUse",
+          "description": "A job id is in use by a job with another `requestId` or spec; choose\na new job id.",
+          "type": "string"
+        },
+        {
+          "const": "operationIdInUse",
+          "description": "A transfer `operationId` is in use for different input.",
+          "type": "string"
+        },
+        {
+          "const": "transferPhase",
+          "description": "The transfer action is not valid in the operation's current phase.",
+          "type": "string"
+        },
+        {
+          "const": "transferOffset",
+          "description": "A transfer write's `offset` is not the digest's next expected offset.",
+          "type": "string"
+        },
+        {
+          "const": "digestMismatch",
+          "description": "Uploaded bytes do not hash to their digest.",
+          "type": "string"
+        },
+        {
+          "const": "environmentClosed",
+          "description": "The environment is closed; its identity or target is spent.",
+          "type": "string"
+        },
+        {
+          "const": "identityInUse",
+          "description": "The daemon identity is bound to another universe.",
+          "type": "string"
+        },
+        {
+          "const": "ownerMismatch",
+          "description": "The target belongs to another owner, or (`target/adopt`) the owner\nalready holds a different target.",
+          "type": "string"
+        },
+        {
+          "const": "templateDeprecated",
+          "description": "The template is deprecated and creates no new targets.",
+          "type": "string"
+        },
+        {
+          "const": "ingressUnsupported",
+          "description": "`ingress/ensure` on a target whose template has no public ingress.",
+          "type": "string"
+        },
+        {
+          "const": "targetNotActive",
+          "description": "A power change on a target whose `phase` is not `active`\n(provisioning, closing, closed or failed).",
+          "type": "string"
+        },
+        {
+          "const": "notAdoptable",
+          "description": "`target/adopt`: the source target exists but the provider cannot take\nit over, for example an instance of a kind it does not manage.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProtocolError": {
+      "additionalProperties": false,
+      "description": "A protocol error: one kind, its typed data and a message.\n\nSerializes as an `ErrorObject`. Displays as `{kind}: {message}`.",
+      "properties": {
+        "code": {
+          "description": "Fixed by `data.kind`; see `ProtocolErrorKind::code`.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "data": {
+          "$ref": "#/definitions/ErrorData"
+        },
+        "message": {
+          "description": "Human-readable description. Never parsed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "type": "object"
+    },
+    "ProviderNativeRef": {
+      "description": "`sourceTarget` of `target/adopt`: a provider-native reference to an\nexisting target, in a format the provider defines.",
+      "maxLength": 255,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "ProviderTargetId": {
+      "description": "`targetId`: the provider's own id for a target, opaque to Lightspeed.",
+      "maxLength": 255,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "PublicUrl": {
+      "description": "A public `http://` or `https://` URL a provider reports, such as a\ntarget's ingress `endpoint`: lowercase scheme, a host and optional port,\noptional path and query, no user information or fragment, at most 2048\nbytes. Validated on decode.",
+      "maxLength": 2048,
+      "minLength": 1,
+      "pattern": "^https?://[^/?#@\\s]+([/?][^#\\s]*)?$",
+      "type": "string"
+    },
+    "RemoveIngressParams": {
+      "additionalProperties": false,
+      "description": "`ingress/remove` params: stop routing public ingress to the target.\nIdempotent.",
+      "properties": {
+        "target": {
+          "$ref": "#/definitions/TargetRef"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "SetTargetPowerParams": {
+      "additionalProperties": false,
+      "description": "`target/setPower` params: converge the target toward `power`. A target\nalready in, or moving toward, that state is observed without further\naction. Resuming may replace the underlying host process. A target whose\n`phase` is not `active` is `failedPrecondition` (`targetNotActive`); a\nstate outside `supportedPowerStates` is `invalidParams`.",
+      "properties": {
+        "power": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PowerState"
+            }
+          ],
+          "description": "One of the target's `supportedPowerStates`."
+        },
+        "target": {
+          "$ref": "#/definitions/TargetRef"
+        }
+      },
+      "required": [
+        "target",
+        "power"
+      ],
+      "type": "object"
+    },
+    "TargetObservation": {
+      "additionalProperties": false,
+      "description": "What the provider observes about a target. Every target method answers\nwith one.",
+      "properties": {
+        "displayName": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DisplayName"
+            }
+          ]
+        },
+        "ingress": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/IngressObservation"
+            }
+          ],
+          "description": "Public ingress as realized; absent when disabled."
+        },
+        "metadata": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Metadata"
+            }
+          ],
+          "description": "Provider-specific display facts."
+        },
+        "owner": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TargetOwner"
+            }
+          ],
+          "description": "Echoed from the request."
+        },
+        "state": {
+          "$ref": "#/definitions/TargetState"
+        },
+        "supportedPowerStates": {
+          "description": "Power states `target/setPower` can move this target to. Empty when\nthe provider offers no power control beyond create and close.",
+          "items": {
+            "$ref": "#/definitions/PowerState"
+          },
+          "type": "array"
+        },
+        "targetId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProviderTargetId"
+            }
+          ],
+          "description": "The provider's id for the target. Absent in two cases only: while\n`phase` is `provisioning` and the provider has not assigned an id\nyet (an asynchronous create answers before it has one; the runtime\nrecords the id from the first observation that carries it), and in a\n`closed` observation of an owner the provider holds no target for."
+        }
+      },
+      "required": [
+        "owner",
+        "state"
+      ],
+      "type": "object"
+    },
+    "TargetOwner": {
+      "additionalProperties": false,
+      "description": "The Lightspeed incarnation a target belongs to. A provider owns at most\none target per owner.",
+      "properties": {
+        "bindingId": {
+          "$ref": "#/definitions/BindingId"
+        },
+        "environmentId": {
+          "$ref": "#/definitions/EnvironmentId"
+        },
+        "incarnationId": {
+          "$ref": "#/definitions/IncarnationId"
+        },
+        "universeId": {
+          "$ref": "#/definitions/UniverseId"
+        }
+      },
+      "required": [
+        "universeId",
+        "bindingId",
+        "environmentId",
+        "incarnationId"
+      ],
+      "type": "object"
+    },
+    "TargetPhase": {
+      "description": "Lifecycle phase of a target.",
+      "oneOf": [
+        {
+          "const": "provisioning",
+          "description": "Being created; not yet usable.",
+          "type": "string"
+        },
+        {
+          "const": "active",
+          "description": "Exists; see `power`.",
+          "type": "string"
+        },
+        {
+          "const": "closing",
+          "description": "Being destroyed.",
+          "type": "string"
+        },
+        {
+          "const": "closed",
+          "description": "Gone, and nothing of it remains.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Broken beyond the provider's own recovery; see `message`.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "The provider cannot tell; see `message`.",
+          "type": "string"
+        }
+      ]
+    },
+    "TargetRef": {
+      "additionalProperties": false,
+      "description": "A reference to an existing target: its owner and, once known, its id.\nWithout `targetId` the provider resolves the owner's target itself.",
+      "properties": {
+        "owner": {
+          "$ref": "#/definitions/TargetOwner"
+        },
+        "targetId": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProviderTargetId"
+            }
+          ]
+        }
+      },
+      "required": [
+        "owner"
+      ],
+      "type": "object"
+    },
+    "TargetResponse": {
+      "additionalProperties": false,
+      "description": "Response of every target method and both ingress methods.",
+      "properties": {
+        "target": {
+          "$ref": "#/definitions/TargetObservation"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
+    },
+    "TargetState": {
+      "additionalProperties": false,
+      "description": "A target's state on two axes: lifecycle `phase`, and `power` while\nactive.",
+      "properties": {
+        "daemonReady": {
+          "description": "envd answers on the target's data route (running targets only).",
+          "type": "boolean"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DescriptiveText"
+            }
+          ],
+          "description": "Why the target is `failed` or `unknown`, or what a transition waits\nfor. Providers build it with\n`DescriptiveText::lossy` from whatever their backend reports."
+        },
+        "phase": {
+          "$ref": "#/definitions/TargetPhase"
+        },
+        "power": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PowerState"
+            }
+          ],
+          "description": "Present exactly when `phase` is `active`."
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "type": "object"
+    },
+    "TemplateId": {
+      "description": "`templateId`: the provider's own id for a template.",
+      "maxLength": 255,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "TemplateResources": {
+      "additionalProperties": false,
+      "description": "Compute a template's targets get, in provider-neutral units. Each\nfield is absent when the provider does not fix it.",
+      "properties": {
+        "diskBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memoryBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vcpus": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "UniverseId": {
+      "description": "`universeId` of a Lightspeed universe.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    }
+  },
+  "description": "Every wire type of the controller plane, protocol version 3.",
+  "title": "Lightspeed environment controller plane"
+}

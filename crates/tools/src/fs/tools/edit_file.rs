@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ToolResult,
-    fs::{FsError, FsPath, FsToolContext},
+    fs::{FsError, FsPath, FsToolContext, WriteOptions},
 };
 
 use super::{invalid_request, resolve_path};
@@ -35,8 +35,8 @@ pub async fn invoke_edit_file(
     }
 
     let resolved_path = resolve_path(ctx, &args.path)?;
-    let contents = ctx.fs.read_file(&resolved_path).await?;
-    let contents = String::from_utf8(contents).map_err(FsError::invalid_data)?;
+    let read = ctx.fs.read_file_versioned(&resolved_path).await?;
+    let contents = String::from_utf8(read.bytes).map_err(FsError::invalid_data)?;
     let replacements = contents.matches(&args.old_string).count();
 
     if replacements == 0 {
@@ -60,7 +60,17 @@ pub async fn invoke_edit_file(
     };
     let bytes = updated.into_bytes();
     let bytes_written = bytes.len();
-    ctx.fs.write_file(&resolved_path, bytes).await?;
+    // Conditional on the version read: a concurrent change is a conflict,
+    // never silently overwritten.
+    ctx.fs
+        .write_file_with(
+            &resolved_path,
+            bytes,
+            WriteOptions {
+                if_match: read.version,
+            },
+        )
+        .await?;
 
     Ok(EditFileResult {
         path: args.path,

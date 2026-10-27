@@ -8,10 +8,13 @@ use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use async_trait::async_trait;
 use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
-pub use environment_protocol::control::targets::PowerState;
+pub use environment_protocol::control::target::PowerState;
 use environment_protocol::{
-    control::targets::EnvironmentTemplate,
-    shared::{EnvironmentTransport, ProviderTargetId},
+    control::template::EnvironmentTemplate,
+    handshake::ImplementationInfo,
+    ids::{ProviderTargetId, validate_opaque_id},
+    metadata::{DescriptiveText, validate_descriptive_text, validate_stored_metadata},
+    routes::DataRouteBase,
 };
 pub use harness::EnvironmentId;
 use harness::{StringIdError, validate_general_string_id};
@@ -186,31 +189,32 @@ pub enum EnvironmentRegistryError {
     Store { message: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentConnectionSpec {
-    pub endpoint: String,
-    pub transport: EnvironmentTransport,
-}
-
-impl EnvironmentConnectionSpec {
-    pub fn new(endpoint: impl Into<String>, transport: EnvironmentTransport) -> Self {
-        Self {
-            endpoint: endpoint.into(),
-            transport,
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
-        validate_endpoint("provider controller endpoint", &self.endpoint)
-    }
+/// Optional controller methods a provider's controller advertised in its
+/// last successful `initialize`. Calls and API requests that need an absent
+/// feature are refused before they reach the provider.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ControllerFeatures {
+    /// `target/adopt` is served.
+    pub adopt_target: bool,
+    /// `ingress/ensure` and `ingress/remove` are served.
+    pub ingress: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentProviderRecord {
     pub provider_id: EnvironmentProviderId,
     pub display_name: Option<String>,
-    pub controller_connection: EnvironmentConnectionSpec,
+    /// Where Lightspeed dials the provider's controller.
+    pub controller_endpoint: EnvironmentEndpoint,
     pub metadata: BTreeMap<String, String>,
+    /// Recorded at the controller's last successful `initialize`, together
+    /// with `data_route_base`; absent until then and after the endpoint
+    /// changes.
+    pub controller_features: Option<ControllerFeatures>,
+    /// Base URL of the provider's data routes as its controller advertised
+    /// it (`routes.data`). The gateway builds every target's data route from
+    /// it; it is never derived from the controller endpoint.
+    pub data_route_base: Option<DataRouteBase>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -218,36 +222,91 @@ pub struct EnvironmentProviderRecord {
 impl EnvironmentProviderRecord {
     pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
         validate_nonempty_optional("display_name", self.display_name.as_deref())?;
-        self.controller_connection.validate()?;
         validate_metadata(&self.metadata)?;
         validate_timestamps(self.created_at_ms, self.updated_at_ms)?;
+        if self.controller_features.is_some() != self.data_route_base.is_some() {
+            return invalid("controller features and data route base are recorded together");
+        }
         Ok(())
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Register or replace a provider. The provider credential is write-only:
+/// the store keeps it sealed and hands it out only through
+/// [`EnvironmentProviderStore::read_provider_credential`].
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PutEnvironmentProvider {
     pub provider_id: EnvironmentProviderId,
     pub display_name: Option<String>,
-    pub controller_connection: EnvironmentConnectionSpec,
+    pub controller_endpoint: EnvironmentEndpoint,
     pub metadata: BTreeMap<String, String>,
+    /// The bearer credential Lightspeed presents on the controller and data
+    /// routes. Required for a new provider; `None` keeps the stored one.
+    pub credential: Option<SecretValue>,
     pub updated_at_ms: i64,
 }
 
 impl PutEnvironmentProvider {
-    pub fn into_record(self) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+    /// The record this put writes for a provider whose current record is
+    /// `existing`: the creation time is kept, and the recorded controller
+    /// facts survive only while the endpoint stays the same.
+    pub fn into_record(
+        self,
+        existing: Option<&EnvironmentProviderRecord>,
+    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
         validate_nonnegative_i64(self.updated_at_ms, "updated_at_ms")?;
+        if let Some(credential) = &self.credential {
+            validate_provider_credential(credential)?;
+        } else if existing.is_none() {
+            return invalid("a new environment provider requires a credential");
+        }
+        let kept = existing.filter(|record| record.controller_endpoint == self.controller_endpoint);
+        let created_at_ms = existing.map_or(self.updated_at_ms, |record| record.created_at_ms);
         let record = EnvironmentProviderRecord {
             provider_id: self.provider_id,
             display_name: self.display_name,
-            controller_connection: self.controller_connection,
+            controller_endpoint: self.controller_endpoint,
             metadata: self.metadata,
-            created_at_ms: self.updated_at_ms,
-            updated_at_ms: self.updated_at_ms,
+            controller_features: kept.and_then(|record| record.controller_features),
+            data_route_base: kept.and_then(|record| record.data_route_base.clone()),
+            created_at_ms,
+            updated_at_ms: self.updated_at_ms.max(created_at_ms),
         };
         record.validate()?;
         Ok(record)
     }
+}
+
+/// Longest accepted provider credential, in bytes.
+pub const PROVIDER_CREDENTIAL_MAX_BYTES: usize = 4096;
+
+/// A provider credential travels as an HTTP bearer token: 1 to
+/// [`PROVIDER_CREDENTIAL_MAX_BYTES`] bytes of visible ASCII.
+pub fn validate_provider_credential(
+    credential: &SecretValue,
+) -> Result<(), EnvironmentRegistryError> {
+    let value = credential.expose();
+    if value.is_empty()
+        || value.len() > PROVIDER_CREDENTIAL_MAX_BYTES
+        || !value.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return invalid(format!(
+            "provider credential must be 1..={PROVIDER_CREDENTIAL_MAX_BYTES} bytes of visible ASCII"
+        ));
+    }
+    Ok(())
+}
+
+/// What a controller advertised at a successful `initialize`. Written only
+/// while the provider is still registered at `controller_endpoint`, so an
+/// `initialize` against an endpoint the operator has since replaced cannot
+/// overwrite the new endpoint's facts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordProviderController {
+    pub provider_id: EnvironmentProviderId,
+    pub controller_endpoint: EnvironmentEndpoint,
+    pub features: ControllerFeatures,
+    pub data_route_base: DataRouteBase,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,9 +389,8 @@ pub enum EnvironmentSource {
         provider_id: EnvironmentProviderId,
         binding_id: EnvironmentProviderBindingId,
     },
-    External {
-        connection: EnvironmentConnectionSpec,
-    },
+    /// An `envd` Lightspeed dials directly at a fixed endpoint.
+    External { endpoint: EnvironmentEndpoint },
     /// An `envd` that dialed the gateway outbound and was admitted by a
     /// registration key. The daemon public key is the identity: one key
     /// maps to at most one environment in the deployment, ever, so a closed
@@ -420,6 +478,12 @@ impl EnvironmentStatus {
     /// out of.
     pub fn is_powered_down(self) -> bool {
         matches!(self, Self::Paused | Self::Suspended | Self::Offline)
+    }
+
+    /// True once a close was accepted: no observation may change the status
+    /// any more except the close's own completion.
+    pub fn is_closing_or_closed(self) -> bool {
+        matches!(self, Self::Closing | Self::Closed)
     }
 }
 
@@ -546,15 +610,63 @@ pub struct EnvironmentRecord {
     /// daemon's idle report.
     pub idle_policy: Option<EnvironmentIdlePolicy>,
     pub incarnation: EnvironmentIncarnationRecord,
+    /// Lightspeed-owned public ingress intent. The lifecycle reconciler
+    /// converges the provider target toward it while the environment is
+    /// ready; the realized endpoint is `public_endpoint`.
     pub public_ingress_enabled: bool,
+    /// The public endpoint the provider last reported realized. It can lag
+    /// the intent in either direction while the reconciler converges.
     pub public_endpoint: Option<String>,
     pub metadata: BTreeMap<String, String>,
     /// Registered environments only: when the gateway last saw the daemon's
     /// control connection (connect, heartbeat). A stale stamp under `Ready`
     /// means the gateway stopped without recording the disconnect.
     pub last_seen_at_ms: Option<i64>,
+    /// Why the environment failed, or the latest error while its lifecycle
+    /// keeps retrying. Cleared once an observation reaches a steady state.
+    pub lifecycle_error: Option<EnvironmentLifecycleError>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+/// The latest lifecycle error of an environment and how long errors have
+/// persisted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentLifecycleError {
+    /// 1 to 1024 bytes without control characters other than line feed and
+    /// tab.
+    pub message: String,
+    /// When the current run of errors began: the first error recorded since
+    /// the environment was last steady.
+    pub first_at_ms: i64,
+    /// When `message` was recorded.
+    pub last_at_ms: i64,
+}
+
+impl EnvironmentLifecycleError {
+    /// The error recorded at `at_ms`, continuing the run of `previous`.
+    /// `message` is cleaned and cut to the stored bound.
+    pub fn record(previous: Option<&Self>, message: &str, at_ms: i64) -> Self {
+        let message = DescriptiveText::lossy(message)
+            .map(DescriptiveText::into_string)
+            .unwrap_or_else(|| "unspecified lifecycle error".to_owned());
+        let first_at_ms = previous.map_or(at_ms, |previous| previous.first_at_ms.min(at_ms));
+        Self {
+            message,
+            first_at_ms,
+            last_at_ms: at_ms.max(first_at_ms),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EnvironmentRegistryError> {
+        validate_descriptive_text(&self.message)
+            .map_err(|error| invalid_error(format!("lifecycle error message: {error}")))?;
+        validate_nonnegative_i64(self.first_at_ms, "lifecycle_error.first_at_ms")?;
+        if self.last_at_ms < self.first_at_ms {
+            return invalid("lifecycle_error.last_at_ms must be >= first_at_ms");
+        }
+        Ok(())
+    }
 }
 
 impl EnvironmentRecord {
@@ -591,6 +703,36 @@ impl EnvironmentRecord {
                 .is_some_and(|observed| observed != self.desired_power)
     }
 
+    /// True for a ready provisioned environment whose realized public
+    /// endpoint does not match its ingress intent yet.
+    pub fn ingress_diverges(&self) -> bool {
+        matches!(self.source, EnvironmentSource::Provisioned { .. })
+            && self.status == EnvironmentStatus::Ready
+            && self.public_ingress_enabled != self.public_endpoint.is_some()
+    }
+
+    /// True for a provisioned environment at rest in a power state whose
+    /// provider target is recorded: only a periodic observation notices a
+    /// target that changed or vanished out of band.
+    pub fn is_steady_provisioned(&self) -> bool {
+        matches!(self.source, EnvironmentSource::Provisioned { .. })
+            && self.status.power_state().is_some()
+            && self.incarnation.provider_target_id.is_some()
+    }
+
+    /// Whether a reconcile pass of `scope` visits this environment.
+    pub fn needs_reconcile(&self, scope: ReconcileScope) -> bool {
+        matches!(
+            self.status,
+            EnvironmentStatus::Provisioning
+                | EnvironmentStatus::Booting
+                | EnvironmentStatus::Closing
+                | EnvironmentStatus::Unknown
+        ) || self.power_diverges()
+            || self.ingress_diverges()
+            || (scope == ReconcileScope::WithSteady && self.is_steady_provisioned())
+    }
+
     pub fn provider_id(&self) -> Option<&EnvironmentProviderId> {
         self.source.provider_id()
     }
@@ -615,10 +757,7 @@ impl EnvironmentRecord {
         if let Some(policy) = &self.idle_policy {
             policy.validate()?;
         }
-        if self.public_ingress_enabled != self.public_endpoint.is_some() {
-            return invalid("public ingress requires exactly one public endpoint when enabled");
-        }
-        if self.public_ingress_enabled
+        if (self.public_ingress_enabled || self.public_endpoint.is_some())
             && !matches!(self.source, EnvironmentSource::Provisioned { .. })
         {
             return invalid("only provisioned environments can have provider-managed ingress");
@@ -629,8 +768,8 @@ impl EnvironmentRecord {
         if let Some(seen) = self.last_seen_at_ms {
             validate_nonnegative_i64(seen, "last_seen_at_ms")?;
         }
-        if let Some(target_id) = &self.incarnation.provider_target_id {
-            validate_provider_target_id(target_id)?;
+        if let Some(error) = &self.lifecycle_error {
+            error.validate()?;
         }
         match &self.source {
             EnvironmentSource::Provisioned { .. } => {
@@ -644,18 +783,11 @@ impl EnvironmentRecord {
                         "provisioned incarnation requires exactly one template or adoption source",
                     );
                 }
-                if let Some(source) = self.incarnation.adoption_source_target.as_deref()
-                    && (source.is_empty()
-                        || source.len() > 255
-                        || source.chars().any(char::is_control))
-                {
-                    return invalid(
-                        "adoption_source_target must be non-empty, at most 255 bytes, and contain no control characters",
-                    );
+                if let Some(source) = self.incarnation.adoption_source_target.as_deref() {
+                    validate_adoption_source(source)?;
                 }
             }
-            EnvironmentSource::External { connection } => {
-                connection.validate()?;
+            EnvironmentSource::External { .. } => {
                 self.validate_no_provider_linkage("external")?;
             }
             EnvironmentSource::Registered {
@@ -663,10 +795,8 @@ impl EnvironmentRecord {
                 daemon_public_key,
                 ..
             } => {
-                validate_daemon_public_key(daemon_public_key)?;
-                if daemon_id
-                    != &EnvironmentDaemonId::from_public_key(&decode_hex(daemon_public_key)?)
-                {
+                let public_key = parse_daemon_public_key(daemon_public_key)?;
+                if daemon_id != &EnvironmentDaemonId::from_public_key(public_key.as_bytes()) {
                     return invalid("registered daemon id does not match its public key");
                 }
                 if self.request_id != EnvironmentProvisionRequestId::for_daemon(daemon_id) {
@@ -931,10 +1061,8 @@ pub struct CreateRegisteredEnvironment {
 
 impl CreateRegisteredEnvironment {
     pub fn daemon_id(&self) -> Result<EnvironmentDaemonId, EnvironmentRegistryError> {
-        validate_daemon_public_key(&self.daemon_public_key)?;
-        Ok(EnvironmentDaemonId::from_public_key(&decode_hex(
-            &self.daemon_public_key,
-        )?))
+        let public_key = parse_daemon_public_key(&self.daemon_public_key)?;
+        Ok(EnvironmentDaemonId::from_public_key(public_key.as_bytes()))
     }
 }
 
@@ -963,32 +1091,30 @@ pub struct ObserveRegisteredEnvironment {
     pub metadata: BTreeMap<String, String>,
 }
 
-/// Metadata keys the gateway writes about the daemon serving a registered
-/// environment. They carry the reserved prefix, so a daemon cannot set them.
+/// Metadata keys Lightspeed writes about the daemon serving an environment.
+/// They carry the reserved prefix, so a caller cannot set them.
 pub const ENVD_VERSION_METADATA_KEY: &str = "lightspeed.envd.version";
 pub const ENVD_GIT_SHA_METADATA_KEY: &str = "lightspeed.envd.gitSha";
 pub const ENVD_PROTOCOL_VERSION_METADATA_KEY: &str = "lightspeed.envd.protocolVersion";
 
-/// What the gateway learned about a daemon's build when it registered or
-/// reconnected. Recorded on the environment row at every admission so an
-/// operator sees which build serves the environment. Never consulted for
-/// admission: the protocol version alone decides that, and this only
-/// records which number the admitted daemon spoke.
+/// What Lightspeed learned about the daemon serving an environment: from
+/// `registration/register` for a registered daemon, from the data-plane
+/// `initialize` at the Ready transition for a provisioned one. Recorded on
+/// the environment row so an operator sees which build serves it, and which
+/// protocol version a mismatched daemon spoke. Never consulted for
+/// admission: the protocol version alone decides that.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RegisteredDaemonBuild {
+pub struct DaemonBuild {
     pub version: Option<String>,
     pub git_sha: Option<String>,
     pub protocol_version: u32,
 }
 
-impl RegisteredDaemonBuild {
-    pub fn from_registration(
-        implementation: &environment_protocol::shared::ImplementationInfo,
-        protocol_version: u32,
-    ) -> Self {
+impl DaemonBuild {
+    pub fn from_implementation(implementation: &ImplementationInfo, protocol_version: u32) -> Self {
         Self {
-            version: implementation.version.clone(),
-            git_sha: implementation.git_sha.clone(),
+            version: implementation.version().map(str::to_owned),
+            git_sha: implementation.git_sha().map(str::to_owned),
             protocol_version,
         }
     }
@@ -1041,10 +1167,183 @@ pub struct CreateExternalEnvironment {
     pub request_id: EnvironmentProvisionRequestId,
     pub environment_id: EnvironmentId,
     pub incarnation_id: EnvironmentIncarnationId,
-    pub connection: EnvironmentConnectionSpec,
+    pub endpoint: EnvironmentEndpoint,
     pub display_name: Option<String>,
     pub metadata: BTreeMap<String, String>,
     pub created_at_ms: i64,
+}
+
+impl CreateEnvironment {
+    /// The validated record this create inserts for a binding of
+    /// `provider_id`.
+    pub fn record(
+        &self,
+        provider_id: EnvironmentProviderId,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let record = new_record(
+            self.environment_id.clone(),
+            self.request_id.clone(),
+            EnvironmentSource::Provisioned {
+                provider_id,
+                binding_id: self.binding_id.clone(),
+            },
+            self.display_name.clone(),
+            EnvironmentStatus::Provisioning,
+            EnvironmentIncarnationRecord {
+                provision_request_id: Some(self.request_id.clone()),
+                template_id: Some(self.template_id.clone()),
+                ..new_incarnation(self.incarnation_id.clone(), self.created_at_ms)
+            },
+            self.metadata.clone(),
+            self.created_at_ms,
+        );
+        let record = EnvironmentRecord {
+            idle_policy: self.idle_policy.clone(),
+            ..record
+        };
+        record.validate()?;
+        Ok(record)
+    }
+}
+
+impl AdoptEnvironment {
+    /// The validated record this adoption inserts for a binding of
+    /// `provider_id`.
+    pub fn record(
+        &self,
+        provider_id: EnvironmentProviderId,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        validate_adoption_source(&self.source_target)?;
+        let record = new_record(
+            self.environment_id.clone(),
+            self.request_id.clone(),
+            EnvironmentSource::Provisioned {
+                provider_id,
+                binding_id: self.binding_id.clone(),
+            },
+            self.display_name.clone(),
+            EnvironmentStatus::Provisioning,
+            EnvironmentIncarnationRecord {
+                provision_request_id: Some(self.request_id.clone()),
+                adoption_source_target: Some(self.source_target.clone()),
+                ..new_incarnation(self.incarnation_id.clone(), self.created_at_ms)
+            },
+            self.metadata.clone(),
+            self.created_at_ms,
+        );
+        record.validate()?;
+        Ok(record)
+    }
+}
+
+impl CreateExternalEnvironment {
+    /// The validated record this create inserts.
+    pub fn record(&self) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let record = new_record(
+            self.environment_id.clone(),
+            self.request_id.clone(),
+            EnvironmentSource::External {
+                endpoint: self.endpoint.clone(),
+            },
+            self.display_name.clone(),
+            EnvironmentStatus::Ready,
+            new_incarnation(self.incarnation_id.clone(), self.created_at_ms),
+            self.metadata.clone(),
+            self.created_at_ms,
+        );
+        record.validate()?;
+        Ok(record)
+    }
+}
+
+impl CreateRegisteredEnvironment {
+    /// The validated record this admission inserts under `key`.
+    pub fn record(
+        &self,
+        key: &EnvironmentRegistrationKeyRecord,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let daemon_id = self.daemon_id()?;
+        let record = new_record(
+            self.environment_id.clone(),
+            EnvironmentProvisionRequestId::for_daemon(&daemon_id),
+            EnvironmentSource::Registered {
+                registration_key_id: key.registration_key_id.clone(),
+                daemon_id,
+                daemon_public_key: self.daemon_public_key.clone(),
+                identity_mode: key.identity_mode,
+            },
+            self.display_name.clone(),
+            EnvironmentStatus::Ready,
+            new_incarnation(self.incarnation_id.clone(), self.created_at_ms),
+            self.metadata.clone(),
+            self.created_at_ms,
+        );
+        let record = EnvironmentRecord {
+            last_seen_at_ms: Some(self.created_at_ms),
+            ..record
+        };
+        record.validate()?;
+        Ok(record)
+    }
+}
+
+fn new_incarnation(
+    incarnation_id: EnvironmentIncarnationId,
+    created_at_ms: i64,
+) -> EnvironmentIncarnationRecord {
+    EnvironmentIncarnationRecord {
+        incarnation_id,
+        provision_request_id: None,
+        provider_target_id: None,
+        template_id: None,
+        adoption_source_target: None,
+        power_states: Vec::new(),
+        created_at_ms,
+        updated_at_ms: created_at_ms,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn new_record(
+    environment_id: EnvironmentId,
+    request_id: EnvironmentProvisionRequestId,
+    source: EnvironmentSource,
+    display_name: Option<String>,
+    status: EnvironmentStatus,
+    incarnation: EnvironmentIncarnationRecord,
+    metadata: BTreeMap<String, String>,
+    created_at_ms: i64,
+) -> EnvironmentRecord {
+    EnvironmentRecord {
+        environment_id,
+        request_id,
+        source,
+        display_name,
+        status,
+        desired_power: PowerState::Running,
+        idle_policy: None,
+        incarnation,
+        public_ingress_enabled: false,
+        public_endpoint: None,
+        metadata,
+        last_seen_at_ms: None,
+        lifecycle_error: None,
+        created_at_ms,
+        updated_at_ms: created_at_ms,
+    }
+}
+
+/// Which environments a lifecycle reconcile pass visits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReconcileScope {
+    /// Environments with convergence pending: provisioning, booting,
+    /// closing or unknown, a power state that diverges from the intent, or
+    /// a ready environment whose public endpoint does not match its
+    /// ingress intent.
+    Converging,
+    /// Those plus every steady provisioned environment with a recorded
+    /// target, observed on a slower cadence.
+    WithSteady,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1059,14 +1358,64 @@ pub struct ListEnvironments {
     pub metadata: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A provider observation of a provisioned environment's target. The target
+/// id and power states are recorded whatever the environment's status, so a
+/// close that raced the first create can still address the target. The
+/// status, the daemon build and the clearing of `lifecycle_error` apply only
+/// while the environment is not closing or closed: a close is never
+/// overwritten by an observation that was in flight when it was accepted.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObserveProvisionedEnvironment {
     pub environment_id: EnvironmentId,
-    pub provider_target_id: ProviderTargetId,
+    /// Recorded when present; absent while an asynchronous provider has not
+    /// assigned one yet, which keeps the recorded id. A different id than
+    /// the recorded one is refused.
+    pub provider_target_id: Option<ProviderTargetId>,
     pub status: EnvironmentStatus,
     /// Provider-reported supported power states for this target.
     pub power_states: Vec<PowerState>,
+    /// The daemon found by the data-plane `initialize` of a Ready
+    /// transition.
+    pub daemon_build: Option<DaemonBuild>,
     pub observed_at_ms: i64,
+}
+
+impl ObserveProvisionedEnvironment {
+    /// Apply this observation to `record`. Stale observations (older than
+    /// the incarnation's last update) leave it unchanged.
+    pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<(), EnvironmentRegistryError> {
+        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
+        if !matches!(record.source, EnvironmentSource::Provisioned { .. }) {
+            return invalid("provider observations apply only to provisioned environments");
+        }
+        if self.observed_at_ms < record.incarnation.updated_at_ms {
+            return Ok(());
+        }
+        if let (Some(recorded), Some(observed)) = (
+            record.incarnation.provider_target_id.as_ref(),
+            self.provider_target_id.as_ref(),
+        ) && recorded != observed
+        {
+            return invalid("provider target conflicts with current incarnation");
+        }
+        if let Some(target_id) = &self.provider_target_id {
+            record.incarnation.provider_target_id = Some(target_id.clone());
+        }
+        record.incarnation.power_states = self.power_states.clone();
+        record.incarnation.updated_at_ms = self.observed_at_ms;
+        if record.status.is_closing_or_closed() {
+            return Ok(());
+        }
+        record.status = self.status;
+        if let Some(build) = &self.daemon_build {
+            record.metadata.extend(build.metadata());
+        }
+        if self.status.power_state().is_some() {
+            record.lifecycle_error = None;
+        }
+        record.updated_at_ms = record.updated_at_ms.max(self.observed_at_ms);
+        Ok(())
+    }
 }
 
 /// Set the Lightspeed-owned power intent. Rejected for external, closing,
@@ -1086,11 +1435,64 @@ pub struct SetEnvironmentIdlePolicy {
     pub updated_at_ms: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Move an environment to `failed` with `message` as its lifecycle error.
+/// A closing or closed environment is left as it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailEnvironmentLifecycle {
     pub environment_id: EnvironmentId,
     pub message: String,
+    /// The daemon whose build made the environment unusable, such as one
+    /// that speaks another protocol version.
+    pub daemon_build: Option<DaemonBuild>,
     pub observed_at_ms: i64,
+}
+
+impl FailEnvironmentLifecycle {
+    pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<(), EnvironmentRegistryError> {
+        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
+        if record.status.is_closing_or_closed() {
+            return Ok(());
+        }
+        record.status = EnvironmentStatus::Failed;
+        record.lifecycle_error = Some(EnvironmentLifecycleError::record(
+            record.lifecycle_error.as_ref(),
+            &self.message,
+            self.observed_at_ms,
+        ));
+        if let Some(build) = &self.daemon_build {
+            record.metadata.extend(build.metadata());
+        }
+        record.incarnation.updated_at_ms =
+            record.incarnation.updated_at_ms.max(self.observed_at_ms);
+        record.updated_at_ms = record.updated_at_ms.max(self.observed_at_ms);
+        Ok(())
+    }
+}
+
+/// Record a lifecycle error the reconciler will retry past, without
+/// changing the environment's status. A closed environment is left as it
+/// is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordEnvironmentLifecycleError {
+    pub environment_id: EnvironmentId,
+    pub message: String,
+    pub observed_at_ms: i64,
+}
+
+impl RecordEnvironmentLifecycleError {
+    pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<(), EnvironmentRegistryError> {
+        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
+        if record.status == EnvironmentStatus::Closed {
+            return Ok(());
+        }
+        record.lifecycle_error = Some(EnvironmentLifecycleError::record(
+            record.lifecycle_error.as_ref(),
+            &self.message,
+            self.observed_at_ms,
+        ));
+        record.updated_at_ms = record.updated_at_ms.max(self.observed_at_ms);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1105,12 +1507,40 @@ pub struct FinishCloseEnvironment {
     pub observed_at_ms: i64,
 }
 
+/// Record the public ingress intent of a provisioned environment; the
+/// lifecycle reconciler converges the provider toward it. Enabling is
+/// refused for a closing or closed environment.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetEnvironmentIngress {
     pub environment_id: EnvironmentId,
     pub enabled: bool,
-    pub public_endpoint: Option<String>,
     pub updated_at_ms: i64,
+}
+
+/// Record the public endpoint a provider observation reports realized,
+/// `None` when the target has no public ingress. A closing or closed
+/// environment is left as it is.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordEnvironmentIngress {
+    pub environment_id: EnvironmentId,
+    pub public_endpoint: Option<String>,
+    pub observed_at_ms: i64,
+}
+
+impl RecordEnvironmentIngress {
+    pub fn apply(&self, record: &mut EnvironmentRecord) -> Result<(), EnvironmentRegistryError> {
+        validate_nonnegative_i64(self.observed_at_ms, "observed_at_ms")?;
+        validate_nonempty_optional("public_endpoint", self.public_endpoint.as_deref())?;
+        if !matches!(record.source, EnvironmentSource::Provisioned { .. }) {
+            return invalid("provider-managed ingress requires a provisioned environment");
+        }
+        if record.status.is_closing_or_closed() {
+            return Ok(());
+        }
+        record.public_endpoint = self.public_endpoint.clone();
+        record.updated_at_ms = record.updated_at_ms.max(self.observed_at_ms);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1171,6 +1601,18 @@ pub trait EnvironmentProviderStore: Send + Sync {
     async fn read_provider(
         &self,
         provider_id: &EnvironmentProviderId,
+    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
+    /// The provider's bearer credential, unsealed.
+    async fn read_provider_credential(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<SecretValue, EnvironmentRegistryError>;
+    /// Record what the controller advertised at a successful `initialize`.
+    /// Returns the record unchanged when the provider has moved to another
+    /// endpoint since.
+    async fn record_provider_controller(
+        &self,
+        request: RecordProviderController,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError>;
     async fn list_providers(
         &self,
@@ -1246,12 +1688,17 @@ pub trait EnvironmentStore: Send + Sync {
         &self,
         request_id: &EnvironmentProvisionRequestId,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    /// Rows that no longer decode are left out and logged by the store, so
+    /// one bad row never hides the others; every list method does the same.
     async fn list_environments(
         &self,
         request: ListEnvironments,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError>;
+    /// The environments a reconcile pass of `scope` visits; see
+    /// [`EnvironmentRecord::needs_reconcile`].
     async fn list_environments_needing_reconcile(
         &self,
+        scope: ReconcileScope,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError>;
     async fn observe_provisioned_environment(
         &self,
@@ -1260,6 +1707,10 @@ pub trait EnvironmentStore: Send + Sync {
     async fn fail_environment_lifecycle(
         &self,
         request: FailEnvironmentLifecycle,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn record_environment_lifecycle_error(
+        &self,
+        request: RecordEnvironmentLifecycleError,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn begin_close_environment(
         &self,
@@ -1272,6 +1723,10 @@ pub trait EnvironmentStore: Send + Sync {
     async fn set_environment_ingress(
         &self,
         request: SetEnvironmentIngress,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
+    async fn record_environment_ingress(
+        &self,
+        request: RecordEnvironmentIngress,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError>;
     async fn set_environment_power(
         &self,
@@ -1309,7 +1764,7 @@ pub fn template_record(
     value: &EnvironmentTemplate,
 ) -> Result<EnvironmentTemplateId, EnvironmentRegistryError> {
     let template_id =
-        EnvironmentTemplateId::try_new(value.template_id.clone()).map_err(|error| {
+        EnvironmentTemplateId::try_new(value.template_id.as_str()).map_err(|error| {
             EnvironmentRegistryError::InvalidInput {
                 message: format!("invalid template id: {error}"),
             }
@@ -1317,6 +1772,8 @@ pub fn template_record(
     Ok(template_id)
 }
 
+pub mod endpoint;
+pub use endpoint::{EndpointError, EndpointScheme, EnvironmentEndpoint};
 mod memory;
 pub use memory::{InMemoryEnvironmentRegistryStore, apply_registered_observation};
 
@@ -1338,20 +1795,11 @@ fn validate_timestamps(
     Ok(())
 }
 
-fn validate_endpoint(name: &'static str, value: &str) -> Result<(), EnvironmentRegistryError> {
-    validate_nonempty_string(name, value)?;
-    if value.chars().any(char::is_whitespace) {
-        return invalid(format!("{name} must not contain whitespace"));
-    }
-    Ok(())
-}
-
-fn validate_provider_target_id(value: &ProviderTargetId) -> Result<(), EnvironmentRegistryError> {
-    validate_general_string_id("target_id", value.as_str()).map_err(|error| {
-        EnvironmentRegistryError::InvalidInput {
-            message: error.to_string(),
-        }
-    })
+/// An adoption source is a provider-native reference under the protocol's
+/// opaque rule: 1 to 255 bytes without control characters.
+pub fn validate_adoption_source(value: &str) -> Result<(), EnvironmentRegistryError> {
+    validate_opaque_id("adoption_source_target", value)
+        .map_err(|error| invalid_error(error.to_string()))
 }
 
 fn validate_registration_display_name(value: &str) -> Result<(), EnvironmentRegistryError> {
@@ -1369,27 +1817,14 @@ fn validate_registration_display_name(value: &str) -> Result<(), EnvironmentRegi
 
 /// A daemon public key is the raw 32-byte Ed25519 key as lowercase hex.
 pub fn validate_daemon_public_key(value: &str) -> Result<(), EnvironmentRegistryError> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return invalid("daemon public key must be 64 lowercase hex characters");
-    }
-    Ok(())
+    parse_daemon_public_key(value).map(|_| ())
 }
 
-fn decode_hex(value: &str) -> Result<Vec<u8>, EnvironmentRegistryError> {
-    if !value.len().is_multiple_of(2) {
-        return invalid("hex value has odd length");
-    }
-    (0..value.len())
-        .step_by(2)
-        .map(|index| {
-            u8::from_str_radix(&value[index..index + 2], 16)
-                .map_err(|_| invalid_error("hex value contains a non-hex character"))
-        })
-        .collect()
+fn parse_daemon_public_key(
+    value: &str,
+) -> Result<environment_protocol::registration::DaemonPublicKey, EnvironmentRegistryError> {
+    environment_protocol::registration::DaemonPublicKey::parse(value)
+        .map_err(|_| invalid_error("daemon public key must be 64 lowercase hex characters"))
 }
 
 fn invalid_error(message: impl Into<String>) -> EnvironmentRegistryError {
@@ -1398,29 +1833,12 @@ fn invalid_error(message: impl Into<String>) -> EnvironmentRegistryError {
     }
 }
 
-/// Stored records obey the registration handshake's bounds (entry count,
-/// key and value bytes, no control characters). The reserved-prefix check
-/// applies to caller input at the API boundary, not here: Lightspeed itself
-/// annotates records under that prefix, and those entries sit on top of a
-/// caller's full allowance rather than eating into it, so the entry count
-/// applies to the caller's keys alone.
+/// Stored records obey the descriptive metadata bounds. The reserved-prefix
+/// check applies to caller input at the API boundary, not here: Lightspeed
+/// itself annotates records under that prefix, and those entries sit on top
+/// of a caller's full allowance rather than eating into it.
 fn validate_metadata(value: &BTreeMap<String, String>) -> Result<(), EnvironmentRegistryError> {
-    use environment_protocol::registration::{
-        MAX_METADATA_ENTRIES, RESERVED_METADATA_PREFIX, validate_metadata_entry,
-    };
-    let caller_entries = value
-        .keys()
-        .filter(|key| !key.starts_with(RESERVED_METADATA_PREFIX))
-        .count();
-    if caller_entries > MAX_METADATA_ENTRIES {
-        return Err(invalid_error(format!(
-            "metadata has more than {MAX_METADATA_ENTRIES} caller entries"
-        )));
-    }
-    for (key, entry) in value {
-        validate_metadata_entry(key, entry).map_err(invalid_error)?;
-    }
-    Ok(())
+    validate_stored_metadata(value).map_err(|error| invalid_error(error.to_string()))
 }
 
 fn validate_nonempty_optional(

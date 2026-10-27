@@ -1,0 +1,19 @@
+{
+  "params": {
+    "operationId": "op-2",
+    "digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "offset": 0,
+    "data": "aGVsbG8gd29ybGQK"
+  },
+  "response": {
+    "nextOffset": 12
+  },
+  "error": {
+    "code": -32007,
+    "message": "uploaded bytes do not hash to the digest",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "digestMismatch"
+    }
+  }
+}

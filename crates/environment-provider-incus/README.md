@@ -1,16 +1,22 @@
 # Incus environment provider
 
-`lightspeed-provider-incus` is a stateless controller, passive data endpoint,
-optional application edge, and single-node/cluster Incus adapter. It depends
-on the public host
+`lightspeed-provider-incus` is a stateless controller, data-route relay,
+optional application edge, and single-node/cluster Incus adapter. It serves
+the controller plane of the environment protocol and depends on the public
 protocol crate, not Lightspeed's database, API implementation, harness, or
 Temporal runtime.
 
-Start from `config.example.json`. Application-level authentication for both
-the provider endpoint and private envd endpoint is intentionally deferred.
-Protect those listeners with the deployment network/transport boundary for
-now. The Incus client certificate and key remain deployment files mounted into
-the provider process.
+Start from `config.example.json`. The listener serves the controller on
+`/control` and the data routes under `/routes/...`. Both require the provider
+credential: `credentialFile` names a file holding a secret of at least 32
+bytes without whitespace (a trailing newline is ignored), which Lightspeed
+presents as `Authorization: Bearer` and the provider compares in constant
+time. A missing or wrong credential is refused with HTTP 401 before the
+WebSocket upgrade. `GET /health` needs no credential. Register the same
+credential with the provider in Lightspeed. The guest envd listener has no
+authentication of its own; keep guest networks private. The Incus client
+certificate and key remain deployment files mounted into the provider
+process.
 
 ## Incus topology
 
@@ -74,9 +80,15 @@ cargo run -p environment-provider-incus -- \
   --config crates/environment-provider-incus/config.example.json
 ```
 
-Register its controller as `ws://127.0.0.1:19090/control`. Lightspeed derives
-the sibling `/routes/...` endpoint and connects only while an environment is
-being used; the provider then dials private envd and reaps idle connections.
+Register its controller as `ws://127.0.0.1:19090/control` with the credential.
+`dataRouteBase` is advertised as `routes.data` in the controller's
+`initialize`: it must reach this listener's `/routes` from the environment
+gateway, and it must use `wss://` when Lightspeed reaches the controller over
+TLS. Lightspeed connects to a data route only while an environment is being
+used; the provider then dials private envd and relays frames unchanged. The
+relay forwards WebSocket pings, counts every frame as activity, and closes a
+connection only after `relayIdleSeconds` without frames, which cannot be set
+below 60.
 Registering the provider and creating an enabled binding in Lightspeed is
 sufficient to use it. Provider configuration contains no universe or binding
 allowlist. Every request carries a binding context, and the provider lazily
@@ -108,3 +120,57 @@ bodies, and WebSockets to the approved private guest port. The provider records
 the realized hostname and port in `user.lightspeed.*` Incus target metadata so
 route operations remain ownership-fenced and reconstructible without a
 provider database or configured universe list.
+
+## Controller behavior
+
+Every controller method answers within about five seconds with the target's
+current observation. Slow Incus work (an image pull, a boot, a graceful stop)
+runs as one background job per target, serialized per target; later calls
+report `provisioning` or `closing` while it runs, and a failed create reports
+`failed` with the Incus error as the target's `message`. Job state is in
+memory; Incus itself, read through the deterministic owner name, is the record
+of every target, so a provider restart loses nothing.
+
+- `target/create` looks up the owner's instance before applying any creation
+  policy, so deprecating a template never affects existing targets.
+- `target/get` only reads. A missing instance is `notFound`.
+- `target/close` resolves the instance by owner when no target id is given,
+  stops it gracefully for up to 30 seconds, then forces the stop and deletes
+  the instance, its disk, and its ingress metadata.
+- Templates report typed `resources`. `memory` and `disk` must be whole Incus
+  sizes such as `4GiB`; the provider converts them to bytes at startup.
+- Cloud-init sets `LIGHTSPEED_ENVD_STATE_DIR=/var/lib/lightspeed-envd`, so the
+  daemon key and job records live outside the agent's `/workspace`.
+- Incus API failures answer `unavailable`, which the runtime retries.
+- The provider advertises `adoptTarget`, and `ingress` when an `ingress` block
+  is configured.
+
+## Adoption
+
+`target/adopt` takes over an existing Incus VM as a managed environment. The
+`sourceTarget` is `instance` or `project/instance`; the project defaults to
+`default`. Project and instance names are 1 to 63 ASCII letters, digits, and
+hyphens, without a leading or trailing hyphen. Only persistent virtual
+machines that are not already Lightspeed-managed can be adopted; containers
+and ephemeral instances are refused with `notAdoptable`.
+
+Adoption moves the VM into the binding's project under the owner's
+deterministic name and records ownership metadata. It replaces the VM's
+profiles with the binding baseline, rewrites `eth0` onto the binding's managed
+network, and disables every other local NIC. A running source is stopped
+first. A later close destroys the adopted VM like any other target, so adopt
+only machines whose disk Lightspeed may delete.
+
+## Conformance
+
+The ignored live test `the_controller_conforms_on_live_incus` runs the
+environment client's controller conformance suite against this provider on a
+live Incus server or cluster. It creates and deletes one VM from the first
+non-deprecated template, using the fixed universe `lightspeed-conformance` and
+binding `incus-live`:
+
+```bash
+LIGHTSPEED_INCUS_PROVIDER_CONFIG=/absolute/path/provider.json \
+  cargo test -p environment-provider-incus --test incus_live \
+  the_controller_conforms_on_live_incus -- --ignored
+```

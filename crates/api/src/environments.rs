@@ -173,8 +173,9 @@ pub struct EnvironmentIdlePolicyPutResponse {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentExternalCreateParams {
     pub request_id: EnvironmentProvisionRequestId,
-    /// Connection to an envd instance reachable from Lightspeed.
-    pub connection: EnvironmentConnectionView,
+    /// `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
+    /// Lightspeed.
+    pub endpoint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -218,7 +219,8 @@ pub enum EnvironmentSourceView {
         binding_id: EnvironmentProviderBindingId,
     },
     External {
-        connection: EnvironmentConnectionView,
+        /// `ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.
+        endpoint: String,
     },
     /// An envd that dialed the gateway outbound and was admitted by a
     /// registration key. The key is the environment's group; the daemon id
@@ -356,23 +358,6 @@ pub struct EnvironmentRegistrationKeyRevokeResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EnvironmentConnectionView {
-    pub endpoint: String,
-    pub transport: EnvironmentConnectionTransportView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum EnvironmentConnectionTransportView {
-    WebSocket,
-    Http,
-    Stdio,
-    Ssh,
-    Provider { provider_type: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct EnvironmentIncarnationView {
     pub incarnation_id: EnvironmentIncarnationId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -403,7 +388,11 @@ pub struct EnvironmentView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_policy: Option<EnvironmentIdlePolicyView>,
     pub incarnation: EnvironmentIncarnationView,
+    /// Lightspeed-owned public ingress intent; `publicEndpoint` is what the
+    /// provider realized.
     pub public_ingress_enabled: bool,
+    /// The public endpoint the provider last reported. It lags
+    /// `publicIngressEnabled` while the lifecycle reconciler converges.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -412,8 +401,23 @@ pub struct EnvironmentView {
     /// control connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_at_ms: Option<i64>,
+    /// Why the environment failed, or the latest error (or what the
+    /// provider reports it is waiting on) while its lifecycle converges;
+    /// absent once it reaches a steady state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_error: Option<EnvironmentLifecycleErrorView>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentLifecycleErrorView {
+    pub message: String,
+    /// When the current run of errors began.
+    pub first_at_ms: i64,
+    /// When `message` was recorded.
+    pub last_at_ms: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -469,8 +473,25 @@ pub struct EnvironmentTemplateView {
     pub description: Option<String>,
     pub public_ingress: bool,
     pub deprecated: bool,
+    /// Compute targets of this template get; absent when the provider does
+    /// not fix it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<EnvironmentTemplateResourcesView>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+}
+
+/// A template's compute, in provider-neutral units. Each field is absent
+/// when the provider does not fix it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentTemplateResourcesView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcpus: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -632,6 +653,9 @@ pub struct SessionJobStartedView {
     pub queue_key: Option<String>,
 }
 
+/// One job's summary and output page, or why it could not be read: an
+/// entry with `error` and no summary names a job the environment does not
+/// know (never created, or garbage-collected).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJobReadEntryView {
@@ -639,11 +663,17 @@ pub struct SessionJobReadEntryView {
     pub handle: Option<SessionJobHandleView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<SessionJobSummaryView>,
+    /// Output in offset order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_chunks: Vec<SessionJobOutputChunkView>,
-    pub output_next_seq: u64,
+    /// Byte offset to continue reading from: pass it as `after`.
+    pub output_next: u64,
+    /// Output bytes the job produced so far; final once it is terminal.
+    pub output_end: u64,
+    /// Output ranges between the requested start and `outputNext` that
+    /// cannot be returned.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub artifacts: Vec<SessionJobArtifactView>,
+    pub output_gaps: Vec<SessionJobOutputGapView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -667,25 +697,38 @@ pub enum SessionJobCancelScopeView {
     Dependents,
 }
 
+/// What a job is and how it ended. Instants are the environment's wall
+/// clock.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJobSummaryView {
-    pub namespace: String,
     pub job_id: String,
+    /// The start request that created the job; part of its identity.
+    pub request_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub status: SessionJobStatusView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<String>,
-    pub created_at_ms: u64,
+    pub created_at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queued_at_ms: Option<u64>,
+    pub queued_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at_ms: Option<u64>,
+    pub started_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finished_at_ms: Option<u64>,
+    pub finished_at_ms: Option<i64>,
+    /// When a cancel reached the job while it ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
+    pub cancel_requested_at_ms: Option<i64>,
+    /// Run time from start to finish, immune to clock jumps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// How the job's root process ended, once it ran and exited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<SessionJobExitView>,
+    /// Set when Lightspeed stopped the running job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_by: Option<SessionJobStoppedByView>,
     /// True when the job's root process exited while descendants it spawned
     /// were still running; the host terminated them best-effort at job
     /// completion.
@@ -697,28 +740,84 @@ pub struct SessionJobSummaryView {
     pub queue_key: Option<String>,
 }
 
+/// Job lifecycle. `queued` and `running` are live; the rest are terminal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionJobStatusView {
-    Accepted,
+    /// Waiting for dependencies or its queue.
     Queued,
     Running,
+    /// Exited with code 0.
     Succeeded,
+    /// Exited otherwise, or could not start.
     Failed,
-    CancelRequested,
-    Cancelled,
+    /// Its timeout expired and it was stopped.
     TimedOut,
+    /// Stopped or never started because of a cancel.
+    Cancelled,
+    /// A dependency did not finish as the dependency policy requires.
     DependencyFailed,
+    /// The environment daemon stopped while the job was queued or running.
     Interrupted,
-    Lost,
+}
+
+/// How a job's root process ended.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SessionJobExitView {
+    /// Normal exit with this status code.
+    Code { code: i32 },
+    /// Killed by this signal, named like `SIGSEGV`.
+    Signal {
+        signal: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        core_dumped: bool,
+    },
+}
+
+/// Why Lightspeed stopped a running job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionJobStoppedByView {
+    /// Its timeout expired: terminate, a grace period, then kill.
+    Timeout,
+    /// A cancel without `force`: terminate, a grace period, then kill.
+    Terminate,
+    /// A cancel with `force`: killed at once.
+    Kill,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJobOutputChunkView {
-    pub seq: u64,
+    /// Byte offset of the chunk's first byte in the job's combined output.
+    pub offset: u64,
     pub stream: SessionJobOutputStreamView,
     pub data_base64: String,
+}
+
+/// Output bytes in `[offset, offset + omittedBytes)` that cannot be
+/// returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJobOutputGapView {
+    pub offset: u64,
+    pub omitted_bytes: u64,
+    pub reason: SessionJobOutputGapReasonView,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionJobOutputGapReasonView {
+    /// Dropped from the middle because the job's retained output exceeded
+    /// its cap; the head and the newest bytes are kept.
+    Overflow,
+    /// Released after it was delivered.
+    Expired,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -726,16 +825,6 @@ pub struct SessionJobOutputChunkView {
 pub enum SessionJobOutputStreamView {
     Stdout,
     Stderr,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionJobArtifactView {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -759,12 +848,16 @@ pub struct EnvironmentJobCreateResponse {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentJobReadParams {
     pub jobs: Vec<SessionJobHandleInput>,
+    /// Most output bytes per job; omit for the server's default page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_bytes: Option<usize>,
+    pub max_bytes: Option<u64>,
+    /// Byte offset to read each job's output from: a previous entry's
+    /// `outputNext`. Omitted with `tailBytes` omitted reads from the start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after_seq: Option<u64>,
-    #[serde(default)]
-    pub include_artifacts: bool,
+    pub after: Option<u64>,
+    /// Read each job's last `tailBytes` of output instead; excludes `after`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tail_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

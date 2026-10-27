@@ -31,6 +31,9 @@ pub(super) fn visible_with_search_stop(
         crate::fs::FsSearchStop::TimeLimit => {
             "[truncated: time budget exhausted — narrow the path or add an include filter]"
         }
+        crate::fs::FsSearchStop::ResponseLimit => {
+            "[truncated: response size limit reached — narrow the pattern or the path]"
+        }
     };
     if !visible.is_empty() {
         visible.push('\n');

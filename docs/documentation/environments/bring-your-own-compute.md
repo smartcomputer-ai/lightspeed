@@ -95,9 +95,10 @@ For the local quickstart, run:
 ```
 
 For a remote installation, replace the gateway URL with its public endpoint,
-for example `wss://lightspeed.example.com/environment-gateway/connect`.
-Plain `ws://` is accepted only for loopback connections. Leave the daemon
-running in this terminal.
+for example `wss://lightspeed.example.com/environment-gateway/connect`. Use
+the host of the deployment's public base URL: the daemon signs the origin it
+dials, and the gateway refuses any other. Plain `ws://` is accepted only for
+loopback connections. Leave the daemon running in this terminal.
 
 The daemon opens an outbound control connection. When a worker needs a data
 connection, the daemon opens another outbound connection for that route.
@@ -105,8 +106,14 @@ This command does not start a passive listener on the machine.
 
 Wait for `receipt.json` to appear, then reload the **Environments** page and
 confirm **My workstation** is ready. The receipt records the assigned
-environment and daemon identifiers, without the registration secret. Keep the
-state directory: it contains the daemon's private identity key.
+environment, incarnation, and daemon identifiers, the control connection, the
+identity mode, and whether this admission created the environment or
+reconnected to it. It never contains the registration secret. Keep the state
+directory: it contains the daemon's private identity key.
+
+The daemon sends the registration key only until its first admission. After
+that it reconnects with its identity alone, even if the key is still
+configured.
 
 Once registration succeeds, you can remove the admission secret from this
 machine in another terminal:
@@ -144,7 +151,8 @@ the directory printed by `pwd`.
 
 ## Stop and reconnect
 
-Press Ctrl+C in the daemon terminal. With persistent registration, the
+Press Ctrl+C in the daemon terminal. The daemon tells the gateway it is
+stopping and exits with status 0. With persistent registration, the
 environment becomes offline and remains in the universe; reload
 **Environments** to inspect its status. To reconnect, use the same state
 directory and omit the deleted registration-key file:
@@ -164,8 +172,13 @@ repeat the `pwd` request to verify access.
 
 For short-lived machines, a registration key can instead use an ephemeral
 identity mode. Those environments close after their disconnect grace period.
-Once an environment is closed, its daemon identity cannot register again;
-a replacement needs a fresh state directory and a valid registration key.
+Once an environment is closed, its daemon identity cannot register again: a
+running daemon is told so and exits with status 4, and a replacement needs a
+fresh state directory and a valid registration key.
+
+Run one daemon per state directory. When a second process connects with the
+same identity, the newer connection wins and the older daemon exits with
+status 5, naming the shared identity in its log.
 
 ## Finish the walkthrough
 
@@ -205,7 +218,10 @@ the runtime and daemon run on the same host; in a container deployment,
 | The environment never appears | Check the registration secret, its universe and limits, and that the daemon can reach the gateway. |
 | A remote WebSocket connection fails | Use `wss://` and ensure both `/environment-gateway/connect` and `/environment-gateway/data` reach the environment gateway through a WebSocket-capable proxy. |
 | Restart fails after deleting the key file | Remove `--registration-key-file` from the command and retain the original `--state-dir`. |
-| The daemon reports incompatible protocol versions | Use daemon and runtime builds from the same release. `lightspeed-envd --print-build` reports daemon build and protocol information. |
+| The daemon reports incompatible protocol versions | Use daemon and runtime builds from the same release, or run `lightspeed-envd upgrade`. `lightspeed-envd --print-build` reports daemon build and protocol information. |
+| The daemon exits with status 3 | The gateway refused registration for good, for example an invalid, revoked, or expired key, or a protocol version the daemon cannot upgrade to. The log names the reason. |
+| Registration is refused because the signature does not verify | The daemon dialed a different host than the gateway's public base URL, such as `localhost` instead of `127.0.0.1`. Use the exact public host. |
+| The daemon exits with status 5 | Another process uses the same state directory and identity. Give each daemon its own state directory. |
 | The agent has no process tool | Enable **Environments**, select the active environment, and apply the setup to the actual session. |
 | A command cannot start or find a program | Check the daemon user's permissions, installed programs, Bash, and working directory on the machine. |
 | A closed environment cannot reconnect | Its identity is spent. Create a replacement with a new state directory and registration key rather than reusing the closed identity. |

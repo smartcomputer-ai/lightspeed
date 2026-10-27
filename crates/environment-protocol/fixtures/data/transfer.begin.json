@@ -1,0 +1,43 @@
+{
+  "params": {
+    "operationId": "op-1",
+    "selection": {
+      "kind": "capture",
+      "source": "/workspace",
+      "filter": {
+        "exclude": [
+          "node_modules/**",
+          ".git/**"
+        ]
+      },
+      "symlinks": "skip",
+      "specialFiles": "skip"
+    },
+    "limits": {
+      "maxEntries": 100000,
+      "maxDepth": 64,
+      "maxFileBytes": 1073741824,
+      "maxTotalBytes": 1073741824,
+      "maxManifestBytes": 33554432,
+      "maxDurationMs": 86400000
+    }
+  },
+  "response": {
+    "operationId": "op-1",
+    "phase": "scanning",
+    "entryCount": 0,
+    "totalBytes": 0,
+    "transferredBytes": 0,
+    "reusedBytes": 0,
+    "deadlineAtMs": 1761400000000
+  },
+  "error": {
+    "code": -32008,
+    "message": "8 transfers are active",
+    "data": {
+      "kind": "busy",
+      "reason": "transferCapacity",
+      "retryAfterMs": 1000
+    }
+  }
+}

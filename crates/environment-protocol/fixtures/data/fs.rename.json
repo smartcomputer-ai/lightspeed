@@ -1,0 +1,16 @@
+{
+  "params": {
+    "source": "/workspace/a.rs",
+    "destination": "/workspace/b.rs",
+    "overwrite": true,
+    "ifMatch": "v1:1761400000000000000:4096:42"
+  },
+  "response": {},
+  "error": {
+    "code": -32009,
+    "message": "/workspace/b.rs exists",
+    "data": {
+      "kind": "alreadyExists"
+    }
+  }
+}

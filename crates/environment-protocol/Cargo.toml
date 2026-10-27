@@ -10,5 +10,17 @@ schema = ["dep:schemars"]
 base64 = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_path_to_error = "0.1"
+sha2 = "0.11"
 schemars = { version = "1", optional = true }
 thiserror = "2"
+
+[dev-dependencies]
+# Integration tests check the committed contract, which needs the schema
+# export.
+environment-protocol = { path = ".", features = ["schema"] }
+
+[[bin]]
+name = "export-contract"
+path = "src/bin/export-contract.rs"
+required-features = ["schema"]

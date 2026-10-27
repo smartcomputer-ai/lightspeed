@@ -313,6 +313,7 @@ where
     let mut tasks = Tasks(vec![task.abort_handle()]);
     let directory = tempfile::tempdir()?;
     let root = directory.path().canonicalize()?;
+    let daemon_state = tempfile::tempdir()?;
     let context = support::live::local_request_context_for(api::AccessScope::Universe {
         universe_id: universe,
     })
@@ -326,11 +327,11 @@ where
                 display_name:"Code capability test".into(), identity_mode:api::EnvironmentIdentityModeView::Ephemeral,
                 max_active_environments:Some(1), ephemeral_disconnect_grace_ms:None, expires_at_ms:None,
             }).await?.result;
-            let connect_url = format!("ws://{address}/environment-gateway/connect");
+            let connect_url = format!("ws://{address}{}", environment_protocol::routes::CONNECT_PATH);
             let mut registration = environment_daemon::config::RegistrationConfig::new(connect_url.clone(), environment_daemon::upgrade::resolve_discovery_url(Some(&connect_url), None)?);
-            registration.registration_key = Some(environment_protocol::shared::SecretString::new(key.secret.0));
+            registration.registration_key = Some(environment_protocol::bytes::SecretString::new(key.secret.0));
             let daemon = environment_daemon::DaemonRuntime::new(environment_daemon::config::DaemonConfig {
-                listen:None, cwd:root.clone(), fs_root:root.clone(), state_dir:root.join(".envd"), read_only_fs:false, registration:Some(registration), scrubbed_env:vec![],
+                listen:None, cwd:root.clone(), fs_root:root.clone(), state_dir:daemon_state.path().into(), read_only_fs:false, registration:Some(registration), scrubbed_env:vec![],
             })?;
             let task = tokio::spawn(environment_daemon::server::run(daemon));
             tasks.0.push(task.abort_handle());
@@ -643,9 +644,11 @@ async fn jobs_and_subagents_case(fixture: Fixture) -> anyhow::Result<()> {
                 .as_ref()
                 .is_some_and(|handle| handle.environment_id
                     == tools::environment::handles::environment_handle(environment))
-                && actual.summary.as_ref().is_some_and(|summary| summary.status
-                    == environment_protocol::data::jobs::JobStatus::Succeeded
-                    && &summary.namespace == environment),
+                && actual
+                    .summary
+                    .as_ref()
+                    .is_some_and(|summary| summary.status
+                        == tools::environment::jobs::ModelJobStatus::Succeeded),
             "job must finish on the admitted environment: {actual:?}"
         );
     }

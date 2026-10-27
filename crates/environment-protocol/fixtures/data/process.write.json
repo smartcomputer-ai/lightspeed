@@ -1,0 +1,18 @@
+{
+  "params": {
+    "processId": "proc-7",
+    "data": "aGVsbG8K",
+    "closeInput": true
+  },
+  "response": {
+    "acceptedBytes": 6
+  },
+  "error": {
+    "code": -32007,
+    "message": "process proc-7 has no open input",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "inputClosed"
+    }
+  }
+}

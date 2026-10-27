@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use environment_protocol::shared::SecretString;
+use environment_protocol::bytes::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 

@@ -3,13 +3,13 @@ use crate::{
     environments::gateway::EnvironmentGatewayClientConfig,
     environments::resolver::EnvironmentResolver,
 };
-use environment_client::{EnvironmentDataClient, JsonRpcTransport, WebSocketTransport};
+use environment_client::DataClient;
 use environment_protocol::{
     data::{
-        fs::GetMetadataParams,
-        handshake::{InitializeParams, InitializeResponse, InitializedParams},
+        handshake::InitializeResponse,
+        scan::{ScanParams, ScanResponse, ScanRootResult},
     },
-    shared::{CURRENT_PROTOCOL_VERSION, EnvironmentPath},
+    paths::EnvironmentPath,
 };
 use harness::{
     ContextEntryInput, ContextEntryKey, CoreAgentCommand, EnvironmentId, EnvironmentsFeature,
@@ -21,30 +21,25 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) async fn working_directory<T: JsonRpcTransport>(
-    client: &mut EnvironmentDataClient<T>,
+/// `clientInfo.name` of discovery connections.
+const SOURCE_DISCOVERY_CLIENT: &str = "lightspeed-source-discovery";
+
+/// The working directory discovery resolves sources against: the
+/// attachment's configured directory, else the daemon's `defaultCwd`. It is
+/// proven to exist by the probe root of each discovery scan, not by a
+/// separate call.
+pub(crate) fn working_directory(
     configured: Option<&str>,
-    default: Option<&str>,
-) -> Result<String, String> {
-    let value = configured
-        .or(default)
-        .ok_or("environment does not advertise a default working directory")?;
+    default: &EnvironmentPath,
+) -> Result<EnvironmentPath, String> {
+    let Some(value) = configured else {
+        return Ok(default.clone());
+    };
     if !value.starts_with('/') {
         return Err("environment working directory must be absolute".into());
     }
-    let cwd = tools::environment::sources::absolute(std::path::Path::new("/"), value)?
-        .to_string_lossy()
-        .into_owned();
-    let metadata = client
-        .get_metadata(&GetMetadataParams {
-            path: EnvironmentPath::new(&cwd).map_err(|e| e.to_string())?,
-        })
-        .await
-        .map_err(|e| format!("working directory {cwd}: {e}"))?;
-    if !metadata.is_directory {
-        return Err(format!("working directory is not a directory: {cwd}"));
-    }
-    Ok(cwd)
+    let cwd = tools::environment::sources::absolute(std::path::Path::new("/"), value)?;
+    EnvironmentPath::new(cwd.to_string_lossy()).map_err(|error| error.to_string())
 }
 
 pub(crate) struct Discovery<'a> {
@@ -56,11 +51,35 @@ pub(crate) struct Discovery<'a> {
 }
 
 pub(crate) struct SourceConnection {
-    pub client: EnvironmentDataClient<WebSocketTransport>,
+    pub client: DataClient,
     pub initialized: InitializeResponse,
-    pub cwd: String,
+    pub cwd: EnvironmentPath,
     // Includes universe and incarnation so cached observations cannot cross routes.
     pub identity: String,
+}
+
+impl SourceConnection {
+    /// Run a discovery scan with the working-directory probe appended, check
+    /// that probe, and return the response without it. `fs/scan` is an
+    /// observation, so discovery never resets the idle clock.
+    pub async fn scan(&self, mut query: ScanParams) -> Result<ScanResponse, String> {
+        tools::environment::sources::with_working_directory_probe(&mut query, &self.cwd);
+        let mut scan = self
+            .client
+            .scan(&query)
+            .await
+            .map_err(|error| error.to_string())?;
+        match scan.roots.pop() {
+            Some(ScanRootResult::Complete { .. } | ScanRootResult::Unchanged { .. }) => Ok(scan),
+            Some(ScanRootResult::Missing { .. }) => {
+                Err(format!("working directory {} does not exist", self.cwd))
+            }
+            Some(ScanRootResult::Failed { error, .. }) => {
+                Err(format!("working directory {}: {error}", self.cwd))
+            }
+            None => Err("discovery scan answered without its working directory probe".into()),
+        }
+    }
 }
 
 impl Discovery<'_> {
@@ -84,8 +103,13 @@ impl Discovery<'_> {
     }
 
     pub fn discard_connection(&mut self) {
-        // A cancelled RPC can leave an unread response. Never reuse that stream.
-        self.connection = None;
+        // Abandoned scans were cancelled by the multiplexed client; a fresh
+        // connection keeps a failed attempt from affecting the next source.
+        if let Some(connection) = self.connection.take() {
+            tokio::spawn(async move {
+                let _ = connection.client.close().await;
+            });
+        }
     }
 }
 
@@ -123,7 +147,7 @@ pub(crate) async fn refresh(
         })
     }
     .await;
-    if let Some(mut connection) = discovery.connection.take() {
+    if let Some(connection) = discovery.connection.take() {
         let _close = PhaseTimer::new("close");
         let _ = tokio::time::timeout(Duration::from_secs(1), connection.client.close()).await;
     }
@@ -171,49 +195,32 @@ async fn connect(
     {
         return Err("environment is not accessible; discovery does not wake it".into());
     }
-    let connection = gateway.connection_for(resolver.universe_id(), &environment);
-    let identity =
-        serde_json::to_string(&(resolver.universe_id(), &connection)).map_err(|e| e.to_string())?;
-    let mut client = {
+    let endpoint = gateway.endpoint_for(resolver.universe_id(), &environment);
+    let identity = serde_json::to_string(&(
+        resolver.universe_id(),
+        environment.environment_id.as_str(),
+        environment.incarnation.incarnation_id.as_str(),
+    ))
+    .map_err(|e| e.to_string())?;
+    let (client, initialized) = {
         let _timer = PhaseTimer::new("connect");
-        EnvironmentDataClient::connect(
-            &connection.endpoint,
-            gateway.connect_options("lightspeed-source-discovery"),
-        )
-        .await
-        .map_err(|e| e.to_string())?
-    };
-    let initialized = {
-        let _timer = PhaseTimer::new("initialize");
-        let initialized = client
-            .initialize(&InitializeParams {
-                protocol_version: CURRENT_PROTOCOL_VERSION,
-                client_name: "lightspeed-source-discovery".into(),
-                scope: connection.scope,
-                resume_connection_id: None,
-            })
+        DataClient::connect_initialized(&endpoint, gateway.connect_options(SOURCE_DISCOVERY_CLIENT))
             .await
-            .map_err(|e| e.to_string())?;
-        client
-            .initialized(&InitializedParams {})
-            .await
-            .map_err(|e| e.to_string())?;
-        initialized
+            .map_err(|e| e.to_string())?
     };
-    if initialized.protocol_version != CURRENT_PROTOCOL_VERSION
-        || !initialized.capabilities.filesystem_read
-        || !initialized.capabilities.filesystem_scan
-    {
+    if initialized.capabilities.filesystem.is_none() {
+        let _ = client.close().await;
         return Err("endpoint does not support filesystem source discovery".into());
     }
-    let cwd = {
-        let _timer = PhaseTimer::new("working_directory");
-        working_directory(
-            &mut client,
-            attachment.working_directory.as_deref(),
-            initialized.default_cwd.as_deref(),
-        )
-        .await?
+    let cwd = match working_directory(
+        attachment.working_directory.as_deref(),
+        &initialized.default_cwd,
+    ) {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            let _ = client.close().await;
+            return Err(error);
+        }
     };
     Ok(SourceConnection {
         client,
@@ -221,4 +228,23 @@ async fn connect(
         cwd,
         identity,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_working_directory_is_configured_or_the_daemon_default() {
+        let default = EnvironmentPath::new("/workspace").unwrap();
+        assert_eq!(working_directory(None, &default).unwrap(), default);
+        assert_eq!(
+            working_directory(Some("/srv/app/./src/.."), &default)
+                .unwrap()
+                .as_str(),
+            "/srv/app"
+        );
+        assert!(working_directory(Some("relative"), &default).is_err());
+        assert!(working_directory(Some("/../escape"), &default).is_err());
+    }
 }

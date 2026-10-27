@@ -1,40 +1,29 @@
-//! Provider-owned public ingress lifecycle payloads.
+//! `ingress/*`: public ingress of one target. Requires
+//! `capabilities.ingress`. `target/close` removes ingress by contract, so
+//! `ingress/remove` exists only to disable ingress on a target that stays.
+//! Both answer [`TargetResponse`](crate::control::target::TargetResponse)
+//! with the realized ingress in the observation; the runtime converges its
+//! recorded intent against that observation.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{control::targets::ProviderBindingContext, shared::ProviderTargetId};
+use crate::control::target::TargetRef;
 
+/// `ingress/ensure` params: route the template's public ingress to the
+/// target. Idempotent. A target whose template has no `publicIngress` is
+/// `failedPrecondition` (`ingressUnsupported`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnsureIngressParams {
-    pub request_id: String,
-    pub environment_id: String,
-    pub incarnation_id: String,
-    pub binding: ProviderBindingContext,
-    pub target_id: ProviderTargetId,
+    pub target: TargetRef,
 }
 
+/// `ingress/remove` params: stop routing public ingress to the target.
+/// Idempotent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RemoveIngressParams {
-    pub request_id: String,
-    pub environment_id: String,
-    pub incarnation_id: String,
-    pub binding: ProviderBindingContext,
-    pub target_id: ProviderTargetId,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ProviderIngressStatus {
-    Ready,
-    Disabled,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IngressResponse {
-    pub status: ProviderIngressStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_endpoint: Option<String>,
+    pub target: TargetRef,
 }

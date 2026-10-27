@@ -14,13 +14,13 @@ const metadataSchema = z.record(z.string(), z.string()).optional();
 const providerPutSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
   metadata: metadataSchema,
-  controllerConnection: z.object({
-    endpoint: z.string().trim().min(1).max(2000),
-    transport: z.union([
-      z.object({ type: z.enum(["webSocket", "http"]) }),
-      z.object({ type: z.literal("provider"), providerType: z.string().trim().min(1).max(100) }),
-    ]),
-  }),
+  controllerEndpoint: z
+    .string()
+    .trim()
+    .max(2048)
+    .regex(/^(wss?:\/\/|unix:\/\/\/)[^\s]+$/, "controller endpoint must be a ws://, wss:// or unix:// URL"),
+  // Write-only: required for a new provider, omitted to keep the stored one.
+  credential: z.string().min(1).max(4096).optional(),
 });
 const bindingPutSchema = z.object({
   providerId: z.string().trim().min(1).max(200),

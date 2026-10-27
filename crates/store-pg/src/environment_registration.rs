@@ -15,7 +15,9 @@ use uuid::Uuid;
 
 use crate::{
     PgStore, PgStoreError,
-    environment::{identity_mode_from_str, invalid, not_found, sql_error, store_message},
+    environment::{
+        decode_rows, identity_mode_from_str, invalid, not_found, sql_error, store_message,
+    },
 };
 
 const KEY_COLUMNS: &str = r#"
@@ -99,7 +101,11 @@ impl EnvironmentRegistrationKeyStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list registration keys", error))?;
-        rows.iter().map(key_from_row).collect()
+        Ok(decode_rows(
+            &rows,
+            key_from_row,
+            "environment registration key",
+        ))
     }
 
     async fn revoke_registration_key(

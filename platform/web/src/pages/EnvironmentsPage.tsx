@@ -116,6 +116,7 @@ function ProviderList({ universeId }: { universeId: string }) {
       return rows?.some((environment) =>
         ["provisioning", "booting", "closing", "unknown"].includes(environment.status)
           || powerDiverges(environment)
+          || ingressDiverges(environment)
       ) ? REFRESH_MS : false;
     },
   });
@@ -199,7 +200,7 @@ function ProviderList({ universeId }: { universeId: string }) {
                 (environment) =>
                   environment.source.type === "external"
                   && hints.data?.devEnvdEndpoint
-                  && environment.source.connection.endpoint === hints.data.devEnvdEndpoint,
+                  && environment.source.endpoint === hints.data.devEnvdEndpoint,
               )}
             />
             {creatableTemplates.length > 0 && (
@@ -1119,7 +1120,12 @@ function EnvironmentIngressButton({
           ? "Updating ingress…"
           : environment.publicIngressEnabled ? "Disable public ingress" : "Enable public ingress"}
       </Button>
-      {environment.publicEndpoint && (
+      {ingressDiverges(environment) && (
+        <span className="text-xs text-muted-foreground">
+          {environment.publicIngressEnabled ? "Public endpoint pending…" : "Removing public endpoint…"}
+        </span>
+      )}
+      {environment.publicIngressEnabled && environment.publicEndpoint && (
         <a
           className="break-all text-xs text-primary underline-offset-4 hover:underline"
           href={environment.publicEndpoint}
@@ -1132,6 +1138,15 @@ function EnvironmentIngressButton({
       {ingress.error && <span className="text-xs text-destructive">{ingress.error.message}</span>}
     </>
   );
+}
+
+/**
+ * `environments/ingress/put` records the intent; the reconciler realizes it
+ * later, so `publicEndpoint` lags `publicIngressEnabled` until it converges.
+ */
+function ingressDiverges(environment: Environment): boolean {
+  if (environment.source.type !== "provisioned") return false;
+  return environment.publicIngressEnabled !== Boolean(environment.publicEndpoint);
 }
 
 function CloseEnvironmentButton({

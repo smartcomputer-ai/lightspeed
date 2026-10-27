@@ -2531,6 +2531,7 @@ async fn skill_list_reads_latest_structured_provenance() {
     environment.availability = EnvironmentSkillAvailability::Stale;
     environment.warnings = vec!["scan incomplete".into()];
     environment.skills.push(EnvironmentSkill {
+        root: "/skills/system".into(),
         skill_id: tools::skills::SkillId::new("environment:review"),
         name: "current".into(),
         description: "same named skill".into(),

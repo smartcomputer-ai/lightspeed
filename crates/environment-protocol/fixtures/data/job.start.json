@@ -1,0 +1,75 @@
+{
+  "params": {
+    "requestId": "jobreq-run1-turn2-call3",
+    "jobs": [
+      {
+        "jobId": "setup",
+        "name": "setup",
+        "command": {
+          "argv": [
+            "npm",
+            "ci"
+          ]
+        }
+      },
+      {
+        "jobId": "build",
+        "command": {
+          "argv": [
+            "cargo",
+            "build"
+          ],
+          "cwd": "/workspace",
+          "input": {
+            "kind": "bytes",
+            "data": "aGVsbG8="
+          },
+          "timeoutMs": 1800000
+        },
+        "dependsOn": [
+          {
+            "kind": "name",
+            "name": "setup"
+          },
+          {
+            "kind": "jobId",
+            "jobId": "lint"
+          }
+        ],
+        "dependencyPolicy": "allTerminal",
+        "queueKey": "cargo"
+      }
+    ]
+  },
+  "response": {
+    "jobs": [
+      {
+        "jobId": "setup",
+        "requestId": "jobreq-run1-turn2-call3",
+        "name": "setup",
+        "status": "running",
+        "createdAtMs": 1761400000000,
+        "startedAtMs": 1761400000050
+      },
+      {
+        "jobId": "build",
+        "requestId": "jobreq-run1-turn2-call3",
+        "status": "queued",
+        "dependsOn": [
+          "setup",
+          "lint"
+        ],
+        "queueKey": "cargo",
+        "createdAtMs": 1761400000000
+      }
+    ]
+  },
+  "error": {
+    "code": -32007,
+    "message": "job id build names an earlier run; choose a new job id",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "jobIdInUse"
+    }
+  }
+}

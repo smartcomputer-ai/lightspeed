@@ -2,15 +2,17 @@
 
 use std::time::{Duration, Instant};
 
-use glob::Pattern;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ToolResult,
-    fs::{FsGlobLimits, FsGlobRequest, FsPath, FsSearchStop, FsToolContext},
+    fs::{FsGlobLimits, FsGlobRequest, FsPath, FsSearchStop, FsToolContext, pattern::PathPattern},
 };
 
-use super::{collect_file_paths_bounded, invalid_request, relative_path_string, resolve_path};
+use super::{
+    collect_file_paths_bounded, invalid_request, relative_path_string, resolve_path,
+    root_relative_pattern,
+};
 
 pub const DEFAULT_GLOB_LIMIT: usize = 1_000;
 
@@ -38,8 +40,6 @@ pub async fn invoke_glob(ctx: &FsToolContext, args: GlobArgs) -> ToolResult<Glob
     if args.pattern.is_empty() {
         return Err(invalid_request("glob pattern must not be empty"));
     }
-    let pattern = Pattern::new(&args.pattern)
-        .map_err(|error| invalid_request(format!("invalid glob pattern: {error}")))?;
     let requested_limit = args.limit.unwrap_or(DEFAULT_GLOB_LIMIT);
     if requested_limit == 0 {
         return Err(invalid_request("glob limit must be 1 or greater"));
@@ -56,12 +56,15 @@ pub async fn invoke_glob(ctx: &FsToolContext, args: GlobArgs) -> ToolResult<Glob
         Some(path) => resolve_path(ctx, path)?,
         None => ctx.fs_cwd.clone().unwrap_or_else(FsPath::current_dir),
     };
+    let wire_pattern = root_relative_pattern(&args.pattern, &root);
+    let pattern = PathPattern::new(&wire_pattern, false)
+        .map_err(|error| invalid_request(error.to_string()))?;
 
     // A backend with a native enumeration (e.g. a remote host) walks the
     // tree locally under the same bounds and returns only matching paths.
     let native_request = FsGlobRequest {
         root: root.clone(),
-        pattern: args.pattern.clone(),
+        pattern: wire_pattern,
         max_depth: args.max_depth,
         limits,
     };
@@ -90,7 +93,7 @@ pub async fn invoke_glob(ctx: &FsToolContext, args: GlobArgs) -> ToolResult<Glob
     let mut matches = Vec::new();
 
     for path in paths {
-        if glob_matches(&pattern, &args.pattern, &path, &root) {
+        if pattern.matches(&relative_path_string(&path, &root), false) {
             // Like the match budget elsewhere, truncation is reported only
             // when a match beyond the cap actually arrives.
             if matches.len() as u64 >= limits.max_matches {
@@ -108,19 +111,6 @@ pub async fn invoke_glob(ctx: &FsToolContext, args: GlobArgs) -> ToolResult<Glob
         truncated: stopped.is_some(),
         stopped,
     })
-}
-
-fn glob_matches(pattern: &Pattern, pattern_text: &str, path: &FsPath, root: &FsPath) -> bool {
-    if pattern_text.starts_with('/') {
-        return pattern.matches(path.as_str());
-    }
-
-    let relative = relative_path_string(path, root);
-    pattern.matches(&relative)
-        || (!pattern_text.contains('/')
-            && path
-                .file_name()
-                .is_some_and(|file_name| pattern.matches(file_name)))
 }
 
 #[cfg(test)]
@@ -170,6 +160,130 @@ mod tests {
             vec![FsPath::new("/workspace/src/lib.rs").unwrap()]
         );
         assert!(!result.truncated);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generic_glob_keeps_star_within_one_segment() {
+        let fs = InMemoryFileSystem::full_access();
+        fs.create_directory(
+            &FsPath::new("/workspace/src/deep").expect("deep"),
+            CreateDirectoryOptions::recursive(),
+        )
+        .await
+        .expect("create deep");
+        for path in ["/workspace/src/lib.rs", "/workspace/src/deep/nested.rs"] {
+            fs.write_file(&FsPath::new(path).unwrap(), Vec::new())
+                .await
+                .expect("write");
+        }
+        let ctx = context(Arc::new(fs)).with_cwd(FsPath::new("/workspace").expect("cwd"));
+        let glob = |pattern: &str| GlobArgs {
+            pattern: pattern.to_owned(),
+            path: None,
+            max_depth: None,
+            limit: None,
+        };
+
+        let shallow = invoke_glob(&ctx, glob("src/*.rs")).await.expect("glob");
+        assert_eq!(
+            shallow.matches,
+            vec![FsPath::new("/workspace/src/lib.rs").unwrap()]
+        );
+        let named = invoke_glob(&ctx, glob("*.rs")).await.expect("glob");
+        assert_eq!(named.matches.len(), 2, "a bare name matches at any depth");
+        let anchored = invoke_glob(&ctx, glob("/workspace/*.rs"))
+            .await
+            .expect("glob");
+        assert!(
+            anchored.matches.is_empty(),
+            "an absolute pattern below the root anchors to it"
+        );
+        let absolute = invoke_glob(&ctx, glob("/workspace/src/**/*.rs"))
+            .await
+            .expect("glob");
+        assert_eq!(absolute.matches.len(), 2);
+        let rooted = invoke_glob(&ctx, glob("/src/*.rs")).await.expect("glob");
+        assert_eq!(
+            rooted.matches,
+            vec![FsPath::new("/workspace/src/lib.rs").unwrap()],
+            "a leading '/' anchors to the root, as in gitignore"
+        );
+        let elsewhere = invoke_glob(&ctx, glob("/elsewhere/*.rs"))
+            .await
+            .expect("glob");
+        assert!(
+            elsewhere.matches.is_empty(),
+            "any other leading '/' pattern anchors to the root too"
+        );
+        let direct = invoke_glob(
+            &ctx,
+            GlobArgs {
+                max_depth: Some(2),
+                ..glob("**/*.rs")
+            },
+        )
+        .await
+        .expect("glob");
+        assert_eq!(
+            direct.matches,
+            vec![FsPath::new("/workspace/src/lib.rs").unwrap()],
+            "depth 1 is the root's direct children"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn generic_glob_applies_the_environment_walk_defaults() {
+        let fs = InMemoryFileSystem::full_access();
+        for directory in [
+            "/repo/.git",
+            "/repo/.cache",
+            "/repo/src/gen",
+            "/repo/target",
+        ] {
+            fs.create_directory(
+                &FsPath::new(directory).unwrap(),
+                CreateDirectoryOptions::recursive(),
+            )
+            .await
+            .expect("create directory");
+        }
+        for (path, contents) in [
+            ("/.gitignore", "*.log\n"),
+            ("/repo/.gitignore", "target/\n"),
+            ("/repo/src/.ignore", "gen/\n!keep.log\n"),
+            ("/repo/.git/HEAD.rs", ""),
+            ("/repo/.cache/hit.rs", ""),
+            ("/repo/.env.rs", ""),
+            ("/repo/target/out.rs", ""),
+            ("/repo/src/gen/made.rs", ""),
+            ("/repo/src/lib.rs", ""),
+            ("/repo/src/debug.log", ""),
+            ("/repo/src/keep.log", ""),
+        ] {
+            fs.write_file(&FsPath::new(path).unwrap(), contents.as_bytes().to_vec())
+                .await
+                .expect("write");
+        }
+        let ctx = context(Arc::new(fs)).with_cwd(FsPath::new("/repo").expect("cwd"));
+        let glob = |pattern: &str| GlobArgs {
+            pattern: pattern.to_owned(),
+            path: None,
+            max_depth: None,
+            limit: None,
+        };
+
+        let sources = invoke_glob(&ctx, glob("*.rs")).await.expect("glob");
+        assert_eq!(
+            sources.matches,
+            vec![FsPath::new("/repo/src/lib.rs").unwrap()],
+            "hidden names, VCS directories and ignored paths are left out"
+        );
+        let logs = invoke_glob(&ctx, glob("*.log")).await.expect("glob");
+        assert_eq!(
+            logs.matches,
+            vec![FsPath::new("/repo/src/keep.log").unwrap()],
+            "an ancestor's rule applies and a deeper negation overrides it"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -280,17 +394,6 @@ mod tests {
             options: crate::fs::RemoveOptions,
         ) -> crate::fs::FsResult<()> {
             self.inner.remove(path, options).await
-        }
-
-        async fn copy(
-            &self,
-            source_path: &FsPath,
-            destination_path: &FsPath,
-            options: crate::fs::CopyOptions,
-        ) -> crate::fs::FsResult<()> {
-            self.inner
-                .copy(source_path, destination_path, options)
-                .await
         }
 
         async fn glob_files(

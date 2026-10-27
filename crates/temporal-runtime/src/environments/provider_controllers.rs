@@ -1,701 +1,851 @@
+//! Provider controllers: dialing a provider's controller with its
+//! credential, recording what its `initialize` advertises, and classifying
+//! what goes wrong.
+//!
+//! Every connection runs the controller handshake through
+//! [`ControllerClient::connect_initialized`]. At each successful handshake
+//! the advertised `routes.data` passes the downgrade rule and, together with
+//! the optional features, is recorded on the provider record; the gateway's
+//! provider data proxy and the reconciler's data-plane handshake build
+//! every target's data route from that recorded base, never from the
+//! controller URL.
+
 use super::*;
 
-use ::environments::EnvironmentConnectionSpec;
+use ::environments::{
+    ControllerFeatures, EndpointScheme, EnvironmentEndpoint, EnvironmentProviderId,
+    EnvironmentProviderStore, EnvironmentRegistryError, ListEnvironmentProviders,
+    RecordProviderController,
+};
 use async_trait::async_trait;
-use environment_client::{
-    EnvironmentClientError, EnvironmentProviderClient, WebSocketConnectOptions,
-};
+use auth::SecretValue;
+use environment_client::{ClientError, ConnectOptions, ControllerClient};
 use environment_protocol::{
-    control::{
-        handshake::{ControllerInitializeParams, ControllerInitializeResponse},
-        ingress::{
-            EnsureIngressParams, IngressResponse, ProviderIngressStatus, RemoveIngressParams,
-        },
-        targets::{
-            AdoptTargetParams, AdoptTargetResponse, CloseTargetParams, CloseTargetResponse,
-            CreateTargetParams, CreateTargetResponse, EnvironmentTemplate, ListTemplatesParams,
-            ListTemplatesResponse, PowerState, ProviderTargetStatus, ProviderTargetSummary,
-            SetTargetPowerParams, SetTargetPowerResponse,
-        },
-    },
-    shared::{
-        CURRENT_PROTOCOL_VERSION, EnvironmentCapabilities, EnvironmentScope, EnvironmentTransport,
-        ImplementationInfo, ProviderTargetId,
-    },
+    control::handshake::ControllerInitializeResponse,
+    error::{ErrorData, PreconditionReason, ProtocolErrorKind},
+    routes::{DataRouteBase, UrlError},
 };
-
 use std::{
-    collections::{BTreeMap, hash_map::DefaultHasher},
-    hash::{Hash, Hasher},
-    sync::Arc,
+    collections::HashMap,
+    time::{Duration, Instant},
 };
+use thiserror::Error;
 
-#[async_trait]
-pub(crate) trait ProviderController: Send {
-    async fn close(&mut self) -> Result<(), AgentApiError> {
-        Ok(())
-    }
+/// Deadline of every controller call. Controllers answer target methods
+/// promptly and continue slow work in the background, so this bounds a
+/// hung controller, not a slow create.
+pub(crate) const CONTROLLER_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-    async fn initialize(
-        &mut self,
-        params: &ControllerInitializeParams,
-    ) -> Result<ControllerInitializeResponse, AgentApiError>;
-
-    async fn create_target(
-        &mut self,
-        params: &CreateTargetParams,
-    ) -> Result<CreateTargetResponse, AgentApiError>;
-
-    async fn adopt_target(
-        &mut self,
-        params: &AdoptTargetParams,
-    ) -> Result<AdoptTargetResponse, AgentApiError>;
-
-    async fn list_templates(
-        &mut self,
-        params: &ListTemplatesParams,
-    ) -> Result<ListTemplatesResponse, AgentApiError>;
-
-    async fn close_target(
-        &mut self,
-        params: &CloseTargetParams,
-    ) -> Result<CloseTargetResponse, AgentApiError>;
-    async fn set_target_power(
-        &mut self,
-        params: &SetTargetPowerParams,
-    ) -> Result<SetTargetPowerResponse, AgentApiError>;
-    async fn ensure_ingress(
-        &mut self,
-        params: &EnsureIngressParams,
-    ) -> Result<IngressResponse, AgentApiError>;
-    async fn remove_ingress(
-        &mut self,
-        params: &RemoveIngressParams,
-    ) -> Result<IngressResponse, AgentApiError>;
+/// Options for one controller or provider data-route connection: the
+/// provider credential as the bearer token, the default connect and
+/// `initialize` bounds, and [`CONTROLLER_REQUEST_TIMEOUT`] on every call.
+pub(crate) fn provider_connect_options(credential: &SecretValue) -> ConnectOptions {
+    ConnectOptions::new(super::gateway::runtime_client_info())
+        .with_bearer_token(credential.expose())
+        .with_request_timeout(CONTROLLER_REQUEST_TIMEOUT)
 }
 
+/// Dials a provider controller and runs its handshake. Tests substitute an
+/// in-process client.
 #[async_trait]
 pub(crate) trait ProviderControllerConnector: Send + Sync {
     async fn connect(
         &self,
-        connection: &EnvironmentConnectionSpec,
-    ) -> Result<Box<dyn ProviderController>, AgentApiError>;
+        endpoint: &EnvironmentEndpoint,
+        options: ConnectOptions,
+    ) -> Result<ControllerClient, ClientError>;
 }
 
-#[derive(Default)]
-pub(crate) struct WebSocketProviderControllerConnector {
-    fake_backend: Arc<tokio::sync::Mutex<FakeBackend>>,
-}
+/// The production connector: `ws://`, `wss://` and `unix://` controller
+/// URLs through [`ControllerClient::connect_initialized`].
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct WebSocketProviderControllerConnector;
 
 #[async_trait]
 impl ProviderControllerConnector for WebSocketProviderControllerConnector {
     async fn connect(
         &self,
-        connection: &EnvironmentConnectionSpec,
-    ) -> Result<Box<dyn ProviderController>, AgentApiError> {
-        let mut controller: Box<dyn ProviderController> = match &connection.transport {
-            EnvironmentTransport::WebSocket => {
-                let client = EnvironmentProviderClient::connect(
-                    &connection.endpoint,
-                    WebSocketConnectOptions {
-                        bearer_token: None,
-                        user_agent: Some("lightspeed-temporal-runtime".to_owned()),
-                        headers: Vec::new(),
-                    },
-                )
-                .await
-                .map_err(map_environment_client_error)?;
-                Box::new(client)
-            }
-            EnvironmentTransport::Http => return Err(unsupported_transport("http")),
-            EnvironmentTransport::Stdio => return Err(unsupported_transport("stdio")),
-            EnvironmentTransport::Ssh => return Err(unsupported_transport("ssh")),
-            EnvironmentTransport::Provider { provider_type } => {
-                if provider_type == "fake" {
-                    Box::new(FakeProviderController {
-                        backend: self.fake_backend.clone(),
-                    })
-                } else {
-                    return Err(unsupported_transport(format!("provider:{provider_type}")));
-                }
+        endpoint: &EnvironmentEndpoint,
+        options: ConnectOptions,
+    ) -> Result<ControllerClient, ClientError> {
+        ControllerClient::connect_initialized(endpoint.as_str(), options)
+            .await
+            .map(|(client, _)| client)
+    }
+}
+
+/// The facts a controller's `initialize` advertises, checked: the data
+/// route base must not downgrade a `wss` controller to `ws`. A controller
+/// on a Unix socket is local, so any base passes.
+pub(crate) fn controller_facts(
+    endpoint: &EnvironmentEndpoint,
+    initialize: &ControllerInitializeResponse,
+) -> Result<(ControllerFeatures, DataRouteBase), UrlError> {
+    if endpoint.scheme() != EndpointScheme::Unix {
+        initialize
+            .routes
+            .data
+            .check_for_controller(endpoint.as_str())?;
+    }
+    Ok((
+        ControllerFeatures {
+            adopt_target: initialize.capabilities.adopt_target,
+            ingress: initialize.capabilities.ingress,
+        },
+        initialize.routes.data.clone(),
+    ))
+}
+
+/// An optional controller feature the runtime gates calls on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControllerFeature {
+    AdoptTarget,
+    Ingress,
+}
+
+impl ControllerFeature {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::AdoptTarget => "target adoption",
+            Self::Ingress => "public ingress",
+        }
+    }
+
+    pub(crate) fn in_features(self, features: &ControllerFeatures) -> bool {
+        match self {
+            Self::AdoptTarget => features.adopt_target,
+            Self::Ingress => features.ingress,
+        }
+    }
+}
+
+/// One initialized controller connection and what its handshake advertised.
+#[derive(Clone)]
+pub(crate) struct ProviderController {
+    pub(crate) provider_id: EnvironmentProviderId,
+    pub(crate) client: ControllerClient,
+    pub(crate) features: ControllerFeatures,
+    pub(crate) data_route_base: DataRouteBase,
+    /// The provider credential, presented on its data routes too.
+    pub(crate) credential: SecretValue,
+}
+
+impl ProviderController {
+    /// Refuse a call that needs an optional feature the controller did not
+    /// advertise, before anything is sent.
+    pub(crate) fn require(&self, feature: ControllerFeature) -> Result<(), ControllerError> {
+        if feature.in_features(&self.features) {
+            Ok(())
+        } else {
+            Err(ControllerError::FeatureUnavailable {
+                provider_id: self.provider_id.to_string(),
+                feature,
+            })
+        }
+    }
+
+    /// Wrap a failed call of this controller.
+    pub(crate) fn call_error(&self, source: ClientError) -> ControllerError {
+        ControllerError::Call {
+            provider_id: self.provider_id.to_string(),
+            source,
+        }
+    }
+
+    pub(crate) async fn close(&self) {
+        let _ = self.client.close().await;
+    }
+}
+
+/// Connect to a provider's controller with its stored credential, check the
+/// advertised facts and record them on the provider record when they
+/// changed.
+pub(crate) async fn connect_provider_controller(
+    store: &dyn EnvironmentProviderStore,
+    connector: &dyn ProviderControllerConnector,
+    provider_id: &EnvironmentProviderId,
+) -> Result<ProviderController, ControllerError> {
+    let provider = store.read_provider(provider_id).await?;
+    let credential = store.read_provider_credential(provider_id).await?;
+    let client = connector
+        .connect(
+            &provider.controller_endpoint,
+            provider_connect_options(&credential),
+        )
+        .await
+        .map_err(|source| ControllerError::Connect {
+            provider_id: provider_id.to_string(),
+            source,
+        })?;
+    let (features, data_route_base) =
+        match controller_facts(&provider.controller_endpoint, client.initialize_response()) {
+            Ok(facts) => facts,
+            Err(source) => {
+                let _ = client.close().await;
+                return Err(ControllerError::Routes {
+                    provider_id: provider_id.to_string(),
+                    source,
+                });
             }
         };
-        let initialized = controller
-            .initialize(&ControllerInitializeParams {
-                protocol_version: CURRENT_PROTOCOL_VERSION,
-                client_name: "lightspeed-temporal-runtime".to_owned(),
+    if provider.controller_features != Some(features)
+        || provider.data_route_base.as_ref() != Some(&data_route_base)
+    {
+        let recorded = store
+            .record_provider_controller(RecordProviderController {
+                provider_id: provider_id.clone(),
+                controller_endpoint: provider.controller_endpoint.clone(),
+                features,
+                data_route_base: data_route_base.clone(),
             })
             .await;
-        let initialized = match initialized {
-            Ok(initialized) => initialized,
+        if let Err(error) = recorded {
+            let _ = client.close().await;
+            return Err(error.into());
+        }
+    }
+    Ok(ProviderController {
+        provider_id: provider_id.clone(),
+        client,
+        features,
+        data_route_base,
+        credential,
+    })
+}
+
+/// Check a controller endpoint at provider registration. A controller that
+/// answers definitively wrong (an HTTP refusal such as 404 for a URL that
+/// names no controller or 401 for a wrong credential, another plane, or a
+/// data route base that fails the downgrade rule) is refused, so a
+/// mis-registered provider never provisions anything. One that cannot be
+/// reached right now is accepted; its facts are recorded at the first
+/// successful handshake.
+pub(crate) async fn probe_controller(
+    connector: &dyn ProviderControllerConnector,
+    endpoint: &EnvironmentEndpoint,
+    credential: &SecretValue,
+) -> Result<Option<(ControllerFeatures, DataRouteBase)>, AgentApiError> {
+    match connector
+        .connect(endpoint, provider_connect_options(credential))
+        .await
+    {
+        Ok(client) => {
+            let facts = controller_facts(endpoint, client.initialize_response());
+            let _ = client.close().await;
+            facts.map(Some).map_err(|error| {
+                AgentApiError::invalid_request(format!(
+                    "the provider controller advertised an unusable data route: {error}"
+                ))
+            })
+        }
+        Err(error) if refuses_registration(&error) => Err(AgentApiError::invalid_request(format!(
+            "the provider controller at {endpoint} refused the handshake: {error}"
+        ))),
+        Err(error) => {
+            tracing::warn!(
+                target: "temporal_runtime",
+                %endpoint,
+                %error,
+                "provider controller is not reachable at registration; its features are recorded at the first successful handshake"
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Handshake failures that prove the registration wrong rather than the
+/// controller temporarily unavailable.
+fn refuses_registration(error: &ClientError) -> bool {
+    match error {
+        ClientError::UpgradeRejected { status } => {
+            (400..500).contains(status) && !matches!(status, 408 | 429)
+        }
+        ClientError::WrongPlane { .. } | ClientError::Configuration { .. } => true,
+        _ => false,
+    }
+}
+
+/// How the reconciler treats a failed controller interaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControllerDisposition {
+    /// May succeed later unchanged: keep the status, record the error and
+    /// retry next pass, until the provisioning deadline.
+    Transient,
+    /// The provider refused the request; repeating it cannot help.
+    Refused,
+    /// The provider holds no such target.
+    Gone,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum ControllerError {
+    /// Dialing the controller or its `initialize` failed, a version or
+    /// plane mismatch included. Always transient: a provider restart or a
+    /// rollout that upgrades the runtime first must not fail environments.
+    #[error("provider controller {provider_id} is unreachable: {source}")]
+    Connect {
+        provider_id: String,
+        #[source]
+        source: ClientError,
+    },
+
+    /// The controller advertised a data route base that fails the
+    /// downgrade rule; treated like a failed `initialize`.
+    #[error("provider controller {provider_id} advertised an unusable data route: {source}")]
+    Routes {
+        provider_id: String,
+        #[source]
+        source: UrlError,
+    },
+
+    /// A call on an initialized connection failed.
+    #[error("provider controller {provider_id}: {source}")]
+    Call {
+        provider_id: String,
+        #[source]
+        source: ClientError,
+    },
+
+    /// The call needs an optional feature the controller did not
+    /// advertise; nothing was sent.
+    #[error("provider {provider_id} does not offer {}", feature.as_str())]
+    FeatureUnavailable {
+        provider_id: String,
+        feature: ControllerFeature,
+    },
+
+    /// An earlier failure in this reconcile pass marked the provider
+    /// unhealthy; its remaining environments are not attempted.
+    #[error("provider controller {provider_id} is skipped for this pass: {message}")]
+    Skipped {
+        provider_id: String,
+        message: String,
+    },
+
+    #[error(transparent)]
+    Registry(#[from] EnvironmentRegistryError),
+}
+
+impl ControllerError {
+    /// Refusals are the controller's typed answers that no retry changes.
+    /// Connection failures, deadlines, undecodable answers and retryable or
+    /// `internal` answers are transient; `notFound` means the target is
+    /// gone. Registry failures are the runtime's own and transient.
+    pub(crate) fn disposition(&self) -> ControllerDisposition {
+        match self {
+            Self::Call { source, .. } => call_disposition(source),
+            Self::FeatureUnavailable { .. } => ControllerDisposition::Refused,
+            Self::Connect { .. } | Self::Routes { .. } | Self::Skipped { .. } => {
+                ControllerDisposition::Transient
+            }
+            Self::Registry(_) => ControllerDisposition::Transient,
+        }
+    }
+
+    /// True when the controller connection itself failed (a dial, a
+    /// deadline, a dropped socket): the provider's remaining environments
+    /// are skipped for the rest of the pass, so one hung provider costs one
+    /// deadline per pass instead of one per environment.
+    pub(crate) fn is_connection_failure(&self) -> bool {
+        match self {
+            Self::Connect { .. } | Self::Routes { .. } | Self::Skipped { .. } => true,
+            Self::Call { source, .. } => !matches!(
+                source,
+                ClientError::Protocol(_) | ClientError::Decode(_) | ClientError::Encode(_)
+            ),
+            Self::FeatureUnavailable { .. } | Self::Registry(_) => false,
+        }
+    }
+
+    /// The precondition a refusal named, if any.
+    pub(crate) fn precondition(&self) -> Option<PreconditionReason> {
+        match self {
+            Self::Call {
+                source: ClientError::Protocol(error),
+                ..
+            } => match error.data {
+                ErrorData::FailedPrecondition { reason } => Some(reason),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub(crate) fn provider_id(&self) -> Option<&str> {
+        match self {
+            Self::Connect { provider_id, .. }
+            | Self::Routes { provider_id, .. }
+            | Self::Call { provider_id, .. }
+            | Self::FeatureUnavailable { provider_id, .. }
+            | Self::Skipped { provider_id, .. } => Some(provider_id),
+            Self::Registry(_) => None,
+        }
+    }
+
+    /// The API error for a caller waiting on this controller interaction.
+    pub(crate) fn into_api_error(self) -> AgentApiError {
+        match self {
+            Self::Registry(error) => super::providers::map_environments_error(error),
+            other => match other.disposition() {
+                ControllerDisposition::Refused => AgentApiError::rejected(other.to_string()),
+                ControllerDisposition::Gone => AgentApiError::not_found(other.to_string()),
+                ControllerDisposition::Transient => AgentApiError::internal(other.to_string()),
+            },
+        }
+    }
+}
+
+/// The disposition of a failed call on an initialized connection.
+pub(crate) fn call_disposition(error: &ClientError) -> ControllerDisposition {
+    match error {
+        ClientError::Protocol(error) => match error.kind() {
+            ProtocolErrorKind::NotFound => ControllerDisposition::Gone,
+            ProtocolErrorKind::Internal => ControllerDisposition::Transient,
+            kind if kind.is_retryable() => ControllerDisposition::Transient,
+            _ => ControllerDisposition::Refused,
+        },
+        _ => ControllerDisposition::Transient,
+    }
+}
+
+/// The controllers one reconcile pass talks to: each provider is dialed at
+/// most once per pass, and a provider whose connection failed is skipped
+/// for the rest of the pass.
+#[derive(Default)]
+pub(crate) struct ProviderPass {
+    controllers: HashMap<EnvironmentProviderId, PassController>,
+}
+
+enum PassController {
+    Connected(ProviderController),
+    Unhealthy(String),
+}
+
+impl ProviderPass {
+    pub(crate) async fn controller(
+        &mut self,
+        store: &dyn EnvironmentProviderStore,
+        connector: &dyn ProviderControllerConnector,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<ProviderController, ControllerError> {
+        match self.controllers.get(provider_id) {
+            Some(PassController::Connected(controller)) => return Ok(controller.clone()),
+            Some(PassController::Unhealthy(message)) => {
+                return Err(ControllerError::Skipped {
+                    provider_id: provider_id.to_string(),
+                    message: message.clone(),
+                });
+            }
+            None => {}
+        }
+        match connect_provider_controller(store, connector, provider_id).await {
+            Ok(controller) => {
+                self.controllers.insert(
+                    provider_id.clone(),
+                    PassController::Connected(controller.clone()),
+                );
+                Ok(controller)
+            }
             Err(error) => {
-                let _ = controller.close().await;
-                return Err(error);
+                if error.is_connection_failure() {
+                    self.controllers.insert(
+                        provider_id.clone(),
+                        PassController::Unhealthy(error.to_string()),
+                    );
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Record a failure of `error`'s provider: a connection failure skips
+    /// the provider for the rest of the pass.
+    pub(crate) async fn observe_failure(&mut self, error: &ControllerError) {
+        if !error.is_connection_failure() {
+            return;
+        }
+        let Some(provider_id) = error.provider_id() else {
+            return;
+        };
+        let Ok(provider_id) = EnvironmentProviderId::try_new(provider_id) else {
+            return;
+        };
+        if let Some(PassController::Connected(controller)) = self
+            .controllers
+            .insert(provider_id, PassController::Unhealthy(error.to_string()))
+        {
+            controller.close().await;
+        }
+    }
+
+    pub(crate) async fn close(self) {
+        for controller in self.controllers.into_values() {
+            if let PassController::Connected(controller) = controller {
+                controller.close().await;
+            }
+        }
+    }
+}
+
+/// Dials providers whose controller facts are not recorded yet (never
+/// reached, or their endpoint changed and the registration probe could not
+/// reach the new one), so the gateway's data proxy gets a data route base
+/// even when none of the provider's environments needs convergence. Failed
+/// attempts back off per provider.
+#[derive(Default)]
+pub(crate) struct ProviderFactsRefresh {
+    listed_at: Option<Instant>,
+    retry: HashMap<EnvironmentProviderId, (Instant, Duration)>,
+}
+
+impl ProviderFactsRefresh {
+    /// How often the provider list is read.
+    const LIST_INTERVAL: Duration = Duration::from_secs(5);
+    const FIRST_RETRY: Duration = Duration::from_secs(5);
+    const MAX_RETRY: Duration = Duration::from_secs(300);
+
+    /// One refresh step of a deployment pass; connections stay in `pass`.
+    pub(crate) async fn run(
+        &mut self,
+        pass: &mut ProviderPass,
+        store: &dyn EnvironmentProviderStore,
+        connector: &dyn ProviderControllerConnector,
+    ) {
+        let now = Instant::now();
+        if self
+            .listed_at
+            .is_some_and(|listed| now.duration_since(listed) < Self::LIST_INTERVAL)
+        {
+            return;
+        }
+        self.listed_at = Some(now);
+        let providers = match store
+            .list_providers(ListEnvironmentProviders::default())
+            .await
+        {
+            Ok(providers) => providers,
+            Err(error) => {
+                tracing::warn!(target: "temporal_runtime", %error, "listing providers for a controller handshake failed");
+                return;
             }
         };
-        if initialized.protocol_version != CURRENT_PROTOCOL_VERSION {
-            let _ = controller.close().await;
-            return Err(AgentApiError::rejected(format!(
-                "environment provider protocol version {} is incompatible with {}",
-                initialized.protocol_version, CURRENT_PROTOCOL_VERSION,
-            )));
+        let unrecorded: Vec<EnvironmentProviderId> = providers
+            .into_iter()
+            .filter(|provider| provider.data_route_base.is_none())
+            .map(|provider| provider.provider_id)
+            .collect();
+        self.retry
+            .retain(|provider_id, _| unrecorded.contains(provider_id));
+        for provider_id in unrecorded {
+            if self
+                .retry
+                .get(&provider_id)
+                .is_some_and(|(next, _)| now < *next)
+            {
+                continue;
+            }
+            match pass.controller(store, connector, &provider_id).await {
+                Ok(_) => {
+                    self.retry.remove(&provider_id);
+                }
+                Err(error) => {
+                    let backoff = self
+                        .retry
+                        .get(&provider_id)
+                        .map_or(Self::FIRST_RETRY, |(_, backoff)| {
+                            (*backoff * 2).min(Self::MAX_RETRY)
+                        });
+                    tracing::debug!(
+                        target: "temporal_runtime",
+                        %provider_id,
+                        %error,
+                        retry_in_s = backoff.as_secs(),
+                        "provider controller handshake failed; its data route base stays unrecorded"
+                    );
+                    self.retry.insert(provider_id, (now + backoff, backoff));
+                }
+            }
         }
-        Ok(controller)
     }
 }
 
-/// Power states the in-process fake provider advertises. Suspended is
-/// deliberately included so the Firecracker-shaped path has coverage.
-const FAKE_POWER_STATES: [PowerState; 4] = [
-    PowerState::Running,
-    PowerState::Paused,
-    PowerState::Suspended,
-    PowerState::Stopped,
-];
-
-#[derive(Default)]
-struct FakeBackend {
-    targets: BTreeMap<String, FakeTarget>,
-    requests: BTreeMap<(String, String, String), String>,
-}
-
-#[derive(Clone)]
-struct FakeTarget {
-    universe_id: String,
-    binding_id: String,
-    environment_id: String,
-    incarnation_id: String,
-    response: CreateTargetResponse,
-}
-
-struct FakeProviderController {
-    backend: Arc<tokio::sync::Mutex<FakeBackend>>,
-}
-
-#[async_trait]
-impl ProviderController for FakeProviderController {
-    async fn initialize(
-        &mut self,
-        _params: &ControllerInitializeParams,
-    ) -> Result<ControllerInitializeResponse, AgentApiError> {
-        Ok(ControllerInitializeResponse {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            capabilities: environment_protocol::control::handshake::ControllerCapabilities {
-                list_templates: true,
-                list_targets: true,
-                create_target: true,
-                adopt_target: true,
-                get_target: true,
-                close_target: true,
-                set_target_power: true,
-                ingress: true,
-            },
-            implementation: ImplementationInfo {
-                name: "lightspeed-fake-environment-provider".to_owned(),
-                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
-                ..Default::default()
-            },
-        })
+impl EnvironmentService {
+    /// A controller connection for one API request; the caller closes it.
+    pub(crate) async fn connect_provider_controller(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<ProviderController, ControllerError> {
+        connect_provider_controller(
+            self.store.as_ref(),
+            self.provider_controller_connector.as_ref(),
+            provider_id,
+        )
+        .await
     }
 
-    async fn list_templates(
-        &mut self,
-        _params: &ListTemplatesParams,
-    ) -> Result<ListTemplatesResponse, AgentApiError> {
-        Ok(ListTemplatesResponse {
-            templates: vec![EnvironmentTemplate {
-                template_id: "rust-v1".to_owned(),
-                display_name: "Rust development".to_owned(),
-                description: Some("Deterministic fake provider template".to_owned()),
-                public_ingress: false,
-                deprecated: false,
-                metadata: BTreeMap::new(),
-            }],
-        })
-    }
-
-    async fn create_target(
-        &mut self,
-        params: &CreateTargetParams,
-    ) -> Result<CreateTargetResponse, AgentApiError> {
-        if params.template_id != "rust-v1" && !params.template_id.starts_with("adopted:") {
-            return Err(AgentApiError::rejected(
-                "fake provider policy rejected the template",
-            ));
-        }
-        let key = (
-            params.binding.universe_id.clone(),
-            params.binding.binding_id.clone(),
-            params.request_id.clone(),
-        );
-        let mut backend = self.backend.lock().await;
-        if let Some(target_id) = backend.requests.get(&key) {
-            return Ok(backend
-                .targets
-                .get(target_id)
-                .expect("fake request index target")
-                .response
-                .clone());
-        }
-        if backend.targets.values().any(|target| {
-            target.universe_id == params.binding.universe_id
-                && target.binding_id == params.binding.binding_id
-                && target.response.target.status != ProviderTargetStatus::Closed
-        }) {
-            return Err(AgentApiError::rejected(
-                "fake provider policy allows one active target per binding",
-            ));
-        }
-        let mut identity = DefaultHasher::new();
-        params.binding.universe_id.hash(&mut identity);
-        params.binding.binding_id.hash(&mut identity);
-        params.incarnation_id.hash(&mut identity);
-        let target_id = format!("fake-{:016x}", identity.finish());
-        let provider_target_id = ProviderTargetId::new(target_id.clone());
-        let capabilities = EnvironmentCapabilities::filesystem(true, true).with_process();
-        let response = CreateTargetResponse {
-            target: ProviderTargetSummary {
-                target_id: provider_target_id.clone(),
-                display_name: Some(params.environment_id.clone()),
-                status: ProviderTargetStatus::Ready,
-                scope: EnvironmentScope::Default,
-                capabilities: capabilities.clone(),
-                default_cwd: None,
-                power_states: FAKE_POWER_STATES.to_vec(),
-                metadata: BTreeMap::from([(
-                    "imageFingerprint".to_owned(),
-                    format!("fake:{}", params.template_id),
-                )]),
-            },
+    /// Refuse an API request that needs an optional controller feature the
+    /// provider does not offer. Features recorded at the last handshake
+    /// decide; a provider not reached yet is dialed once to learn them.
+    pub(crate) async fn require_controller_feature(
+        &self,
+        provider_id: &EnvironmentProviderId,
+        feature: ControllerFeature,
+    ) -> Result<(), AgentApiError> {
+        let provider = self.read_environment_provider(provider_id).await?;
+        let features = match provider.controller_features {
+            Some(features) => features,
+            None => {
+                let controller = self
+                    .connect_provider_controller(provider_id)
+                    .await
+                    .map_err(ControllerError::into_api_error)?;
+                controller.close().await;
+                controller.features
+            }
         };
-        backend.requests.insert(key, target_id.clone());
-        backend.targets.insert(
-            target_id,
-            FakeTarget {
-                universe_id: params.binding.universe_id.clone(),
-                binding_id: params.binding.binding_id.clone(),
-                environment_id: params.environment_id.clone(),
-                incarnation_id: params.incarnation_id.clone(),
-                response: response.clone(),
-            },
-        );
-        Ok(response)
-    }
-
-    async fn adopt_target(
-        &mut self,
-        params: &AdoptTargetParams,
-    ) -> Result<AdoptTargetResponse, AgentApiError> {
-        let create = CreateTargetParams {
-            request_id: params.request_id.clone(),
-            environment_id: params.environment_id.clone(),
-            incarnation_id: params.incarnation_id.clone(),
-            binding: params.binding.clone(),
-            template_id: format!("adopted:{}", params.source_target),
-        };
-        let response = self.create_target(&create).await?;
-        Ok(AdoptTargetResponse {
-            target: response.target,
-        })
-    }
-
-    async fn close_target(
-        &mut self,
-        params: &CloseTargetParams,
-    ) -> Result<CloseTargetResponse, AgentApiError> {
-        let mut backend = self.backend.lock().await;
-        let target = backend
-            .targets
-            .get_mut(params.target_id.as_str())
-            .ok_or_else(|| {
-                AgentApiError::not_found(format!("fake target not found: {}", params.target_id))
-            })?;
-        if target.universe_id != params.binding.universe_id
-            || target.binding_id != params.binding.binding_id
-            || target.environment_id != params.environment_id
-            || target.incarnation_id != params.incarnation_id
-        {
-            return Err(AgentApiError::rejected(
-                "fake target ownership metadata does not match close request",
-            ));
-        }
-        target.response.target.status = ProviderTargetStatus::Closed;
-        Ok(CloseTargetResponse {
-            target_id: params.target_id.clone(),
-            status: ProviderTargetStatus::Closed,
-        })
-    }
-
-    /// The fake provider converges instantly: the requested steady state is
-    /// the observed state on return.
-    async fn set_target_power(
-        &mut self,
-        params: &SetTargetPowerParams,
-    ) -> Result<SetTargetPowerResponse, AgentApiError> {
-        if !FAKE_POWER_STATES.contains(&params.power) {
-            return Err(AgentApiError::rejected(format!(
-                "fake provider does not support power state {}",
-                params.power
-            )));
-        }
-        let mut backend = self.backend.lock().await;
-        let target = backend
-            .targets
-            .get_mut(params.target_id.as_str())
-            .ok_or_else(|| {
-                AgentApiError::not_found(format!("fake target not found: {}", params.target_id))
-            })?;
-        if target.universe_id != params.binding.universe_id
-            || target.binding_id != params.binding.binding_id
-            || target.environment_id != params.environment_id
-            || target.incarnation_id != params.incarnation_id
-        {
-            return Err(AgentApiError::rejected(
-                "fake target ownership metadata does not match power request",
-            ));
-        }
-        if target.response.target.status == ProviderTargetStatus::Closed {
-            return Err(AgentApiError::rejected("fake target is closed"));
-        }
-        target.response.target.status = match params.power {
-            PowerState::Running => ProviderTargetStatus::Ready,
-            PowerState::Paused => ProviderTargetStatus::Paused,
-            PowerState::Suspended => ProviderTargetStatus::Suspended,
-            PowerState::Stopped => ProviderTargetStatus::Stopped,
-        };
-        Ok(SetTargetPowerResponse {
-            target: target.response.target.clone(),
-        })
-    }
-
-    async fn ensure_ingress(
-        &mut self,
-        _params: &EnsureIngressParams,
-    ) -> Result<IngressResponse, AgentApiError> {
-        Ok(IngressResponse {
-            status: ProviderIngressStatus::Ready,
-            public_endpoint: Some("https://fake.env.test".to_owned()),
-        })
-    }
-
-    async fn remove_ingress(
-        &mut self,
-        _params: &RemoveIngressParams,
-    ) -> Result<IngressResponse, AgentApiError> {
-        Ok(IngressResponse {
-            status: ProviderIngressStatus::Disabled,
-            public_endpoint: None,
-        })
-    }
-}
-
-#[async_trait]
-impl<T> ProviderController for EnvironmentProviderClient<T>
-where
-    T: environment_client::JsonRpcTransport + Send,
-{
-    async fn close(&mut self) -> Result<(), AgentApiError> {
-        EnvironmentProviderClient::close(self)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn initialize(
-        &mut self,
-        params: &ControllerInitializeParams,
-    ) -> Result<ControllerInitializeResponse, AgentApiError> {
-        EnvironmentProviderClient::initialize(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn create_target(
-        &mut self,
-        params: &CreateTargetParams,
-    ) -> Result<CreateTargetResponse, AgentApiError> {
-        EnvironmentProviderClient::create_target(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn adopt_target(
-        &mut self,
-        params: &AdoptTargetParams,
-    ) -> Result<AdoptTargetResponse, AgentApiError> {
-        EnvironmentProviderClient::adopt_target(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn list_templates(
-        &mut self,
-        params: &ListTemplatesParams,
-    ) -> Result<ListTemplatesResponse, AgentApiError> {
-        EnvironmentProviderClient::list_templates(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn close_target(
-        &mut self,
-        params: &CloseTargetParams,
-    ) -> Result<CloseTargetResponse, AgentApiError> {
-        EnvironmentProviderClient::close_target(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn set_target_power(
-        &mut self,
-        params: &SetTargetPowerParams,
-    ) -> Result<SetTargetPowerResponse, AgentApiError> {
-        EnvironmentProviderClient::set_target_power(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn ensure_ingress(
-        &mut self,
-        params: &EnsureIngressParams,
-    ) -> Result<IngressResponse, AgentApiError> {
-        EnvironmentProviderClient::ensure_ingress(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-
-    async fn remove_ingress(
-        &mut self,
-        params: &RemoveIngressParams,
-    ) -> Result<IngressResponse, AgentApiError> {
-        EnvironmentProviderClient::remove_ingress(self, params)
-            .await
-            .map_err(map_environment_client_error)
-    }
-}
-
-/// Finish one scoped provider-controller operation and close its transport on
-/// both success and failure. A close error does not replace the operation's
-/// result: controller calls are already complete when this runs.
-pub(crate) async fn finish_provider_controller<T>(
-    mut controller: Box<dyn ProviderController>,
-    result: Result<T, AgentApiError>,
-) -> Result<T, AgentApiError> {
-    let _ = controller.close().await;
-    result
-}
-
-pub(crate) fn map_environment_client_error(error: EnvironmentClientError) -> AgentApiError {
-    match error {
-        EnvironmentClientError::Protocol(error) => {
-            AgentApiError::rejected(format!("provider controller error: {}", error.message))
-        }
-        EnvironmentClientError::TransportClosed => {
-            AgentApiError::rejected("provider controller disconnected")
-        }
-        EnvironmentClientError::Serialize(error) => {
-            AgentApiError::rejected(format!("provider controller call failed: {error}"))
-        }
-        EnvironmentClientError::Transport(message)
-        | EnvironmentClientError::InvalidMessage(message) => {
-            AgentApiError::rejected(format!("provider controller call failed: {message}"))
+        if feature.in_features(&features) {
+            Ok(())
+        } else {
+            Err(AgentApiError::rejected(format!(
+                "provider {provider_id} does not offer {}",
+                feature.as_str()
+            )))
         }
     }
-}
-
-fn unsupported_transport(transport: impl std::fmt::Display) -> AgentApiError {
-    AgentApiError::invalid_request(format!(
-        "provider controller transport is not supported by this gateway: {transport}"
-    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::environments::EnvironmentConnectionSpec;
-    use environment_client::{EnvironmentClientResult, JsonRpcTransport};
-    use environment_protocol::control::targets::ProviderBindingContext;
-    use serde_json::Value;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use environment_protocol::{
+        CONTROLLER_PROTOCOL_VERSION,
+        control::handshake::{ControllerCapabilities, ControllerRoutes},
+        error::ProtocolError,
+        handshake::{ImplementationInfo, Plane},
+    };
 
-    struct CloseTrackingTransport {
-        closed: Arc<AtomicBool>,
+    fn initialize(data: &str) -> ControllerInitializeResponse {
+        ControllerInitializeResponse {
+            protocol_version: CONTROLLER_PROTOCOL_VERSION,
+            plane: Plane::Controller,
+            server_info: ImplementationInfo::new("controller").unwrap(),
+            capabilities: ControllerCapabilities {
+                adopt_target: true,
+                ingress: false,
+            },
+            routes: ControllerRoutes {
+                data: DataRouteBase::new(data).unwrap(),
+            },
+        }
+    }
+
+    fn call(source: ClientError) -> ControllerError {
+        ControllerError::Call {
+            provider_id: "provider".into(),
+            source,
+        }
+    }
+
+    #[test]
+    fn connection_failures_and_contract_breaches_are_transient() {
+        for source in [
+            ClientError::Closed {
+                code: None,
+                reason: None,
+            },
+            ClientError::Transport("reset".into()),
+            ClientError::DeadlineExceeded {
+                elapsed_ms: 120_000,
+            },
+            ClientError::Decode("missing field".into()),
+            ClientError::InvalidMessage("binary frame".into()),
+            ClientError::Protocol(ProtocolError::internal("bug")),
+            ClientError::Protocol(ProtocolError::unavailable("incus api down")),
+        ] {
+            assert_eq!(
+                call(source.clone()).disposition(),
+                ControllerDisposition::Transient,
+                "{source}"
+            );
+        }
+        // Every handshake failure is transient, a version mismatch included.
+        for source in [
+            ClientError::VersionMismatch {
+                plane: Plane::Controller,
+                local: 3,
+                remote: 4,
+            },
+            ClientError::UpgradeRejected { status: 404 },
+            ClientError::ConnectTimeout {
+                endpoint: "ws://provider".into(),
+            },
+        ] {
+            let error = ControllerError::Connect {
+                provider_id: "provider".into(),
+                source,
+            };
+            assert_eq!(error.disposition(), ControllerDisposition::Transient);
+            assert!(error.is_connection_failure());
+        }
+    }
+
+    #[test]
+    fn typed_refusals_and_missing_targets_are_final() {
+        let refused = call(ClientError::Protocol(ProtocolError::failed_precondition(
+            PreconditionReason::TemplateDeprecated,
+            "deprecated",
+        )));
+        assert_eq!(refused.disposition(), ControllerDisposition::Refused);
+        assert_eq!(
+            refused.precondition(),
+            Some(PreconditionReason::TemplateDeprecated)
+        );
+        assert!(!refused.is_connection_failure());
+        let gone = call(ClientError::Protocol(ProtocolError::not_found("no target")));
+        assert_eq!(gone.disposition(), ControllerDisposition::Gone);
+        let unadvertised = ControllerError::FeatureUnavailable {
+            provider_id: "provider".into(),
+            feature: ControllerFeature::AdoptTarget,
+        };
+        assert_eq!(unadvertised.disposition(), ControllerDisposition::Refused);
+        // A deadline or a dropped socket skips the provider for the pass.
+        assert!(call(ClientError::DeadlineExceeded { elapsed_ms: 1 }).is_connection_failure());
+        assert!(!call(ClientError::Decode("bad".into())).is_connection_failure());
+    }
+
+    #[test]
+    fn registration_refuses_only_definitive_handshake_failures() {
+        for refused in [
+            ClientError::UpgradeRejected { status: 404 },
+            ClientError::UpgradeRejected { status: 401 },
+            ClientError::WrongPlane {
+                expected: Plane::Controller,
+                actual: Plane::Data,
+            },
+        ] {
+            assert!(refuses_registration(&refused), "{refused}");
+        }
+        for accepted in [
+            ClientError::UpgradeRejected { status: 503 },
+            ClientError::UpgradeRejected { status: 429 },
+            ClientError::Connect {
+                endpoint: "ws://provider".into(),
+                message: "refused".into(),
+            },
+            ClientError::VersionMismatch {
+                plane: Plane::Controller,
+                local: 3,
+                remote: 4,
+            },
+        ] {
+            assert!(!refuses_registration(&accepted), "{accepted}");
+        }
+    }
+
+    /// A connector whose every dial fails, counting the attempts.
+    #[derive(Default)]
+    struct UnreachableConnector {
+        attempts: std::sync::atomic::AtomicUsize,
     }
 
     #[async_trait]
-    impl JsonRpcTransport for CloseTrackingTransport {
-        async fn send(&mut self, _message: Value) -> EnvironmentClientResult<()> {
-            Ok(())
-        }
-
-        async fn recv(&mut self) -> EnvironmentClientResult<Option<Value>> {
-            Ok(None)
-        }
-
-        async fn close(&mut self) -> EnvironmentClientResult<()> {
-            self.closed.store(true, Ordering::SeqCst);
-            Ok(())
+    impl ProviderControllerConnector for UnreachableConnector {
+        async fn connect(
+            &self,
+            endpoint: &EnvironmentEndpoint,
+            _options: ConnectOptions,
+        ) -> Result<ControllerClient, ClientError> {
+            self.attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(ClientError::Connect {
+                endpoint: endpoint.to_string(),
+                message: "refused".into(),
+            })
         }
     }
 
-    fn connection() -> EnvironmentConnectionSpec {
-        EnvironmentConnectionSpec::new(
-            "in-process",
-            EnvironmentTransport::Provider {
-                provider_type: "fake".to_owned(),
-            },
-        )
-    }
-
-    fn create(
-        universe: &str,
-        binding: &str,
-        request: &str,
-        environment: &str,
-    ) -> CreateTargetParams {
-        CreateTargetParams {
-            request_id: request.to_owned(),
-            environment_id: environment.to_owned(),
-            incarnation_id: format!("incarnation-{environment}"),
-            binding: ProviderBindingContext {
-                universe_id: universe.to_owned(),
-                binding_id: binding.to_owned(),
-            },
-            template_id: "rust-v1".to_owned(),
-        }
+    async fn provider_store(
+        endpoint: &str,
+        credential: &str,
+    ) -> ::environments::InMemoryEnvironmentRegistryStore {
+        let store = ::environments::InMemoryEnvironmentRegistryStore::new();
+        store
+            .put_provider(::environments::PutEnvironmentProvider {
+                provider_id: EnvironmentProviderId::new("provider"),
+                display_name: None,
+                controller_endpoint: EnvironmentEndpoint::parse(endpoint).unwrap(),
+                metadata: Default::default(),
+                credential: Some(SecretValue::new(credential)),
+                updated_at_ms: 1,
+            })
+            .await
+            .unwrap();
+        store
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn finishing_a_provider_operation_closes_its_transport() {
-        let closed = Arc::new(AtomicBool::new(false));
-        let controller: Box<dyn ProviderController> =
-            Box::new(EnvironmentProviderClient::new(CloseTrackingTransport {
-                closed: closed.clone(),
-            }));
-
-        let value = finish_provider_controller(controller, Ok::<_, AgentApiError>(42))
+    async fn the_refresh_records_facts_of_a_provider_never_reached() {
+        let controller = crate::environments::fake_controller::FakeController::start()
             .await
-            .expect("operation result");
-
-        assert_eq!(value, 42);
-        assert!(closed.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn fake_provider_adopts_retries_and_isolates_bindings() {
-        let connector = WebSocketProviderControllerConnector::default();
-        let mut first = connector.connect(&connection()).await.expect("connect");
-        let created = first
-            .create_target(&create(
-                "universe-a",
-                "binding-a",
-                "request-1",
-                "environment-1",
-            ))
-            .await
-            .expect("create");
-        drop(first);
-
-        let mut after_restart = connector.connect(&connection()).await.expect("reconnect");
-        let adopted = after_restart
-            .create_target(&create(
-                "universe-a",
-                "binding-a",
-                "request-1",
-                "different-environment",
-            ))
-            .await
-            .expect("adopt");
-        assert_eq!(adopted.target.target_id, created.target.target_id);
-
-        let isolated = after_restart
-            .create_target(&create(
-                "universe-b",
-                "binding-b",
-                "request-1",
-                "environment-2",
-            ))
-            .await
-            .expect("isolated create");
-        assert_ne!(isolated.target.target_id, created.target.target_id);
-
-        let imported = after_restart
-            .adopt_target(&AdoptTargetParams {
-                request_id: "adopt-request-1".to_owned(),
-                environment_id: "environment-imported".to_owned(),
-                incarnation_id: "incarnation-imported".to_owned(),
-                binding: ProviderBindingContext {
-                    universe_id: "universe-c".to_owned(),
-                    binding_id: "binding-c".to_owned(),
-                },
-                source_target: "legacy/hand-built-vm".to_owned(),
-            })
-            .await
-            .expect("explicit adoption");
-        assert_eq!(
-            imported.target.metadata.get("imageFingerprint"),
-            Some(&"fake:adopted:legacy/hand-built-vm".to_owned())
-        );
-
-        let wrong_owner = after_restart
-            .close_target(&CloseTargetParams {
-                request_id: "close-1".to_owned(),
-                environment_id: "environment-1".to_owned(),
-                incarnation_id: "incarnation-environment-1".to_owned(),
-                binding: ProviderBindingContext {
-                    universe_id: "universe-b".to_owned(),
-                    binding_id: "binding-b".to_owned(),
-                },
-                target_id: created.target.target_id.clone(),
-                force: false,
-            })
-            .await
-            .expect_err("ownership mismatch");
-        assert_eq!(wrong_owner.kind, AgentApiErrorKind::Rejected);
-
-        let power = |power: PowerState| SetTargetPowerParams {
-            request_id: format!("power-{power}"),
-            environment_id: "environment-1".to_owned(),
-            incarnation_id: "incarnation-environment-1".to_owned(),
-            binding: ProviderBindingContext {
-                universe_id: "universe-a".to_owned(),
-                binding_id: "binding-a".to_owned(),
-            },
-            target_id: created.target.target_id.clone(),
-            power,
-        };
-        assert_eq!(created.target.power_states, FAKE_POWER_STATES.to_vec());
-        let paused = after_restart
-            .set_target_power(&power(PowerState::Paused))
-            .await
-            .expect("pause");
-        assert_eq!(paused.target.status, ProviderTargetStatus::Paused);
-        let resumed = after_restart
-            .set_target_power(&power(PowerState::Running))
-            .await
-            .expect("resume");
-        assert_eq!(resumed.target.status, ProviderTargetStatus::Ready);
-        assert_eq!(resumed.target.target_id, created.target.target_id);
-
-        let closed = after_restart
-            .close_target(&CloseTargetParams {
-                request_id: "close-1".to_owned(),
-                environment_id: "environment-1".to_owned(),
-                incarnation_id: "incarnation-environment-1".to_owned(),
-                binding: ProviderBindingContext {
-                    universe_id: "universe-a".to_owned(),
-                    binding_id: "binding-a".to_owned(),
-                },
-                target_id: created.target.target_id.clone(),
-                force: false,
-            })
-            .await
-            .expect("close");
-        assert_eq!(closed.status, ProviderTargetStatus::Closed);
+            .unwrap();
+        let store = provider_store(controller.controller_url(), controller.credential()).await;
+        let provider_id = EnvironmentProviderId::new("provider");
         assert!(
-            after_restart
-                .set_target_power(&power(PowerState::Running))
+            store
+                .read_provider(&provider_id)
                 .await
-                .is_err()
+                .unwrap()
+                .data_route_base
+                .is_none()
         );
+        let mut pass = ProviderPass::default();
+        ProviderFactsRefresh::default()
+            .run(&mut pass, &store, &WebSocketProviderControllerConnector)
+            .await;
+        pass.close().await;
+        let provider = store.read_provider(&provider_id).await.unwrap();
+        assert!(provider.data_route_base.is_some());
+        assert!(provider.controller_features.is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unreachable_provider_is_retried_with_backoff() {
+        let store = provider_store("ws://127.0.0.1:9/control", "credential").await;
+        let connector = UnreachableConnector::default();
+        let mut refresh = ProviderFactsRefresh::default();
+        let mut pass = ProviderPass::default();
+        refresh.run(&mut pass, &store, &connector).await;
+        assert_eq!(
+            connector.attempts.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        // The next listing still finds it unrecorded, but its retry is not
+        // due yet.
+        refresh.listed_at = None;
+        let mut pass = ProviderPass::default();
+        refresh.run(&mut pass, &store, &connector).await;
+        assert_eq!(
+            connector.attempts.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        let (_, backoff) = refresh.retry[&EnvironmentProviderId::new("provider")];
+        assert_eq!(backoff, ProviderFactsRefresh::FIRST_RETRY);
+    }
+
+    #[test]
+    fn controller_facts_enforce_the_downgrade_rule() {
+        let secure = EnvironmentEndpoint::parse("wss://provider.test/control").unwrap();
+        assert!(matches!(
+            controller_facts(&secure, &initialize("ws://provider.test/routes")),
+            Err(UrlError::Downgrade(_))
+        ));
+        let (features, base) =
+            controller_facts(&secure, &initialize("wss://provider.test/routes")).unwrap();
+        assert!(features.adopt_target && !features.ingress);
+        assert_eq!(base.as_str(), "wss://provider.test/routes");
+        let plain = EnvironmentEndpoint::parse("ws://127.0.0.1:9/control").unwrap();
+        assert!(controller_facts(&plain, &initialize("ws://127.0.0.1:9/routes")).is_ok());
+        let local = EnvironmentEndpoint::parse("unix:///run/provider.sock").unwrap();
+        assert!(controller_facts(&local, &initialize("ws://localhost/routes")).is_ok());
     }
 }

@@ -1,0 +1,35 @@
+{
+  "params": {
+    "operationId": "op-1",
+    "index": 0,
+    "limit": 128
+  },
+  "response": {
+    "entries": [
+      {
+        "path": ".",
+        "content": {
+          "kind": "directory"
+        }
+      },
+      {
+        "path": "bin/tool",
+        "content": {
+          "kind": "file",
+          "sizeBytes": 2048,
+          "executable": true,
+          "digest": "sha256:abababababababababababababababababababababababababababababababab"
+        }
+      }
+    ],
+    "nextIndex": 2
+  },
+  "error": {
+    "code": -32007,
+    "message": "the inventory is not sealed yet",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "transferPhase"
+    }
+  }
+}

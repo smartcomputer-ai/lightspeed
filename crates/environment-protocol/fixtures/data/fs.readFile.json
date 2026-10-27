@@ -1,0 +1,21 @@
+{
+  "params": {
+    "path": "/workspace/src/lib.rs",
+    "offset": 1024,
+    "maxBytes": 65536
+  },
+  "response": {
+    "data": "aGVsbG8=",
+    "fileSize": 4096,
+    "truncated": true,
+    "version": "v1:1761400000000000000:4096:42"
+  },
+  "error": {
+    "code": -32007,
+    "message": "/dev/zero is not a regular file",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "notRegularFile"
+    }
+  }
+}

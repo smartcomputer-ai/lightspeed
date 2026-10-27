@@ -1,0 +1,38 @@
+{
+  "params": {
+    "operationId": "op-1"
+  },
+  "response": {
+    "operationId": "op-1",
+    "phase": "failed",
+    "entryCount": 3,
+    "totalBytes": 2048,
+    "transferredBytes": 1024,
+    "reusedBytes": 512,
+    "deadlineAtMs": 1761400000000,
+    "skipped": [
+      {
+        "path": "node_modules/.bin/tsc",
+        "reason": "symlink"
+      }
+    ],
+    "skippedEntryCount": 140,
+    "error": {
+      "code": -32017,
+      "message": "src/lib.rs changed while it was read",
+      "data": {
+        "kind": "aborted",
+        "reason": "sourceChanged"
+      }
+    },
+    "receiptExpiresAtMs": 1761486400000
+  },
+  "error": {
+    "code": -32007,
+    "message": "advance is not valid in the complete phase",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "transferPhase"
+    }
+  }
+}

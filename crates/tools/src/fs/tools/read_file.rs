@@ -97,18 +97,22 @@ pub async fn invoke_read_file(
     // Ranged read: an oversized file is truncated at the source (when the
     // backend supports ranges) and rejected with its true size instead of
     // being transferred in full.
+    // A backend that bounds one read (an environment's advertised ceiling)
+    // lowers the limit; a file over it is refused, never shown short.
+    let max_bytes = ctx
+        .fs
+        .max_read_bytes()
+        .map_or(ctx.limits.max_file_read_bytes, |ceiling| {
+            ceiling.min(ctx.limits.max_file_read_bytes)
+        });
     let read = ctx
         .fs
-        .read_file_range(
-            &resolved_path,
-            0,
-            Some(ctx.limits.max_file_read_bytes.saturating_add(1)),
-        )
+        .read_file_range(&resolved_path, 0, Some(max_bytes.saturating_add(1)))
         .await?;
-    if read.truncated || read.file_size > ctx.limits.max_file_read_bytes {
+    if read.truncated || read.file_size > max_bytes {
         return Err(invalid_request(format!(
-            "read_file would read {} bytes, exceeding max_file_read_bytes={}",
-            read.file_size, ctx.limits.max_file_read_bytes
+            "read_file would read {} bytes from {resolved_path}, exceeding the {max_bytes}-byte read limit",
+            read.file_size
         )));
     }
     let bytes_read = read.bytes.len();
@@ -368,15 +372,6 @@ mod tests {
             &self,
             _path: &FsPath,
             _options: crate::fs::RemoveOptions,
-        ) -> crate::fs::FsResult<()> {
-            unimplemented!()
-        }
-
-        async fn copy(
-            &self,
-            _source_path: &FsPath,
-            _destination_path: &FsPath,
-            _options: crate::fs::CopyOptions,
         ) -> crate::fs::FsResult<()> {
             unimplemented!()
         }

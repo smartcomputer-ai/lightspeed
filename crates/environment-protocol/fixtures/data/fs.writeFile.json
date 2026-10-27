@@ -1,0 +1,20 @@
+{
+  "params": {
+    "path": "/workspace/src/lib.rs",
+    "data": "aGVsbG8=",
+    "create": "ifPresent",
+    "ifMatch": "v1:1761400000000000000:4096:42",
+    "executable": true
+  },
+  "response": {
+    "version": "v1:1761400001000000000:5:42"
+  },
+  "error": {
+    "code": -32007,
+    "message": "/workspace/src/lib.rs changed since it was read",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "ifMatchFailed"
+    }
+  }
+}

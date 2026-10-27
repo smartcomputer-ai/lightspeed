@@ -108,6 +108,7 @@ export default defineConfig({
         { label: 'Reference', collapsed: true, items: [
           { label: 'JSON-RPC API', slug: 'reference/api' },
           { label: 'Environment variables', slug: 'reference/environment-variables' },
+          { label: 'Environment protocol', slug: 'reference/environment-protocol' },
           { label: 'Workflow contract', slug: 'reference/workflow-contract' },
         ] },
       ],

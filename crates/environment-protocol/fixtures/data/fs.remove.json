@@ -1,0 +1,16 @@
+{
+  "params": {
+    "path": "/workspace/build",
+    "recursive": true,
+    "force": true
+  },
+  "response": {},
+  "error": {
+    "code": -32003,
+    "message": "/var/lib/lightspeed-envd is the daemon state directory",
+    "data": {
+      "kind": "permissionDenied",
+      "reason": "daemonState"
+    }
+  }
+}

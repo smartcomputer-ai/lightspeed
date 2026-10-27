@@ -1,0 +1,89 @@
+{
+  "params": {
+    "roots": [
+      {
+        "path": "/workspace",
+        "maxDepth": 0
+      },
+      {
+        "path": "/workspace/.agents/skills",
+        "ifNoneMatch": "scan:v1:9f2c"
+      },
+      {
+        "path": "/home/dev/.agents/skills"
+      }
+    ],
+    "filter": {
+      "include": [
+        "SKILL.md",
+        "*/SKILL.md"
+      ],
+      "maxDepth": 2
+    },
+    "readContent": true,
+    "includeDigests": true,
+    "followSymlinks": true,
+    "limits": {
+      "maxEntries": 4096,
+      "maxFileBytes": 65536,
+      "maxTotalBytes": 4194304,
+      "maxDurationMs": 2000
+    }
+  },
+  "response": {
+    "roots": [
+      {
+        "kind": "complete",
+        "path": "/workspace",
+        "fingerprint": "scan:v1:0001"
+      },
+      {
+        "kind": "unchanged",
+        "path": "/workspace/.agents/skills",
+        "fingerprint": "scan:v1:9f2c"
+      },
+      {
+        "kind": "complete",
+        "path": "/home/dev/.agents/skills",
+        "canonicalPath": "/home/dev/dotfiles/skills",
+        "fingerprint": "scan:v1:77aa",
+        "entries": [
+          {
+            "path": "review",
+            "content": {
+              "kind": "directory"
+            }
+          },
+          {
+            "path": "review/SKILL.md",
+            "content": {
+              "kind": "file",
+              "sizeBytes": 5,
+              "digest": "sha256:abababababababababababababababababababababababababababababababab"
+            },
+            "data": "aGVsbG8="
+          }
+        ],
+        "skipped": [
+          {
+            "path": "huge/SKILL.md",
+            "reason": "fileTooLarge"
+          },
+          {
+            "reason": "nonUtf8Name"
+          }
+        ],
+        "skippedEntryCount": 2
+      }
+    ]
+  },
+  "error": {
+    "code": -32602,
+    "message": "roots has 40 entries; the ceiling is 32",
+    "data": {
+      "kind": "invalidParams",
+      "field": "roots",
+      "ceiling": 32
+    }
+  }
+}

@@ -1305,7 +1305,7 @@ function seedEnvironments(universe: UniverseState): void {
     requestId: `req-${hex("priya-laptop", 12)}`,
     source: {
       type: "external",
-      connection: { endpoint: "ws://priya-mbp.tailnet.acme.example:19091", transport: "webSocket" },
+      endpoint: "ws://priya-mbp.tailnet.acme.example:19091",
     },
     displayName: "Priya's laptop (envd)",
     status: "ready",

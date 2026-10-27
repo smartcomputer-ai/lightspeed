@@ -1,41 +1,83 @@
 //! On-demand provider data connections.
 //!
 //! Lightspeed opens one provider WebSocket for a specific current target. The
-//! provider validates ownership, dials the target's private envd, and proxies
-//! the connection until it closes or becomes idle. There is no provider-initiated
-//! connection and no provider route registry in Lightspeed.
+//! provider validates the credential and ownership, dials the target's private
+//! envd, and proxies the connection until it closes or becomes idle. There is
+//! no provider-initiated connection and no provider route registry in
+//! Lightspeed.
+//!
+//! The relay is an intermediary under the protocol's liveness rule: it
+//! forwards pings and pongs, counts every frame in either direction as
+//! activity, and never idle-closes sooner than `relayIdleSeconds`, which
+//! config loading keeps at or above the protocol minimum. Both legs carry the
+//! protocol's message and frame limit.
 
 use std::time::Duration;
 
 use anyhow::Context as _;
 use axum::extract::ws::{Message as AxumMessage, WebSocket};
+use environment_protocol::limits::MAX_MESSAGE_BYTES;
 use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message as TungsteniteMessage,
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
+    tungstenite::{Message as TungsteniteMessage, protocol::WebSocketConfig},
 };
 
 use crate::{Config, incus::OwnedTarget};
 
 pub type GuestSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// Bound on the readiness probe's dial, so an observation stays prompt while
+/// a guest boots.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The protocol's message limit, applied to both relay legs.
+pub fn websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(MAX_MESSAGE_BYTES as usize))
+        .max_frame_size(Some(MAX_MESSAGE_BYTES as usize))
+}
+
 pub async fn dial_guest(config: &Config, target: &OwnedTarget) -> anyhow::Result<GuestSocket> {
+    dial_guest_within(
+        config,
+        target,
+        Duration::from_secs(config.dial_timeout_seconds),
+    )
+    .await
+}
+
+async fn dial_guest_within(
+    config: &Config,
+    target: &OwnedTarget,
+    timeout: Duration,
+) -> anyhow::Result<GuestSocket> {
     let address = target
         .ipv4_address
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("target has no private IPv4 address"))?;
     let endpoint = format!("ws://{address}:{}/", config.envd_port);
     let (socket, _) = tokio::time::timeout(
-        Duration::from_secs(config.dial_timeout_seconds),
-        connect_async(endpoint),
+        timeout,
+        connect_async_with_config(endpoint, Some(websocket_config()), true),
     )
     .await
     .context("envd dial timeout")??;
     Ok(socket)
 }
 
+/// The provider's own liveness probe of envd: a WebSocket upgrade on the
+/// guest's data listener, without `initialize`, so the provider never
+/// depends on envd's protocol version.
 pub async fn probe_guest(config: &Config, target: &OwnedTarget) -> bool {
-    match dial_guest(config, target).await {
+    match dial_guest_within(
+        config,
+        target,
+        PROBE_TIMEOUT.min(Duration::from_secs(config.dial_timeout_seconds)),
+    )
+    .await
+    {
         Ok(mut socket) => {
             let _ = socket.close(None).await;
             true
@@ -124,7 +166,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn relay_closes_guest_when_lightspeed_disappears_without_a_close_frame() {
         let guest_listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -144,7 +186,7 @@ mod tests {
             }
             false
         });
-        let (guest, _) = connect_async(format!("ws://{guest_address}"))
+        let (guest, _) = tokio_tungstenite::connect_async(format!("ws://{guest_address}"))
             .await
             .expect("connect guest");
         let guest = Arc::new(Mutex::new(Some(guest)));
@@ -178,7 +220,7 @@ mod tests {
                 .expect("relay server")
         });
 
-        let (lightspeed, _) = connect_async(format!("ws://{relay_address}"))
+        let (lightspeed, _) = tokio_tungstenite::connect_async(format!("ws://{relay_address}"))
             .await
             .expect("connect lightspeed");
         drop(lightspeed);
@@ -189,5 +231,83 @@ mod tests {
             .expect("guest observer");
         relay_server.abort();
         assert!(saw_close, "relay dropped guest without a close frame");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn relay_forwards_pings_and_counts_them_as_activity() {
+        let guest_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("guest listener");
+        let guest_address = guest_listener.local_addr().expect("guest address");
+        let guest_observer = tokio::spawn(async move {
+            let (stream, _) = guest_listener.accept().await.expect("guest accept");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("guest websocket");
+            let mut pings = 0;
+            while let Some(message) = socket.next().await {
+                match message {
+                    Ok(TungsteniteMessage::Ping(_)) => pings += 1,
+                    Ok(TungsteniteMessage::Text(text)) => return Some((pings, text.to_string())),
+                    Ok(_) => {}
+                    Err(_) => return None,
+                }
+            }
+            None
+        });
+        let (guest, _) = tokio_tungstenite::connect_async(format!("ws://{guest_address}"))
+            .await
+            .expect("connect guest");
+        let guest = Arc::new(Mutex::new(Some(guest)));
+        let relay_listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("relay listener");
+        let relay_address = relay_listener.local_addr().expect("relay address");
+        let app = Router::new().route(
+            "/",
+            get(move |upgrade: WebSocketUpgrade| {
+                let guest = guest.clone();
+                async move {
+                    let mut guest = guest.lock().await.take().expect("one relay connection");
+                    upgrade
+                        .on_upgrade(move |mut socket| async move {
+                            proxy_with_idle(Duration::from_millis(300), &mut socket, &mut guest)
+                                .await;
+                        })
+                        .into_response()
+                }
+            }),
+        );
+        let relay_server = tokio::spawn(async move {
+            axum::serve(relay_listener, app)
+                .await
+                .expect("relay server")
+        });
+
+        let (mut lightspeed, _) = tokio_tungstenite::connect_async(format!("ws://{relay_address}"))
+            .await
+            .expect("connect lightspeed");
+        // Eight pings 100 ms apart keep the 300 ms idle timer from firing
+        // across 800 ms with no data frame.
+        for _ in 0..8 {
+            lightspeed
+                .send(TungsteniteMessage::Ping(vec![1].into()))
+                .await
+                .expect("ping");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        lightspeed
+            .send(TungsteniteMessage::Text("after pings".into()))
+            .await
+            .expect("text");
+
+        let observed = tokio::time::timeout(Duration::from_secs(2), guest_observer)
+            .await
+            .expect("guest timeout")
+            .expect("guest observer");
+        relay_server.abort();
+        let (pings, text) = observed.expect("the relay closed the guest leg while pings flowed");
+        assert_eq!(pings, 8);
+        assert_eq!(text, "after pings");
     }
 }

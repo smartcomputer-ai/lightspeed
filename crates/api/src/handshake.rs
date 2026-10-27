@@ -96,8 +96,9 @@ pub struct ServerInfo {
 pub struct EnvironmentDaemonInfo {
     pub version: String,
     pub git_sha: String,
-    /// Environment protocol version the gateway speaks. A daemon registers
-    /// only when it reports exactly this number.
+    /// The envd protocol version (data plane and registration channel)
+    /// the gateway speaks. A daemon registers only when it reports exactly
+    /// this number.
     pub protocol_version: u32,
     /// Rust target triples the daemon is published for.
     pub targets: Vec<String>,

@@ -81,6 +81,19 @@ Choose the lowest level that covers the task:
 Each level includes those before it. Command execution includes file editing
 because a process can write files using the daemon user's permissions.
 
+File tools on a machine behave the same way at every level. Search and glob
+skip hidden entries and paths excluded by `.gitignore` or `.ignore`, and
+never descend into `.git` or other version-control metadata; in their
+patterns, `*` matches within one path segment and `**` across segments. One
+read returns at most the daemon's advertised read limit, 8 MiB on the
+included daemon; a ranged read pages through a larger file, while an edit of
+a larger file fails instead of working on a truncated copy. Use
+[VFS transfer](vfs-transfer.md) for large files. Writes replace a file
+atomically. An edit or patch fails, instead of overwriting, when the file
+changed on the machine after the agent read it. File tools stay inside the
+daemon's filesystem root: a symlink is followed only while its target stays
+inside it.
+
 ```json
 {"features":{"environments":{"environments":[{"environmentId":"<environment-id>","default":true,"access":"read"}]}}}
 ```

@@ -1,395 +1,644 @@
-use std::collections::{BTreeMap, VecDeque};
+//! Socket behaviour of the data and controller clients against scripted
+//! WebSocket servers.
 
-use async_trait::async_trait;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
 use environment_client::{
-    EnvironmentClientError, EnvironmentClientResult, EnvironmentDataClient,
-    EnvironmentProviderClient, JsonRpcTransport, WebSocketConnectOptions,
+    ClientError, ConnectOptions, ControllerClient, DataClient,
+    conformance::controller::{ControllerConformance, run},
 };
 use environment_protocol::{
-    control::{
-        handshake::ControllerInitializeParams,
-        targets::{AdoptTargetParams, ProviderBindingContext},
-    },
+    CONTROLLER_PROTOCOL_VERSION, ENVD_PROTOCOL_VERSION,
+    bytes::ByteChunk,
+    control::{handshake::ControllerInitializeResponse, target::TargetOwner},
     data::{
-        fs::ReadFileParams,
-        jobs::{JobDependencyPolicy, JobStartSpec, ListJobsParams, StartJobsParams},
-        methods::PROCESS_OUTPUT_METHOD,
+        exec::ReturnOn,
+        fs::{WriteCondition, WriteFileParams},
+        handshake::InitializeResponse,
+        idle::{GetIdleParams, GetIdleResponse},
+        process::ReadProcessParams,
     },
-    error::EnvironmentProtocolErrorCode,
-    shared::{ByteChunk, CURRENT_PROTOCOL_VERSION, EnvironmentPath, JobId},
+    error::{ProtocolError, ProtocolErrorKind},
+    handshake::{ImplementationInfo, Plane},
+    ids::{BindingId, EnvironmentId, IncarnationId, ProcessId, TemplateId, UniverseId},
+    jsonrpc::{self, CancelRequestParams, Id, Message as RpcMessage, Request, Response},
+    limits::MAX_MESSAGE_BYTES,
+    manifest::{CancelRequest, EnvGetIdle},
+    paths::EnvironmentPath,
 };
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::{TcpListener, UnixListener},
+    sync::mpsc,
+};
+use tokio_tungstenite::{
+    WebSocketStream, accept_async, accept_hdr_async,
+    tungstenite::{
+        Message,
+        handshake::server::{
+            ErrorResponse, Request as UpgradeRequest, Response as UpgradeResponse,
+        },
+        http::StatusCode,
+    },
+};
+
+fn fixture(path: &str) -> Value {
+    let text = match path {
+        "data" => include_str!("../../environment-protocol/fixtures/data/initialize.json"),
+        "controller" => {
+            include_str!("../../environment-protocol/fixtures/controller/initialize.json")
+        }
+        other => panic!("no fixture {other}"),
+    };
+    serde_json::from_str::<Value>(text).expect("fixture")["response"].clone()
+}
+
+fn options() -> ConnectOptions {
+    ConnectOptions::new(
+        ImplementationInfo::new("lightspeed-client-test")
+            .and_then(|info| info.with_version("0.0.0"))
+            .expect("client info"),
+    )
+}
+
+/// Serve one WebSocket connection on a fresh loopback port with `serve`.
+async fn server<F, Fut>(serve: F) -> String
+where
+    F: FnOnce(WebSocketStream<tokio::net::TcpStream>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("ws://{}", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        serve(accept_async(stream).await.expect("upgrade")).await;
+    });
+    url
+}
+
+/// The next frame that is a request, skipping pings.
+async fn next_request<S>(socket: &mut WebSocketStream<S>) -> Option<Request>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    loop {
+        match socket.next().await?.ok()? {
+            Message::Text(text) => match jsonrpc::parse(&text).expect("valid frame") {
+                RpcMessage::Request(request) => return Some(request),
+                RpcMessage::Notification(_) | RpcMessage::Response(_) => {}
+            },
+            Message::Close(_) => return None,
+            _ => {}
+        }
+    }
+}
+
+async fn send<S>(socket: &mut WebSocketStream<S>, response: Response)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    socket
+        .send(Message::text(response.to_text()))
+        .await
+        .expect("send response");
+}
+
+/// Answer the first request, `initialize`, with `result`.
+async fn answer_initialize<S>(socket: &mut WebSocketStream<S>, result: Value)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let request = next_request(socket).await.expect("initialize");
+    assert_eq!(request.method, "initialize");
+    assert_eq!(
+        request.params["protocolVersion"],
+        json!(ENVD_PROTOCOL_VERSION)
+    );
+    send(socket, Response::success(request.id, &result)).await;
+}
+
+fn idle(ms: u64) -> GetIdleResponse {
+    GetIdleResponse {
+        idle_for_ms: ms,
+        ..GetIdleResponse::default()
+    }
+}
+
+fn read_params() -> ReadProcessParams {
+    ReadProcessParams {
+        process_id: ProcessId::new("p1").expect("process id"),
+        after: None,
+        tail_bytes: None,
+        ack: None,
+        max_bytes: 1024,
+        wait_ms: 60_000,
+        return_on: ReturnOn::AnyOutput,
+    }
+}
 
 #[tokio::test(flavor = "current_thread")]
-async fn websocket_client_close_sends_a_close_frame() {
-    use futures_util::StreamExt as _;
-    use tokio::net::TcpListener;
-    use tokio_tungstenite::{accept_async, tungstenite::Message};
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
-    let address = listener.local_addr().expect("listener address");
-    let server = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.expect("accept");
-        let mut websocket = accept_async(stream).await.expect("websocket handshake");
-        while let Some(message) = websocket.next().await {
-            if matches!(message.expect("websocket message"), Message::Close(_)) {
-                return true;
+async fn connect_initialized_returns_the_handshake_and_close_sends_a_close_frame() {
+    let (saw_close, mut closed) = mpsc::unbounded_channel();
+    let url = server(move |mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        while let Some(Ok(message)) = socket.next().await {
+            if matches!(message, Message::Close(_)) {
+                let _ = saw_close.send(());
+                return;
             }
         }
-        false
-    });
+    })
+    .await;
+    let (client, initialize) = DataClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    let expected: InitializeResponse = serde_json::from_value(fixture("data")).expect("fixture");
+    assert_eq!(initialize, expected);
+    assert_eq!(client.initialize_response(), &expected);
+    client.close().await.expect("close");
+    assert!(client.is_closed());
+    tokio::time::timeout(Duration::from_secs(5), closed.recv())
+        .await
+        .expect("server saw the close frame in time")
+        .expect("close frame");
+    assert!(matches!(
+        client.get_idle(&GetIdleParams {}).await,
+        Err(ClientError::Closed { .. })
+    ));
+}
 
-    let mut client = EnvironmentDataClient::connect(
-        &format!("ws://{address}"),
-        WebSocketConnectOptions::default(),
+#[tokio::test(flavor = "current_thread")]
+async fn a_version_mismatch_answer_is_typed() {
+    let url = server(|mut socket| async move {
+        let request = next_request(&mut socket).await.expect("initialize");
+        let received = request.params["protocolVersion"].as_u64().unwrap() as u32;
+        send(
+            &mut socket,
+            Response::failure(
+                Some(request.id),
+                ProtocolError::version_mismatch(2, received),
+            ),
+        )
+        .await;
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let error = DataClient::connect_initialized(&url, options())
+        .await
+        .expect_err("mismatch");
+    assert!(
+        matches!(
+            error,
+            ClientError::VersionMismatch {
+                plane: Plane::Data,
+                local: ENVD_PROTOCOL_VERSION,
+                remote: 2
+            }
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.protocol_kind(),
+        Some(ProtocolErrorKind::VersionMismatch)
+    );
+    assert!(!error.is_retryable());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_response_with_another_version_is_a_mismatch() {
+    let mut response = fixture("data");
+    response["protocolVersion"] = json!(ENVD_PROTOCOL_VERSION + 1);
+    let url = server(move |mut socket| async move {
+        answer_initialize(&mut socket, response).await;
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    assert!(matches!(
+        DataClient::connect_initialized(&url, options()).await,
+        Err(ClientError::VersionMismatch { remote, .. }) if remote == ENVD_PROTOCOL_VERSION + 1
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_controller_answering_a_data_client_is_the_wrong_plane() {
+    let url = server(|mut socket| async move {
+        answer_initialize(&mut socket, fixture("controller")).await;
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    assert!(matches!(
+        DataClient::connect_initialized(&url, options()).await,
+        Err(ClientError::WrongPlane {
+            expected: Plane::Data,
+            actual: Plane::Controller
+        })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn controller_clients_check_their_own_plane_and_version() {
+    let url = server(|mut socket| async move {
+        let request = next_request(&mut socket).await.expect("initialize");
+        assert_eq!(
+            request.params["protocolVersion"],
+            json!(CONTROLLER_PROTOCOL_VERSION)
+        );
+        send(
+            &mut socket,
+            Response::success(request.id, &fixture("controller")),
+        )
+        .await;
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let (client, initialize) = ControllerClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    let expected: ControllerInitializeResponse =
+        serde_json::from_value(fixture("controller")).expect("fixture");
+    assert_eq!(initialize, expected);
+    assert!(initialize.capabilities.ingress);
+    client.close().await.expect("close");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pipelined_calls_are_matched_by_id() {
+    let url = server(|mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        let first = next_request(&mut socket).await.expect("first");
+        let second = next_request(&mut socket).await.expect("second");
+        // Answer in reverse order; each result names its own id.
+        for request in [second, first] {
+            let Id::Number(id) = request.id else {
+                panic!("numeric ids")
+            };
+            send(&mut socket, Response::success(request.id, &idle(id as u64))).await;
+        }
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let (client, _) = DataClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    let (first, second) = tokio::join!(
+        client.call::<EnvGetIdle>(&GetIdleParams {}),
+        client.get_idle(&GetIdleParams {}),
+    );
+    let (first, second) = (first.expect("first"), second.expect("second"));
+    assert_ne!(first.idle_for_ms, second.idle_for_ms);
+    assert!(
+        first.idle_for_ms < second.idle_for_ms,
+        "first sent, first id"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_server_notification_fails_pending_calls_and_closes() {
+    let url = server(|mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        let _ = next_request(&mut socket).await.expect("request");
+        socket
+            .send(Message::text(
+                r#"{"jsonrpc":"2.0","method":"process/output","params":{}}"#,
+            ))
+            .await
+            .expect("send notification");
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let (client, _) = DataClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    assert!(matches!(
+        client.get_idle(&GetIdleParams {}).await,
+        Err(ClientError::InvalidMessage(_))
+    ));
+    assert!(client.is_closed());
+    assert!(matches!(
+        client.get_idle(&GetIdleParams {}).await,
+        Err(ClientError::InvalidMessage(_))
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_binary_frame_is_a_protocol_violation() {
+    let url = server(|mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        let _ = next_request(&mut socket).await.expect("request");
+        socket
+            .send(Message::binary(b"{}".to_vec()))
+            .await
+            .expect("send binary");
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let (client, _) = DataClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    assert!(matches!(
+        client.get_idle(&GetIdleParams {}).await,
+        Err(ClientError::InvalidMessage(_))
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_deadline_cancels_an_abortable_call() {
+    let (cancelled, mut cancels) = mpsc::unbounded_channel();
+    let url = server(move |mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        let read = next_request(&mut socket).await.expect("process/read");
+        assert_eq!(read.method, "process/read");
+        while let Some(Ok(message)) = socket.next().await {
+            if let Message::Text(text) = message
+                && let Ok(RpcMessage::Notification(notification)) = jsonrpc::parse(&text)
+            {
+                assert_eq!(notification.method, CancelRequest::NAME);
+                let params: CancelRequestParams = notification.params().expect("params");
+                let _ = cancelled.send((params.id, read.id.clone()));
+                // The late answer is discarded by the client.
+                send(
+                    &mut socket,
+                    Response::failure(Some(read.id.clone()), ProtocolError::cancelled()),
+                )
+                .await;
+            }
+        }
+    })
+    .await;
+    let (client, _) = DataClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    let error = client
+        .call_with_timeout::<environment_protocol::manifest::ProcessRead>(
+            &read_params(),
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("deadline");
+    assert!(
+        matches!(error, ClientError::DeadlineExceeded { .. }),
+        "{error:?}"
+    );
+    let (cancelled_id, read_id) = tokio::time::timeout(Duration::from_secs(5), cancels.recv())
+        .await
+        .expect("cancel in time")
+        .expect("cancel");
+    assert_eq!(cancelled_id, read_id);
+    assert!(
+        !client.is_closed(),
+        "a deadline leaves the connection usable"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_dropped_abortable_call_is_cancelled() {
+    let (cancelled, mut cancels) = mpsc::unbounded_channel();
+    let url = server(move |mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        let read = next_request(&mut socket).await.expect("process/read");
+        while let Some(Ok(message)) = socket.next().await {
+            if let Message::Text(text) = message
+                && let Ok(RpcMessage::Notification(notification)) = jsonrpc::parse(&text)
+            {
+                let params: CancelRequestParams = notification.params().expect("params");
+                let _ = cancelled.send(params.id == read.id);
+            }
+        }
+    })
+    .await;
+    let (client, _) = DataClient::connect_initialized(&url, options())
+        .await
+        .expect("connect");
+    let params = read_params();
+    let read = client.read_process(&params);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), read)
+            .await
+            .is_err(),
+        "the read waits"
+    );
+    let matched = tokio::time::timeout(Duration::from_secs(5), cancels.recv())
+        .await
+        .expect("cancel in time")
+        .expect("cancel");
+    assert!(matched, "the cancel names the dropped request");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pending_calls_keep_the_connection_alive_with_pings() {
+    let pings = Arc::new(AtomicUsize::new(0));
+    let counted = pings.clone();
+    let url = server(move |mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        let request = next_request(&mut socket).await.expect("request");
+        let quiet = tokio::time::sleep(Duration::from_millis(300));
+        tokio::pin!(quiet);
+        loop {
+            tokio::select! {
+                _ = &mut quiet => break,
+                message = socket.next() => match message {
+                    Some(Ok(Message::Ping(_))) => { counted.fetch_add(1, Ordering::SeqCst); }
+                    Some(Ok(_)) => {}
+                    _ => return,
+                },
+            }
+        }
+        send(&mut socket, Response::success(request.id, &idle(0))).await;
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let mut options = options();
+    options.keepalive_interval = Duration::from_millis(40);
+    let (client, _) = DataClient::connect_initialized(&url, options)
+        .await
+        .expect("connect");
+    client.get_idle(&GetIdleParams {}).await.expect("idle");
+    assert!(
+        pings.load(Ordering::SeqCst) >= 3,
+        "pinged {} times",
+        pings.load(Ordering::SeqCst)
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_default_request_timeout_applies_to_every_call() {
+    let url = server(|mut socket| async move {
+        answer_initialize(&mut socket, fixture("data")).await;
+        while socket.next().await.is_some() {}
+    })
+    .await;
+    let (client, _) = DataClient::connect_initialized(
+        &url,
+        options().with_request_timeout(Duration::from_millis(50)),
     )
     .await
-    .expect("connect client");
-    client.close().await.expect("close client");
-
-    let saw_close = tokio::time::timeout(std::time::Duration::from_secs(2), server)
-        .await
-        .expect("server observed close before timeout")
-        .expect("server task");
-    assert!(saw_close, "client dropped without a WebSocket close frame");
+    .expect("connect");
+    assert!(matches!(
+        client.get_idle(&GetIdleParams {}).await,
+        Err(ClientError::DeadlineExceeded { .. })
+    ));
 }
 
-#[derive(Default)]
-struct MockTransport {
-    sent: Vec<Value>,
-    recv: VecDeque<Value>,
-}
-
-impl MockTransport {
-    fn with_recv(messages: impl IntoIterator<Item = Value>) -> Self {
-        Self {
-            sent: Vec::new(),
-            recv: messages.into_iter().collect(),
-        }
-    }
-}
-
-#[async_trait]
-impl JsonRpcTransport for MockTransport {
-    async fn send(&mut self, message: Value) -> EnvironmentClientResult<()> {
-        self.sent.push(message);
-        Ok(())
-    }
-
-    async fn recv(&mut self) -> EnvironmentClientResult<Option<Value>> {
-        Ok(self.recv.pop_front())
-    }
-}
-
-#[tokio::test]
-async fn data_client_sends_typed_request_and_decodes_response() {
-    let transport = MockTransport::with_recv([json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "data": "aGk="
-        }
-    })]);
-    let mut client = EnvironmentDataClient::new(transport);
-
-    let response = client
-        .read_file(&ReadFileParams {
-            path: EnvironmentPath::new("README.md").expect("path"),
-            offset: None,
-            max_bytes: None,
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_requests_fail_without_being_sent() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let client = DataClient::in_process(
+        serde_json::from_value(fixture("data")).expect("fixture"),
+        move |request: Request| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move { Ok(Response::success(request.id, &json!({}))) })
+        },
+    );
+    let error = client
+        .write_file(&WriteFileParams {
+            path: EnvironmentPath::new("/workspace/big").expect("path"),
+            data: ByteChunk::new(vec![0_u8; MAX_MESSAGE_BYTES as usize]),
+            create: WriteCondition::default(),
+            if_match: None,
+            executable: false,
         })
         .await
-        .expect("response");
+        .expect_err("too large");
+    assert!(matches!(
+        error,
+        ClientError::PayloadTooLarge { limit_bytes: MAX_MESSAGE_BYTES, actual_bytes }
+            if actual_bytes > MAX_MESSAGE_BYTES
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
 
-    assert_eq!(response.data, ByteChunk::from(b"hi".as_slice()));
-
-    let transport = client.into_rpc().into_inner();
+#[tokio::test(flavor = "current_thread")]
+async fn in_process_clients_answer_through_the_handler() {
+    let client = DataClient::in_process(
+        serde_json::from_value(fixture("data")).expect("fixture"),
+        |request: Request| {
+            Box::pin(async move {
+                assert_eq!(request.method, "env/getIdle");
+                Ok(Response::success(request.id, &idle(7)))
+            })
+        },
+    );
     assert_eq!(
-        transport.sent,
-        vec![json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "fs/readFile",
-            "params": {
-                "path": "README.md"
-            }
-        })]
+        client.get_idle(&GetIdleParams {}).await.expect("idle"),
+        idle(7)
     );
 }
 
-#[tokio::test]
-async fn data_client_sends_typed_job_start_request() {
-    let transport = MockTransport::with_recv([json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "jobs": [
-                {
-                    "createdAtMs": 1,
-                    "jobId": "job-1",
-                    "namespace": "session_1",
-                    "status": "queued"
-                }
-            ]
-        }
-    })]);
-    let mut client = EnvironmentDataClient::new(transport);
-
-    let response = client
-        .start_jobs(&StartJobsParams {
-            namespace: "session_1".to_owned(),
-            request_id: "request-1".to_owned(),
-            jobs: vec![JobStartSpec {
-                job_id: JobId::new("job-1"),
-                name: None,
-                argv: vec![
-                    "/bin/sh".to_owned(),
-                    "-c".to_owned(),
-                    "printf ok".to_owned(),
-                ],
-                cwd: None,
-                env: Default::default(),
-                secret_env: BTreeMap::new(),
-                stdin: None,
-                timeout_ms: Some(1_000),
-                depends_on: Vec::new(),
-                dependency_policy: JobDependencyPolicy::AllSucceeded,
-                queue_key: None,
-            }],
-        })
-        .await
-        .expect("response");
-
-    assert_eq!(response.jobs[0].job_id.as_str(), "job-1");
-
-    let transport = client.into_rpc().into_inner();
-    assert_eq!(transport.sent[0]["method"], "job/start");
-    assert_eq!(transport.sent[0]["params"]["jobs"][0]["jobId"], "job-1");
-    assert_eq!(transport.sent[0]["params"]["jobs"][0]["argv"][0], "/bin/sh");
+#[allow(clippy::result_large_err)]
+fn refuse_upgrade(
+    _: &UpgradeRequest,
+    _: UpgradeResponse,
+) -> Result<UpgradeResponse, ErrorResponse> {
+    let mut response = ErrorResponse::new(None);
+    *response.status_mut() = StatusCode::UNAUTHORIZED;
+    Err(response)
 }
 
-#[tokio::test]
-async fn data_client_sends_typed_job_list_request() {
-    let transport = MockTransport::with_recv([json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "jobs": [
-                {
-                    "createdAtMs": 2,
-                    "jobId": "job-2",
-                    "namespace": "session_1",
-                    "status": "running"
-                }
-            ]
-        }
-    })]);
-    let mut client = EnvironmentDataClient::new(transport);
-
-    let response = client
-        .list_jobs(&ListJobsParams {
-            namespace: "session_1".to_owned(),
-            limit: Some(5),
-        })
+#[tokio::test(flavor = "current_thread")]
+async fn an_upgrade_refusal_reports_its_status() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("ws://{}", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let _ = accept_hdr_async(stream, refuse_upgrade).await;
+    });
+    let error = DataClient::connect_initialized(&url, options())
         .await
-        .expect("response");
-
-    assert_eq!(response.jobs[0].job_id.as_str(), "job-2");
-
-    let transport = client.into_rpc().into_inner();
-    assert_eq!(transport.sent[0]["method"], "job/list");
-    assert_eq!(transport.sent[0]["params"]["namespace"], "session_1");
-    assert_eq!(transport.sent[0]["params"]["limit"], 5);
+        .expect_err("refused");
+    assert!(
+        matches!(error, ClientError::UpgradeRejected { status: 401 }),
+        "{error:?}"
+    );
+    assert!(!error.is_retryable());
 }
 
-#[tokio::test]
-async fn data_client_stashes_notifications_seen_while_waiting_for_response() {
-    let transport = MockTransport::with_recv([
-        json!({
-            "jsonrpc": "2.0",
-            "method": PROCESS_OUTPUT_METHOD,
-            "params": {
-                "chunk": "b2sK",
-                "processId": "proc-1",
-                "seq": 1,
-                "stream": "stdout"
-            }
-        }),
-        json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "data": "aGk="
-            }
-        }),
-    ]);
-    let mut client = EnvironmentDataClient::new(transport);
-
-    client
-        .read_file(&ReadFileParams {
-            path: EnvironmentPath::new("README.md").expect("path"),
-            offset: None,
-            max_bytes: None,
-        })
-        .await
-        .expect("response");
-
-    let notification = client
-        .next_notification()
-        .await
-        .expect("notification read")
-        .expect("notification");
-    assert_eq!(notification.method, PROCESS_OUTPUT_METHOD);
-    assert_eq!(notification.params["processId"], "proc-1");
+#[tokio::test(flavor = "current_thread")]
+async fn a_silent_server_hits_the_connect_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("ws://{}", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.expect("accept");
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+    let mut options = options();
+    options.connect_timeout = Duration::from_millis(100);
+    assert!(matches!(
+        DataClient::connect_initialized(&url, options).await,
+        Err(ClientError::ConnectTimeout { .. })
+    ));
 }
 
-#[tokio::test]
-async fn data_client_maps_protocol_error_payloads() {
-    let transport = MockTransport::with_recv([json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "error": {
-            "code": "notFound",
-            "message": "missing"
-        }
-    })]);
-    let mut client = EnvironmentDataClient::new(transport);
-
-    let error = client
-        .read_file(&ReadFileParams {
-            path: EnvironmentPath::new("missing.txt").expect("path"),
-            offset: None,
-            max_bytes: None,
-        })
+#[tokio::test(flavor = "current_thread")]
+async fn unix_endpoints_upgrade_over_the_socket() {
+    let path = std::path::PathBuf::from(format!(
+        "/tmp/lightspeed-client-{}-{}.sock",
+        std::process::id(),
+        line!()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let listener = UnixListener::bind(&path).expect("bind unix socket");
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut socket = accept_async(stream).await.expect("upgrade");
+        answer_initialize(&mut socket, fixture("data")).await;
+        while socket.next().await.is_some() {}
+    });
+    let endpoint = format!("unix://{}", path.display());
+    let (client, _) = DataClient::connect_initialized(&endpoint, options())
         .await
-        .expect_err("environment protocol error");
-
-    match error {
-        EnvironmentClientError::Protocol(error) => {
-            assert_eq!(error.code, EnvironmentProtocolErrorCode::NotFound)
-        }
-        other => panic!("unexpected error {other:?}"),
-    }
+        .expect("connect over unix");
+    client.close().await.expect("close");
+    let _ = std::fs::remove_file(&path);
 }
 
-#[tokio::test]
-async fn controller_client_sends_typed_initialize_request() {
-    let transport = MockTransport::with_recv([json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "capabilities": {
-                "closeTarget": true,
-                "createTarget": true,
-                "getTarget": true,
-                "listTargets": true
-            },
-            "implementation": {
-                "name": "test-controller",
-                "version": "0.1.0"
-            },
-            "protocolVersion": 2
-        }
-    })]);
-    let mut client = EnvironmentProviderClient::new(transport);
-
-    let response = client
-        .initialize(&ControllerInitializeParams {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            client_name: "lightspeed-test".to_owned(),
-        })
+#[tokio::test(flavor = "current_thread")]
+async fn clients_connect_over_an_existing_byte_stream() {
+    let (client_end, server_end) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        let mut socket = accept_async(server_end).await.expect("upgrade");
+        answer_initialize(&mut socket, fixture("data")).await;
+        let request = next_request(&mut socket).await.expect("request");
+        send(&mut socket, Response::success(request.id, &idle(3))).await;
+        while socket.next().await.is_some() {}
+    });
+    let (client, _) = DataClient::connect_initialized_over(client_end, options())
         .await
-        .expect("response");
-
-    assert!(response.capabilities.create_target);
-    assert_eq!(response.implementation.name, "test-controller");
-
-    let transport = client.into_rpc().into_inner();
-    assert_eq!(transport.sent[0]["method"], "controller/initialize");
-    assert_eq!(transport.sent[0]["params"]["clientName"], "lightspeed-test");
-}
-
-#[tokio::test]
-async fn controller_client_sends_typed_adoption_request() {
-    let transport = MockTransport::with_recv([json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {
-            "target": {
-                "targetId": "target-adopted",
-                "status": "starting",
-                "scope": { "type": "default" },
-                "capabilities": {}
-            }
-        }
-    })]);
-    let mut client = EnvironmentProviderClient::new(transport);
-
-    let response = client
-        .adopt_target(&AdoptTargetParams {
-            request_id: "adopt-1".to_owned(),
-            environment_id: "environment-1".to_owned(),
-            incarnation_id: "incarnation-1".to_owned(),
-            binding: ProviderBindingContext {
-                universe_id: "universe-1".to_owned(),
-                binding_id: "primary".to_owned(),
-            },
-            source_target: "legacy/hand-built-vm".to_owned(),
-        })
-        .await
-        .expect("response");
-    assert_eq!(response.target.target_id.as_str(), "target-adopted");
-
-    let transport = client.into_rpc().into_inner();
-    assert_eq!(transport.sent[0]["method"], "controller/adoptTarget");
+        .expect("connect over duplex");
     assert_eq!(
-        transport.sent[0]["params"]["sourceTarget"],
-        "legacy/hand-built-vm"
+        client.get_idle(&GetIdleParams {}).await.expect("idle"),
+        idle(3)
     );
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn data_client_transfer_methods_preserve_binary_payloads() {
-    use environment_protocol::data::transfer::*;
-    let entries = vec![TransferEntry {
-        path: "".into(),
-        content: TransferContent::File {
-            data: ByteChunk::from(vec![0, 255, 128]),
-            executable: true,
-        },
-    }];
-    let limits = TransferLimits {
-        max_entries: 1,
-        max_depth: 0,
-        max_file_bytes: 3,
-        max_total_bytes: 3,
-        max_duration_ms: 1000,
-    };
-    let transport = MockTransport::with_recv([
-        json!({"jsonrpc":"2.0", "id":1, "result": {"destination":"/file", "entries":1, "bytes":3, "retiredDirectory":null}}),
-        json!({"jsonrpc":"2.0", "id":2, "result": {"source":"/file", "entries":entries, "bytes":3}}),
-    ]);
-    let mut client = EnvironmentDataClient::new(transport);
-    let request = MaterializeParams {
-        destination: EnvironmentPath::new("/file").unwrap(),
-        entries: entries.clone(),
-        limits,
-        on_existing: TransferOnExisting::Error,
-    };
-    assert_eq!(client.materialize(&request).await.unwrap().bytes, 3);
-    let captured = client
-        .capture(&CaptureParams {
-            source: request.destination.clone(),
-            limits,
-        })
-        .await
-        .unwrap();
-    assert_eq!(captured.entries, entries);
-    let transport = client.into_rpc().into_inner();
-    assert_eq!(transport.sent[0]["method"], "fs/materialize");
-    assert_eq!(
-        transport.sent[0]["params"],
-        serde_json::to_value(request).unwrap()
-    );
-    assert_eq!(transport.sent[1]["method"], "fs/capture");
+async fn conformance_reports_an_unreachable_controller() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("ws://{}", listener.local_addr().expect("address"));
+    drop(listener);
+    let owner = Arc::new(|| TargetOwner {
+        universe_id: UniverseId::new("u1").unwrap(),
+        binding_id: BindingId::new("b1").unwrap(),
+        environment_id: EnvironmentId::new("e1").unwrap(),
+        incarnation_id: IncarnationId::new("i1").unwrap(),
+    });
+    let report = run(&ControllerConformance::new(
+        url,
+        options().with_bearer_token("credential"),
+        TemplateId::new("t1").unwrap(),
+        owner,
+    ))
+    .await;
+    assert!(!report.passed());
+    assert_eq!(report.checks.len(), 1);
+    assert_eq!(report.checks[0].name, "initialize");
+    assert!(report.into_result().is_err());
 }

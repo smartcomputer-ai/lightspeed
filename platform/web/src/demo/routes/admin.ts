@@ -13,8 +13,6 @@ import { groupsFor } from "@/lib/method-groups";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";
 
-type ControllerConnection = DeploymentEnvironmentProviderView["controllerConnection"];
-
 /// What a fresh binding provisions from when no other universe already
 /// lists this provider's templates.
 const DEFAULT_TEMPLATES: Array<Omit<EnvironmentTemplate, "providerId" | "bindingId">> = [
@@ -53,25 +51,8 @@ function stringMetadata(value: unknown): Record<string, string> {
   return metadata;
 }
 
-function parseConnection(value: unknown): ControllerConnection | null {
-  if (!isRecord(value)) return null;
-  const endpoint = optionalString(value.endpoint);
-  const transport = isRecord(value.transport) ? value.transport : null;
-  if (!endpoint || !transport) return null;
-  switch (transport.type) {
-    case "provider": {
-      const providerType = optionalString(transport.providerType);
-      return providerType ? { endpoint, transport: { type: "provider", providerType } } : null;
-    }
-    case "webSocket":
-    case "http":
-    case "stdio":
-    case "ssh":
-      return { endpoint, transport: { type: transport.type } };
-    default:
-      return null;
-  }
-}
+/// The controller URL schemes the engine accepts.
+const CONTROLLER_ENDPOINT = /^(wss?:\/\/|unix:\/\/\/)[^\s]+$/;
 
 /// The admin page addresses universes by their engine id; the platform id
 /// resolves too so either spelling works.
@@ -166,17 +147,33 @@ export function adminRoutes(store: DemoStore): Hono {
   app.put("/admin/environment-providers/:providerId", async (c) => {
     const providerId = c.req.param("providerId").trim();
     if (!providerId) return badRequest(c, "providerId is required");
-    const body = await readBody<{ displayName?: unknown; metadata?: unknown; controllerConnection?: unknown }>(c);
-    const controllerConnection = parseConnection(body.controllerConnection);
-    if (!controllerConnection) {
-      return badRequest(c, "controllerConnection needs an endpoint and a transport");
+    const body = await readBody<{
+      displayName?: unknown;
+      metadata?: unknown;
+      controllerEndpoint?: unknown;
+      credential?: unknown;
+    }>(c);
+    const controllerEndpoint = optionalString(body.controllerEndpoint);
+    if (!controllerEndpoint || !CONTROLLER_ENDPOINT.test(controllerEndpoint)) {
+      return badRequest(c, "controllerEndpoint must be a ws://, wss:// or unix:// URL");
     }
     const existing = store.environmentProviders.get(providerId);
+    if (!existing && !optionalString(body.credential)) {
+      return badRequest(c, "credential is required for a new provider");
+    }
     const now = Date.now();
     const provider: DeploymentEnvironmentProviderView = {
       providerId,
       ...(optionalString(body.displayName) ? { displayName: optionalString(body.displayName) } : {}),
-      controllerConnection,
+      controllerEndpoint,
+      // The demo has no controller to reach, so a changed endpoint has
+      // not advertised anything yet.
+      ...(existing && existing.controllerEndpoint === controllerEndpoint
+        ? {
+          controllerFeatures: existing.controllerFeatures ?? null,
+          dataRouteBase: existing.dataRouteBase ?? null,
+        }
+        : {}),
       metadata: stringMetadata(body.metadata),
       createdAtMs: existing?.createdAtMs ?? now,
       updatedAtMs: now,

@@ -15,6 +15,7 @@ pub(crate) mod catalog_text;
 pub mod control;
 pub mod handles;
 pub mod jobs;
+pub mod output;
 pub mod process;
 pub mod projection;
 pub mod sources;

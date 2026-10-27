@@ -1,13 +1,11 @@
-//! Data-plane protocol for one selected environment execution scope.
+//! The data plane: one envd serving one environment's filesystem,
+//! processes and jobs. The runtime is the client; envd is the server.
 
-pub mod events;
+pub mod exec;
 pub mod fs;
 pub mod handshake;
 pub mod idle;
-pub mod jobs;
-pub mod methods;
+pub mod job;
 pub mod process;
+pub mod scan;
 pub mod transfer;
-
-pub mod inventory;
-pub mod transfer_session;

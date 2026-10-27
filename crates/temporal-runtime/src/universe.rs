@@ -264,20 +264,50 @@ impl UniverseRuntime {
 
     /// Run the one active deployment lifecycle reconciler. Provider calls are
     /// idempotent, so process restart safely resumes any persisted intent.
+    /// Each tick is one deployment pass: every provider is dialed at most
+    /// once, and a provider whose connection fails is skipped for the rest
+    /// of the pass in every universe. Every
+    /// [`STEADY_OBSERVATION_INTERVAL`](crate::environments::lifecycle::STEADY_OBSERVATION_INTERVAL)
+    /// a pass also observes steady environments, and each pass first dials
+    /// providers whose controller facts are not recorded yet.
     pub async fn run_environment_reconciler(self: Arc<Self>) {
+        use crate::environments::provider_controllers::{
+            ProviderFactsRefresh, ProviderPass, WebSocketProviderControllerConnector,
+        };
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut failures = crate::gateway::ReconcileFailureLog::default();
+        let mut facts = ProviderFactsRefresh::default();
+        let provider_store = self.stores.store_for(Uuid::nil());
+        let mut steady_at: Option<std::time::Instant> = None;
         loop {
             interval.tick().await;
+            let scope = if steady_at.is_none_or(|at| {
+                at.elapsed() >= crate::environments::lifecycle::STEADY_OBSERVATION_INTERVAL
+            }) {
+                steady_at = Some(std::time::Instant::now());
+                ::environments::ReconcileScope::WithSteady
+            } else {
+                ::environments::ReconcileScope::Converging
+            };
+            let mut pass = ProviderPass::default();
+            facts
+                .run(
+                    &mut pass,
+                    provider_store.as_ref(),
+                    &WebSocketProviderControllerConnector,
+                )
+                .await;
             let universe_ids = match store_pg::list_universes_with_pending_environments(
                 self.stores.pool(),
+                scope,
             )
             .await
             {
                 Ok(ids) => ids,
                 Err(error) => {
                     tracing::warn!(target: "temporal_runtime", %error, "environment reconciler scan failed");
+                    pass.close().await;
                     continue;
                 }
             };
@@ -292,13 +322,14 @@ impl UniverseRuntime {
                 match state
                     .api
                     .environment_service()
-                    .reconcile_environment_lifecycle_once()
+                    .reconcile_environment_lifecycle_pass(&mut pass, scope)
                     .await
                 {
                     Ok(_) => failures.succeeded(universe_id),
                     Err(error) => failures.failed(universe_id, &error),
                 }
             }
+            pass.close().await;
         }
     }
 
@@ -321,6 +352,9 @@ impl UniverseRuntime {
                     continue;
                 }
             };
+            // Providers whose daemons timed out are skipped for the rest of
+            // the pass, in every universe.
+            let mut unhealthy = std::collections::HashSet::new();
             for universe_id in universe_ids {
                 let state = match self.state_for(universe_id, false).await {
                     Ok(state) => state,
@@ -332,7 +366,7 @@ impl UniverseRuntime {
                 match state
                     .api
                     .environment_service()
-                    .reconcile_idle_power_once()
+                    .reconcile_idle_power_pass(&mut unhealthy)
                     .await
                 {
                     Ok(_) => failures.succeeded(universe_id),

@@ -11,15 +11,11 @@ use std::{
 };
 use tools::skills::environment::*;
 
-#[derive(Clone)]
-struct CachedObservation {
-    fingerprint: String,
-    catalog: EnvironmentSkillCatalog,
-}
-// An optimization only: losing/evicting this cache forces a complete scan. The
-// cached catalog is reused only after the environment confirms its fingerprint.
-static OBSERVATIONS: OnceLock<Mutex<BTreeMap<String, CachedObservation>>> = OnceLock::new();
-fn observations() -> &'static Mutex<BTreeMap<String, CachedObservation>> {
+// An optimization only: losing/evicting this cache forces a full scan. A
+// cached catalog contributes only the roots the environment confirms
+// unchanged by their fingerprints.
+static OBSERVATIONS: OnceLock<Mutex<BTreeMap<String, EnvironmentSkillCatalog>>> = OnceLock::new();
+fn observations() -> &'static Mutex<BTreeMap<String, EnvironmentSkillCatalog>> {
     OBSERVATIONS.get_or_init(Default::default)
 }
 
@@ -56,10 +52,14 @@ pub(crate) async fn refresh(
     .expect("serialize discovery scope");
     let attempt = async {
         let connection = discovery.connection().await?;
-        let mut query = environment_skill_scan_query(
+        let query = environment_skill_scan_query(
             config,
-            Some(&connection.cwd),
-            connection.initialized.home_directory.as_deref(),
+            Some(connection.cwd.as_str()),
+            connection
+                .initialized
+                .home_directory
+                .as_ref()
+                .map(|home| home.as_str()),
         )?;
         let cache_key = serde_json::to_string(&(
             session_id,
@@ -74,42 +74,30 @@ pub(crate) async fn refresh(
             .expect("observation lock")
             .get(&cache_key)
             .cloned();
-        query.if_none_match = cached.as_ref().map(|c| c.fingerprint.clone());
-        let scan = {
+        let catalog = {
             let _timer = PhaseTimer::new("skills_scan");
-            connection
-                .client
-                .scan(&query)
-                .await
-                .map_err(|e| e.to_string())?
-        };
-        if !scan.complete {
-            return Err(format!(
-                "incomplete environment discovery: {:?}",
-                scan.diagnostics
-            ));
-        }
-        if scan.unchanged {
-            return cached
-                .filter(|cached| scan.fingerprint.as_ref() == Some(&cached.fingerprint))
-                .map(|cached| cached.catalog)
-                .ok_or("unexpected unchanged scan without matching observation".to_owned());
-        }
-        let catalog = environment_skill_catalog(environment_id.as_str(), &scan)?;
-        if let Some(fingerprint) = scan.fingerprint {
-            let mut cache = observations().lock().expect("observation lock");
-            if cache.len() >= 128 {
-                cache.clear();
+            let mut cached_query = query.clone();
+            if let Some(previous) = &cached {
+                apply_cached_fingerprints(&mut cached_query, previous);
             }
-            cache.insert(
-                cache_key,
-                CachedObservation {
-                    fingerprint,
-                    catalog: catalog.clone(),
-                },
-            );
+            let scan = connection.scan(cached_query).await?;
+            match environment_skill_catalog(environment_id.as_str(), &scan, cached.as_ref()) {
+                Ok(catalog) => catalog,
+                // A root answered unchanged against an observation the
+                // catalog cannot reuse: observe every root in full.
+                Err(_) if cached.is_some() => {
+                    let scan = connection.scan(query).await?;
+                    environment_skill_catalog(environment_id.as_str(), &scan, None)?
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        let mut cache = observations().lock().expect("observation lock");
+        if cache.len() >= 128 {
+            cache.clear();
         }
-        Ok(catalog)
+        cache.insert(cache_key, catalog.clone());
+        Ok::<_, String>(catalog)
     };
     let mut catalog = match tokio::time::timeout(Duration::from_secs(4), attempt).await {
         Ok(Ok(catalog)) => catalog,
@@ -166,6 +154,7 @@ mod tests {
         catalog.availability = EnvironmentSkillAvailability::Available;
         catalog.discovery_scope = Some("configured roots".into());
         catalog.skills.push(EnvironmentSkill {
+            root: "/skills".into(),
             skill_id: tools::skills::SkillId::new("internal-id"),
             name: "review".into(),
             description: "Review changes".into(),

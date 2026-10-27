@@ -133,6 +133,13 @@ The daemon's default working directory is a convenience, not a process
 sandbox. File-path restrictions and read-only file RPC settings do not prevent
 a shell process from using the permissions of that OS user.
 
+The daemon keeps its identity key, job records, and transfer journal in a
+state directory outside the working directory. File and transfer tools can
+never read or change that directory, but commands running as the daemon's
+user can. Grant **Run commands** only where that is acceptable, or run
+commands in a target whose daemon identity is not worth protecting, such as
+a disposable VM.
+
 Environment credential bindings can supply secrets to processes without
 putting the values into the agent's instructions. Those processes can access
 the injected credentials, so their permissions remain part of the environment's
@@ -155,6 +162,6 @@ Then continue through the task guides:
 - [Networking and ingress](networking-and-ingress.md): connect daemons and
   publish applications through the supported provider edge.
 
-The [environment protocol](../../../crates/environment-protocol/src/lib.rs) and
+The [environment protocol reference](../reference/environment-protocol.md) and
 [environment-variable reference](../reference/environment-variables.md#environment-services)
 define the interfaces and settings.

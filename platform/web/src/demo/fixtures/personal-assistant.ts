@@ -877,7 +877,7 @@ function seedEnvironments(universe: UniverseState): void {
     requestId: `req-${hex("ada-mac-mini", 12)}`,
     source: {
       type: "external",
-      connection: { endpoint: "ws://mac-mini.tailnet:19091", transport: "webSocket" },
+      endpoint: "ws://mac-mini.tailnet:19091",
     },
     displayName: "Mac mini (home)",
     status: "ready",

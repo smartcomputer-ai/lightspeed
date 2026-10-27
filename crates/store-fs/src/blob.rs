@@ -93,7 +93,7 @@ impl BlobStore for FsBlobStore {
         max_bytes: usize,
     ) -> Result<Vec<u8>, BlobStoreError> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        if max_bytes > 1024 * 1024 {
+        if max_bytes > harness::storage::MAX_BLOB_RANGE_BYTES {
             return Err(BlobStoreError::Store {
                 message: "blob range limit exceeded".into(),
             });

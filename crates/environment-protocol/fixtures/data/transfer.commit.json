@@ -1,0 +1,22 @@
+{
+  "params": {
+    "operationId": "op-2"
+  },
+  "response": {
+    "operationId": "op-2",
+    "phase": "complete",
+    "entryCount": 3,
+    "totalBytes": 2048,
+    "transferredBytes": 1024,
+    "reusedBytes": 512,
+    "deadlineAtMs": 1761400000000,
+    "receiptExpiresAtMs": 1761486400000
+  },
+  "error": {
+    "code": -32015,
+    "message": "operation op-2 ran out of its 86400000 ms",
+    "data": {
+      "kind": "deadlineExceeded"
+    }
+  }
+}

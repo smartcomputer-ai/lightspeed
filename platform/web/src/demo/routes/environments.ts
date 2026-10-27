@@ -31,7 +31,7 @@ const POWER_STATUS: Record<PowerState, LifecycleStatus> = {
 
 const IDLE_STAGES = ["pauseAfterMs", "suspendAfterMs", "stopAfterMs", "closeAfterMs"] as const;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const WS_ENDPOINT = /^wss?:\/\/[^\s]+$/;
+const ENVD_ENDPOINT = /^(wss?:\/\/|unix:\/\/\/)[^\s]+$/;
 const DEV_ENVD_ENDPOINT = "ws://127.0.0.1:19091";
 
 export interface ProvisionParams {
@@ -169,9 +169,10 @@ export function provisionEnvironment(
   if (template) {
     transition(environment, [["booting", 2_500], ["ready", 6_000]]);
   } else {
-    environment.metadata = {
-      ...environment.metadata,
-      lifecycleError: `unknown template ${params.templateId}`,
+    environment.lifecycleError = {
+      message: `unknown template ${params.templateId}`,
+      firstAtMs: now,
+      lastAtMs: now,
     };
     transition(environment, [["failed", 1_500]]);
   }
@@ -409,7 +410,9 @@ export function environmentRoutes(store: DemoStore): Hono {
     if (!universe) return notFound(c);
     const body = await readBody<{ endpoint?: unknown; displayName?: unknown }>(c);
     const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : "";
-    if (!WS_ENDPOINT.test(endpoint)) return badRequest(c, "endpoint must be a ws:// or wss:// URL");
+    if (!ENVD_ENDPOINT.test(endpoint)) {
+      return badRequest(c, "endpoint must be a ws://, wss:// or unix:// URL");
+    }
     const requestId = externalRequestId(endpoint);
     const existing = findByRequestId(universe, requestId);
     if (existing) return c.json(existing, 201);
@@ -418,7 +421,7 @@ export function environmentRoutes(store: DemoStore): Hono {
     const environment: Environment = {
       environmentId,
       requestId,
-      source: { type: "external", connection: { endpoint, transport: "webSocket" } },
+      source: { type: "external", endpoint },
       displayName: typeof body.displayName === "string" && body.displayName.trim()
         ? body.displayName.trim()
         : null,

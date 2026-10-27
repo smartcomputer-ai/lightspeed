@@ -1,3 +1,4 @@
+use super::provider_controllers::ControllerError;
 use super::*;
 
 use ::environments::{
@@ -5,8 +6,12 @@ use ::environments::{
     EnvironmentProviderBindingStatus, EnvironmentProviderId, EnvironmentProviderRecord,
     EnvironmentRecord, EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus,
 };
-use environment_protocol::control::targets::{
-    EnvironmentTemplate, ListTemplatesParams, ProviderBindingContext,
+use environment_protocol::{
+    control::{
+        target::BindingRef,
+        template::{EnvironmentTemplate, ListTemplatesParams},
+    },
+    ids::{BindingId, UniverseId},
 };
 
 impl EnvironmentService {
@@ -76,17 +81,20 @@ impl EnvironmentService {
             .into_iter()
             .filter(|binding| binding.status == EnvironmentProviderBindingStatus::Enabled)
         {
-            let provider = self.read_environment_provider(&binding.provider_id).await?;
-            let mut controller = self
-                .provider_controller_connector
-                .connect(&provider.controller_connection)
-                .await?;
-            let response = controller
-                .list_templates(&ListTemplatesParams {
-                    binding: binding_context(&binding),
-                })
-                .await;
-            let response = finish_provider_controller(controller, response).await?;
+            let controller = self
+                .connect_provider_controller(&binding.provider_id)
+                .await
+                .map_err(ControllerError::into_api_error)?;
+            let response = match binding_ref(&binding) {
+                Ok(binding) => controller
+                    .client
+                    .list_templates(&ListTemplatesParams { binding })
+                    .await
+                    .map_err(|error| controller.call_error(error).into_api_error()),
+                Err(error) => Err(error),
+            };
+            controller.close().await;
+            let response = response?;
             templates.extend(
                 response
                     .templates
@@ -130,11 +138,19 @@ impl EnvironmentService {
     }
 }
 
-pub(crate) fn binding_context(record: &EnvironmentProviderBindingRecord) -> ProviderBindingContext {
-    ProviderBindingContext {
-        universe_id: record.universe_id.to_string(),
-        binding_id: record.binding_id.to_string(),
-    }
+/// The controller-plane reference to a binding.
+pub(crate) fn binding_ref(
+    record: &EnvironmentProviderBindingRecord,
+) -> Result<BindingRef, AgentApiError> {
+    let invalid = |error: environment_protocol::ids::IdError| {
+        AgentApiError::internal(format!(
+            "binding ids do not fit the controller protocol: {error}"
+        ))
+    };
+    Ok(BindingRef {
+        universe_id: UniverseId::new(record.universe_id.to_string()).map_err(invalid)?,
+        binding_id: BindingId::new(record.binding_id.as_str()).map_err(invalid)?,
+    })
 }
 
 pub(crate) fn parse_environment_provider_id(
@@ -178,14 +194,25 @@ pub(crate) fn environment_template_view(
     template: &EnvironmentTemplate,
 ) -> EnvironmentTemplateView {
     EnvironmentTemplateView {
-        template_id: template.template_id.clone(),
+        template_id: template.template_id.to_string(),
         provider_id: binding.provider_id.to_string(),
         binding_id: binding.binding_id.to_string(),
-        display_name: template.display_name.clone(),
-        description: template.description.clone(),
+        display_name: template.display_name.to_string(),
+        description: template
+            .description
+            .as_ref()
+            .map(|description| description.to_string()),
         public_ingress: template.public_ingress,
         deprecated: template.deprecated,
-        metadata: template.metadata.clone(),
+        resources: template
+            .resources
+            .as_ref()
+            .map(|resources| EnvironmentTemplateResourcesView {
+                vcpus: resources.vcpus,
+                memory_bytes: resources.memory_bytes,
+                disk_bytes: resources.disk_bytes,
+            }),
+        metadata: template.metadata.as_map().clone(),
     }
 }
 
@@ -201,29 +228,8 @@ pub(crate) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
                 provider_id: provider_id.to_string(),
                 binding_id: binding_id.to_string(),
             },
-            EnvironmentSource::External { connection } => EnvironmentSourceView::External {
-                connection: EnvironmentConnectionView {
-                    endpoint: connection.endpoint.clone(),
-                    transport: match &connection.transport {
-                        environment_protocol::shared::EnvironmentTransport::WebSocket => {
-                            EnvironmentConnectionTransportView::WebSocket
-                        }
-                        environment_protocol::shared::EnvironmentTransport::Http => {
-                            EnvironmentConnectionTransportView::Http
-                        }
-                        environment_protocol::shared::EnvironmentTransport::Stdio => {
-                            EnvironmentConnectionTransportView::Stdio
-                        }
-                        environment_protocol::shared::EnvironmentTransport::Ssh => {
-                            EnvironmentConnectionTransportView::Ssh
-                        }
-                        environment_protocol::shared::EnvironmentTransport::Provider {
-                            provider_type,
-                        } => EnvironmentConnectionTransportView::Provider {
-                            provider_type: provider_type.clone(),
-                        },
-                    },
-                },
+            EnvironmentSource::External { endpoint } => EnvironmentSourceView::External {
+                endpoint: endpoint.as_str().to_owned(),
             },
             EnvironmentSource::Registered {
                 registration_key_id,
@@ -271,6 +277,13 @@ pub(crate) fn environment_view(record: &EnvironmentRecord) -> EnvironmentView {
         public_endpoint: record.public_endpoint.clone(),
         metadata: record.metadata.clone(),
         last_seen_at_ms: record.last_seen_at_ms,
+        lifecycle_error: record.lifecycle_error.as_ref().map(|error| {
+            EnvironmentLifecycleErrorView {
+                message: error.message.clone(),
+                first_at_ms: error.first_at_ms,
+                last_at_ms: error.last_at_ms,
+            }
+        }),
         created_at_ms: record.created_at_ms,
         updated_at_ms: record.updated_at_ms,
     }

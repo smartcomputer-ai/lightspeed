@@ -23,8 +23,11 @@ if (!/^[0-9a-f]{40}$/.test(value.gitSha)) fail("gitSha must be a full SHA");
 if (value.version !== metadata.LIGHTSPEED_PRODUCT_VERSION) fail("unexpected product version");
 if (value.target !== metadata.LIGHTSPEED_RELEASE_TARGET) fail("unexpected target");
 if (value.envdTarget !== metadata.LIGHTSPEED_ENVD_TARGET) fail("unexpected envd target");
-if (value.environmentProtocolVersion !== Number(metadata.LIGHTSPEED_ENVIRONMENT_PROTOCOL_VERSION)) {
-  fail("unexpected environment protocol version");
+if (value.envdProtocolVersion !== Number(metadata.LIGHTSPEED_ENVD_PROTOCOL_VERSION)) {
+  fail("unexpected envd protocol version");
+}
+if (value.controllerProtocolVersion !== Number(metadata.LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION)) {
+  fail("unexpected controller protocol version");
 }
 if (!/@sha256:[0-9a-f]{64}$/.test(value.buildImage)) fail("buildImage is not digest-pinned");
 if (published && !value.buildImage.startsWith("ghcr.io/")) fail("published build image is not in GHCR");
@@ -94,7 +97,7 @@ const discovery = JSON.parse(fs.readFileSync(discoveryFile, "utf8"));
 if (discovery.version !== value.version) dfail("version differs from the manifest");
 if (discovery.gitSha !== value.gitSha) dfail("gitSha differs from the manifest");
 if (!["release", "main"].includes(discovery.channel)) dfail("channel must be release or main");
-if (discovery.protocolVersion !== value.environmentProtocolVersion) {
+if (discovery.protocolVersion !== value.envdProtocolVersion) {
   dfail("protocolVersion differs from the manifest");
 }
 if (!Number.isInteger(discovery.builtAtMs) || discovery.builtAtMs <= 0) dfail("invalid builtAtMs");

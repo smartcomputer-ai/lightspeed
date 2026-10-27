@@ -368,7 +368,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"configure_resource","kind":"universe"},
     summary: "Configure environment public ingress",
-    description: "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+    description: "Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.",
   },
   "environments/power/put": {
     scope: "universe",
@@ -416,7 +416,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"read","kind":"universe"},
     summary: "Read environment jobs",
-    description: "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
+    description: "Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.",
   },
   "environments/jobs/cancel": {
     scope: "universe",
@@ -944,19 +944,19 @@ export const METHOD_INFO = {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Put an environment provider",
-    description: "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
+    description: "Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.",
   },
   "deployment/environment-providers/list": {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "List environment providers",
-    description: "Returns every deployment-registered deployment provider and its controller connection.",
+    description: "Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
   },
   "deployment/environment-providers/read": {
     scope: "deployment",
     access: {"kind":"deployment"},
     summary: "Read an environment provider",
-    description: "Returns one deployment-registered deployment provider and its controller connection.",
+    description: "Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
   },
   "deployment/environment-providers/delete": {
     scope: "deployment",
@@ -1330,7 +1330,7 @@ export interface MethodMap {
   /**
    * Configure environment public ingress
    *
-   * Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
+   * Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.
    */
   "environments/ingress/put": {
     params: Api.EnvironmentIngressPutParams;
@@ -1402,7 +1402,7 @@ export interface MethodMap {
   /**
    * Read environment jobs
    *
-   * Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.
+   * Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.
    */
   "environments/jobs/read": {
     params: Api.EnvironmentJobReadParams;
@@ -2194,7 +2194,7 @@ export interface MethodMap {
   /**
    * Put an environment provider
    *
-   * Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
+   * Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.
    */
   "deployment/environment-providers/put": {
     params: Api.DeploymentEnvironmentProviderPutParams;
@@ -2203,7 +2203,7 @@ export interface MethodMap {
   /**
    * List environment providers
    *
-   * Returns every deployment-registered deployment provider and its controller connection.
+   * Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
    */
   "deployment/environment-providers/list": {
     params: Api.DeploymentEnvironmentProviderListParams;
@@ -2212,7 +2212,7 @@ export interface MethodMap {
   /**
    * Read an environment provider
    *
-   * Returns one deployment-registered deployment provider and its controller connection.
+   * Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
    */
   "deployment/environment-providers/read": {
     params: Api.DeploymentEnvironmentProviderReadParams;
@@ -2564,7 +2564,7 @@ export const rpc = {
   /**
    * Configure environment public ingress
    *
-   * Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.
+   * Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.
    */
   environmentsIngressPut(client: RpcCaller, params: Api.EnvironmentIngressPutParams): Promise<Api.AgentApiOutcomeOfEnvironmentIngressPutResponse> {
     return client.call("environments/ingress/put", params);
@@ -2628,7 +2628,7 @@ export const rpc = {
   /**
    * Read environment jobs
    *
-   * Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.
+   * Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.
    */
   environmentsJobsRead(client: RpcCaller, params: Api.EnvironmentJobReadParams): Promise<Api.AgentApiOutcomeOfEnvironmentJobReadResponse> {
     return client.call("environments/jobs/read", params);
@@ -3332,7 +3332,7 @@ export const rpc = {
   /**
    * Put an environment provider
    *
-   * Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.
+   * Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.
    */
   deploymentEnvironmentProvidersPut(client: RpcCaller, params: Api.DeploymentEnvironmentProviderPutParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderPutResponse> {
     return client.call("deployment/environment-providers/put", params);
@@ -3340,7 +3340,7 @@ export const rpc = {
   /**
    * List environment providers
    *
-   * Returns every deployment-registered deployment provider and its controller connection.
+   * Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
    */
   deploymentEnvironmentProvidersList(client: RpcCaller, params: Api.DeploymentEnvironmentProviderListParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderListResponse> {
     return client.call("deployment/environment-providers/list", params);
@@ -3348,7 +3348,7 @@ export const rpc = {
   /**
    * Read an environment provider
    *
-   * Returns one deployment-registered deployment provider and its controller connection.
+   * Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
    */
   deploymentEnvironmentProvidersRead(client: RpcCaller, params: Api.DeploymentEnvironmentProviderReadParams): Promise<Api.AgentApiOutcomeOfDeploymentEnvironmentProviderReadResponse> {
     return client.call("deployment/environment-providers/read", params);

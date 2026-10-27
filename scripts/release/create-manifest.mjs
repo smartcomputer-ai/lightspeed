@@ -58,13 +58,19 @@ if (typeof rustVersion !== "string" || rustVersion.length === 0) {
 // well-known path, next to the archives it names, so an orchestrator can pick
 // the daemon that matches a gateway without credentials or a checkout. The
 // protocol version is the number that decides admission; the rest is
-// provenance. `url` is a plain HTTPS download when one exists, which today is
+// provenance; the controller number only travels in the release manifest.
+// `url` is a plain HTTPS download when one exists, which today is
 // only a tagged release's GitHub asset; a snapshot bundle carries null and the
 // serving deployment fills it in.
 const envdTarget = metadata.LIGHTSPEED_ENVD_TARGET;
-const environmentProtocolVersion = Number(metadata.LIGHTSPEED_ENVIRONMENT_PROTOCOL_VERSION);
-if (!envdTarget || !Number.isInteger(environmentProtocolVersion) || environmentProtocolVersion < 1) {
-  throw new Error("release metadata must name the envd target and the environment protocol version");
+const envdProtocolVersion = Number(metadata.LIGHTSPEED_ENVD_PROTOCOL_VERSION);
+const controllerProtocolVersion = Number(metadata.LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION);
+if (
+  !envdTarget
+  || !Number.isInteger(envdProtocolVersion) || envdProtocolVersion < 1
+  || !Number.isInteger(controllerProtocolVersion) || controllerProtocolVersion < 1
+) {
+  throw new Error("release metadata must name the envd target and both environment protocol versions");
 }
 const channel = process.env.LIGHTSPEED_RELEASE_CHANNEL ?? "main";
 if (!["release", "main"].includes(channel)) {
@@ -96,7 +102,7 @@ const discovery = {
   version,
   gitSha,
   channel,
-  protocolVersion: environmentProtocolVersion,
+  protocolVersion: envdProtocolVersion,
   builtAtMs,
   artifacts: envdArtifacts,
 };
@@ -111,7 +117,8 @@ const manifest = {
   envdTarget,
   buildImage,
   protocolVersion: metadata.LIGHTSPEED_API_PROTOCOL_VERSION,
-  environmentProtocolVersion,
+  envdProtocolVersion,
+  controllerProtocolVersion,
   contractRevision: `sha256:${contractHash.digest("hex")}`,
   schemaRevision: Number(metadata.LIGHTSPEED_SCHEMA_REVISION),
   platformSchemaRevision: Number(metadata.LIGHTSPEED_PLATFORM_SCHEMA_REVISION),

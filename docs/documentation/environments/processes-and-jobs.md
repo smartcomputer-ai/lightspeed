@@ -107,20 +107,32 @@ or input files on that route.
 
 ## Collect output and stop a process
 
-Follow-up calls return output through a daemon-owned cursor. Reconnecting a
-client while the daemon remains alive does not require restarting the
-command. Use the handle returned by the start call, and keep the session on
-the originating environment when continuing it.
+Follow-up calls return output through a daemon-owned cursor. The cursor
+advances only after a reply reaches the caller, so a dropped connection does
+not lose output, and reconnecting while the daemon remains alive does not
+require restarting the command. Use the handle returned by the start call,
+and keep the session on the originating environment when continuing it.
 
-Output is bounded. The daemon can omit the middle of accumulated output and
-reports omitted bytes; important complete logs should be written to a file.
-The included daemon retains finished process handles for 60 seconds after the
-exit is first observed. They are not a substitute for stored job records or
-saved artifacts.
+A finished command is reported only after its output has settled, so the
+result includes everything the command printed. Output is bounded. When a
+finished command printed more than the tool shows, the result keeps the
+beginning and the end, where failure summaries usually appear, and reports
+how many bytes it left out in between. The daemon itself retains about 1 MiB
+per process between reads; beyond that, it drops the middle of the unread
+output and keeps its beginning and newest bytes. Write important complete
+logs to a file.
+
+The included daemon keeps a finished process readable for 60 seconds after
+its output was fully read, and for two hours when nobody read it to the end.
+Afterwards the handle reports that it expired. A handle from before a daemon
+restart reports that the daemon restarted. Neither is a substitute for
+stored job records or saved files.
 
 Ask the agent to stop the specific process when it is no longer needed. An
-interrupt sends a signal the command can handle or ignore; a kill terminates
-the process group. Inspect the resulting state afterward.
+interrupt sends a signal the command can handle or ignore; with a PTY it
+reaches the foreground job, as Ctrl+C would. A kill terminates the process
+group. Inspect the resulting state afterward: an exit reports either a code
+or the name of the signal that ended the command.
 
 **Stop run** cancels agent work but is not a guarantee that every remote
 operating-system process has stopped. A command can outlive a canceled tool
@@ -143,7 +155,7 @@ if another attachment made it available. The agent receives:
 | --- | --- |
 | `job_run` | Run one bounded job and return its terminal result. |
 | `job_submit` | Submit a group and receive a promise for each job. |
-| `job_read` | Inspect a job's status, bounded output, and available artifact metadata. |
+| `job_read` | Inspect a job's status and bounded output. |
 
 Use `job_run` for a check the agent should wait for directly. It has a default
 30-minute timeout and a maximum of 60 minutes. Use `job_submit` when the agent
@@ -180,13 +192,15 @@ The default dependency policy is `allSucceeded`. If the check fails or is
 canceled, the report becomes `dependencyFailed`. Use `allTerminal` for a
 follow-up that should run after any terminal outcome, such as cleanup.
 Independent jobs can run concurrently. A shared `queue_key` serializes jobs
-in acceptance order within the environment's job namespace, including jobs
-from separate submissions.
+in acceptance order within the environment, including jobs from separate
+submissions.
 
-Names identify dependencies within a submission. Job IDs identify executions;
-use fresh IDs for a deliberately new run of this example. Jobs accept an
-argument array, working directory, environment variables, timeout, and
-one-shot stdin, but have no interactive input channel or PTY.
+Names identify dependencies within a submission. Job IDs identify executions
+within the environment; use fresh IDs for a deliberately new run of this
+example. Reusing a job ID from an earlier submission is refused rather than
+replaying the earlier run's result, so the agent is told to choose a new ID.
+Jobs accept an argument array, working directory, environment variables,
+timeout, and one-shot stdin, but have no interactive input channel or PTY.
 
 ## Wait, detach, or cancel
 
@@ -220,19 +234,24 @@ environment's job service; there is no central Lightspeed job registry that
 copies the machine's execution state.
 
 The included daemon persists job records and output under its state directory.
-After a daemon restart, previously unfinished records become `interrupted`;
-inspect any effects before starting replacement work. Completed records remain
-readable when that directory survives. Save useful output outside a disposable
-machine before destroying it.
+A job keeps the beginning and the end of its output, 1 MiB each, and reports
+the size of the omitted middle. After a daemon restart, previously unfinished
+records become `interrupted`, and the daemon stops any of their processes
+that are still running; inspect any effects before starting replacement work.
+Completed records remain readable for seven days when that directory
+survives. Save useful output outside a disposable machine before destroying
+it.
 
-Inspect terminal statuses such as `succeeded`, `failed`, `cancelled`,
-`timedOut`, `dependencyFailed`, `interrupted`, or `lost`. A missing record is
-not evidence of success. Jobs also attempt to clean up descendants left after
-their main process exits; an orphaned-descendant result needs investigation.
+Inspect terminal statuses: `succeeded`, `failed`, `cancelled`, `timedOut`,
+`dependencyFailed`, or `interrupted`. When the environment no longer knows a
+job, because it never existed there or its record expired, `job_read` reports
+it as not found and a pending promise for it settles as `lost`. A missing
+record is not evidence of success. When a job finishes, the
+daemon stops descendants its main process left running; an
+orphaned-descendant result needs investigation.
 
-The daemon currently returns no discovered artifacts in the optional artifact
-list. A job writing a file does not automatically export it. Read and retain
-output files explicitly before [closing the environment](power-and-cleanup.md).
+A job writing a file does not export it. Read and retain output files
+explicitly before [closing the environment](power-and-cleanup.md).
 
 ## Start jobs through the API
 
@@ -258,17 +277,24 @@ For example, this is a complete `environments/jobs/create` params object:
 }
 ```
 
-Retain the request ID and identical inputs when retrying the same admission.
-If omitted, job IDs are derived from the environment, request, and job index.
-Reusing an existing job ID with different job inputs conflicts. Fresh intended
-work should use a new request ID and new explicit job IDs when supplied.
+Retain the request ID and identical inputs when retrying the same admission:
+the environment then returns the jobs it already started. If omitted, job IDs
+are derived from the environment, request, and job index. Reusing an existing
+job ID with another request ID or different job inputs conflicts. Fresh
+intended work should use a new request ID and new explicit job IDs when
+supplied.
 
 The response supplies job handles, not session promises. These standalone jobs
-belong to the environment. Read using the returned handles, inspect each
-entry's status and error, and advance output reads with `outputNextSeq` as
-the next `afterSeq`. Output chunks contain base64 data. Cancellation can target
-the individual job or its dependents; it may initially report
-`cancelRequested`, so continue reading until terminal.
+belong to the environment. Read using the returned handles and inspect each
+entry's status and error; an entry with an error and no summary names a job
+the environment does not know. Output positions are byte offsets: pass an
+entry's `outputNext` as the next read's `after`, or read the last bytes with
+`tailBytes`. `outputEnd` is the output produced so far, and `outputGaps` name
+ranges that are no longer available. Output chunks contain base64 data.
+Cancellation can target the individual job or its dependents. A running job
+first receives a termination signal and is killed after a grace period unless
+`force` is set; it reports `cancelRequestedAtMs` and stays `running` until it
+ends, so continue reading until terminal.
 
 A standalone call can return `environment_not_ready` during provisioning or
 wake-up. Wait and retry with the same creation identity. Exact types and

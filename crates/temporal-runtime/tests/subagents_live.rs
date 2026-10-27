@@ -1314,28 +1314,26 @@ async fn run_agent_run_inherit_environment_live_client(
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
-    use environment_protocol::shared::EnvironmentTransport;
     use environments::{
-        EnvironmentConnectionSpec, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
+        EnvironmentEndpoint, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
         EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
         PutEnvironmentProvider, PutEnvironmentProviderBinding,
     };
+    use temporal_runtime::environments::fake_controller::FakeController;
 
     let store = pg_store_from_env().await?;
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let provider_id = format!("fake-inherit-{suffix}");
     let binding_id = format!("binding-inherit-{suffix}");
+    // Serves the controller and data routes until the test returns.
+    let controller = FakeController::start().await?;
     store
         .put_provider(PutEnvironmentProvider {
             provider_id: EnvironmentProviderId::new(provider_id.clone()),
             display_name: Some("Live fake provider".to_owned()),
-            controller_connection: EnvironmentConnectionSpec::new(
-                "in-process",
-                EnvironmentTransport::Provider {
-                    provider_type: "fake".to_owned(),
-                },
-            ),
+            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
             metadata: BTreeMap::new(),
+            credential: Some(auth::SecretValue::new(controller.credential())),
             updated_at_ms: 1,
         })
         .await?;

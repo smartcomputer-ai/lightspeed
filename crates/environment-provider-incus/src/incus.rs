@@ -15,11 +15,10 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use environment_protocol::{
-    control::targets::{
-        AdoptTargetParams, CreateTargetParams, PowerState, ProviderBindingContext,
-        ProviderTargetStatus,
+    control::target::{BindingRef, PowerState, TargetOwner},
+    ids::{
+        BindingId, EnvironmentId, IncarnationId, ProviderNativeRef, ProviderTargetId, UniverseId,
     },
-    shared::ProviderTargetId,
 };
 
 use crate::{
@@ -27,19 +26,16 @@ use crate::{
     policy,
 };
 
+/// A Lightspeed-managed Incus instance, read from its ownership metadata.
 #[derive(Clone, Debug)]
 pub struct OwnedTarget {
+    /// The instance name, which is the deterministic name of `owner`.
     pub target_id: ProviderTargetId,
-    pub name: String,
-    pub universe_id: String,
-    pub binding_id: String,
-    pub environment_id: String,
-    pub incarnation_id: String,
-    pub request_id: String,
+    pub owner: TargetOwner,
     pub template_id: String,
     pub image_fingerprint: String,
     pub adoption_source: Option<String>,
-    pub status: ProviderTargetStatus,
+    pub status: InstanceStatus,
     pub ipv4_address: Option<String>,
     pub ingress_hostname: Option<String>,
     pub ingress_port: Option<u16>,
@@ -48,60 +44,110 @@ pub struct OwnedTarget {
     pub location: Option<String>,
 }
 
+impl OwnedTarget {
+    pub fn name(&self) -> &str {
+        self.target_id.as_str()
+    }
+
+    pub fn binding(&self) -> BindingRef {
+        policy::binding_of(&self.owner)
+    }
+}
+
+/// Incus instance status, reduced to what the provider acts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstanceStatus {
+    Running,
+    Starting,
+    Stopping,
+    Stopped,
+    /// `Frozen` or `Freezing`: a paused VM.
+    Frozen,
+    Error,
+    /// Any other status Incus reports.
+    Other,
+}
+
+impl InstanceStatus {
+    fn from_incus(status: &str) -> Self {
+        match status {
+            "Running" | "Thawed" => Self::Running,
+            "Starting" => Self::Starting,
+            "Stopping" => Self::Stopping,
+            "Stopped" => Self::Stopped,
+            "Frozen" | "Freezing" => Self::Frozen,
+            "Error" => Self::Error,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What an adoption source is, checked before any change is made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AdoptionSource {
+    Missing,
+    /// A stopped or running, persistent, unmanaged virtual machine.
+    Adoptable,
+    /// Already managed by Lightspeed, so it belongs to some owner.
+    Managed,
+    /// It exists but cannot be taken over; the text says why.
+    NotAdoptable(&'static str),
+}
+
+/// The Incus operations the controller needs. Mutations are slow (image
+/// pulls, boots, graceful shutdowns); the controller runs them in the
+/// background and observes the result with [`IncusBackend::get_owned`].
 #[async_trait]
 pub trait IncusBackend: Clone + Send + Sync + 'static {
     async fn topology(&self) -> anyhow::Result<IncusTopology>;
-    async fn reconcile_binding(&self, binding: &ProviderBindingContext) -> anyhow::Result<()>;
+    async fn reconcile_binding(&self, binding: &BindingRef) -> anyhow::Result<()>;
     async fn ensure_image(&self, fingerprint: &str) -> anyhow::Result<()>;
-    async fn list_owned(
-        &self,
-        binding: &ProviderBindingContext,
-    ) -> anyhow::Result<Vec<OwnedTarget>>;
     async fn list_all_owned(&self) -> anyhow::Result<Vec<OwnedTarget>>;
+    /// The managed instance `name` in the binding's project. `None` when the
+    /// project or instance does not exist, when `name` is not an Incus
+    /// instance name, or when the instance carries no valid ownership
+    /// metadata.
     async fn get_owned(
         &self,
-        binding: &ProviderBindingContext,
-        target_id: &ProviderTargetId,
+        binding: &BindingRef,
+        name: &str,
     ) -> anyhow::Result<Option<OwnedTarget>>;
-    async fn create_vm(
-        &self,
-        binding: &ProviderBindingContext,
-        template: &TemplatePolicy,
-        params: &CreateTargetParams,
-    ) -> anyhow::Result<OwnedTarget>;
-    async fn adopt_vm(
-        &self,
-        binding: &ProviderBindingContext,
-        params: &AdoptTargetParams,
-    ) -> anyhow::Result<OwnedTarget>;
-    async fn delete_vm(
-        &self,
-        binding: &ProviderBindingContext,
-        target: &OwnedTarget,
-        force: bool,
-    ) -> anyhow::Result<()>;
+    /// Create the owner's instance from the template and start it.
+    async fn create_vm(&self, owner: &TargetOwner, template: &TemplatePolicy)
+    -> anyhow::Result<()>;
+    async fn adoption_source(&self, source: &ProviderNativeRef) -> anyhow::Result<AdoptionSource>;
+    /// Move the source into the owner's project under the owner's name and
+    /// start it.
+    async fn adopt_vm(&self, owner: &TargetOwner, source: &ProviderNativeRef)
+    -> anyhow::Result<()>;
+    /// Destroy the instance: a graceful stop within 30 s, then a forced stop,
+    /// then delete. Its ingress metadata goes with it.
+    async fn delete_vm(&self, target: &OwnedTarget) -> anyhow::Result<()>;
+    /// Record (or with `None` clear) the realized ingress hostname and port.
     async fn set_ingress(
         &self,
-        binding: &ProviderBindingContext,
         target: &OwnedTarget,
-        hostname: Option<&str>,
-        port: Option<u16>,
-    ) -> anyhow::Result<OwnedTarget>;
-    /// Converge one owned instance toward `power`. Idempotent by inventory;
-    /// transitional instances are reported as observed and converged on a
-    /// later call.
-    async fn set_power(
-        &self,
-        binding: &ProviderBindingContext,
-        target: &OwnedTarget,
-        power: PowerState,
-    ) -> anyhow::Result<OwnedTarget>;
+        route: Option<(&str, u16)>,
+    ) -> anyhow::Result<()>;
+    /// Converge the instance toward `power`. A stopped VM asked to pause is
+    /// started; a later call freezes it.
+    async fn set_power(&self, target: &OwnedTarget, power: PowerState) -> anyhow::Result<()>;
 }
 
 /// Power states the Incus provider can move a VM to. Stateful stop
 /// (`suspended`) is deliberately not advertised until it is wired up.
 pub const SUPPORTED_POWER_STATES: [PowerState; 3] =
     [PowerState::Running, PowerState::Paused, PowerState::Stopped];
+
+/// envd's state directory inside every VM: outside the agent's working tree
+/// and writable by the service (`ReadWritePaths` in the image's unit).
+pub const ENVD_STATE_DIR: &str = "/var/lib/lightspeed-envd";
+
+/// Bound on one graceful Incus state action, in seconds.
+const STATE_ACTION_TIMEOUT_SECONDS: i64 = 30;
+
+/// `template` and `image` metadata of an adopted target.
+pub const ADOPTED: &str = "adopted";
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -444,6 +490,9 @@ impl IncusClient {
     }
 
     async fn instance(&self, project: &str, name: &str) -> anyhow::Result<Option<OwnedTarget>> {
+        if !policy::is_instance_name(name) {
+            return Ok(None);
+        }
         if !self
             .exists(&format!("/instances/{name}"), Some(project))
             .await?
@@ -467,13 +516,7 @@ impl IncusClient {
             )
             .await
             .unwrap_or_default();
-        owned_from_instance(instance, state).map(Some)
-    }
-
-    async fn observed_instance(&self, project: &str, name: &str) -> anyhow::Result<OwnedTarget> {
-        self.instance(project, name)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Incus target disappeared during a power change"))
+        Ok(owned_from_instance(instance, state))
     }
 
     async fn instance_state_action(
@@ -481,7 +524,7 @@ impl IncusClient {
         project: &str,
         name: &str,
         action: &str,
-        timeout: u64,
+        timeout: i64,
         force: bool,
     ) -> anyhow::Result<()> {
         self.request_unit(
@@ -491,6 +534,44 @@ impl IncusClient {
             Some(json!({"action":action,"timeout":timeout,"force":force})),
         )
         .await
+    }
+
+    /// Run a state action; when it fails, accept it anyway if the instance
+    /// already reached a status in `reached` (a stale read, a transport
+    /// failure after Incus accepted the action, or a concurrent change).
+    async fn converge_state(
+        &self,
+        project: &str,
+        name: &str,
+        action: &str,
+        force: bool,
+        reached: &[InstanceStatus],
+    ) -> anyhow::Result<()> {
+        let Err(error) = self
+            .instance_state_action(project, name, action, STATE_ACTION_TIMEOUT_SECONDS, force)
+            .await
+        else {
+            return Ok(());
+        };
+        match self.instance(project, name).await? {
+            Some(target) if reached.contains(&target.status) => Ok(()),
+            None if action == "stop" => Ok(()),
+            _ => Err(error),
+        }
+    }
+
+    /// Incus can briefly report the pre-operation `Stopped` status right
+    /// after a start operation succeeds. Wait a few seconds for the first
+    /// post-start status so the next observation is not stale.
+    async fn settle_after_start(&self, project: &str, name: &str) -> anyhow::Result<()> {
+        for _ in 0..10 {
+            match self.instance(project, name).await? {
+                Some(target) if target.status != InstanceStatus::Stopped => return Ok(()),
+                None => anyhow::bail!("the Incus instance disappeared while starting"),
+                Some(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+            }
+        }
+        Ok(())
     }
 
     async fn raw_instance(&self, project: &str, name: &str) -> anyhow::Result<Option<Instance>> {
@@ -516,7 +597,7 @@ impl IncusClient {
             .await?;
         let mut networks = Vec::new();
         for project in projects {
-            let Some(binding) = project.binding_context() else {
+            let Some(binding) = project.binding() else {
                 continue;
             };
             let network_name = policy::network_name(&binding);
@@ -651,12 +732,12 @@ impl IncusBackend for IncusClient {
         })
     }
 
-    async fn reconcile_binding(&self, binding: &ProviderBindingContext) -> anyhow::Result<()> {
+    async fn reconcile_binding(&self, binding: &BindingRef) -> anyhow::Result<()> {
         let _reconcile_guard = self.reconcile_lock.lock().await;
         let project = policy::project_name(binding);
         let isolated_project_networks = self.config.incus.mode == IncusMode::Cluster;
         let network_project = network_resource_project(self.config.incus.mode, &project);
-        self.ensure_resource(&format!("/projects/{project}"), "/projects", None, json!({"name":project,"description":"Lightspeed managed binding","config":{"features.images":"false","features.networks":isolated_project_networks.to_string(),"features.profiles":"true","restricted":"true","restricted.devices.nic":"managed","restricted.devices.disk":"managed","restricted.networks.access":policy::network_name(binding),"user.lightspeed.managed":"true","user.lightspeed.universe":binding.universe_id,"user.lightspeed.binding":binding.binding_id}})).await?;
+        self.ensure_resource(&format!("/projects/{project}"), "/projects", None, json!({"name":project,"description":"Lightspeed managed binding","config":{"features.images":"false","features.networks":isolated_project_networks.to_string(),"features.profiles":"true","restricted":"true","restricted.devices.nic":"managed","restricted.devices.disk":"managed","restricted.networks.access":policy::network_name(binding),"user.lightspeed.managed":"true","user.lightspeed.universe":binding.universe_id.as_str(),"user.lightspeed.binding":binding.binding_id.as_str()}})).await?;
         self.ensure_resource(&format!("/network-acls/{}", policy::acl_name(binding)), "/network-acls", network_project, json!({"name":policy::acl_name(binding),"description":"Lightspeed binding baseline","ingress":[],"egress":[],"config":{}})).await?;
         let network = match self.config.incus.mode {
             IncusMode::Single => {
@@ -693,35 +774,6 @@ impl IncusBackend for IncusClient {
         Ok(())
     }
 
-    async fn list_owned(
-        &self,
-        binding: &ProviderBindingContext,
-    ) -> anyhow::Result<Vec<OwnedTarget>> {
-        let project = policy::project_name(binding);
-        if !self.exists(&format!("/projects/{project}"), None).await? {
-            return Ok(Vec::new());
-        }
-        let instances: Vec<Instance> = self
-            .request(Method::GET, "/instances?recursion=1", Some(&project), None)
-            .await?;
-        let mut targets = Vec::new();
-        for instance in instances {
-            let state = self
-                .request(
-                    Method::GET,
-                    &format!("/instances/{}/state", instance.name),
-                    Some(&project),
-                    None,
-                )
-                .await
-                .unwrap_or_default();
-            if let Ok(target) = owned_from_instance(instance, state) {
-                targets.push(target);
-            }
-        }
-        Ok(targets)
-    }
-
     async fn list_all_owned(&self) -> anyhow::Result<Vec<OwnedTarget>> {
         let projects: Vec<Project> = self
             .request(Method::GET, "/projects?recursion=1", None, None)
@@ -746,14 +798,10 @@ impl IncusBackend for IncusClient {
                     )
                     .await
                     .unwrap_or_default();
-                if let Ok(target) = owned_from_instance(instance, state) {
-                    let binding = ProviderBindingContext {
-                        universe_id: target.universe_id.clone(),
-                        binding_id: target.binding_id.clone(),
-                    };
-                    if project.name == policy::project_name(&binding) {
-                        targets.push(target);
-                    }
+                if let Some(target) = owned_from_instance(instance, state)
+                    && project.name == policy::project_name(&target.binding())
+                {
+                    targets.push(target);
                 }
             }
         }
@@ -762,68 +810,52 @@ impl IncusBackend for IncusClient {
 
     async fn get_owned(
         &self,
-        binding: &ProviderBindingContext,
-        target_id: &ProviderTargetId,
+        binding: &BindingRef,
+        name: &str,
     ) -> anyhow::Result<Option<OwnedTarget>> {
-        self.instance(&policy::project_name(binding), target_id.as_str())
-            .await
+        if !policy::is_instance_name(name) {
+            return Ok(None);
+        }
+        let project = policy::project_name(binding);
+        if !self.exists(&format!("/projects/{project}"), None).await? {
+            return Ok(None);
+        }
+        Ok(self
+            .instance(&project, name)
+            .await?
+            .filter(|target| target.binding() == *binding))
     }
 
     async fn create_vm(
         &self,
-        binding: &ProviderBindingContext,
+        owner: &TargetOwner,
         template: &TemplatePolicy,
-        params: &CreateTargetParams,
-    ) -> anyhow::Result<OwnedTarget> {
-        let project = policy::project_name(binding);
-        let name = policy::instance_name(
-            &binding.universe_id,
-            &binding.binding_id,
-            &params.environment_id,
-            &params.incarnation_id,
-        );
+    ) -> anyhow::Result<()> {
+        let binding = policy::binding_of(owner);
+        let project = policy::project_name(&binding);
+        let name = policy::instance_name(owner);
         let created_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis()
             .to_string();
         let cloud_init = format!(
-            "#cloud-config\nwrite_files:\n  - path: /etc/lightspeed-envd/provider.env\n    permissions: '0600'\n    content: |\n      LIGHTSPEED_ENVD_LISTEN=0.0.0.0:{}\n      LIGHTSPEED_ENVD_CWD=/workspace\n      LIGHTSPEED_ENVD_FS_ROOT=/\nruncmd:\n  - [mkdir, -p, /workspace]\n  - [systemctl, enable, --now, lightspeed-envd]\n",
-            self.config.envd_port
+            "#cloud-config\nwrite_files:\n  - path: /etc/lightspeed-envd/provider.env\n    permissions: '0600'\n    content: |\n      LIGHTSPEED_ENVD_LISTEN=0.0.0.0:{}\n      LIGHTSPEED_ENVD_CWD=/workspace\n      LIGHTSPEED_ENVD_FS_ROOT=/\n      LIGHTSPEED_ENVD_STATE_DIR={}\nruncmd:\n  - [mkdir, -p, /workspace]\n  - [systemctl, enable, --now, lightspeed-envd]\n",
+            self.config.envd_port, ENVD_STATE_DIR,
         );
-        let config = BTreeMap::from([
+        let mut config = ownership_config(owner);
+        config.extend([
             ("limits.cpu".to_owned(), template.cpu.to_string()),
             ("limits.memory".to_owned(), template.memory.clone()),
             ("cloud-init.user-data".to_owned(), cloud_init),
-            ("user.lightspeed.managed".to_owned(), "true".to_owned()),
             (
-                "user.lightspeed.universe".to_owned(),
-                params.binding.universe_id.clone(),
+                format!("{}template", policy::META_PREFIX),
+                template.template_id.to_string(),
             ),
             (
-                "user.lightspeed.binding".to_owned(),
-                params.binding.binding_id.clone(),
-            ),
-            (
-                "user.lightspeed.environment".to_owned(),
-                params.environment_id.clone(),
-            ),
-            (
-                "user.lightspeed.incarnation".to_owned(),
-                params.incarnation_id.clone(),
-            ),
-            (
-                "user.lightspeed.request".to_owned(),
-                params.request_id.clone(),
-            ),
-            (
-                "user.lightspeed.template".to_owned(),
-                template.template_id.clone(),
-            ),
-            (
-                "user.lightspeed.image".to_owned(),
+                format!("{}image", policy::META_PREFIX),
                 template.image_fingerprint.clone(),
             ),
-            ("user.lightspeed.created_at_ms".to_owned(), created_at),
+            (format!("{}created_at_ms", policy::META_PREFIX), created_at),
         ]);
         let path = if let Some(group) = &template.cluster_group {
             if !self
@@ -836,112 +868,65 @@ impl IncusBackend for IncusClient {
         } else {
             "/instances".to_owned()
         };
-        if let Err(create_error) = self.request_unit(Method::POST, &path, Some(&project), Some(json!({"name":name,"type":"virtual-machine","start":false,"profiles":[policy::profile_name(binding)],"source":{"type":"image","fingerprint":template.image_fingerprint},"config":config,"devices":{"root":{"type":"disk","pool":self.config.incus.storage_pool,"path":"/","size":template.disk}}}))).await {
+        if let Err(create_error) = self.request_unit(Method::POST, &path, Some(&project), Some(json!({"name":name,"type":"virtual-machine","start":false,"profiles":[policy::profile_name(&binding)],"source":{"type":"image","fingerprint":template.image_fingerprint},"config":config,"devices":{"root":{"type":"disk","pool":self.config.incus.storage_pool,"path":"/","size":template.disk}}}))).await
             // A transport can fail after Incus accepted the deterministic
             // create. Resolve that uncertainty before returning an error.
-            if let Some(target) = self.instance(&project, &name).await? {
-                return Ok(target);
-            }
+            && self.instance(&project, &name).await?.is_none()
+        {
             return Err(create_error);
         }
-        if let Err(error) = self
-            .request_unit(
-                Method::PUT,
-                &format!("/instances/{name}/state"),
-                Some(&project),
-                Some(json!({"action":"start","timeout":30,"force":false})),
-            )
-            .await
-        {
-            let observed = self.instance(&project, &name).await?;
-            if !observed.as_ref().is_some_and(|target| {
-                matches!(
-                    target.status,
-                    ProviderTargetStatus::Starting | ProviderTargetStatus::Ready
-                )
-            }) {
-                return Err(error);
-            }
-        }
-        let target = self
-            .instance(&project, &name)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("created Incus instance disappeared"))?;
-        Ok(target_after_accepted_start(target))
+        start_instance(self, &project, &name).await
+    }
+
+    async fn adoption_source(&self, source: &ProviderNativeRef) -> anyhow::Result<AdoptionSource> {
+        let (source_project, source_name) = parse_source_target(source.as_str())?;
+        let Some(source) = self.raw_instance(source_project, source_name).await? else {
+            return Ok(AdoptionSource::Missing);
+        };
+        Ok(classify_adoption_source(&source))
     }
 
     async fn adopt_vm(
         &self,
-        binding: &ProviderBindingContext,
-        params: &AdoptTargetParams,
-    ) -> anyhow::Result<OwnedTarget> {
-        let project = policy::project_name(binding);
-        let destination = policy::instance_name(
-            &binding.universe_id,
-            &binding.binding_id,
-            &params.environment_id,
-            &params.incarnation_id,
-        );
-        if let Some(target) = self.instance(&project, &destination).await? {
-            verify_adopted_target(&target, params)?;
-            return ensure_instance_started(self, &project, &destination, target).await;
+        owner: &TargetOwner,
+        source_target: &ProviderNativeRef,
+    ) -> anyhow::Result<()> {
+        let binding = policy::binding_of(owner);
+        let project = policy::project_name(&binding);
+        let destination = policy::instance_name(owner);
+        if self.instance(&project, &destination).await?.is_some() {
+            return start_instance(self, &project, &destination).await;
         }
 
-        let (source_project, source_name) = parse_source_target(&params.source_target)?;
+        let (source_project, source_name) = parse_source_target(source_target.as_str())?;
         let source = self
             .raw_instance(source_project, source_name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Incus adoption source target not found"))?;
-        if source.kind != "virtual-machine" {
-            anyhow::bail!("only Incus virtual-machine instances can be adopted")
-        }
-        if source.ephemeral {
-            anyhow::bail!("ephemeral Incus instances cannot be adopted")
-        }
-        if source
-            .config
-            .get(&format!("{}managed", policy::META_PREFIX))
-            .is_some_and(|value| value == "true")
-        {
-            anyhow::bail!("Incus source target is already Lightspeed-managed")
+        match classify_adoption_source(&source) {
+            AdoptionSource::Adoptable => {}
+            AdoptionSource::Managed => {
+                anyhow::bail!("Incus source target is already Lightspeed-managed")
+            }
+            AdoptionSource::NotAdoptable(reason) => {
+                anyhow::bail!("Incus source target cannot be adopted: {reason}")
+            }
+            AdoptionSource::Missing => anyhow::bail!("Incus adoption source target not found"),
         }
 
         // Incus merges these overrides with the instance's existing local
         // configuration during a cross-project move. User configuration is
         // therefore preserved while ownership metadata is added.
-        let config = BTreeMap::from([
-            (format!("{}managed", policy::META_PREFIX), "true".to_owned()),
-            (
-                format!("{}universe", policy::META_PREFIX),
-                binding.universe_id.clone(),
-            ),
-            (
-                format!("{}binding", policy::META_PREFIX),
-                binding.binding_id.clone(),
-            ),
-            (
-                format!("{}environment", policy::META_PREFIX),
-                params.environment_id.clone(),
-            ),
-            (
-                format!("{}incarnation", policy::META_PREFIX),
-                params.incarnation_id.clone(),
-            ),
-            (
-                format!("{}request", policy::META_PREFIX),
-                params.request_id.clone(),
-            ),
+        let mut config = ownership_config(owner);
+        config.extend([
             (
                 format!("{}template", policy::META_PREFIX),
-                "adopted".to_owned(),
+                ADOPTED.to_owned(),
             ),
-            (
-                format!("{}image", policy::META_PREFIX),
-                "adopted".to_owned(),
-            ),
+            (format!("{}image", policy::META_PREFIX), ADOPTED.to_owned()),
             (
                 format!("{}adoption_source", policy::META_PREFIX),
-                params.source_target.clone(),
+                source_target.to_string(),
             ),
         ]);
 
@@ -957,7 +942,7 @@ impl IncusBackend for IncusClient {
             let replacement = if name == "eth0" {
                 json!({
                     "type":"nic",
-                    "network":policy::network_name(binding),
+                    "network":policy::network_name(&binding),
                     "security.port_isolation":"true",
                     "security.ipv4_filtering":"true"
                 })
@@ -972,7 +957,7 @@ impl IncusBackend for IncusClient {
                 Method::PUT,
                 &format!("/instances/{source_name}/state"),
                 Some(source_project),
-                Some(json!({"action":"stop","timeout":30,"force":true})),
+                Some(json!({"action":"stop","timeout":STATE_ACTION_TIMEOUT_SECONDS,"force":true})),
             )
             .await
             .context("stop Incus source target before adoption")?;
@@ -992,7 +977,7 @@ impl IncusBackend for IncusClient {
                     "instance_only":false,
                     "config":config,
                     "devices":devices,
-                    "profiles":[policy::profile_name(binding)]
+                    "profiles":[policy::profile_name(&binding)]
                 })),
             )
             .await
@@ -1004,158 +989,138 @@ impl IncusBackend for IncusClient {
             .instance(&project, &destination)
             .await?
             .ok_or_else(|| anyhow::anyhow!("adopted Incus target is not visible"))?;
-        verify_adopted_target(&target, params)?;
-        ensure_instance_started(self, &project, &destination, target).await
+        if target.owner != *owner
+            || target.adoption_source.as_deref() != Some(source_target.as_str())
+        {
+            anyhow::bail!("adopted Incus target carries unexpected ownership metadata")
+        }
+        start_instance(self, &project, &destination).await
     }
 
-    async fn delete_vm(
-        &self,
-        binding: &ProviderBindingContext,
-        target: &OwnedTarget,
-        force: bool,
-    ) -> anyhow::Result<()> {
-        let project = policy::project_name(binding);
-        if target.status != ProviderTargetStatus::Stopped {
-            let stop_result = self
-                .request_unit(
-                    Method::PUT,
-                    &format!("/instances/{}/state", target.name),
-                    Some(&project),
-                    Some(json!({
-                        "action":"stop",
-                        "timeout": if force { 0 } else { 30 },
-                        "force": force
-                    })),
-                )
+    async fn delete_vm(&self, target: &OwnedTarget) -> anyhow::Result<()> {
+        let project = policy::project_name(&target.binding());
+        let name = target.name();
+        if target.status != InstanceStatus::Stopped {
+            // Graceful first; a guest that ignores ACPI power-down (a hung
+            // kernel, an emergency shell) is then stopped by force, since its
+            // disk is destroyed either way.
+            let graceful = self
+                .converge_state(&project, name, "stop", false, &[InstanceStatus::Stopped])
                 .await;
-            if let Err(error) = stop_result {
-                let observed = self.instance(&project, &target.name).await?;
-                if observed
-                    .as_ref()
-                    .is_some_and(|target| target.status != ProviderTargetStatus::Stopped)
-                {
-                    return Err(error);
-                }
+            if graceful.is_err() {
+                self.converge_state(&project, name, "stop", true, &[InstanceStatus::Stopped])
+                    .await
+                    .context("force-stop Incus instance before delete")?;
             }
         }
         if let Err(error) = self
             .request_unit(
                 Method::DELETE,
-                &format!("/instances/{}", target.name),
+                &format!("/instances/{name}"),
                 Some(&project),
                 None,
             )
             .await
-            && self.instance(&project, &target.name).await?.is_some()
+            && self.instance(&project, name).await?.is_some()
         {
             return Err(error);
         }
         Ok(())
     }
 
-    async fn set_power(
-        &self,
-        binding: &ProviderBindingContext,
-        target: &OwnedTarget,
-        power: PowerState,
-    ) -> anyhow::Result<OwnedTarget> {
+    async fn set_power(&self, target: &OwnedTarget, power: PowerState) -> anyhow::Result<()> {
         if !SUPPORTED_POWER_STATES.contains(&power) {
             anyhow::bail!("Incus provider does not support power state {power}")
         }
-        let project = policy::project_name(binding);
-        let name = target.name.clone();
+        let project = policy::project_name(&target.binding());
+        let name = target.name();
         match (target.status, power) {
-            // Already there or already on the way: report the observation.
-            (ProviderTargetStatus::Ready | ProviderTargetStatus::Starting, PowerState::Running)
-            | (ProviderTargetStatus::Paused, PowerState::Paused)
-            | (ProviderTargetStatus::Stopped, PowerState::Stopped) => Ok(target.clone()),
-            (ProviderTargetStatus::Paused, PowerState::Running) => {
-                self.instance_state_action(&project, &name, "unfreeze", 30, false)
-                    .await?;
-                let observed = self.observed_instance(&project, &name).await?;
-                Ok(target_after_accepted_resume(observed))
+            // Already there or already on the way.
+            (InstanceStatus::Running | InstanceStatus::Starting, PowerState::Running)
+            | (InstanceStatus::Frozen, PowerState::Paused)
+            | (InstanceStatus::Stopped | InstanceStatus::Stopping, PowerState::Stopped) => Ok(()),
+            (InstanceStatus::Frozen, PowerState::Running) => {
+                self.converge_state(
+                    &project,
+                    name,
+                    "unfreeze",
+                    false,
+                    &[InstanceStatus::Running],
+                )
+                .await
             }
-            (ProviderTargetStatus::Stopped, PowerState::Running | PowerState::Paused) => {
+            (InstanceStatus::Stopped, PowerState::Running | PowerState::Paused) => {
                 // A stopped VM cannot be frozen directly; converge through
                 // running and let a later call freeze it.
-                ensure_instance_started(self, &project, &name, target.clone()).await
+                start_instance(self, &project, name).await
             }
-            (ProviderTargetStatus::Ready, PowerState::Paused) => {
-                self.instance_state_action(&project, &name, "freeze", 30, false)
-                    .await?;
-                let observed = self.observed_instance(&project, &name).await?;
-                Ok(target_after_accepted_freeze(observed))
-            }
-            (ProviderTargetStatus::Ready | ProviderTargetStatus::Paused, PowerState::Stopped) => {
-                if target.status == ProviderTargetStatus::Paused {
-                    self.instance_state_action(&project, &name, "unfreeze", 30, false)
-                        .await?;
-                }
-                if let Err(error) = self
-                    .instance_state_action(&project, &name, "stop", 30, false)
+            (InstanceStatus::Running, PowerState::Paused) => {
+                self.converge_state(&project, name, "freeze", false, &[InstanceStatus::Frozen])
                     .await
-                {
-                    let observed = self.instance(&project, &name).await?;
-                    if !observed
-                        .as_ref()
-                        .is_some_and(|target| target.status == ProviderTargetStatus::Stopped)
-                    {
-                        return Err(error);
-                    }
-                }
-                let observed = self.observed_instance(&project, &name).await?;
-                Ok(target_after_accepted_stop(observed))
             }
-            // Starting/creating/closing/failed/unknown: nothing safe to do
-            // until the instance settles; the caller re-observes later.
-            (_, _) => Ok(target.clone()),
+            (InstanceStatus::Running | InstanceStatus::Frozen, PowerState::Stopped) => {
+                if target.status == InstanceStatus::Frozen {
+                    self.converge_state(
+                        &project,
+                        name,
+                        "unfreeze",
+                        false,
+                        &[InstanceStatus::Running],
+                    )
+                    .await?;
+                }
+                self.converge_state(&project, name, "stop", false, &[InstanceStatus::Stopped])
+                    .await
+            }
+            // Transitional, failed or unknown: nothing safe to do until the
+            // instance settles; the caller re-observes later.
+            _ => Ok(()),
         }
     }
 
     async fn set_ingress(
         &self,
-        binding: &ProviderBindingContext,
         target: &OwnedTarget,
-        hostname: Option<&str>,
-        port: Option<u16>,
-    ) -> anyhow::Result<OwnedTarget> {
-        if hostname.is_some() != port.is_some() {
-            anyhow::bail!("ingress hostname and port must be set together")
-        }
-        let project = policy::project_name(binding);
+        route: Option<(&str, u16)>,
+    ) -> anyhow::Result<()> {
+        let project = policy::project_name(&target.binding());
+        let name = target.name();
         let instance: Instance = self
             .request(
                 Method::GET,
-                &format!("/instances/{}", target.name),
+                &format!("/instances/{name}"),
                 Some(&project),
                 None,
             )
             .await?;
         let mut config = instance.config;
-        match (hostname, port) {
-            (Some(hostname), Some(port)) => {
-                config.insert(
-                    "user.lightspeed.ingress_hostname".to_owned(),
-                    hostname.to_owned(),
-                );
-                config.insert("user.lightspeed.ingress_port".to_owned(), port.to_string());
+        let hostname_key = format!("{}ingress_hostname", policy::META_PREFIX);
+        let port_key = format!("{}ingress_port", policy::META_PREFIX);
+        match route {
+            Some((hostname, port)) => {
+                config.insert(hostname_key, hostname.to_owned());
+                config.insert(port_key, port.to_string());
             }
-            _ => {
-                config.remove("user.lightspeed.ingress_hostname");
-                config.remove("user.lightspeed.ingress_port");
+            None => {
+                config.remove(&hostname_key);
+                config.remove(&port_key);
             }
         }
-        let update = self.request_unit(Method::PUT, &format!("/instances/{}", target.name), Some(&project), Some(json!({"config":config,"description":instance.description,"profiles":instance.profiles,"devices":instance.devices,"ephemeral":instance.ephemeral}))).await;
+        let update = self.request_unit(Method::PUT, &format!("/instances/{name}"), Some(&project), Some(json!({"config":config,"description":instance.description,"profiles":instance.profiles,"devices":instance.devices,"ephemeral":instance.ephemeral}))).await;
         let observed = self
-            .instance(&project, &target.name)
+            .instance(&project, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("target disappeared while updating ingress"))?;
-        if observed.ingress_hostname.as_deref() != hostname || observed.ingress_port != port {
+        let realized = observed
+            .ingress_hostname
+            .as_deref()
+            .zip(observed.ingress_port);
+        if realized != route {
             return Err(update.err().unwrap_or_else(|| {
                 anyhow::anyhow!("Incus did not realize the requested ingress metadata")
             }));
         }
-        Ok(observed)
+        Ok(())
     }
 }
 
@@ -1212,7 +1177,7 @@ struct Project {
 }
 
 impl Project {
-    fn binding_context(&self) -> Option<ProviderBindingContext> {
+    fn binding(&self) -> Option<BindingRef> {
         if self
             .config
             .get("user.lightspeed.managed")
@@ -1220,15 +1185,17 @@ impl Project {
         {
             return None;
         }
-        let binding = ProviderBindingContext {
-            universe_id: self.config.get("user.lightspeed.universe")?.clone(),
-            binding_id: self.config.get("user.lightspeed.binding")?.clone(),
+        let binding = BindingRef {
+            universe_id: UniverseId::new(self.config.get("user.lightspeed.universe")?.as_str())
+                .ok()?,
+            binding_id: BindingId::new(self.config.get("user.lightspeed.binding")?.as_str())
+                .ok()?,
         };
         (self.name == policy::project_name(&binding)).then_some(binding)
     }
 
     fn is_lightspeed_managed(&self) -> bool {
-        self.binding_context().is_some()
+        self.binding().is_some()
     }
 }
 
@@ -1338,7 +1305,7 @@ fn network_resource_project(mode: IncusMode, project: &str) -> Option<&str> {
     }
 }
 
-fn parse_source_target(value: &str) -> anyhow::Result<(&str, &str)> {
+pub(crate) fn parse_source_target(value: &str) -> anyhow::Result<(&str, &str)> {
     let (project, name) = value.split_once('/').unwrap_or(("default", value));
     if project.is_empty()
         || name.is_empty()
@@ -1357,165 +1324,106 @@ fn parse_source_target(value: &str) -> anyhow::Result<(&str, &str)> {
     Ok((project, name))
 }
 
-async fn ensure_instance_started(
-    client: &IncusClient,
-    project: &str,
-    name: &str,
-    target: OwnedTarget,
-) -> anyhow::Result<OwnedTarget> {
-    if matches!(
-        target.status,
-        ProviderTargetStatus::Ready | ProviderTargetStatus::Starting
-    ) {
-        return Ok(target);
-    }
-    if target.status == ProviderTargetStatus::Paused {
-        client
-            .instance_state_action(project, name, "unfreeze", 30, false)
-            .await?;
-        let observed = client.observed_instance(project, name).await?;
-        return Ok(target_after_accepted_resume(observed));
-    }
-    if let Err(error) = client
-        .request_unit(
-            Method::PUT,
-            &format!("/instances/{name}/state"),
-            Some(project),
-            Some(json!({"action":"start","timeout":30,"force":false})),
-        )
-        .await
-    {
-        let observed = client.instance(project, name).await?;
-        if !observed.as_ref().is_some_and(|target| {
-            matches!(
-                target.status,
-                ProviderTargetStatus::Starting | ProviderTargetStatus::Ready
-            )
-        }) {
-            return Err(error);
-        }
-    }
+/// Start a stopped instance or unfreeze a frozen one; a running or starting
+/// one needs nothing.
+async fn start_instance(client: &IncusClient, project: &str, name: &str) -> anyhow::Result<()> {
     let target = client
         .instance(project, name)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("Incus target disappeared while starting"))?;
-    Ok(target_after_accepted_start(target))
-}
-
-/// Incus can briefly return the pre-operation `Stopped` state immediately
-/// after its asynchronous start operation succeeds. Keep the provisioning
-/// lifecycle pending until a later observation sees the actual running state.
-fn target_after_accepted_start(mut target: OwnedTarget) -> OwnedTarget {
-    target.status = status_after_accepted_start(target.status);
-    target
-}
-
-fn status_after_accepted_start(status: ProviderTargetStatus) -> ProviderTargetStatus {
-    match status {
-        ProviderTargetStatus::Stopped => ProviderTargetStatus::Starting,
-        status => status,
+        .ok_or_else(|| anyhow::anyhow!("the Incus instance disappeared before it started"))?;
+    match target.status {
+        InstanceStatus::Running | InstanceStatus::Starting => Ok(()),
+        InstanceStatus::Frozen => {
+            client
+                .converge_state(project, name, "unfreeze", false, &[InstanceStatus::Running])
+                .await
+        }
+        _ => {
+            client
+                .converge_state(
+                    project,
+                    name,
+                    "start",
+                    false,
+                    &[InstanceStatus::Running, InstanceStatus::Starting],
+                )
+                .await?;
+            client.settle_after_start(project, name).await
+        }
     }
 }
 
-/// After an accepted unfreeze, a stale `Frozen` read means "resuming", not
-/// "still paused".
-fn target_after_accepted_resume(mut target: OwnedTarget) -> OwnedTarget {
-    if target.status == ProviderTargetStatus::Paused {
-        target.status = ProviderTargetStatus::Starting;
-    }
-    target
+/// The `user.lightspeed.*` keys that make an instance the owner's.
+fn ownership_config(owner: &TargetOwner) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (format!("{}managed", policy::META_PREFIX), "true".to_owned()),
+        (
+            format!("{}universe", policy::META_PREFIX),
+            owner.universe_id.to_string(),
+        ),
+        (
+            format!("{}binding", policy::META_PREFIX),
+            owner.binding_id.to_string(),
+        ),
+        (
+            format!("{}environment", policy::META_PREFIX),
+            owner.environment_id.to_string(),
+        ),
+        (
+            format!("{}incarnation", policy::META_PREFIX),
+            owner.incarnation_id.to_string(),
+        ),
+    ])
 }
 
-/// After an accepted freeze, a stale `Running` read must not make the caller
-/// freeze again; report the requested steady state.
-fn target_after_accepted_freeze(mut target: OwnedTarget) -> OwnedTarget {
-    if target.status == ProviderTargetStatus::Ready {
-        target.status = ProviderTargetStatus::Paused;
-    }
-    target
-}
-
-/// After an accepted stop, a stale `Running`/`Frozen` read is reported as
-/// stopped; a later observation corrects it if the stop did not stick.
-fn target_after_accepted_stop(mut target: OwnedTarget) -> OwnedTarget {
-    if matches!(
-        target.status,
-        ProviderTargetStatus::Ready | ProviderTargetStatus::Paused
-    ) {
-        target.status = ProviderTargetStatus::Stopped;
-    }
-    target
-}
-
-fn verify_adopted_target(target: &OwnedTarget, params: &AdoptTargetParams) -> anyhow::Result<()> {
-    if target.universe_id != params.binding.universe_id
-        || target.binding_id != params.binding.binding_id
-        || target.environment_id != params.environment_id
-        || target.incarnation_id != params.incarnation_id
-        || target.request_id != params.request_id
-        || target.template_id != "adopted"
-        || target.image_fingerprint != "adopted"
-        || target.adoption_source.as_deref() != Some(params.source_target.as_str())
+fn classify_adoption_source(source: &Instance) -> AdoptionSource {
+    if source
+        .config
+        .get(&format!("{}managed", policy::META_PREFIX))
+        .is_some_and(|value| value == "true")
     {
-        anyhow::bail!("existing target metadata conflicts with adoption request")
+        return AdoptionSource::Managed;
     }
-    Ok(())
+    if source.kind != "virtual-machine" {
+        return AdoptionSource::NotAdoptable("only Incus virtual machines can be adopted");
+    }
+    if source.ephemeral {
+        return AdoptionSource::NotAdoptable("ephemeral Incus instances cannot be adopted");
+    }
+    AdoptionSource::Adoptable
 }
 
-fn owned_from_instance(instance: Instance, state: InstanceState) -> anyhow::Result<OwnedTarget> {
-    let name = instance.name.clone();
+/// The owned target an instance describes, or `None` when its ownership
+/// metadata is missing, invalid or does not match its deterministic name.
+fn owned_from_instance(instance: Instance, state: InstanceState) -> Option<OwnedTarget> {
     let get = |key: &str| {
         instance
             .config
             .get(&format!("{}{}", policy::META_PREFIX, key))
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("instance {name} is not owned: missing {key}"))
     };
     if get("managed")? != "true" {
-        anyhow::bail!("instance is not Lightspeed-managed")
+        return None;
     }
-    let universe_id = get("universe")?;
-    let binding_id = get("binding")?;
-    let environment_id = get("environment")?;
-    let incarnation_id = get("incarnation")?;
-    if instance.name
-        != policy::instance_name(&universe_id, &binding_id, &environment_id, &incarnation_id)
-    {
-        anyhow::bail!("managed instance name does not match immutable ownership metadata")
+    let owner = TargetOwner {
+        universe_id: UniverseId::new(get("universe")?).ok()?,
+        binding_id: BindingId::new(get("binding")?).ok()?,
+        environment_id: EnvironmentId::new(get("environment")?).ok()?,
+        incarnation_id: IncarnationId::new(get("incarnation")?).ok()?,
+    };
+    if instance.name != policy::instance_name(&owner) {
+        return None;
     }
-    let ipv4_address = managed_ipv4_address(&state);
-    Ok(OwnedTarget {
-        target_id: ProviderTargetId::new(instance.name.clone()),
-        name: instance.name,
-        universe_id,
-        binding_id,
-        environment_id,
-        incarnation_id,
-        request_id: get("request")?,
+    Some(OwnedTarget {
+        target_id: ProviderTargetId::new(instance.name.clone()).ok()?,
+        owner,
         template_id: get("template")?,
         image_fingerprint: get("image")?,
-        adoption_source: instance
-            .config
-            .get(&format!("{}adoption_source", policy::META_PREFIX))
-            .cloned(),
-        status: match instance.status.as_str() {
-            "Running" => ProviderTargetStatus::Ready,
-            "Starting" => ProviderTargetStatus::Starting,
-            "Stopped" => ProviderTargetStatus::Stopped,
-            // Incus reports a frozen container or paused VM as `Frozen`.
-            "Frozen" | "Freezing" => ProviderTargetStatus::Paused,
-            "Error" => ProviderTargetStatus::Failed,
-            _ => ProviderTargetStatus::Unknown,
-        },
-        ipv4_address,
-        ingress_hostname: instance
-            .config
-            .get(&format!("{}ingress_hostname", policy::META_PREFIX))
-            .cloned(),
-        ingress_port: instance
-            .config
-            .get(&format!("{}ingress_port", policy::META_PREFIX))
-            .and_then(|value| value.parse().ok()),
+        adoption_source: get("adoption_source"),
+        status: InstanceStatus::from_incus(&instance.status),
+        ipv4_address: managed_ipv4_address(&state),
+        ingress_hostname: get("ingress_hostname"),
+        ingress_port: get("ingress_port").and_then(|value| value.parse().ok()),
         location: (!instance.location.is_empty()).then_some(instance.location),
     })
 }
@@ -1543,10 +1451,7 @@ mod tests {
 
     #[test]
     fn managed_projects_require_matching_binding_metadata() {
-        let binding = ProviderBindingContext {
-            universe_id: "u".to_owned(),
-            binding_id: "b".to_owned(),
-        };
+        let binding = policy::binding_of(&policy::tests::owner("u", "b", "e"));
         let project = Project {
             name: policy::project_name(&binding),
             config: BTreeMap::from([
@@ -1561,6 +1466,63 @@ mod tests {
             ..project
         };
         assert!(!spoofed.is_lightspeed_managed());
+    }
+
+    fn instance(name: &str, config: BTreeMap<String, String>) -> Instance {
+        Instance {
+            name: name.to_owned(),
+            kind: "virtual-machine".to_owned(),
+            description: String::new(),
+            profiles: Vec::new(),
+            devices: BTreeMap::new(),
+            ephemeral: false,
+            status: "Running".to_owned(),
+            config,
+            location: String::new(),
+        }
+    }
+
+    #[test]
+    fn ownership_metadata_must_match_the_deterministic_name() {
+        let owner = policy::tests::owner("u", "b", "e");
+        let mut config = ownership_config(&owner);
+        config.insert("user.lightspeed.template".to_owned(), "t".to_owned());
+        config.insert("user.lightspeed.image".to_owned(), "f".to_owned());
+        let name = policy::instance_name(&owner);
+        let owned = owned_from_instance(instance(&name, config.clone()), InstanceState::default())
+            .expect("owned");
+        assert_eq!(owned.owner, owner);
+        assert_eq!(owned.status, InstanceStatus::Running);
+        assert!(
+            owned_from_instance(
+                instance("ls-other", config.clone()),
+                InstanceState::default()
+            )
+            .is_none()
+        );
+        config.insert("user.lightspeed.universe".to_owned(), "bad id!".to_owned());
+        assert!(owned_from_instance(instance(&name, config), InstanceState::default()).is_none());
+    }
+
+    #[test]
+    fn adoption_sources_are_classified_before_any_change() {
+        let mut source = instance("manual-vm", BTreeMap::new());
+        assert_eq!(classify_adoption_source(&source), AdoptionSource::Adoptable);
+        source.ephemeral = true;
+        assert!(matches!(
+            classify_adoption_source(&source),
+            AdoptionSource::NotAdoptable(_)
+        ));
+        source.ephemeral = false;
+        source.kind = "container".to_owned();
+        assert!(matches!(
+            classify_adoption_source(&source),
+            AdoptionSource::NotAdoptable(_)
+        ));
+        source
+            .config
+            .insert("user.lightspeed.managed".to_owned(), "true".to_owned());
+        assert_eq!(classify_adoption_source(&source), AdoptionSource::Managed);
     }
 
     #[test]
@@ -1620,53 +1582,18 @@ mod tests {
     }
 
     #[test]
-    fn accepted_power_changes_do_not_report_stale_pre_operation_states() {
-        let target = |status| OwnedTarget {
-            target_id: "t".into(),
-            name: "t".to_owned(),
-            universe_id: "u".to_owned(),
-            binding_id: "b".to_owned(),
-            environment_id: "e".to_owned(),
-            incarnation_id: "i".to_owned(),
-            request_id: "r".to_owned(),
-            template_id: "tpl".to_owned(),
-            image_fingerprint: "img".to_owned(),
-            adoption_source: None,
-            status,
-            ipv4_address: None,
-            ingress_hostname: None,
-            ingress_port: None,
-            location: None,
-        };
+    fn incus_statuses_reduce_to_provider_statuses() {
         assert_eq!(
-            target_after_accepted_freeze(target(ProviderTargetStatus::Ready)).status,
-            ProviderTargetStatus::Paused
+            InstanceStatus::from_incus("Running"),
+            InstanceStatus::Running
         );
         assert_eq!(
-            target_after_accepted_resume(target(ProviderTargetStatus::Paused)).status,
-            ProviderTargetStatus::Starting
+            InstanceStatus::from_incus("Freezing"),
+            InstanceStatus::Frozen
         );
-        assert_eq!(
-            target_after_accepted_resume(target(ProviderTargetStatus::Ready)).status,
-            ProviderTargetStatus::Ready
-        );
-        assert_eq!(
-            target_after_accepted_stop(target(ProviderTargetStatus::Paused)).status,
-            ProviderTargetStatus::Stopped
-        );
+        assert_eq!(InstanceStatus::from_incus("Error"), InstanceStatus::Error);
+        assert_eq!(InstanceStatus::from_incus("Pending"), InstanceStatus::Other);
         assert!(SUPPORTED_POWER_STATES.contains(&PowerState::Paused));
         assert!(!SUPPORTED_POWER_STATES.contains(&PowerState::Suspended));
-    }
-
-    #[test]
-    fn accepted_start_does_not_report_a_stale_stopped_state() {
-        assert_eq!(
-            status_after_accepted_start(ProviderTargetStatus::Stopped),
-            ProviderTargetStatus::Starting
-        );
-        assert_eq!(
-            status_after_accepted_start(ProviderTargetStatus::Ready),
-            ProviderTargetStatus::Ready
-        );
     }
 }

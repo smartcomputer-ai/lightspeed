@@ -1,2051 +1,2082 @@
+//! `job/*`: durable batch commands with dependencies and queues, on the
+//! shared execution primitive.
+//!
+//! A job is identified by its `jobId` together with the `requestId` of the
+//! `job/start` that created it and a hash of its spec: an identical retry
+//! replays the job, any other reuse of the id is `jobIdInUse`. A job runs
+//! once its dependencies satisfy its policy and its queue key is free. When
+//! its root exits the daemon sweeps its process group (`SIGTERM`, the
+//! cancel grace, `SIGKILL`) and reports what it swept.
+//!
+//! Records and output persist under `<state>/jobs/` through the job store,
+//! off the runtime thread; output keeps a head and a tail with the middle
+//! as an overflow gap. Startup loads summaries only, quarantines unreadable
+//! records instead of failing, marks unfinished jobs `interrupted` and kills
+//! the groups an earlier instance left running in this boot.
+
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::{Component, PathBuf},
-    process::Stdio,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use environment_protocol::{
-    data::jobs::{
-        CancelJobsParams, CancelJobsResponse, JobCancelScope, JobDependencyPolicy, JobOutputChunk,
-        JobOutputStream, JobReadResult, JobStartSpec, JobStatus, JobSummary, ListJobsParams,
-        ListJobsResponse, ReadJobsParams, ReadJobsResponse, StartJobsParams, StartJobsResponse,
+    bytes::encode_hex,
+    data::{
+        exec::{
+            CommandSpec, ExecInput, ExitStatus, LeftoverDisposition, LeftoverReport, OutputPage,
+            OutputStream, ReturnOn, StoppedBy,
+        },
+        handshake::JobLimits,
+        job::{
+            CancelJobsParams, CancelJobsResponse, JobCancelScope, JobDependency,
+            JobDependencyPolicy, JobReadEntry, JobReadRequest, JobStatus, JobSummary,
+            JobSummaryEntry, ReadJobsParams, ReadJobsResponse, StartJobsParams, StartJobsResponse,
+        },
     },
-    error::{EnvironmentProtocolError, EnvironmentProtocolErrorCode},
-    shared::{ByteChunk, EnvironmentPath, JobId, SecretString},
+    error::{PreconditionReason, ProtocolError},
+    ids::{DaemonInstanceId, JobId, JobName, JobRequestId, QueueKey},
+    limits::MAX_PAGE_CHUNKS,
+    paths::EnvironmentPath,
 };
 use serde::{Deserialize, Serialize};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    process::Command,
-    sync::{Mutex, Notify},
-    task::JoinHandle,
-};
+use sha2::{Digest as _, Sha256};
+use tokio::sync::watch;
 
 use crate::{
+    dispatch::RequestContext,
+    exec::{
+        AfterExit, ExecOptions, Execution, OutputSink, PreparedCommand,
+        job_store::{JobStore, load_output},
+        log::OutputLog,
+        outcome::describe_exit,
+        spawn_record::{SpawnRecord, write_json_atomic},
+        validate_command,
+    },
+    filesystem::Confinement,
     process_group,
-    redaction::{redact_bytes, redactions_for_secret_env},
 };
 
+/// Version of the persisted job record; a record of another version is
+/// quarantined.
+const JOB_RECORD_FORMAT: u32 = 1;
+
+/// Terminal jobs whose output stays in memory after completion or a load.
+const MAX_CACHED_OUTPUTS: usize = 16;
+
+/// Everything a [`JobManager`] needs from the daemon.
+pub struct JobConfig {
+    /// Canonical default `cwd`.
+    pub cwd: PathBuf,
+    /// Resolves every `cwd` when the job starts running.
+    pub confinement: Arc<Confinement>,
+    /// Records and output live in `<state_dir>/jobs`.
+    pub state_dir: PathBuf,
+    /// Daemon variables no child inherits.
+    pub scrubbed_env: Vec<String>,
+    pub instance_id: DaemonInstanceId,
+    pub limits: JobLimits,
+    /// `limits.maxWaitMs`, the `waitMs` ceiling.
+    pub max_wait_ms: u64,
+}
+
+/// The daemon's jobs. Cheap to clone.
 #[derive(Clone)]
 pub struct JobManager {
-    cwd: PathBuf,
-    fs_root: PathBuf,
-    jobs_root: PathBuf,
-    state: Arc<Mutex<JobManagerState>>,
-    notify: Arc<Notify>,
-    /// Daemon configuration variables no job may inherit.
-    scrubbed_env: Arc<Vec<String>>,
+    inner: Arc<JobsInner>,
+}
+
+struct JobsInner {
+    config: JobConfig,
+    store: JobStore,
+    state: Mutex<JobsState>,
+    /// Bumped on every status change and every output append.
+    changed: watch::Sender<u64>,
 }
 
 #[derive(Default)]
-struct JobManagerState {
-    accepting: bool,
-    jobs: BTreeMap<JobKey, JobRecord>,
-    running: BTreeMap<JobKey, Arc<RunningJob>>,
-    secret_envs: BTreeMap<JobKey, BTreeMap<String, SecretString>>,
-    next_accept_seq: u64,
+struct JobsState {
+    jobs: BTreeMap<JobId, JobEntry>,
+    next_seq: u64,
+    /// Terminal jobs holding their output in memory, oldest first.
+    cached: VecDeque<JobId>,
 }
 
-type JobKey = (String, JobId);
-
-struct RunningJob {
-    cancel: Notify,
-    interrupted: AtomicBool,
+struct JobEntry {
+    record: StoredJob,
+    /// The command of a queued job, secrets included. Memory only.
+    pending: Option<CommandSpec>,
+    run: Option<Run>,
+    /// The output of a terminal job, while cached.
+    output: Option<Arc<OutputLog>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct JobRecord {
-    namespace: String,
+struct Run {
+    execution: Execution<JobOutput>,
+    started: Instant,
+}
+
+/// A running job's output: retained head and tail in memory, every byte
+/// forwarded to the store.
+struct JobOutput {
     job_id: JobId,
-    name: Option<String>,
-    argv: Vec<String>,
-    cwd: Option<EnvironmentPath>,
-    env: BTreeMap<String, String>,
-    #[serde(default)]
-    secret_env_names: Vec<String>,
-    stdin: Option<ByteChunk>,
-    timeout_ms: Option<u64>,
-    dependency_policy: JobDependencyPolicy,
-    dependencies: Vec<JobId>,
-    queue_key: Option<String>,
+    log: OutputLog,
+    cap: u64,
+    store: JobStore,
+    changed: watch::Sender<u64>,
+}
+
+impl OutputSink for JobOutput {
+    fn append(&mut self, stream: OutputStream, data: &[u8]) {
+        self.store
+            .append(&self.job_id, self.log.end(), stream, data);
+        self.log.append(stream, data);
+        self.log.enforce_cap(self.cap, 0);
+        self.changed
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+}
+
+/// The persisted record of one job.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredJob {
+    format: u32,
+    job_id: JobId,
+    request_id: JobRequestId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<JobName>,
     spec_hash: String,
-    #[serde(default)]
-    accept_seq: u64,
+    seq: u64,
     status: JobStatus,
-    created_at_ms: u64,
-    queued_at_ms: Option<u64>,
-    started_at_ms: Option<u64>,
-    finished_at_ms: Option<u64>,
-    exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    depends_on: Vec<JobId>,
+    dependency_policy: JobDependencyPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    queue_key: Option<QueueKey>,
+    created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    queued_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    started_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    finished_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cancel_requested_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exit: Option<ExitStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stopped_by: Option<StoppedBy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    leftovers: Option<LeftoverReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<ProtocolError>,
+    /// The running job's process group, for restart reconciliation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spawn: Option<SpawnRecord>,
+    /// Output bytes produced, final once the job is terminal.
     #[serde(default)]
-    orphaned_descendants: bool,
-    failure: Option<String>,
-    output_chunks: Vec<JobOutputChunk>,
-    output_next_seq: u64,
+    output_end_bytes: u64,
 }
 
-#[derive(Clone)]
-struct ResolvedJob {
-    spec: JobStartSpec,
-    dependencies: Vec<JobId>,
-    secret_env: BTreeMap<String, SecretString>,
-    spec_hash: String,
-}
-
-#[derive(Clone, Copy)]
-enum FinishKind {
-    Exit,
-    Cancelled,
-    Interrupted,
-    TimedOut,
-}
-
-struct SpawnOutcome {
-    finish: FinishKind,
-    exit_code: Option<i32>,
-    orphaned_descendants: bool,
-}
-
-impl JobManager {
-    pub fn new(cwd: PathBuf, fs_root: PathBuf, state_dir: PathBuf) -> anyhow::Result<Self> {
-        let cwd = normalize_path(cwd);
-        let fs_root = normalize_path(fs_root);
-        let jobs_root = normalize_path(state_dir).join("jobs");
-        std::fs::create_dir_all(&jobs_root)?;
-        let mut state = JobManagerState {
-            accepting: true,
-            ..JobManagerState::default()
-        };
-        let now = now_ms();
-
-        for entry in std::fs::read_dir(&jobs_root)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-                continue;
-            }
-            let bytes = std::fs::read(&path)?;
-            let mut record: JobRecord = serde_json::from_slice(&bytes)?;
-            if !record.status.is_terminal() {
-                record.status = JobStatus::Interrupted;
-                record.finished_at_ms = Some(now);
-                record.failure =
-                    Some("lightspeed-envd restarted before this job could be recovered".to_owned());
-                persist_record_at(&jobs_root, &record)?;
-            }
-            state.next_accept_seq = state
-                .next_accept_seq
-                .max(record.accept_seq.saturating_add(1));
-            state
-                .jobs
-                .insert(job_key(&record.namespace, &record.job_id), record);
-        }
-
-        Ok(Self {
-            cwd,
-            fs_root,
-            jobs_root,
-            state: Arc::new(Mutex::new(state)),
-            notify: Arc::new(Notify::new()),
-            scrubbed_env: Arc::new(Vec::new()),
-        })
-    }
-
-    pub fn with_scrubbed_env(mut self, names: Vec<String>) -> Self {
-        self.scrubbed_env = Arc::new(names);
-        self
-    }
-
-    /// Jobs currently executing (running or cancelling).
-    pub async fn running_count(&self) -> u32 {
-        u32::try_from(self.state.lock().await.running.len()).unwrap_or(u32::MAX)
-    }
-
-    pub async fn start_jobs(
-        &self,
-        params: StartJobsParams,
-    ) -> Result<StartJobsResponse, EnvironmentProtocolError> {
-        let now = now_ms();
-        let resolved = {
-            let state = self.state.lock().await;
-            require_accepting(&state)?;
-            validate_and_resolve_start(&state, &params)?
-        };
-        let mut accepted = Vec::new();
-        {
-            let mut state = self.state.lock().await;
-            require_accepting(&state)?;
-            for job in &resolved {
-                let key = job_key(&params.namespace, &job.spec.job_id);
-                if state.jobs.contains_key(&key) {
-                    state
-                        .secret_envs
-                        .entry(key.clone())
-                        .or_insert_with(|| job.secret_env.clone());
-                    accepted.push(key);
-                    continue;
-                }
-                let accept_seq = state.next_accept_seq;
-                state.next_accept_seq = state.next_accept_seq.saturating_add(1);
-
-                let record = JobRecord {
-                    namespace: params.namespace.clone(),
-                    job_id: job.spec.job_id.clone(),
-                    name: job.spec.name.clone(),
-                    argv: job.spec.argv.clone(),
-                    cwd: job.spec.cwd.clone(),
-                    env: job.spec.env.clone(),
-                    secret_env_names: job.secret_env.keys().cloned().collect(),
-                    stdin: job.spec.stdin.clone(),
-                    timeout_ms: job.spec.timeout_ms,
-                    dependency_policy: job.spec.dependency_policy,
-                    dependencies: job.dependencies.clone(),
-                    queue_key: job.spec.queue_key.clone(),
-                    spec_hash: job.spec_hash.clone(),
-                    accept_seq,
-                    status: JobStatus::Queued,
-                    created_at_ms: now,
-                    queued_at_ms: Some(now),
-                    started_at_ms: None,
-                    finished_at_ms: None,
-                    exit_code: None,
-                    orphaned_descendants: false,
-                    failure: None,
-                    output_chunks: Vec::new(),
-                    output_next_seq: 0,
-                };
-                self.persist_record(&record)?;
-                accepted.push(key.clone());
-                state
-                    .secret_envs
-                    .insert(key.clone(), job.secret_env.clone());
-                state.jobs.insert(key, record);
-            }
-        }
-
-        self.schedule_ready_jobs().await;
-
-        let state = self.state.lock().await;
-        Ok(StartJobsResponse {
-            jobs: accepted
-                .into_iter()
-                .map(|key| {
-                    state
-                        .jobs
-                        .get(&key)
-                        .map(JobRecord::summary)
-                        .unwrap_or_else(|| lost_summary(&key.0, &key.1))
-                })
-                .collect(),
-        })
-    }
-
-    pub async fn read_jobs(
-        &self,
-        params: ReadJobsParams,
-    ) -> Result<ReadJobsResponse, EnvironmentProtocolError> {
-        validate_id_component("namespace", &params.namespace)?;
-        if params.jobs.is_empty() {
-            return Err(EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::InvalidRequest,
-                "job/read requires at least one job id",
-            ));
-        }
-
-        let deadline = params
-            .wait_ms
-            .map(|wait_ms| tokio::time::Instant::now() + Duration::from_millis(wait_ms));
-
-        loop {
-            let response = {
-                let state = self.state.lock().await;
-                let response = build_read_response(&state, &params);
-                let all_terminal = response
-                    .jobs
-                    .iter()
-                    .all(|result| result.summary.status.is_terminal());
-                let should_wait = params.wait_ms.is_some()
-                    && !all_terminal
-                    && deadline.is_some_and(|deadline| tokio::time::Instant::now() < deadline);
-                if should_wait { None } else { Some(response) }
-            };
-            if let Some(response) = response {
-                return Ok(response);
-            }
-
-            let Some(deadline) = deadline else {
-                continue;
-            };
-            tokio::select! {
-                _ = self.notify.notified() => {}
-                _ = tokio::time::sleep_until(deadline) => {}
-            }
-        }
-    }
-
-    pub async fn list_jobs(
-        &self,
-        params: ListJobsParams,
-    ) -> Result<ListJobsResponse, EnvironmentProtocolError> {
-        validate_id_component("namespace", &params.namespace)?;
-        if matches!(params.limit, Some(0)) {
-            return Err(EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::InvalidRequest,
-                "job/list limit must be greater than zero",
-            ));
-        }
-        let state = self.state.lock().await;
-        let mut jobs = state
-            .jobs
-            .values()
-            .filter(|record| record.namespace == params.namespace)
-            .map(JobRecord::summary)
-            .collect::<Vec<_>>();
-        jobs.sort_by(|left, right| {
-            right
-                .created_at_ms
-                .cmp(&left.created_at_ms)
-                .then_with(|| left.job_id.cmp(&right.job_id))
-        });
-        if let Some(limit) = params.limit {
-            jobs.truncate(limit);
-        }
-        Ok(ListJobsResponse { jobs })
-    }
-
-    pub async fn cancel_jobs(
-        &self,
-        params: CancelJobsParams,
-    ) -> Result<CancelJobsResponse, EnvironmentProtocolError> {
-        validate_id_component("namespace", &params.namespace)?;
-        if params.jobs.is_empty() {
-            return Err(EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::InvalidRequest,
-                "job/cancel requires at least one job id",
-            ));
-        }
-
-        let now = now_ms();
-        let mut cancel_handles = Vec::new();
-        let target_ids = {
-            let state = self.state.lock().await;
-            resolve_cancel_scope(&state, &params)
-        };
-
-        {
-            let mut state = self.state.lock().await;
-            for key in &target_ids {
-                let Some(status) = state.jobs.get(key).map(|record| record.status) else {
-                    continue;
-                };
-                if status.is_terminal() {
-                    continue;
-                }
-                let running = state.running.get(key).cloned();
-                let Some(record) = state.jobs.get_mut(key) else {
-                    continue;
-                };
-                match status {
-                    JobStatus::Running | JobStatus::CancelRequested => {
-                        record.status = JobStatus::CancelRequested;
-                        record.failure = Some(if params.force {
-                            "job force cancellation requested".to_owned()
-                        } else {
-                            "job cancellation requested".to_owned()
-                        });
-                        if let Some(running) = running {
-                            cancel_handles.push(running);
-                        }
-                    }
-                    _ => {
-                        record.status = JobStatus::Cancelled;
-                        record.finished_at_ms = Some(now);
-                        record.failure = Some("job cancelled before start".to_owned());
-                    }
-                }
-                self.persist_record(record)?;
-            }
-        }
-
-        for running in cancel_handles {
-            running.cancel.notify_one();
-        }
-        self.notify.notify_waiters();
-        self.schedule_ready_jobs().await;
-
-        let state = self.state.lock().await;
-        Ok(CancelJobsResponse {
-            jobs: target_ids
-                .iter()
-                .map(|key| {
-                    state
-                        .jobs
-                        .get(key)
-                        .map(JobRecord::summary)
-                        .unwrap_or_else(|| lost_summary(&key.0, &key.1))
-                })
-                .collect(),
-        })
-    }
-
-    pub async fn interrupt_all(&self) -> Result<(), EnvironmentProtocolError> {
-        let now = now_ms();
-        let mut running = Vec::new();
-        {
-            let mut state = self.state.lock().await;
-            state.accepting = false;
-            let keys = state
-                .jobs
-                .iter()
-                .filter(|(_, record)| !record.status.is_terminal())
-                .map(|(key, _)| key.clone())
-                .collect::<Vec<_>>();
-            for key in keys {
-                let active = state.running.get(&key).cloned();
-                let Some(record) = state.jobs.get_mut(&key) else {
-                    continue;
-                };
-                if let Some(active) = active {
-                    active.interrupted.store(true, Ordering::Release);
-                    record.status = JobStatus::CancelRequested;
-                    record.failure =
-                        Some("environment close requested job interruption".to_owned());
-                    running.push(active);
-                } else {
-                    record.status = JobStatus::Interrupted;
-                    record.finished_at_ms = Some(now);
-                    record.failure = Some("environment closed before job started".to_owned());
-                }
-                self.persist_record(record)?;
-            }
-        }
-        for active in running {
-            active.cancel.notify_one();
-        }
-        self.notify.notify_waiters();
-        Ok(())
-    }
-
-    async fn schedule_ready_jobs(&self) {
-        loop {
-            let ready = {
-                let mut state = self.state.lock().await;
-                if let Err(error) = self.mark_dependency_failures(&mut state) {
-                    eprintln!("lightspeed-envd job dependency update failed: {error:?}");
-                }
-
-                let mut busy_queues = state
-                    .running
-                    .keys()
-                    .filter_map(|key| state.jobs.get(key))
-                    .filter_map(|record| {
-                        record
-                            .queue_key
-                            .as_ref()
-                            .map(|queue_key| (record.namespace.clone(), queue_key.clone()))
-                    })
-                    .collect::<BTreeSet<_>>();
-                let mut candidates = state
-                    .jobs
-                    .iter()
-                    .filter_map(|(key, record)| {
-                        if !matches!(record.status, JobStatus::Accepted | JobStatus::Queued)
-                            || state.running.contains_key(key)
-                            || !dependencies_satisfied(&state, record)
-                        {
-                            return None;
-                        }
-                        Some((
-                            key.clone(),
-                            record.accept_seq,
-                            record.queued_at_ms.unwrap_or(record.created_at_ms),
-                            record.created_at_ms,
-                            record.job_id.clone(),
-                        ))
-                    })
-                    .collect::<Vec<_>>();
-                candidates.sort_by(|left, right| {
-                    left.1
-                        .cmp(&right.1)
-                        .then_with(|| left.2.cmp(&right.2))
-                        .then_with(|| left.3.cmp(&right.3))
-                        .then_with(|| left.4.cmp(&right.4))
-                });
-
-                let mut ready_ids = Vec::new();
-                for (key, _, _, _, _) in candidates {
-                    let Some(record) = state.jobs.get(&key) else {
-                        continue;
-                    };
-                    if let Some(queue_key) = record.queue_key.as_ref()
-                        && !busy_queues.insert((record.namespace.clone(), queue_key.clone()))
-                    {
-                        continue;
-                    }
-                    ready_ids.push(key.clone());
-                }
-                let now = now_ms();
-                let mut ready = Vec::new();
-                for key in ready_ids {
-                    let mut ready_record = None;
-                    if let Some(record) = state.jobs.get_mut(&key) {
-                        record.status = JobStatus::Running;
-                        record.started_at_ms = Some(now);
-                        record.failure = None;
-                        if let Err(error) = self.persist_record(record) {
-                            eprintln!(
-                                "lightspeed-envd failed to persist running job {}: {error:?}",
-                                job_key_id(&key)
-                            );
-                        }
-                        ready_record = Some(record.clone());
-                    }
-                    if let Some(record) = ready_record {
-                        let secret_env = state.secret_envs.get(&key).cloned().unwrap_or_default();
-                        let running = Arc::new(RunningJob {
-                            cancel: Notify::new(),
-                            interrupted: AtomicBool::new(false),
-                        });
-                        state.running.insert(key, running.clone());
-                        ready.push((record.clone(), running, secret_env));
-                    }
-                }
-                ready
-            };
-
-            if ready.is_empty() {
-                break;
-            }
-            for (record, running, secret_env) in ready {
-                let manager = self.clone();
-                tokio::spawn(async move {
-                    manager.run_job(record, running, secret_env).await;
-                });
-            }
-        }
-    }
-
-    fn mark_dependency_failures(
-        &self,
-        state: &mut JobManagerState,
-    ) -> Result<(), EnvironmentProtocolError> {
-        loop {
-            let mut changed = false;
-            let failed = state
-                .jobs
-                .iter()
-                .filter(|(_, record)| {
-                    matches!(record.status, JobStatus::Accepted | JobStatus::Queued)
-                        && record.dependency_policy == JobDependencyPolicy::AllSucceeded
-                        && record.dependencies.iter().any(|dependency| {
-                            state
-                                .jobs
-                                .get(&job_key(&record.namespace, dependency))
-                                .map(|dependency| {
-                                    dependency.status.is_terminal()
-                                        && dependency.status != JobStatus::Succeeded
-                                })
-                                .unwrap_or(true)
-                        })
-                })
-                .map(|(job_id, _)| job_id.clone())
-                .collect::<Vec<_>>();
-            if failed.is_empty() {
-                return Ok(());
-            }
-            let now = now_ms();
-            for job_id in failed {
-                let Some(record) = state.jobs.get_mut(&job_id) else {
-                    continue;
-                };
-                if record.status.is_terminal() {
-                    continue;
-                }
-                record.status = JobStatus::DependencyFailed;
-                record.finished_at_ms = Some(now);
-                record.failure = Some("one or more dependencies did not succeed".to_owned());
-                self.persist_record(record)?;
-                changed = true;
-            }
-            if !changed {
-                return Ok(());
-            }
-            self.notify.notify_waiters();
-        }
-    }
-
-    async fn run_job(
-        &self,
-        record: JobRecord,
-        running: Arc<RunningJob>,
-        secret_env: BTreeMap<String, SecretString>,
-    ) {
-        let result = self
-            .spawn_and_wait(record.clone(), running.clone(), secret_env)
-            .await;
-        let (status, exit_code, orphaned_descendants, failure) = match result {
-            Ok(outcome) => {
-                let (status, failure) = match outcome.finish {
-                    FinishKind::Exit => {
-                        if outcome.exit_code == Some(0) {
-                            (JobStatus::Succeeded, None)
-                        } else {
-                            (
-                                JobStatus::Failed,
-                                Some(match outcome.exit_code {
-                                    Some(code) => format!("job exited with status {code}"),
-                                    None => "job exited without a status code".to_owned(),
-                                }),
-                            )
-                        }
-                    }
-                    FinishKind::Cancelled => {
-                        (JobStatus::Cancelled, Some("job cancelled".to_owned()))
-                    }
-                    FinishKind::Interrupted => (
-                        JobStatus::Interrupted,
-                        Some("job interrupted because the environment closed".to_owned()),
-                    ),
-                    FinishKind::TimedOut => (JobStatus::TimedOut, Some("job timed out".to_owned())),
-                };
-                (
-                    status,
-                    outcome.exit_code,
-                    outcome.orphaned_descendants,
-                    failure,
-                )
-            }
-            Err(error) => (JobStatus::Failed, None, false, Some(error.message)),
-        };
-
-        {
-            let mut state = self.state.lock().await;
-            let key = job_key(&record.namespace, &record.job_id);
-            state.running.remove(&key);
-            state.secret_envs.remove(&key);
-            if let Some(record) = state.jobs.get_mut(&key) {
-                record.status = status;
-                record.exit_code = exit_code;
-                record.orphaned_descendants = orphaned_descendants;
-                record.failure = failure;
-                record.finished_at_ms = Some(now_ms());
-                if let Err(error) = self.persist_record(record) {
-                    eprintln!(
-                        "lightspeed-envd failed to persist finished job {}: {error:?}",
-                        record.job_id
-                    );
-                }
-            }
-        }
-        self.notify.notify_waiters();
-        self.kick_scheduler();
-    }
-
-    fn kick_scheduler(&self) {
-        let manager = self.clone();
-        tokio::spawn(async move {
-            manager.schedule_ready_jobs().await;
-        });
-    }
-
-    async fn spawn_and_wait(
-        &self,
-        record: JobRecord,
-        running: Arc<RunningJob>,
-        secret_env: BTreeMap<String, SecretString>,
-    ) -> Result<SpawnOutcome, EnvironmentProtocolError> {
-        if record.argv.is_empty() {
-            return Err(EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::InvalidRequest,
-                "job argv must not be empty",
-            ));
-        }
-        let cwd = record
-            .cwd
-            .as_ref()
-            .map(|path| self.resolve_cwd(path))
-            .transpose()?
-            .unwrap_or_else(|| self.cwd.clone());
-
-        let mut command = Command::new(&record.argv[0]);
-        for name in secret_env.keys() {
-            if record.env.contains_key(name) {
-                return Err(EnvironmentProtocolError::new(
-                    EnvironmentProtocolErrorCode::InvalidRequest,
-                    format!("job env collides with secret env: {name}"),
-                ));
-            }
-        }
-        for name in self.scrubbed_env.iter() {
-            command.env_remove(name);
-        }
-        command
-            .args(&record.argv[1..])
-            .current_dir(cwd)
-            .envs(record.env.iter())
-            .stdin(if record.stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (name, value) in &secret_env {
-            command.env(name, value.expose());
-        }
-        process_group::spawn_in_own_group(&mut command);
-
-        let mut child = command.spawn().map_err(|error| {
-            EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::ProcessFailed,
-                format!("spawn job {:?}: {error}", record.argv),
-            )
-        })?;
-        let pgid = child.id();
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        if let Some(input) = record.stdin.as_ref() {
-            let Some(stdin) = child.stdin.as_mut() else {
-                return Err(EnvironmentProtocolError::new(
-                    EnvironmentProtocolErrorCode::ProcessFailed,
-                    "job stdin was not available",
-                ));
-            };
-            stdin.write_all(input.as_slice()).await.map_err(|error| {
-                EnvironmentProtocolError::new(
-                    EnvironmentProtocolErrorCode::ProcessFailed,
-                    error.to_string(),
-                )
-            })?;
-            child.stdin.take();
-        }
-
-        let stdout_task = stdout.map(|stdout| {
-            tokio::spawn(read_job_stream(
-                self.clone(),
-                record.namespace.clone(),
-                record.job_id.clone(),
-                stdout,
-                JobOutputStream::Stdout,
-                redactions_for_secret_env(&secret_env),
-            ))
-        });
-        let stderr_task = stderr.map(|stderr| {
-            tokio::spawn(read_job_stream(
-                self.clone(),
-                record.namespace.clone(),
-                record.job_id.clone(),
-                stderr,
-                JobOutputStream::Stderr,
-                redactions_for_secret_env(&secret_env),
-            ))
-        });
-
-        let kill_job_group = || {
-            if let Some(pgid) = pgid {
-                process_group::kill_group(pgid);
-            }
-        };
-        let (finish, status) = if let Some(timeout_ms) = record.timeout_ms {
-            tokio::select! {
-                status = child.wait() => {
-                    (FinishKind::Exit, status)
-                }
-                _ = running.cancel.notified() => {
-                    kill_job_group();
-                    let _ = child.start_kill();
-                    let finish = if running.interrupted.load(Ordering::Acquire) {
-                        FinishKind::Interrupted
-                    } else {
-                        FinishKind::Cancelled
-                    };
-                    (finish, child.wait().await)
-                }
-                _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
-                    kill_job_group();
-                    let _ = child.start_kill();
-                    (FinishKind::TimedOut, child.wait().await)
-                }
-            }
-        } else {
-            tokio::select! {
-                status = child.wait() => {
-                    (FinishKind::Exit, status)
-                }
-                _ = running.cancel.notified() => {
-                    kill_job_group();
-                    let _ = child.start_kill();
-                    let finish = if running.interrupted.load(Ordering::Acquire) {
-                        FinishKind::Interrupted
-                    } else {
-                        FinishKind::Cancelled
-                    };
-                    (finish, child.wait().await)
-                }
-            }
-        };
-
-        // The root process's exit is ground truth for the job outcome.
-        // Descendants may still hold the output pipes open, so drain them for
-        // a bounded grace period, sweep whatever the script left running, and
-        // abandon the pipes rather than letting completion depend on EOF.
-        let mut stream_tasks = [stdout_task, stderr_task];
-        // Probe for survivors only on a natural exit; on cancel/timeout the
-        // group was killed deliberately and not-yet-reaped children would
-        // read as false positives.
-        let mut orphaned_descendants =
-            matches!(finish, FinishKind::Exit) && pgid.is_some_and(process_group::group_alive);
-        let drained =
-            drain_stream_tasks(&mut stream_tasks, process_group::OUTPUT_DRAIN_GRACE).await;
-        orphaned_descendants |= !drained;
-        if orphaned_descendants && let Some(pgid) = pgid {
-            process_group::sweep_group(pgid).await;
-        }
-        if !drained
-            && !drain_stream_tasks(&mut stream_tasks, process_group::OUTPUT_DRAIN_GRACE).await
-        {
-            for task in stream_tasks.iter().flatten() {
-                task.abort();
-            }
-        }
-
-        let status = status.map_err(|error| {
-            EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::ProcessFailed,
-                error.to_string(),
-            )
-        })?;
-        Ok(SpawnOutcome {
-            finish,
-            exit_code: status.code(),
-            orphaned_descendants,
-        })
-    }
-
-    fn resolve_cwd(&self, path: &EnvironmentPath) -> Result<PathBuf, EnvironmentProtocolError> {
-        let candidate = if path.is_absolute() {
-            PathBuf::from(path.as_str())
-        } else if path.as_str() == "." {
-            self.cwd.clone()
-        } else {
-            self.cwd.join(path.as_str())
-        };
-        let normalized = normalize_path(candidate);
-        if !normalized.starts_with(&self.fs_root) {
-            return Err(EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::Forbidden,
-                format!(
-                    "job cwd is outside bridge fs root: {} (root {})",
-                    normalized.display(),
-                    self.fs_root.display()
-                ),
-            ));
-        }
-        Ok(normalized)
-    }
-
-    fn persist_record(&self, record: &JobRecord) -> Result<(), EnvironmentProtocolError> {
-        persist_record_at(&self.jobs_root, record).map_err(|error| {
-            EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::Internal,
-                format!("persist job {}: {error}", record.job_id),
-            )
-        })
-    }
-}
-
-/// Joins the output-reader tasks against one shared deadline. Returns true
-/// when every reader finished; unfinished readers stay in their slot.
-async fn drain_stream_tasks(tasks: &mut [Option<JoinHandle<()>>; 2], grace: Duration) -> bool {
-    let deadline = tokio::time::Instant::now() + grace;
-    let mut drained = true;
-    for slot in tasks.iter_mut() {
-        let Some(task) = slot.as_mut() else {
-            continue;
-        };
-        if tokio::time::timeout_at(deadline, task).await.is_ok() {
-            *slot = None;
-        } else {
-            drained = false;
-        }
-    }
-    drained
-}
-
-fn require_accepting(state: &JobManagerState) -> Result<(), EnvironmentProtocolError> {
-    if state.accepting {
-        Ok(())
-    } else {
-        Err(EnvironmentProtocolError::new(
-            EnvironmentProtocolErrorCode::Conflict,
-            "environment target is closed and no longer accepts jobs",
-        ))
-    }
-}
-
-async fn read_job_stream<R>(
-    manager: JobManager,
-    namespace: String,
-    job_id: JobId,
-    mut reader: R,
-    stream: JobOutputStream,
-    redactions: Vec<Vec<u8>>,
-) where
-    R: AsyncRead + Unpin,
-{
-    let mut buffer = vec![0; 8192];
-    loop {
-        let read = match reader.read(&mut buffer).await {
-            Ok(0) => {
-                manager.notify.notify_waiters();
-                return;
-            }
-            Ok(read) => read,
-            Err(error) => {
-                let mut state = manager.state.lock().await;
-                if let Some(record) = state.jobs.get_mut(&job_key(&namespace, &job_id))
-                    && !record.status.is_terminal()
-                {
-                    record.failure = Some(error.to_string());
-                    if let Err(error) = manager.persist_record(record) {
-                        eprintln!(
-                            "lightspeed-envd failed to persist stream failure for {job_id}: {error:?}"
-                        );
-                    }
-                }
-                manager.notify.notify_waiters();
-                return;
-            }
-        };
-        let mut state = manager.state.lock().await;
-        if let Some(record) = state.jobs.get_mut(&job_key(&namespace, &job_id)) {
-            if record.status.is_terminal() {
-                // The job completed without waiting for pipe EOF; late output
-                // from orphaned descendants must not mutate the terminal
-                // record.
-                return;
-            }
-            let seq = record.output_next_seq;
-            record.output_next_seq += 1;
-            record.output_chunks.push(JobOutputChunk {
-                seq,
-                stream,
-                chunk: ByteChunk::from(redact_bytes(&buffer[..read], &redactions)),
-            });
-            if let Err(error) = manager.persist_record(record) {
-                eprintln!("lightspeed-envd failed to persist output for {job_id}: {error:?}");
-            }
-        }
-        manager.notify.notify_waiters();
-    }
-}
-
-fn validate_and_resolve_start(
-    state: &JobManagerState,
-    params: &StartJobsParams,
-) -> Result<Vec<ResolvedJob>, EnvironmentProtocolError> {
-    if params.jobs.is_empty() {
-        return Err(invalid_request("job/start requires at least one job"));
-    }
-    validate_id_component("namespace", &params.namespace)?;
-    validate_id_component("request_id", &params.request_id)?;
-
-    let mut seen_job_ids = BTreeSet::new();
-    let mut seen_names = BTreeMap::new();
-    for spec in &params.jobs {
-        validate_id_component("job id", spec.job_id.as_str())?;
-        if spec.argv.is_empty() {
-            return Err(invalid_request(format!(
-                "job {} argv must not be empty",
-                spec.job_id
-            )));
-        }
-        for name in spec.secret_env.keys() {
-            validate_nonempty("secret env name", name)?;
-            if spec.env.contains_key(name) {
-                return Err(invalid_request(format!(
-                    "job {} env collides with secret env: {name}",
-                    spec.job_id
-                )));
-            }
-        }
-        if !seen_job_ids.insert(spec.job_id.as_str().to_owned()) {
-            return Err(invalid_request(format!(
-                "duplicate job id in start request: {}",
-                spec.job_id
-            )));
-        }
-        if let Some(name) = spec.name.as_deref() {
-            validate_nonempty("job name", name)?;
-            if seen_names
-                .insert(name.to_owned(), spec.job_id.clone())
-                .is_some()
-            {
-                return Err(invalid_request(format!("duplicate job name: {name}")));
-            }
-        }
-        validate_optional_id_component("queue_key", spec.queue_key.as_deref())?;
-    }
-
-    let request_job_ids = params
-        .jobs
-        .iter()
-        .map(|spec| spec.job_id.as_str().to_owned())
-        .collect::<BTreeSet<_>>();
-
-    let mut resolved = Vec::new();
-    for spec in &params.jobs {
-        let dependencies = resolve_explicit_dependencies(&seen_names, spec)?;
-        for dependency in &dependencies {
-            if !request_job_ids.contains(dependency.as_str())
-                && !state
-                    .jobs
-                    .contains_key(&job_key(&params.namespace, dependency))
-            {
-                return Err(invalid_request(format!(
-                    "job {} depends on unknown job id {}",
-                    spec.job_id, dependency
-                )));
-            }
-        }
-
-        let spec_hash = job_spec_hash(params, spec, &dependencies)?;
-        let key = job_key(&params.namespace, &spec.job_id);
-        if let Some(existing) = state.jobs.get(&key)
-            && existing.spec_hash != spec_hash
-        {
-            return Err(EnvironmentProtocolError::new(
-                EnvironmentProtocolErrorCode::Conflict,
-                format!(
-                    "job id already exists with different input in namespace {}: {}",
-                    params.namespace, spec.job_id
-                ),
-            ));
-        }
-
-        resolved.push(ResolvedJob {
-            spec: spec.clone(),
-            dependencies,
-            secret_env: spec.secret_env.clone(),
-            spec_hash,
-        });
-    }
-
-    reject_cycles(&resolved)?;
-    Ok(resolved)
-}
-
-fn resolve_explicit_dependencies(
-    names: &BTreeMap<String, JobId>,
-    spec: &JobStartSpec,
-) -> Result<Vec<JobId>, EnvironmentProtocolError> {
-    let mut dependencies = Vec::new();
-    for dependency in &spec.depends_on {
-        match (&dependency.job_id, &dependency.name) {
-            (Some(job_id), None) => push_unique_job_id(&mut dependencies, job_id.clone()),
-            (None, Some(name)) => {
-                validate_nonempty("dependency name", name)?;
-                let Some(job_id) = names.get(name) else {
-                    return Err(invalid_request(format!(
-                        "job {} depends on unknown local name {name}",
-                        spec.job_id
-                    )));
-                };
-                push_unique_job_id(&mut dependencies, job_id.clone());
-            }
-            (Some(_), Some(_)) => {
-                return Err(invalid_request(format!(
-                    "job {} dependency must use either jobId or name, not both",
-                    spec.job_id
-                )));
-            }
-            (None, None) => {
-                return Err(invalid_request(format!(
-                    "job {} dependency must include jobId or name",
-                    spec.job_id
-                )));
-            }
-        }
-    }
-    for dependency in &dependencies {
-        if dependency == &spec.job_id {
-            return Err(invalid_request(format!(
-                "job {} cannot depend on itself",
-                spec.job_id
-            )));
-        }
-    }
-    Ok(dependencies)
-}
-
-fn reject_cycles(resolved: &[ResolvedJob]) -> Result<(), EnvironmentProtocolError> {
-    let graph = resolved
-        .iter()
-        .map(|job| {
-            (
-                job.spec.job_id.as_str().to_owned(),
-                job.dependencies
-                    .iter()
-                    .filter(|dependency| {
-                        resolved
-                            .iter()
-                            .any(|job| job.spec.job_id.as_str() == dependency.as_str())
-                    })
-                    .map(|dependency| dependency.as_str().to_owned())
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut visiting = BTreeSet::new();
-    let mut visited = BTreeSet::new();
-    for job_id in graph.keys() {
-        visit_job(job_id, &graph, &mut visiting, &mut visited)?;
-    }
-    Ok(())
-}
-
-fn visit_job(
-    job_id: &str,
-    graph: &BTreeMap<String, Vec<String>>,
-    visiting: &mut BTreeSet<String>,
-    visited: &mut BTreeSet<String>,
-) -> Result<(), EnvironmentProtocolError> {
-    if visited.contains(job_id) {
-        return Ok(());
-    }
-    if !visiting.insert(job_id.to_owned()) {
-        return Err(invalid_request(format!(
-            "job dependency cycle includes {job_id}"
-        )));
-    }
-    for dependency in graph.get(job_id).into_iter().flatten() {
-        visit_job(dependency, graph, visiting, visited)?;
-    }
-    visiting.remove(job_id);
-    visited.insert(job_id.to_owned());
-    Ok(())
-}
-
-fn push_unique_job_id(dependencies: &mut Vec<JobId>, job_id: JobId) {
-    if !dependencies
-        .iter()
-        .any(|existing| existing.as_str() == job_id.as_str())
-    {
-        dependencies.push(job_id);
-    }
-}
-
-fn dependencies_satisfied(state: &JobManagerState, record: &JobRecord) -> bool {
-    record.dependencies.iter().all(|dependency| {
-        let Some(dependency) = state.jobs.get(&job_key(&record.namespace, dependency)) else {
-            return false;
-        };
-        match record.dependency_policy {
-            JobDependencyPolicy::AllSucceeded => dependency.status == JobStatus::Succeeded,
-            JobDependencyPolicy::AllTerminal => dependency.status.is_terminal(),
-        }
-    })
-}
-
-fn build_read_response(state: &JobManagerState, params: &ReadJobsParams) -> ReadJobsResponse {
-    ReadJobsResponse {
-        jobs: params
-            .jobs
-            .iter()
-            .map(
-                |job_id| match state.jobs.get(&job_key(&params.namespace, job_id)) {
-                    Some(record) => {
-                        let (output_chunks, output_next_seq) =
-                            select_output_chunks(record, params.after_seq, params.max_bytes);
-                        JobReadResult {
-                            summary: record.summary(),
-                            output_chunks,
-                            output_next_seq,
-                            artifacts: Vec::new(),
-                        }
-                    }
-                    None => JobReadResult {
-                        summary: lost_summary(&params.namespace, job_id),
-                        output_chunks: Vec::new(),
-                        output_next_seq: 0,
-                        artifacts: Vec::new(),
-                    },
-                },
-            )
-            .collect(),
-    }
-}
-
-fn select_output_chunks(
-    record: &JobRecord,
-    after_seq: Option<u64>,
-    max_bytes: Option<usize>,
-) -> (Vec<JobOutputChunk>, u64) {
-    let after_seq = after_seq.unwrap_or(0);
-    let mut chunks = Vec::new();
-    let mut bytes = 0usize;
-    let mut next_seq = after_seq;
-
-    for chunk in record
-        .output_chunks
-        .iter()
-        .filter(|chunk| chunk.seq >= after_seq)
-    {
-        let chunk_bytes = chunk.chunk.as_slice();
-        if let Some(max_bytes) = max_bytes {
-            if bytes >= max_bytes {
-                break;
-            }
-            let remaining = max_bytes - bytes;
-            if chunk_bytes.len() > remaining {
-                chunks.push(JobOutputChunk {
-                    seq: chunk.seq,
-                    stream: chunk.stream,
-                    chunk: ByteChunk::from(chunk_bytes[..remaining].to_vec()),
-                });
-                next_seq = chunk.seq + 1;
-                break;
-            }
-        }
-        bytes += chunk_bytes.len();
-        next_seq = chunk.seq + 1;
-        chunks.push(chunk.clone());
-    }
-
-    if chunks.is_empty() && next_seq < record.output_next_seq {
-        next_seq = record.output_next_seq;
-    }
-
-    (chunks, next_seq)
-}
-
-fn resolve_cancel_scope(state: &JobManagerState, params: &CancelJobsParams) -> Vec<JobKey> {
-    let mut target_ids = params
-        .jobs
-        .iter()
-        .map(|job_id| job_key(&params.namespace, job_id))
-        .collect::<BTreeSet<_>>();
-    match params.scope {
-        JobCancelScope::Job => {}
-        JobCancelScope::Dependents => {
-            let mut changed = true;
-            while changed {
-                changed = false;
-                for (key, record) in &state.jobs {
-                    if record.namespace != params.namespace
-                        || record.status.is_terminal()
-                        || target_ids.contains(key)
-                    {
-                        continue;
-                    }
-                    if record.dependencies.iter().any(|dependency| {
-                        target_ids.contains(&job_key(&params.namespace, dependency))
-                    }) {
-                        changed |= target_ids.insert(key.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    target_ids.into_iter().collect()
-}
-
-fn job_spec_hash(
-    params: &StartJobsParams,
-    spec: &JobStartSpec,
-    dependencies: &[JobId],
-) -> Result<String, EnvironmentProtocolError> {
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct JobHashMaterial<'a> {
-        namespace: &'a str,
-        job: JobHashSpec<'a>,
-    }
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct JobHashSpec<'a> {
-        job_id: &'a JobId,
-        name: &'a Option<String>,
-        argv: &'a [String],
-        cwd: &'a Option<EnvironmentPath>,
-        env: &'a BTreeMap<String, String>,
-        secret_env_names: Vec<&'a String>,
-        stdin: &'a Option<ByteChunk>,
-        timeout_ms: Option<u64>,
-        dependencies: &'a [JobId],
-        dependency_policy: JobDependencyPolicy,
-        queue_key: &'a Option<String>,
-    }
-
-    let material = JobHashMaterial {
-        namespace: params.namespace.as_str(),
-        job: JobHashSpec {
-            job_id: &spec.job_id,
-            name: &spec.name,
-            argv: &spec.argv,
-            cwd: &spec.cwd,
-            env: &spec.env,
-            secret_env_names: spec.secret_env.keys().collect(),
-            stdin: &spec.stdin,
-            timeout_ms: spec.timeout_ms,
-            dependencies,
-            dependency_policy: spec.dependency_policy,
-            queue_key: &spec.queue_key,
-        },
-    };
-    let bytes = serde_json::to_vec(&material).map_err(|error| {
-        EnvironmentProtocolError::new(
-            EnvironmentProtocolErrorCode::Internal,
-            format!("encode job idempotency hash: {error}"),
-        )
-    })?;
-    Ok(format!("{:016x}", fnv1a64(&bytes)))
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
-impl JobRecord {
+impl StoredJob {
     fn summary(&self) -> JobSummary {
         JobSummary {
-            namespace: self.namespace.clone(),
             job_id: self.job_id.clone(),
+            request_id: self.request_id.clone(),
             name: self.name.clone(),
             status: self.status,
-            dependencies: self.dependencies.clone(),
+            depends_on: self.depends_on.clone(),
+            queue_key: self.queue_key.clone(),
             created_at_ms: self.created_at_ms,
             queued_at_ms: self.queued_at_ms,
             started_at_ms: self.started_at_ms,
             finished_at_ms: self.finished_at_ms,
-            exit_code: self.exit_code,
-            orphaned_descendants: self.orphaned_descendants,
-            failure: self.failure.clone(),
-            queue_key: self.queue_key.clone(),
+            cancel_requested_at_ms: self.cancel_requested_at_ms,
+            duration_ms: self.duration_ms,
+            exit: self.exit.clone(),
+            stopped_by: self.stopped_by,
+            leftovers: self.leftovers.clone(),
+            error: self.error.clone(),
         }
     }
-}
 
-fn lost_summary(namespace: &str, job_id: &JobId) -> JobSummary {
-    JobSummary {
-        namespace: namespace.to_owned(),
-        job_id: job_id.clone(),
-        name: None,
-        status: JobStatus::Lost,
-        dependencies: Vec::new(),
-        created_at_ms: 0,
-        queued_at_ms: None,
-        started_at_ms: None,
-        finished_at_ms: Some(now_ms()),
-        exit_code: None,
-        orphaned_descendants: false,
-        failure: Some("unknown job id".to_owned()),
-        queue_key: None,
+    fn encode(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("job records encode")
     }
 }
 
-fn persist_record_at(jobs_root: &PathBuf, record: &JobRecord) -> anyhow::Result<()> {
-    std::fs::create_dir_all(jobs_root)?;
-    let stem = record_file_stem(&record.namespace, &record.job_id);
-    let path = jobs_root.join(format!("{stem}.json"));
-    let temp_path = jobs_root.join(format!("{stem}.json.tmp"));
-    let bytes = serde_json::to_vec_pretty(record)?;
-    std::fs::write(&temp_path, bytes)?;
-    std::fs::rename(temp_path, path)?;
+/// A validated `job/start` entry with its dependencies resolved.
+struct ResolvedJob {
+    job_id: JobId,
+    name: Option<JobName>,
+    command: CommandSpec,
+    depends_on: Vec<JobId>,
+    dependency_policy: JobDependencyPolicy,
+    queue_key: Option<QueueKey>,
+    spec_hash: String,
+}
+
+impl JobManager {
+    /// Loads job summaries and reconciles what an earlier instance left.
+    /// Never fails on a record: unreadable ones are quarantined.
+    pub fn new(config: JobConfig) -> anyhow::Result<Self> {
+        let jobs_dir = config.state_dir.join("jobs");
+        std::fs::create_dir_all(&jobs_dir)?;
+        let quarantine_dir = config.state_dir.join("jobs-quarantine");
+        let boot = process_group::boot_id();
+        let now = now_ms();
+        let mut state = JobsState::default();
+        for entry in std::fs::read_dir(&jobs_dir)? {
+            let path = entry?.path();
+            let mut record = match load_record(&path) {
+                Ok(record) => record,
+                Err(reason) => {
+                    quarantine(&path, &quarantine_dir, &reason);
+                    continue;
+                }
+            };
+            if !record.status.is_terminal() {
+                if record.status == JobStatus::Running
+                    && let Some(spawn) = &record.spawn
+                    && spawn.same_boot(boot.as_deref())
+                {
+                    spawn.group().signal(process_group::GroupSignal::Kill);
+                }
+                record.error = Some(ProtocolError::aborted(
+                    None,
+                    format!(
+                        "the daemon stopped while the job was {}",
+                        status_name(record.status)
+                    ),
+                ));
+                record.status = JobStatus::Interrupted;
+                record.finished_at_ms = Some(now);
+                // The last record predates the output the job produced.
+                let cap = config.limits.max_retained_output_bytes;
+                if let Ok(log) = load_output(&path, record.output_end_bytes, cap) {
+                    record.output_end_bytes = log.end();
+                }
+                if let Err(error) = write_json_atomic(&path.join("record.json"), &record) {
+                    eprintln!(
+                        "lightspeed-envd: could not persist interrupted job {}: {error}",
+                        record.job_id
+                    );
+                }
+            }
+            state.next_seq = state.next_seq.max(record.seq.saturating_add(1));
+            state.jobs.insert(
+                record.job_id.clone(),
+                JobEntry {
+                    record,
+                    pending: None,
+                    run: None,
+                    output: None,
+                },
+            );
+        }
+        let cap = config.limits.max_retained_output_bytes;
+        let store = JobStore::start(jobs_dir, cap / 2, cap - cap / 2)?;
+        Ok(Self {
+            inner: Arc::new(JobsInner {
+                config,
+                store,
+                state: Mutex::new(state),
+                changed: watch::Sender::new(0),
+            }),
+        })
+    }
+
+    /// Jobs that are `running`.
+    pub async fn running_count(&self) -> u32 {
+        self.maintain();
+        let running = self
+            .state()
+            .jobs
+            .values()
+            .filter(|entry| entry.record.status == JobStatus::Running)
+            .count();
+        u32::try_from(running).unwrap_or(u32::MAX)
+    }
+
+    pub async fn start(
+        &self,
+        _ctx: &RequestContext,
+        params: StartJobsParams,
+    ) -> Result<StartJobsResponse, ProtocolError> {
+        let resolved = self.resolve_start(&params)?;
+        self.maintain();
+        let records = {
+            let mut state = self.state();
+            if let Some(replay) = replay_or_conflict(&state, &params.request_id, &resolved)? {
+                return Ok(StartJobsResponse { jobs: replay });
+            }
+            for (index, job) in resolved.iter().enumerate() {
+                for dependency in &job.depends_on {
+                    let known = state.jobs.contains_key(dependency)
+                        || resolved.iter().any(|other| &other.job_id == dependency);
+                    if !known {
+                        return Err(ProtocolError::invalid_field(
+                            format!("jobs[{index}].dependsOn"),
+                            format!("unknown job id {dependency}"),
+                        ));
+                    }
+                }
+            }
+            let now = now_ms();
+            let mut started = Vec::new();
+            let mut written = Vec::new();
+            for job in resolved {
+                let seq = state.next_seq;
+                state.next_seq += 1;
+                let record = StoredJob {
+                    format: JOB_RECORD_FORMAT,
+                    job_id: job.job_id.clone(),
+                    request_id: params.request_id.clone(),
+                    name: job.name,
+                    spec_hash: job.spec_hash,
+                    seq,
+                    status: JobStatus::Queued,
+                    depends_on: job.depends_on,
+                    dependency_policy: job.dependency_policy,
+                    queue_key: job.queue_key,
+                    created_at_ms: now,
+                    queued_at_ms: None,
+                    started_at_ms: None,
+                    finished_at_ms: None,
+                    cancel_requested_at_ms: None,
+                    duration_ms: None,
+                    exit: None,
+                    stopped_by: None,
+                    leftovers: None,
+                    error: None,
+                    spawn: None,
+                    output_end_bytes: 0,
+                };
+                written.push(self.inner.store.write_record(&job.job_id, record.encode()));
+                started.push(job.job_id.clone());
+                state.jobs.insert(
+                    job.job_id,
+                    JobEntry {
+                        record,
+                        pending: Some(job.command),
+                        run: None,
+                        output: None,
+                    },
+                );
+            }
+            (started, written)
+        };
+        // The writes were queued under the lock, so the scheduler's later
+        // writes land behind them; the start is answered once they are on
+        // disk.
+        let (started, written) = records;
+        for written in written {
+            let _ = written.await;
+        }
+        self.schedule();
+        let state = self.state();
+        Ok(StartJobsResponse {
+            jobs: started
+                .iter()
+                .filter_map(|job_id| state.jobs.get(job_id))
+                .map(|entry| entry.record.summary())
+                .collect(),
+        })
+    }
+
+    pub async fn read(
+        &self,
+        ctx: &RequestContext,
+        params: ReadJobsParams,
+    ) -> Result<ReadJobsResponse, ProtocolError> {
+        let limits = &self.inner.config.limits;
+        check_job_count("jobs", params.jobs.len(), limits.max_request_jobs)?;
+        if params.max_bytes > limits.max_read_bytes {
+            return Err(ProtocolError::above_ceiling(
+                "maxBytes",
+                params.max_bytes,
+                limits.max_read_bytes,
+            ));
+        }
+        if params.wait_ms > self.inner.config.max_wait_ms {
+            return Err(ProtocolError::above_ceiling(
+                "waitMs",
+                params.wait_ms,
+                self.inner.config.max_wait_ms,
+            ));
+        }
+        for (index, entry) in params.jobs.iter().enumerate() {
+            if entry.after.is_some() && entry.tail_bytes.is_some() {
+                return Err(ProtocolError::invalid_field(
+                    format!("jobs[{index}].tailBytes"),
+                    "after and tailBytes exclude each other",
+                ));
+            }
+            if let Some(max_bytes) = entry.max_bytes
+                && max_bytes > params.max_bytes
+            {
+                return Err(ProtocolError::above_ceiling(
+                    format!("jobs[{index}].maxBytes"),
+                    max_bytes,
+                    params.max_bytes,
+                ));
+            }
+        }
+        self.maintain();
+        // The read pages from its own handles on terminal jobs' output: the
+        // shared cache may evict a log between loading and paging.
+        let mut logs: BTreeMap<JobId, Arc<OutputLog>> = BTreeMap::new();
+        for entry in params
+            .jobs
+            .iter()
+            .filter(|entry| needs_output(&params, entry))
+        {
+            if !logs.contains_key(&entry.job_id)
+                && let Some(log) = self.ensure_output(&entry.job_id).await
+            {
+                logs.insert(entry.job_id.clone(), log);
+            }
+        }
+
+        let (starts, initial) = {
+            let state = self.state();
+            let mut starts = Vec::new();
+            let mut initial = Vec::new();
+            for (index, entry) in params.jobs.iter().enumerate() {
+                let job = state.jobs.get(&entry.job_id);
+                let end = job.map_or(0, output_end);
+                let start = match (entry.after, entry.tail_bytes) {
+                    (Some(after), _) => after,
+                    (None, Some(tail)) => end.saturating_sub(tail),
+                    (None, None) => 0,
+                };
+                if job.is_some() && start > end {
+                    return Err(ProtocolError::invalid_field(
+                        format!("jobs[{index}].after"),
+                        format!("after {start} is past the end of the output ({end})"),
+                    ));
+                }
+                starts.push(start);
+                initial.push(job.map(|job| job.record.status));
+            }
+            (starts, initial)
+        };
+
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(params.wait_ms);
+        let mut changes = self.inner.changed.subscribe();
+        loop {
+            changes.borrow_and_update();
+            if self.read_ready(&params, &starts, &initial) {
+                break;
+            }
+            tokio::select! {
+                () = ctx.cancel.cancelled() => return Err(ProtocolError::cancelled()),
+                () = tokio::time::sleep_until(deadline) => break,
+                changed = changes.changed() => if changed.is_err() { break },
+            }
+        }
+
+        // Jobs that finished during the wait: take their logs under the
+        // lock that pages them, loading any the cache no longer holds.
+        let mut attempted = BTreeSet::new();
+        let state = loop {
+            let missing = match self.take_logs(&params, &mut logs, &mut attempted) {
+                Ok(state) => break state,
+                Err(missing) => missing,
+            };
+            for job_id in missing {
+                if let Some(log) = self.ensure_output(&job_id).await {
+                    logs.insert(job_id, log);
+                }
+            }
+        };
+        let mut budget = params.max_bytes;
+        let mut items = MAX_PAGE_CHUNKS;
+        let mut jobs = Vec::with_capacity(params.jobs.len());
+        for (entry, start) in params.jobs.iter().zip(starts) {
+            let Some(job) = state.jobs.get(&entry.job_id) else {
+                jobs.push(JobReadEntry::Error {
+                    job_id: entry.job_id.clone(),
+                    error: unknown_job(&entry.job_id),
+                });
+                continue;
+            };
+            let entry_budget = entry.max_bytes.map_or(budget, |max| max.min(budget));
+            let page = |log: &OutputLog| (log.page(start, entry_budget, items), log.end());
+            let output = match &job.run {
+                Some(_) => with_log(job, page),
+                None => logs.get(&entry.job_id).map(|log| page(log)),
+            };
+            let output = match output {
+                Some((page, end)) => {
+                    budget -= page.bytes;
+                    items = items.saturating_sub(page.items());
+                    OutputPage {
+                        chunks: page.chunks,
+                        next: page.next,
+                        end,
+                        gaps: page.gaps,
+                    }
+                }
+                None => OutputPage {
+                    next: start,
+                    end: output_end(job),
+                    ..OutputPage::default()
+                },
+            };
+            jobs.push(JobReadEntry::Job {
+                summary: Box::new(job.record.summary()),
+                output,
+            });
+        }
+        Ok(ReadJobsResponse { jobs })
+    }
+
+    pub async fn cancel(
+        &self,
+        _ctx: &RequestContext,
+        params: CancelJobsParams,
+    ) -> Result<CancelJobsResponse, ProtocolError> {
+        let limits = &self.inner.config.limits;
+        check_job_count("jobIds", params.job_ids.len(), limits.max_request_jobs)?;
+        self.maintain();
+        let response = {
+            let mut state = self.state();
+            let mut named = Vec::new();
+            for job_id in &params.job_ids {
+                if !named.contains(job_id) {
+                    named.push(job_id.clone());
+                }
+            }
+            let mut dependents = Vec::new();
+            if params.scope == JobCancelScope::Dependents {
+                let mut affected: BTreeSet<JobId> = named.iter().cloned().collect();
+                loop {
+                    let next: Vec<JobId> = state
+                        .jobs
+                        .values()
+                        .filter(|entry| {
+                            !entry.record.status.is_terminal()
+                                && !affected.contains(&entry.record.job_id)
+                                && entry
+                                    .record
+                                    .depends_on
+                                    .iter()
+                                    .any(|dependency| affected.contains(dependency))
+                        })
+                        .map(|entry| entry.record.job_id.clone())
+                        .collect();
+                    if next.is_empty() {
+                        break;
+                    }
+                    for job_id in next {
+                        affected.insert(job_id.clone());
+                        dependents.push(job_id);
+                    }
+                }
+            }
+            let now = now_ms();
+            for job_id in named.iter().chain(&dependents) {
+                if let Some(entry) = state.jobs.get_mut(job_id) {
+                    self.cancel_entry(entry, params.force, now);
+                }
+            }
+            let max_entries = limits.max_request_jobs as usize;
+            let mut jobs: Vec<JobSummaryEntry> = named
+                .iter()
+                .map(|job_id| match state.jobs.get(job_id) {
+                    Some(entry) => JobSummaryEntry::Job {
+                        summary: Box::new(entry.record.summary()),
+                    },
+                    None => JobSummaryEntry::Error {
+                        job_id: job_id.clone(),
+                        error: unknown_job(job_id),
+                    },
+                })
+                .collect();
+            let room = max_entries.saturating_sub(jobs.len());
+            let unlisted = dependents.len().saturating_sub(room);
+            jobs.extend(dependents.iter().take(room).filter_map(|job_id| {
+                state.jobs.get(job_id).map(|entry| JobSummaryEntry::Job {
+                    summary: Box::new(entry.record.summary()),
+                })
+            }));
+            CancelJobsResponse {
+                jobs,
+                unlisted_job_count: u32::try_from(unlisted).unwrap_or(u32::MAX),
+            }
+        };
+        self.bump();
+        self.schedule();
+        Ok(response)
+    }
+
+    /// Cancels one job: a queued job ends at once; a running one is
+    /// signalled and ends `cancelled` when its root exits.
+    fn cancel_entry(&self, entry: &mut JobEntry, force: bool, now: i64) {
+        match entry.record.status {
+            JobStatus::Queued => {
+                entry.pending = None;
+                entry.record.status = JobStatus::Cancelled;
+                entry.record.finished_at_ms = Some(now);
+                self.inner
+                    .store
+                    .queue_record(&entry.record.job_id, entry.record.encode());
+            }
+            JobStatus::Running => {
+                if entry.record.cancel_requested_at_ms.is_none() {
+                    entry.record.cancel_requested_at_ms = Some(now);
+                    self.inner
+                        .store
+                        .queue_record(&entry.record.job_id, entry.record.encode());
+                }
+                if let Some(run) = &entry.run {
+                    run.execution.stop(if force {
+                        StoppedBy::Kill
+                    } else {
+                        StoppedBy::Terminate
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Validates a start and resolves its dependencies within the request.
+    fn resolve_start(&self, params: &StartJobsParams) -> Result<Vec<ResolvedJob>, ProtocolError> {
+        let limits = &self.inner.config.limits;
+        check_job_count("jobs", params.jobs.len(), limits.max_request_jobs)?;
+        let mut ids = BTreeSet::new();
+        let mut names = BTreeMap::new();
+        for (index, job) in params.jobs.iter().enumerate() {
+            let field = format!("jobs[{index}].command");
+            validate_command(&job.command, &field)?;
+            if matches!(job.command.input, ExecInput::Pipe {}) {
+                return Err(ProtocolError::invalid_field(
+                    format!("{field}.input"),
+                    "jobs take no pipe input; use bytes",
+                ));
+            }
+            if !ids.insert(job.job_id.clone()) {
+                return Err(ProtocolError::invalid_field(
+                    format!("jobs[{index}].jobId"),
+                    format!("job id {} appears twice", job.job_id),
+                ));
+            }
+            if let Some(name) = &job.name
+                && names.insert(name.clone(), job.job_id.clone()).is_some()
+            {
+                return Err(ProtocolError::invalid_field(
+                    format!("jobs[{index}].name"),
+                    format!("job name {name} appears twice"),
+                ));
+            }
+        }
+        let mut resolved = Vec::new();
+        for (index, job) in params.jobs.iter().enumerate() {
+            let mut depends_on = Vec::new();
+            for dependency in &job.depends_on {
+                let job_id = match dependency {
+                    JobDependency::JobId { job_id } => job_id.clone(),
+                    JobDependency::Name { name } => names.get(name).cloned().ok_or_else(|| {
+                        ProtocolError::invalid_field(
+                            format!("jobs[{index}].dependsOn"),
+                            format!("no job of this request is named {name}"),
+                        )
+                    })?,
+                };
+                if !depends_on.contains(&job_id) {
+                    depends_on.push(job_id);
+                }
+            }
+            let spec_hash = spec_hash(
+                job.name.as_ref(),
+                &job.command,
+                &depends_on,
+                job.dependency_policy,
+                job.queue_key.as_ref(),
+            );
+            resolved.push(ResolvedJob {
+                job_id: job.job_id.clone(),
+                name: job.name.clone(),
+                command: job.command.clone(),
+                depends_on,
+                dependency_policy: job.dependency_policy,
+                queue_key: job.queue_key.clone(),
+                spec_hash,
+            });
+        }
+        reject_cycles(&resolved)?;
+        Ok(resolved)
+    }
+
+    /// Fails jobs whose dependencies can no longer succeed and starts every
+    /// runnable job whose queue is free, in start order.
+    fn schedule(&self) {
+        let mut state = self.state();
+        let mut changed = false;
+        loop {
+            let now = now_ms();
+            let mut progressed = false;
+            let doomed: Vec<JobId> = state
+                .jobs
+                .values()
+                .filter(|entry| {
+                    entry.record.status == JobStatus::Queued
+                        && entry.record.dependency_policy == JobDependencyPolicy::AllSucceeded
+                        && entry.record.depends_on.iter().any(|dependency| {
+                            state.jobs.get(dependency).is_none_or(|dependency| {
+                                dependency.record.status.is_terminal()
+                                    && dependency.record.status != JobStatus::Succeeded
+                            })
+                        })
+                })
+                .map(|entry| entry.record.job_id.clone())
+                .collect();
+            for job_id in doomed {
+                if let Some(entry) = state.jobs.get_mut(&job_id) {
+                    entry.pending = None;
+                    entry.record.status = JobStatus::DependencyFailed;
+                    entry.record.finished_at_ms = Some(now);
+                    self.inner
+                        .store
+                        .queue_record(&job_id, entry.record.encode());
+                    progressed = true;
+                }
+            }
+
+            let mut busy: BTreeSet<QueueKey> = state
+                .jobs
+                .values()
+                .filter(|entry| entry.record.status == JobStatus::Running)
+                .filter_map(|entry| entry.record.queue_key.clone())
+                .collect();
+            let mut runnable: Vec<(u64, JobId)> = state
+                .jobs
+                .values()
+                .filter(|entry| {
+                    entry.record.status == JobStatus::Queued
+                        && entry.record.depends_on.iter().all(|dependency| {
+                            state.jobs.get(dependency).is_none_or(|dependency| {
+                                match entry.record.dependency_policy {
+                                    JobDependencyPolicy::AllSucceeded => {
+                                        dependency.record.status == JobStatus::Succeeded
+                                    }
+                                    JobDependencyPolicy::AllTerminal => {
+                                        dependency.record.status.is_terminal()
+                                    }
+                                }
+                            })
+                        })
+                })
+                .map(|entry| (entry.record.seq, entry.record.job_id.clone()))
+                .collect();
+            runnable.sort();
+            for (_, job_id) in runnable {
+                let entry = state.jobs.get_mut(&job_id).expect("runnable job exists");
+                let newly_runnable = entry.record.queued_at_ms.is_none();
+                if newly_runnable {
+                    entry.record.queued_at_ms = Some(now);
+                }
+                if let Some(key) = &entry.record.queue_key
+                    && !busy.insert(key.clone())
+                {
+                    if newly_runnable {
+                        self.inner
+                            .store
+                            .queue_record(&job_id, entry.record.encode());
+                    }
+                    continue;
+                }
+                self.start_entry(entry, now);
+                progressed = true;
+            }
+            changed |= progressed;
+            if !progressed {
+                break;
+            }
+        }
+        drop(state);
+        if changed {
+            self.bump();
+        }
+    }
+
+    /// Starts one runnable job, or fails it when its `cwd` or spawn fails.
+    fn start_entry(&self, entry: &mut JobEntry, now: i64) {
+        let config = &self.inner.config;
+        let job_id = entry.record.job_id.clone();
+        let Some(command) = entry.pending.take() else {
+            entry.record.status = JobStatus::Failed;
+            entry.record.finished_at_ms = Some(now);
+            entry.record.error = Some(ProtocolError::internal("the job's command was lost"));
+            self.inner
+                .store
+                .queue_record(&job_id, entry.record.encode());
+            return;
+        };
+        let options = ExecOptions {
+            timeout: command.timeout_ms.map(Duration::from_millis),
+            terminate_grace: Duration::from_millis(config.limits.cancel_grace_ms),
+            after_exit: AfterExit::Manual,
+        };
+        let spawned = resolve_cwd(config, command.cwd.as_ref()).and_then(|cwd| {
+            let sink = JobOutput {
+                job_id: job_id.clone(),
+                log: OutputLog::default(),
+                cap: config.limits.max_retained_output_bytes,
+                store: self.inner.store.clone(),
+                changed: self.inner.changed.clone(),
+            };
+            PreparedCommand::new(command, cwd, &config.scrubbed_env, None).spawn(sink, options, 0)
+        });
+        match spawned {
+            Ok(execution) => {
+                entry.record.status = JobStatus::Running;
+                entry.record.started_at_ms = Some(now);
+                entry.record.spawn = Some(SpawnRecord::new(execution.group(), &config.instance_id));
+                self.inner
+                    .store
+                    .queue_record(&job_id, entry.record.encode());
+                execution.start_input();
+                entry.run = Some(Run {
+                    execution: execution.clone(),
+                    started: Instant::now(),
+                });
+                let manager = self.clone();
+                tokio::spawn(async move { manager.supervise(job_id, execution).await });
+            }
+            Err(error) => {
+                entry.record.status = JobStatus::Failed;
+                entry.record.finished_at_ms = Some(now);
+                entry.record.error = Some(error);
+                self.inner
+                    .store
+                    .queue_record(&job_id, entry.record.encode());
+            }
+        }
+    }
+
+    /// Follows a running job to its end: root exit, sweep, settled output,
+    /// final record, then the scheduler.
+    async fn supervise(self, job_id: JobId, execution: Execution<JobOutput>) {
+        execution.wait_until(|state| state.exited()).await;
+        let leftovers = execution.sample_leftovers(LeftoverDisposition::Swept);
+        if leftovers.is_some() || execution.group_alive() {
+            execution
+                .group()
+                .terminate(Duration::from_millis(
+                    self.inner.config.limits.cancel_grace_ms,
+                ))
+                .await;
+        }
+        execution.settle(true).await;
+        let (exit, stopped_by, error, log) = execution.with_state(|state| {
+            (
+                state.exit().cloned(),
+                state.stopped_by(),
+                state.error().cloned(),
+                Arc::new(state.sink.log.clone()),
+            )
+        });
+        let status = match (&exit, stopped_by) {
+            (_, Some(StoppedBy::Timeout)) => JobStatus::TimedOut,
+            (_, Some(StoppedBy::Terminate | StoppedBy::Kill)) => JobStatus::Cancelled,
+            (Some(ExitStatus::Code { code: 0 }), None) if error.is_none() => JobStatus::Succeeded,
+            _ => JobStatus::Failed,
+        };
+        let error = error.or_else(|| match (&exit, status) {
+            (Some(exit), JobStatus::Failed) if !matches!(exit, ExitStatus::Code { .. }) => {
+                Some(ProtocolError::process_failed(describe_exit(exit)))
+            }
+            _ => None,
+        });
+
+        let final_record = {
+            let state = self.state();
+            let Some(entry) = state.jobs.get(&job_id) else {
+                return;
+            };
+            let mut record = entry.record.clone();
+            record.status = status;
+            record.exit = exit;
+            record.stopped_by = stopped_by;
+            record.leftovers = leftovers;
+            record.error = error;
+            record.finished_at_ms = Some(now_ms());
+            record.duration_ms = entry
+                .run
+                .as_ref()
+                .map(|run| u64::try_from(run.started.elapsed().as_millis()).unwrap_or(u64::MAX));
+            record.output_end_bytes = log.end();
+            record
+        };
+        // The output and the record are on disk before anyone sees the job
+        // terminal, so a later load from disk finds everything.
+        self.inner
+            .store
+            .finish(&job_id, final_record.encode())
+            .await;
+        {
+            let mut state = self.state();
+            let JobsState { jobs, cached, .. } = &mut *state;
+            if let Some(entry) = jobs.get_mut(&job_id) {
+                let cancel_requested_at_ms = entry.record.cancel_requested_at_ms;
+                entry.record = final_record;
+                if entry.record.cancel_requested_at_ms != cancel_requested_at_ms {
+                    entry.record.cancel_requested_at_ms = cancel_requested_at_ms;
+                    self.inner
+                        .store
+                        .queue_record(&job_id, entry.record.encode());
+                }
+                entry.run = None;
+                entry.output = Some(log);
+                cache_output(jobs, cached, &job_id);
+            }
+        }
+        self.bump();
+        self.schedule();
+    }
+
+    /// A terminal job's output: the cached log, or the log loaded from disk
+    /// (and cached). `None` for an unknown or running job.
+    async fn ensure_output(&self, job_id: &JobId) -> Option<Arc<OutputLog>> {
+        let (dir, end) = {
+            let mut state = self.state();
+            let JobsState { jobs, cached, .. } = &mut *state;
+            let entry = jobs.get(job_id)?;
+            if entry.run.is_some() || !entry.record.status.is_terminal() {
+                return None;
+            }
+            if let Some(log) = entry.output.clone() {
+                cache_output(jobs, cached, job_id);
+                return Some(log);
+            }
+            (
+                self.inner.store.root().join(job_id.as_str()),
+                entry.record.output_end_bytes,
+            )
+        };
+        let cap = self.inner.config.limits.max_retained_output_bytes;
+        let loaded = tokio::task::spawn_blocking(move || load_output(&dir, end, cap)).await;
+        let log = match loaded {
+            Ok(Ok(log)) => log,
+            Ok(Err(error)) => {
+                eprintln!("lightspeed-envd: could not load output of job {job_id}: {error}");
+                OutputLog::from_records([], end)
+            }
+            Err(error) => {
+                eprintln!("lightspeed-envd: could not load output of job {job_id}: {error}");
+                OutputLog::from_records([], end)
+            }
+        };
+        let mut state = self.state();
+        let JobsState { jobs, cached, .. } = &mut *state;
+        let entry = jobs.get_mut(job_id)?;
+        let log = match &entry.output {
+            Some(log) => log.clone(),
+            None => {
+                entry.record.output_end_bytes = entry.record.output_end_bytes.max(log.end());
+                let log = Arc::new(log);
+                entry.output = Some(log.clone());
+                log
+            }
+        };
+        cache_output(jobs, cached, job_id);
+        Some(log)
+    }
+
+    /// Adds to `logs` the cached output of every terminal job the read
+    /// pages, and answers the locked state to page from. When a terminal
+    /// job's output is in neither the cache nor `logs` (and was not
+    /// `attempted`), answers those jobs instead: load them and call again.
+    fn take_logs(
+        &self,
+        params: &ReadJobsParams,
+        logs: &mut BTreeMap<JobId, Arc<OutputLog>>,
+        attempted: &mut BTreeSet<JobId>,
+    ) -> Result<MutexGuard<'_, JobsState>, Vec<JobId>> {
+        let state = self.state();
+        let mut missing = Vec::new();
+        for entry in params
+            .jobs
+            .iter()
+            .filter(|entry| needs_output(params, entry))
+        {
+            let Some(job) = state.jobs.get(&entry.job_id) else {
+                continue;
+            };
+            if job.run.is_some() || logs.contains_key(&entry.job_id) {
+                continue;
+            }
+            if let Some(log) = &job.output {
+                logs.insert(entry.job_id.clone(), log.clone());
+            } else if job.record.status.is_terminal() && attempted.insert(entry.job_id.clone()) {
+                missing.push(entry.job_id.clone());
+            }
+        }
+        if missing.is_empty() {
+            Ok(state)
+        } else {
+            Err(missing)
+        }
+    }
+
+    fn read_ready(
+        &self,
+        params: &ReadJobsParams,
+        starts: &[u64],
+        initial: &[Option<JobStatus>],
+    ) -> bool {
+        let state = self.state();
+        let entries = params.jobs.iter().zip(starts).zip(initial);
+        let all_terminal = params.jobs.iter().all(|entry| {
+            state
+                .jobs
+                .get(&entry.job_id)
+                .is_none_or(|job| job.record.status.is_terminal())
+        });
+        if all_terminal {
+            return true;
+        }
+        match params.return_on {
+            ReturnOn::Exit => false,
+            ReturnOn::AnyOutput => entries.into_iter().any(|((entry, start), initial)| {
+                let job = state.jobs.get(&entry.job_id);
+                job.map(|job| job.record.status) != *initial
+                    || job.is_some_and(|job| output_end(job) > *start)
+            }),
+            ReturnOn::Window => entries.into_iter().any(|((entry, start), _)| {
+                let budget = entry.max_bytes.unwrap_or(params.max_bytes);
+                state
+                    .jobs
+                    .get(&entry.job_id)
+                    .is_some_and(|job| output_end(job).saturating_sub(*start) >= budget)
+            }),
+        }
+    }
+
+    /// Garbage-collects terminal jobs past the record retention.
+    fn maintain(&self) {
+        let retention =
+            i64::try_from(self.inner.config.limits.record_retention_ms).unwrap_or(i64::MAX);
+        let now = now_ms();
+        let mut state = self.state();
+        let expired: Vec<JobId> = state
+            .jobs
+            .values()
+            .filter(|entry| {
+                entry.record.status.is_terminal()
+                    && entry
+                        .record
+                        .finished_at_ms
+                        .is_some_and(|finished| now.saturating_sub(finished) >= retention)
+            })
+            .map(|entry| entry.record.job_id.clone())
+            .collect();
+        for job_id in expired {
+            state.jobs.remove(&job_id);
+            state.cached.retain(|cached| cached != &job_id);
+            self.inner.store.remove(&job_id);
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, JobsState> {
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn bump(&self) {
+        self.inner
+            .changed
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+}
+
+/// An identical retry replays every job; any other overlap with existing
+/// jobs is `jobIdInUse`. `None` when every job is new.
+fn replay_or_conflict(
+    state: &JobsState,
+    request_id: &JobRequestId,
+    resolved: &[ResolvedJob],
+) -> Result<Option<Vec<JobSummary>>, ProtocolError> {
+    let existing = resolved
+        .iter()
+        .filter(|job| state.jobs.contains_key(&job.job_id))
+        .count();
+    if existing == 0 {
+        return Ok(None);
+    }
+    let mut summaries = Vec::new();
+    for job in resolved {
+        let in_use = |detail: &str| {
+            ProtocolError::failed_precondition(
+                PreconditionReason::JobIdInUse,
+                format!(
+                    "job id {} {detail}; choose a new job id for a new run",
+                    job.job_id
+                ),
+            )
+        };
+        let Some(entry) = state.jobs.get(&job.job_id) else {
+            return Err(in_use(
+                "is new while other jobs of this request already exist",
+            ));
+        };
+        if &entry.record.request_id != request_id {
+            return Err(in_use("was started by another request"));
+        }
+        if entry.record.spec_hash != job.spec_hash {
+            return Err(in_use("was started with a different spec"));
+        }
+        summaries.push(entry.record.summary());
+    }
+    Ok(Some(summaries))
+}
+
+fn reject_cycles(resolved: &[ResolvedJob]) -> Result<(), ProtocolError> {
+    let index: BTreeMap<&JobId, usize> = resolved
+        .iter()
+        .enumerate()
+        .map(|(position, job)| (&job.job_id, position))
+        .collect();
+    // 0 unvisited, 1 on the stack, 2 done.
+    let mut marks = vec![0u8; resolved.len()];
+    fn visit(
+        position: usize,
+        resolved: &[ResolvedJob],
+        index: &BTreeMap<&JobId, usize>,
+        marks: &mut [u8],
+    ) -> Result<(), usize> {
+        match marks[position] {
+            2 => return Ok(()),
+            1 => return Err(position),
+            _ => {}
+        }
+        marks[position] = 1;
+        for dependency in &resolved[position].depends_on {
+            if let Some(&next) = index.get(dependency) {
+                visit(next, resolved, index, marks)?;
+            }
+        }
+        marks[position] = 2;
+        Ok(())
+    }
+    for position in 0..resolved.len() {
+        if let Err(cycle) = visit(position, resolved, &index, &mut marks) {
+            return Err(ProtocolError::invalid_field(
+                format!("jobs[{cycle}].dependsOn"),
+                format!(
+                    "job {} depends on itself through a cycle",
+                    resolved[cycle].job_id
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 
-fn job_key(namespace: &str, job_id: &JobId) -> JobKey {
-    (namespace.to_owned(), job_id.clone())
+/// The identity hash of a job's spec. Secret values and input bytes enter
+/// only as their own digests.
+fn spec_hash(
+    name: Option<&JobName>,
+    command: &CommandSpec,
+    depends_on: &[JobId],
+    dependency_policy: JobDependencyPolicy,
+    queue_key: Option<&QueueKey>,
+) -> String {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Material<'a> {
+        name: Option<&'a JobName>,
+        argv: &'a [String],
+        cwd: Option<&'a EnvironmentPath>,
+        env: &'a BTreeMap<String, String>,
+        secret_env: BTreeMap<&'a str, String>,
+        input: String,
+        timeout_ms: Option<u64>,
+        depends_on: &'a [JobId],
+        dependency_policy: JobDependencyPolicy,
+        queue_key: Option<&'a QueueKey>,
+    }
+    let digest = |bytes: &[u8]| encode_hex(&Sha256::digest(bytes));
+    let material = Material {
+        name,
+        argv: &command.argv,
+        cwd: command.cwd.as_ref(),
+        env: &command.env,
+        secret_env: command
+            .secret_env
+            .iter()
+            .map(|(name, value)| (name.as_str(), digest(value.expose().as_bytes())))
+            .collect(),
+        input: match &command.input {
+            ExecInput::None {} => "none".to_owned(),
+            ExecInput::Bytes { data } => format!("bytes:{}", digest(data.as_slice())),
+            ExecInput::Pipe {} => "pipe".to_owned(),
+        },
+        timeout_ms: command.timeout_ms,
+        depends_on,
+        dependency_policy,
+        queue_key,
+    };
+    digest(&serde_json::to_vec(&material).expect("hash material encodes"))
 }
 
-fn job_key_id(key: &JobKey) -> String {
-    format!("{}/{}", key.0, key.1)
+fn resolve_cwd(
+    config: &JobConfig,
+    cwd: Option<&EnvironmentPath>,
+) -> Result<PathBuf, ProtocolError> {
+    match cwd {
+        Some(path) => config.confinement.resolve_directory(path),
+        None => Ok(config.cwd.clone()),
+    }
 }
 
-fn record_file_stem(namespace: &str, job_id: &JobId) -> String {
-    format!("{namespace}--{}", job_id.as_str())
+/// Whether a `job/read` entry pages output (rather than only a summary).
+fn needs_output(params: &ReadJobsParams, entry: &JobReadRequest) -> bool {
+    params.max_bytes > 0 || entry.after.is_some() || entry.tail_bytes.is_some()
 }
 
-fn normalize_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(std::path::MAIN_SEPARATOR.to_string()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(segment) => normalized.push(segment),
+/// Runs `f` on the job's retained output: the live log while it runs, the
+/// cached log once terminal. `None` when neither is in memory.
+fn with_log<R>(entry: &JobEntry, f: impl FnOnce(&OutputLog) -> R) -> Option<R> {
+    if let Some(run) = &entry.run {
+        return Some(run.execution.with_state(|state| f(&state.sink.log)));
+    }
+    entry.output.as_deref().map(f)
+}
+
+fn output_end(entry: &JobEntry) -> u64 {
+    with_log(entry, OutputLog::end).unwrap_or(entry.record.output_end_bytes)
+}
+
+fn cache_output(
+    jobs: &mut BTreeMap<JobId, JobEntry>,
+    cached: &mut VecDeque<JobId>,
+    job_id: &JobId,
+) {
+    cached.retain(|cached| cached != job_id);
+    cached.push_back(job_id.clone());
+    while cached.len() > MAX_CACHED_OUTPUTS {
+        if let Some(evicted) = cached.pop_front()
+            && let Some(entry) = jobs.get_mut(&evicted)
+        {
+            entry.output = None;
         }
     }
-    normalized
 }
 
-fn now_ms() -> u64 {
+fn check_job_count(field: &str, count: usize, max: u32) -> Result<(), ProtocolError> {
+    if count == 0 {
+        return Err(ProtocolError::invalid_field(field, "name at least one job"));
+    }
+    if count > max as usize {
+        return Err(ProtocolError::above_ceiling(
+            field,
+            count as u64,
+            u64::from(max),
+        ));
+    }
+    Ok(())
+}
+
+fn unknown_job(job_id: &JobId) -> ProtocolError {
+    ProtocolError::not_found(format!("unknown job id: {job_id}"))
+}
+
+fn status_name(status: JobStatus) -> &'static str {
+    match status {
+        JobStatus::Queued => "queued",
+        JobStatus::Running => "running",
+        JobStatus::Succeeded => "succeeded",
+        JobStatus::Failed => "failed",
+        JobStatus::TimedOut => "timedOut",
+        JobStatus::Cancelled => "cancelled",
+        JobStatus::DependencyFailed => "dependencyFailed",
+        JobStatus::Interrupted => "interrupted",
+    }
+}
+
+/// Reads one job directory's record.
+fn load_record(dir: &Path) -> Result<StoredJob, String> {
+    if !dir.is_dir() {
+        return Err("not a job directory".to_owned());
+    }
+    let bytes = std::fs::read(dir.join("record.json")).map_err(|error| error.to_string())?;
+    let record: StoredJob = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if record.format != JOB_RECORD_FORMAT {
+        return Err(format!(
+            "record format {} is not {JOB_RECORD_FORMAT}",
+            record.format
+        ));
+    }
+    if dir.file_name().and_then(|name| name.to_str()) != Some(record.job_id.as_str()) {
+        return Err("the directory does not match the job id".to_owned());
+    }
+    Ok(record)
+}
+
+/// Moves an unreadable job aside so it never blocks startup again.
+fn quarantine(path: &Path, quarantine_dir: &Path, reason: &str) {
+    let name = path
+        .file_name()
+        .map_or_else(|| "job".into(), |name| name.to_string_lossy().into_owned());
+    let target = quarantine_dir.join(format!("{name}.{}", now_ms()));
+    let moved =
+        std::fs::create_dir_all(quarantine_dir).and_then(|()| std::fs::rename(path, &target));
+    match moved {
+        Ok(()) => eprintln!(
+            "lightspeed-envd: quarantined unreadable job record {} ({reason}) at {}",
+            path.display(),
+            target.display()
+        ),
+        Err(error) => eprintln!(
+            "lightspeed-envd: could not quarantine unreadable job record {} ({reason}): {error}",
+            path.display()
+        ),
+    }
+}
+
+fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
-        .unwrap_or_default()
-}
-
-fn validate_optional_id_component(
-    label: &str,
-    value: Option<&str>,
-) -> Result<(), EnvironmentProtocolError> {
-    if let Some(value) = value {
-        validate_id_component(label, value)?;
-    }
-    Ok(())
-}
-
-fn validate_id_component(label: &str, value: &str) -> Result<(), EnvironmentProtocolError> {
-    validate_nonempty(label, value)?;
-    if value.len() > 128 {
-        return Err(invalid_request(format!(
-            "{label} must be at most 128 bytes"
-        )));
-    }
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return Err(invalid_request(format!("{label} must not be empty")));
-    };
-    if !first.is_ascii_alphanumeric() {
-        return Err(invalid_request(format!(
-            "{label} must start with an ASCII alphanumeric character"
-        )));
-    }
-    if !chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':' | '-')) {
-        return Err(invalid_request(format!(
-            "{label} may contain only ASCII alphanumeric characters, '_', '.', ':', or '-'"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_nonempty(label: &str, value: &str) -> Result<(), EnvironmentProtocolError> {
-    if value.trim().is_empty() {
-        return Err(invalid_request(format!("{label} must not be empty")));
-    }
-    Ok(())
-}
-
-fn invalid_request(message: impl Into<String>) -> EnvironmentProtocolError {
-    EnvironmentProtocolError::new(EnvironmentProtocolErrorCode::InvalidRequest, message)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, time::Duration};
-
     use environment_protocol::{
-        data::jobs::{
-            JobCancelScope, JobDependency, JobDependencyPolicy, JobStatus, ListJobsParams,
-            ReadJobsParams, StartJobsParams,
-        },
-        shared::{JobId, SecretString},
+        bytes::ByteChunk,
+        data::{exec::GapReason, job::JobSpec},
+        error::{ErrorData, ProtocolErrorKind},
     };
 
     use super::*;
 
-    const TEST_NAMESPACE: &str = "session_1";
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_runs_parallel_jobs_and_retains_output() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        let response = manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "parallel".to_owned(),
-                jobs: vec![job("job-a", "printf a"), job("job-b", "printf b")],
-            })
-            .await
-            .expect("start");
-
-        assert_eq!(response.jobs.len(), 2);
-        let read = wait_for_jobs(&manager, ["job-a", "job-b"]).await;
-        assert!(
-            read.jobs
-                .iter()
-                .all(|job| job.summary.status == JobStatus::Succeeded)
-        );
-        assert!(
-            read.jobs
-                .iter()
-                .all(|job| !job.summary.orphaned_descendants)
-        );
-        let output = read
-            .jobs
-            .iter()
-            .flat_map(|job| {
-                job.output_chunks
-                    .iter()
-                    .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
-            })
-            .collect::<Vec<_>>();
-        assert!(output.contains(&b'a'));
-        assert!(output.contains(&b'b'));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_injects_secret_env_without_persisting_values() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-        let mut spec = job("secret-job", "printf \"$SECRET_TOKEN\"");
-        spec.secret_env.insert(
-            "SECRET_TOKEN".to_owned(),
-            SecretString::new("super-secret-token"),
-        );
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "secret".to_owned(),
-                jobs: vec![spec],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["secret-job"]).await;
-        let result = result(&read, "secret-job");
-        assert_eq!(result.summary.status, JobStatus::Succeeded);
-        let output = result
-            .output_chunks
-            .iter()
-            .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
-            .collect::<Vec<_>>();
-        assert_eq!(output, b"<redacted>");
-
-        let record_path = root
-            .join(".lightspeed")
-            .join("jobs")
-            .join("session_1--secret-job.json");
-        let persisted = std::fs::read_to_string(record_path).expect("persisted job record");
-        assert!(!persisted.contains("super-secret-token"));
-        assert!(persisted.contains("SECRET_TOKEN"));
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_honors_queue_key_order() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let marker = root.join("order.txt");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        let mut first = job("queued-z", "printf 1 >> order.txt");
-        let mut second = job("queued-a", "printf 2 >> order.txt");
-        let mut third = job("queued-m", "printf 3 >> order.txt");
-        first.queue_key = Some("repo".to_owned());
-        second.queue_key = Some("repo".to_owned());
-        third.queue_key = Some("repo".to_owned());
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "queue".to_owned(),
-                jobs: vec![first, second, third],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["queued-z", "queued-a", "queued-m"]).await;
-        assert!(
-            read.jobs
-                .iter()
-                .all(|job| job.summary.status == JobStatus::Succeeded)
-        );
-        assert_eq!(std::fs::read_to_string(marker).expect("marker"), "123");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_honors_explicit_dependencies_and_dependency_failure() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        let mut dependent = job("dependent", "printf should-not-run");
-        dependent.depends_on = vec![JobDependency::name("setup")];
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "deps".to_owned(),
-                jobs: vec![named_job("setup", "setup", "exit 7"), dependent],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["setup", "dependent"]).await;
-        let setup = result(&read, "setup");
-        let dependent = result(&read, "dependent");
-        assert_eq!(setup.summary.status, JobStatus::Failed);
-        assert_eq!(dependent.summary.status, JobStatus::DependencyFailed);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_all_terminal_dependencies_run_after_failed_dependency() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        let mut cleanup = job("cleanup", "printf cleanup");
-        cleanup.depends_on = vec![JobDependency::job_id("fails")];
-        cleanup.dependency_policy = JobDependencyPolicy::AllTerminal;
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "cleanup".to_owned(),
-                jobs: vec![job("fails", "exit 2"), cleanup],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["fails", "cleanup"]).await;
-        assert_eq!(result(&read, "fails").summary.status, JobStatus::Failed);
-        assert_eq!(
-            result(&read, "cleanup").summary.status,
-            JobStatus::Succeeded
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_cancels_running_jobs_and_queued_dependents() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        let mut dependent = job("after", "printf after");
-        dependent.depends_on = vec![JobDependency::job_id("sleep")];
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "cancel".to_owned(),
-                jobs: vec![job("sleep", "sleep 5"), dependent],
-            })
-            .await
-            .expect("start");
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        manager
-            .cancel_jobs(CancelJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                jobs: vec![JobId::new("sleep")],
-                scope: JobCancelScope::Dependents,
-                force: false,
-            })
-            .await
-            .expect("cancel");
-        let read = wait_for_jobs(&manager, ["sleep", "after"]).await;
-        assert_eq!(result(&read, "sleep").summary.status, JobStatus::Cancelled);
-        assert_eq!(result(&read, "after").summary.status, JobStatus::Cancelled);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_interrupts_jobs_and_rejects_starts_after_close() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        let mut dependent = job("after-close", "printf should-not-run");
-        dependent.depends_on = vec![JobDependency::job_id("active-at-close")];
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "close-active".to_owned(),
-                jobs: vec![job("active-at-close", "sleep 5"), dependent],
-            })
-            .await
-            .expect("start");
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        manager.interrupt_all().await.expect("interrupt all");
-        let read = wait_for_jobs(&manager, ["active-at-close", "after-close"]).await;
-        assert_eq!(
-            result(&read, "active-at-close").summary.status,
-            JobStatus::Interrupted
-        );
-        assert_eq!(
-            result(&read, "after-close").summary.status,
-            JobStatus::Interrupted
-        );
-
-        let error = manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "after-close".to_owned(),
-                jobs: vec![job("rejected", "printf should-not-run")],
-            })
-            .await
-            .expect_err("closed manager must reject starts");
-        assert_eq!(error.code, EnvironmentProtocolErrorCode::Conflict);
-    }
-
-    #[cfg(unix)]
-    async fn wait_for_process_gone(pid: i32) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            if rustix::process::test_kill_process(
-                rustix::process::Pid::from_raw(pid).expect("valid child pid"),
-            )
-            .is_err()
-            {
-                return;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "orphaned descendant {pid} was not terminated"
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
+    fn limits() -> JobLimits {
+        JobLimits {
+            max_read_bytes: 4 * 1024 * 1024,
+            max_request_jobs: 64,
+            max_retained_output_bytes: 2 * 1024 * 1024,
+            record_retention_ms: 7 * 24 * 60 * 60 * 1000,
+            cancel_grace_ms: 200,
         }
     }
 
-    #[cfg(unix)]
-    fn read_pid_file(path: &std::path::Path) -> i32 {
-        std::fs::read_to_string(path)
-            .expect("orphan pid file")
-            .trim()
-            .parse()
-            .expect("orphan pid")
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        root: PathBuf,
+        state_dir: PathBuf,
+        manager: JobManager,
     }
 
-    #[cfg(unix)]
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_completes_when_orphaned_descendants_hold_pipes() {
+    fn fixture_with(limits: JobLimits) -> Fixture {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "orphan".to_owned(),
-                jobs: vec![job(
-                    "orphan",
-                    "sleep 30 & echo $! > orphan.pid; printf started; exit 3",
-                )],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["orphan"]).await;
-        let result = result(&read, "orphan");
-        assert_eq!(result.summary.status, JobStatus::Failed);
-        assert_eq!(result.summary.exit_code, Some(3));
-        assert!(result.summary.orphaned_descendants);
-        let output = result
-            .output_chunks
-            .iter()
-            .flat_map(|chunk| chunk.chunk.as_slice().to_vec())
-            .collect::<Vec<_>>();
-        assert_eq!(output, b"started");
-
-        wait_for_process_gone(read_pid_file(&root.join("orphan.pid"))).await;
+        let state_dir = root.join("state");
+        let manager = manager_at(&root, &state_dir, limits);
+        Fixture {
+            _temp: temp,
+            root,
+            state_dir,
+            manager,
+        }
     }
 
-    #[cfg(unix)]
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_completes_when_escaped_descendants_hold_pipes() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        // `set -m` puts the background child in its own process group, so the
-        // group sweep cannot reach it and completion must abandon the pipes.
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "escapee".to_owned(),
-                jobs: vec![job(
-                    "escapee",
-                    "set -m; sleep 30 & echo $! > escapee.pid; printf started; exit 7",
-                )],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["escapee"]).await;
-        let result = result(&read, "escapee");
-        assert_eq!(result.summary.status, JobStatus::Failed);
-        assert_eq!(result.summary.exit_code, Some(7));
-        assert!(result.summary.orphaned_descendants);
-
-        // The escapee is outside the job's process group; clean it up so it
-        // does not outlive the test.
-        let pid = read_pid_file(&root.join("escapee.pid"));
-        let _ = rustix::process::kill_process(
-            rustix::process::Pid::from_raw(pid).expect("valid child pid"),
-            rustix::process::Signal::KILL,
-        );
+    fn fixture() -> Fixture {
+        fixture_with(limits())
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_cancel_terminates_process_group() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "cancel-group".to_owned(),
-                jobs: vec![job("group", "sleep 30 & sleep 30")],
-            })
-            .await
-            .expect("start");
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        manager
-            .cancel_jobs(CancelJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                jobs: vec![JobId::new("group")],
-                scope: JobCancelScope::Job,
-                force: false,
-            })
-            .await
-            .expect("cancel");
-
-        // The backgrounded child holds the job's pipes; without group
-        // termination the drain would wedge until the read wait expires.
-        let read = wait_for_jobs(&manager, ["group"]).await;
-        let result = result(&read, "group");
-        assert_eq!(result.summary.status, JobStatus::Cancelled);
-        assert!(!result.summary.orphaned_descendants);
+    fn manager_at(root: &Path, state_dir: &Path, limits: JobLimits) -> JobManager {
+        let confinement =
+            Confinement::new(root.to_owned(), state_dir.to_owned()).expect("confinement");
+        JobManager::new(JobConfig {
+            cwd: root.to_owned(),
+            confinement: Arc::new(confinement),
+            state_dir: state_dir.to_owned(),
+            scrubbed_env: Vec::new(),
+            instance_id: DaemonInstanceId::new("envd_test").unwrap(),
+            limits,
+            max_wait_ms: 60_000,
+        })
+        .expect("manager")
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_timeout_terminates_process_group() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-        let mut spec = job("timeout-group", "sleep 30 & sleep 30");
-        spec.timeout_ms = Some(50);
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "timeout-group".to_owned(),
-                jobs: vec![spec],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["timeout-group"]).await;
-        assert_eq!(
-            result(&read, "timeout-group").summary.status,
-            JobStatus::TimedOut
-        );
+    fn ctx() -> RequestContext {
+        RequestContext::detached()
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_times_out_jobs() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-        let mut spec = job("timeout", "sleep 5");
-        spec.timeout_ms = Some(50);
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "timeout".to_owned(),
-                jobs: vec![spec],
-            })
-            .await
-            .expect("start");
-
-        let read = wait_for_jobs(&manager, ["timeout"]).await;
-        assert_eq!(result(&read, "timeout").summary.status, JobStatus::TimedOut);
+    fn id(value: &str) -> JobId {
+        JobId::new(value).unwrap()
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_retries_same_start_idempotently_and_rejects_conflict() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-        let params = StartJobsParams {
-            namespace: TEST_NAMESPACE.to_owned(),
-            request_id: "retry".to_owned(),
-            jobs: vec![job("retry", "printf once")],
-        };
-
-        manager.start_jobs(params.clone()).await.expect("first");
-        manager.start_jobs(params).await.expect("retry");
-        let conflict = manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "retry-conflict".to_owned(),
-                jobs: vec![job("retry", "printf different")],
-            })
-            .await
-            .expect_err("conflict");
-        assert_eq!(conflict.code, EnvironmentProtocolErrorCode::Conflict);
+    fn request(value: &str) -> JobRequestId {
+        JobRequestId::new(value).unwrap()
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_lists_latest_jobs_with_limit() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let manager =
-            JobManager::new(root.clone(), root.clone(), root.join(".lightspeed")).expect("manager");
-
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "list-1".to_owned(),
-                jobs: vec![job("job-old", "printf old")],
-            })
-            .await
-            .expect("start old");
-        tokio::time::sleep(Duration::from_millis(2)).await;
-        manager
-            .start_jobs(StartJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                request_id: "list-2".to_owned(),
-                jobs: vec![job("job-new", "printf new")],
-            })
-            .await
-            .expect("start new");
-
-        let listed = manager
-            .list_jobs(ListJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                limit: Some(1),
-            })
-            .await
-            .expect("list jobs");
-
-        assert_eq!(listed.jobs.len(), 1);
-        assert_eq!(listed.jobs[0].job_id.as_str(), "job-new");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn job_manager_marks_unfinished_persisted_jobs_interrupted_on_startup() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let root = temp.path().canonicalize().expect("canonical root");
-        let jobs_root = root.join(".lightspeed").join("jobs");
-        std::fs::create_dir_all(&jobs_root).expect("jobs root");
-        persist_record_at(
-            &jobs_root,
-            &JobRecord {
-                namespace: TEST_NAMESPACE.to_owned(),
-                job_id: JobId::new("recover"),
-                name: None,
-                argv: vec!["sleep".to_owned(), "5".to_owned()],
+    fn job(job_id: &str, script: &str) -> JobSpec {
+        JobSpec {
+            job_id: id(job_id),
+            name: None,
+            command: CommandSpec {
+                argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()],
                 cwd: None,
                 env: BTreeMap::new(),
-                secret_env_names: Vec::new(),
-                stdin: None,
+                secret_env: BTreeMap::new(),
+                input: ExecInput::None {},
                 timeout_ms: None,
-                dependency_policy: JobDependencyPolicy::AllSucceeded,
-                dependencies: Vec::new(),
-                queue_key: None,
-                spec_hash: "seed".to_owned(),
-                accept_seq: 0,
-                status: JobStatus::Running,
-                created_at_ms: now_ms(),
-                queued_at_ms: Some(now_ms()),
-                started_at_ms: Some(now_ms()),
-                finished_at_ms: None,
-                exit_code: None,
-                orphaned_descendants: false,
-                failure: None,
-                output_chunks: Vec::new(),
-                output_next_seq: 0,
             },
-        )
-        .expect("persist seed");
-
-        let recovered = JobManager::new(root.clone(), root.clone(), root.join(".lightspeed"))
-            .expect("recovered manager");
-        let read = recovered
-            .read_jobs(ReadJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                jobs: vec![JobId::new("recover")],
-                after_seq: None,
-                max_bytes: None,
-                include_artifacts: false,
-                wait_ms: None,
-            })
-            .await
-            .expect("read");
-        assert_eq!(
-            result(&read, "recover").summary.status,
-            JobStatus::Interrupted
-        );
-    }
-
-    fn job(job_id: &str, shell: &str) -> JobStartSpec {
-        named_job(job_id, job_id, shell)
-    }
-
-    fn named_job(job_id: &str, name: &str, shell: &str) -> JobStartSpec {
-        JobStartSpec {
-            job_id: JobId::new(job_id),
-            name: Some(name.to_owned()),
-            argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), shell.to_owned()],
-            cwd: None,
-            env: BTreeMap::new(),
-            secret_env: BTreeMap::new(),
-            stdin: None,
-            timeout_ms: Some(5_000),
             depends_on: Vec::new(),
             dependency_policy: JobDependencyPolicy::AllSucceeded,
             queue_key: None,
         }
     }
 
-    async fn wait_for_jobs<const N: usize>(
-        manager: &JobManager,
-        job_ids: [&str; N],
-    ) -> ReadJobsResponse {
-        manager
-            .read_jobs(ReadJobsParams {
-                namespace: TEST_NAMESPACE.to_owned(),
-                jobs: job_ids.iter().map(|job_id| JobId::new(*job_id)).collect(),
-                after_seq: None,
-                max_bytes: None,
-                include_artifacts: false,
-                wait_ms: Some(5_000),
-            })
-            .await
-            .expect("read jobs")
+    fn start(request_id: &str, jobs: Vec<JobSpec>) -> StartJobsParams {
+        StartJobsParams {
+            request_id: request(request_id),
+            jobs,
+        }
     }
 
-    fn result<'a>(response: &'a ReadJobsResponse, job_id: &str) -> &'a JobReadResult {
+    fn entry(job_id: &str) -> JobReadRequest {
+        JobReadRequest {
+            job_id: id(job_id),
+            after: None,
+            tail_bytes: None,
+            max_bytes: None,
+        }
+    }
+
+    /// Waits until every job is terminal and reads their output heads.
+    async fn finished(manager: &JobManager, job_ids: &[&str]) -> Vec<(JobSummary, OutputPage)> {
+        let response = manager
+            .read(
+                &ctx(),
+                ReadJobsParams {
+                    jobs: job_ids.iter().map(|job_id| entry(job_id)).collect(),
+                    max_bytes: 4 * 1024 * 1024,
+                    wait_ms: 30_000,
+                    return_on: ReturnOn::Exit,
+                },
+            )
+            .await
+            .expect("read");
         response
             .jobs
-            .iter()
-            .find(|result| result.summary.job_id.as_str() == job_id)
-            .expect("job result")
+            .into_iter()
+            .map(|entry| match entry {
+                JobReadEntry::Job { summary, output } => {
+                    assert!(summary.status.is_terminal(), "{summary:?}");
+                    (*summary, output)
+                }
+                JobReadEntry::Error { job_id, error } => panic!("{job_id}: {error}"),
+            })
+            .collect()
+    }
+
+    fn text(page: &OutputPage) -> String {
+        String::from_utf8(
+            page.chunks
+                .iter()
+                .flat_map(|chunk| chunk.data.as_slice().to_vec())
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    fn precondition(error: &ProtocolError) -> Option<PreconditionReason> {
+        match &error.data {
+            ErrorData::FailedPrecondition { reason } => Some(*reason),
+            _ => None,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn jobs_run_and_report_exits() {
+        let fixture = fixture();
+        let response = fixture
+            .manager
+            .start(
+                &ctx(),
+                start("r1", vec![job("ok", "printf done"), job("bad", "exit 4")]),
+            )
+            .await
+            .expect("start");
+        assert_eq!(response.jobs.len(), 2);
+        let jobs = finished(&fixture.manager, &["ok", "bad"]).await;
+        assert_eq!(jobs[0].0.status, JobStatus::Succeeded);
+        assert_eq!(text(&jobs[0].1), "done");
+        assert_eq!(jobs[0].1.end, 4);
+        assert!(jobs[0].0.duration_ms.is_some());
+        assert_eq!(jobs[1].0.status, JobStatus::Failed);
+        assert_eq!(jobs[1].0.exit, Some(ExitStatus::Code { code: 4 }));
+        assert_eq!(fixture.manager.running_count().await, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_resubmitted_job_id_is_refused_and_an_identical_retry_replays() {
+        let fixture = fixture();
+        let script = "echo run >> runs.txt";
+        fixture
+            .manager
+            .start(&ctx(), start("first", vec![job("build", script)]))
+            .await
+            .expect("start");
+        finished(&fixture.manager, &["build"]).await;
+
+        let replay = fixture
+            .manager
+            .start(&ctx(), start("first", vec![job("build", script)]))
+            .await
+            .expect("replay");
+        assert_eq!(replay.jobs[0].status, JobStatus::Succeeded);
+
+        let error = fixture
+            .manager
+            .start(&ctx(), start("second", vec![job("build", script)]))
+            .await
+            .unwrap_err();
+        assert_eq!(precondition(&error), Some(PreconditionReason::JobIdInUse));
+        let error = fixture
+            .manager
+            .start(&ctx(), start("first", vec![job("build", "echo changed")]))
+            .await
+            .unwrap_err();
+        assert_eq!(precondition(&error), Some(PreconditionReason::JobIdInUse));
+        let error = fixture
+            .manager
+            .start(
+                &ctx(),
+                start("first", vec![job("build", script), job("new", "true")]),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(precondition(&error), Some(PreconditionReason::JobIdInUse));
+
+        let runs = std::fs::read_to_string(fixture.root.join("runs.txt")).unwrap();
+        assert_eq!(runs, "run\n", "nothing ran twice");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn large_input_never_keeps_a_timeout_from_firing() {
+        // The child never reads its input, so the timeout must be armed
+        // before the input is written or the job runs forever.
+        let fixture = fixture();
+        let mut stuck = job("stuck", "sleep 30");
+        stuck.command.input = ExecInput::Bytes {
+            data: ByteChunk::from(vec![b'x'; 1024 * 1024]),
+        };
+        stuck.command.timeout_ms = Some(300);
+        let mut echo = job("echo", "cat");
+        let input: Vec<u8> = (0..512 * 1024u32).map(|i| b'a' + (i % 26) as u8).collect();
+        echo.command.input = ExecInput::Bytes {
+            data: ByteChunk::from(input.clone()),
+        };
+        fixture
+            .manager
+            .start(&ctx(), start("r", vec![stuck, echo]))
+            .await
+            .expect("start");
+        let jobs = finished(&fixture.manager, &["stuck", "echo"]).await;
+        assert_eq!(jobs[0].0.status, JobStatus::TimedOut);
+        assert_eq!(jobs[0].0.stopped_by, Some(StoppedBy::Timeout));
+        assert_eq!(jobs[1].0.status, JobStatus::Succeeded);
+        assert_eq!(text(&jobs[1].1).as_bytes(), input.as_slice());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn verbose_output_keeps_head_and_tail_and_reads_back_after_a_restart() {
+        let cap = 64 * 1024;
+        let fixture = fixture_with(JobLimits {
+            max_retained_output_bytes: cap,
+            ..limits()
+        });
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "r",
+                    vec![job(
+                        "verbose",
+                        "i=0; while [ $i -lt 30000 ]; do echo line-$i; i=$((i+1)); done; echo 'FAILED: 3 tests'",
+                    )],
+                ),
+            )
+            .await
+            .expect("start");
+        let jobs = finished(&fixture.manager, &["verbose"]).await;
+        let (summary, page) = &jobs[0];
+        assert_eq!(summary.status, JobStatus::Succeeded);
+        assert_eq!(page.gaps.len(), 1);
+        assert_eq!(page.gaps[0].reason, GapReason::Overflow);
+        assert_eq!(page.gaps[0].offset, cap / 2);
+        let shown = text(page);
+        assert!(shown.starts_with("line-0\n"));
+        assert!(shown.ends_with("FAILED: 3 tests\n"));
+        assert_eq!(shown.len() as u64 + page.gaps[0].omitted_bytes, page.end);
+
+        // Head and tail in one read, as the job service asks for them.
+        let response = fixture
+            .manager
+            .read(
+                &ctx(),
+                ReadJobsParams {
+                    jobs: vec![
+                        JobReadRequest {
+                            max_bytes: Some(10),
+                            ..entry("verbose")
+                        },
+                        JobReadRequest {
+                            tail_bytes: Some(16),
+                            ..entry("verbose")
+                        },
+                    ],
+                    max_bytes: 26,
+                    wait_ms: 0,
+                    return_on: ReturnOn::Exit,
+                },
+            )
+            .await
+            .expect("head and tail");
+        let pages: Vec<OutputPage> = response
+            .jobs
+            .into_iter()
+            .map(|entry| match entry {
+                JobReadEntry::Job { output, .. } => output,
+                JobReadEntry::Error { error, .. } => panic!("{error}"),
+            })
+            .collect();
+        assert_eq!(text(&pages[0]), "line-0\nlin");
+        assert_eq!(text(&pages[1]), "FAILED: 3 tests\n");
+
+        let restarted = manager_at(
+            &fixture.root,
+            &fixture.state_dir,
+            JobLimits {
+                max_retained_output_bytes: cap,
+                ..limits()
+            },
+        );
+        let reloaded = finished(&restarted, &["verbose"]).await;
+        assert_eq!(reloaded[0].0.status, JobStatus::Succeeded);
+        let reread = &reloaded[0].1;
+        assert_eq!(text(reread), shown, "the output reads back from disk");
+        assert_eq!(reread.gaps, page.gaps);
+        assert_eq!(reread.end, page.end);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pages_continue_exactly_where_they_stopped() {
+        let fixture = fixture();
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "r",
+                    vec![job(
+                        "page",
+                        "i=0; while [ $i -lt 2000 ]; do printf '%09d\\n' $i; i=$((i+1)); done",
+                    )],
+                ),
+            )
+            .await
+            .expect("start");
+        finished(&fixture.manager, &["page"]).await;
+        let mut after = 0;
+        let mut collected = String::new();
+        loop {
+            let response = fixture
+                .manager
+                .read(
+                    &ctx(),
+                    ReadJobsParams {
+                        jobs: vec![JobReadRequest {
+                            after: Some(after),
+                            ..entry("page")
+                        }],
+                        max_bytes: 100,
+                        wait_ms: 0,
+                        return_on: ReturnOn::Exit,
+                    },
+                )
+                .await
+                .expect("page");
+            let JobReadEntry::Job { output, .. } = &response.jobs[0] else {
+                panic!("job read failed");
+            };
+            collected.push_str(&text(output));
+            if output.next == output.end {
+                break;
+            }
+            assert!(output.next > after);
+            after = output.next;
+        }
+        assert_eq!(collected.len(), 20_000, "no byte of 20 000 was skipped");
+        assert!(collected.ends_with("000001999\n"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_read_of_more_jobs_than_the_cache_holds_returns_every_output() {
+        let fixture = fixture();
+        let count = MAX_CACHED_OUTPUTS + 4;
+        let names: Vec<String> = (0..count).map(|index| format!("job-{index}")).collect();
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "r",
+                    names
+                        .iter()
+                        .map(|name| job(name, &format!("printf {name}")))
+                        .collect(),
+                ),
+            )
+            .await
+            .expect("start");
+        let ids: Vec<&str> = names.iter().map(String::as_str).collect();
+        finished(&fixture.manager, &ids).await;
+
+        // A restarted daemon holds no output in memory, so every log is
+        // loaded from disk during this one read.
+        let restarted = manager_at(&fixture.root, &fixture.state_dir, limits());
+        for manager in [&fixture.manager, &restarted] {
+            let jobs = finished(manager, &ids).await;
+            for (name, (_, page)) in names.iter().zip(&jobs) {
+                assert_eq!(&text(page), name);
+                assert_eq!(page.next, page.end);
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unknown_jobs_are_per_entry_not_found() {
+        let fixture = fixture();
+        let response = fixture
+            .manager
+            .read(
+                &ctx(),
+                ReadJobsParams {
+                    jobs: vec![entry("missing")],
+                    max_bytes: 0,
+                    wait_ms: 1_000,
+                    return_on: ReturnOn::Exit,
+                },
+            )
+            .await
+            .expect("read");
+        match &response.jobs[0] {
+            JobReadEntry::Error { job_id, error } => {
+                assert_eq!(job_id, &id("missing"));
+                assert_eq!(error.kind(), ProtocolErrorKind::NotFound);
+            }
+            JobReadEntry::Job { .. } => panic!("no summary is invented"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancel_is_graceful_unless_forced() {
+        let fixture = fixture();
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "r",
+                    vec![
+                        job(
+                            "graceful",
+                            "trap 'echo trapped; exit 0' TERM; sleep 30 & wait",
+                        ),
+                        job(
+                            "forced",
+                            "trap 'echo trapped; exit 0' TERM; sleep 30 & wait",
+                        ),
+                        job("queued", "true"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, mut spec)| {
+                        if index == 2 {
+                            spec.depends_on = vec![JobDependency::JobId {
+                                job_id: id("forced"),
+                            }];
+                        }
+                        spec
+                    })
+                    .collect(),
+                ),
+            )
+            .await
+            .expect("start");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        fixture
+            .manager
+            .cancel(
+                &ctx(),
+                CancelJobsParams {
+                    job_ids: vec![id("graceful")],
+                    scope: JobCancelScope::Job,
+                    force: false,
+                },
+            )
+            .await
+            .expect("cancel");
+        let cancelled = fixture
+            .manager
+            .cancel(
+                &ctx(),
+                CancelJobsParams {
+                    job_ids: vec![id("forced"), id("missing")],
+                    scope: JobCancelScope::Dependents,
+                    force: true,
+                },
+            )
+            .await
+            .expect("force cancel");
+        assert_eq!(cancelled.jobs.len(), 3, "named jobs, then the dependent");
+        assert!(
+            matches!(&cancelled.jobs[1], JobSummaryEntry::Error { error, .. } if error.kind() == ProtocolErrorKind::NotFound)
+        );
+        let jobs = finished(&fixture.manager, &["graceful", "forced", "queued"]).await;
+        assert_eq!(jobs[0].0.status, JobStatus::Cancelled);
+        assert_eq!(jobs[0].0.stopped_by, Some(StoppedBy::Terminate));
+        assert!(jobs[0].0.cancel_requested_at_ms.is_some());
+        assert_eq!(
+            text(&jobs[0].1),
+            "trapped\n",
+            "SIGTERM let the job clean up"
+        );
+        assert_eq!(jobs[1].0.status, JobStatus::Cancelled);
+        assert_eq!(jobs[1].0.stopped_by, Some(StoppedBy::Kill));
+        assert_eq!(text(&jobs[1].1), "", "a forced cancel kills at once");
+        assert_eq!(jobs[2].0.status, JobStatus::Cancelled);
+        assert_eq!(jobs[2].0.started_at_ms, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dependencies_and_queues_order_jobs() {
+        let fixture = fixture();
+        let mut first = job("first", "sleep 0.2; echo first >> order.txt");
+        first.name = Some(JobName::new("first job").unwrap());
+        first.queue_key = Some(QueueKey::new("q").unwrap());
+        let mut second = job("second", "echo second >> order.txt");
+        second.queue_key = Some(QueueKey::new("q").unwrap());
+        let mut after = job("after", "echo after >> order.txt; exit 1");
+        after.depends_on = vec![JobDependency::Name {
+            name: JobName::new("first job").unwrap(),
+        }];
+        let mut doomed = job("doomed", "echo doomed >> order.txt");
+        doomed.depends_on = vec![JobDependency::JobId {
+            job_id: id("after"),
+        }];
+        let mut tolerant = job("tolerant", "echo tolerant >> order.txt");
+        tolerant.depends_on = vec![JobDependency::JobId {
+            job_id: id("after"),
+        }];
+        tolerant.dependency_policy = JobDependencyPolicy::AllTerminal;
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start("r", vec![first, second, after, doomed, tolerant]),
+            )
+            .await
+            .expect("start");
+        let jobs = finished(
+            &fixture.manager,
+            &["first", "second", "after", "doomed", "tolerant"],
+        )
+        .await;
+        assert_eq!(jobs[3].0.status, JobStatus::DependencyFailed);
+        assert_eq!(jobs[3].0.started_at_ms, None);
+        assert_eq!(jobs[4].0.status, JobStatus::Succeeded);
+        assert_eq!(jobs[2].0.depends_on, vec![id("first")]);
+        let order = std::fs::read_to_string(fixture.root.join("order.txt")).unwrap();
+        let lines: Vec<&str> = order.lines().collect();
+        assert_eq!(lines[0], "first", "one job per queue key, in start order");
+        assert!(lines.iter().position(|line| *line == "second") > Some(0));
+        assert!(!lines.contains(&"doomed"));
+
+        let mut cyclic = job("a", "true");
+        cyclic.depends_on = vec![JobDependency::JobId { job_id: id("b") }];
+        let mut back = job("b", "true");
+        back.depends_on = vec![JobDependency::JobId { job_id: id("a") }];
+        let error = fixture
+            .manager
+            .start(&ctx(), start("cycle", vec![cyclic, back]))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ProtocolErrorKind::InvalidParams);
+        let mut piped = job("piped", "cat");
+        piped.command.input = ExecInput::Pipe {};
+        let error = fixture
+            .manager
+            .start(&ctx(), start("pipe", vec![piped]))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ProtocolErrorKind::InvalidParams);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn leftovers_are_swept_and_reported() {
+        let fixture = fixture();
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "r",
+                    vec![job("leaky", "sleep 30 & echo $! > orphan.pid; exit 0")],
+                ),
+            )
+            .await
+            .expect("start");
+        let jobs = finished(&fixture.manager, &["leaky"]).await;
+        assert_eq!(jobs[0].0.status, JobStatus::Succeeded);
+        let leftovers = jobs[0]
+            .0
+            .leftovers
+            .as_ref()
+            .expect("swept leftovers reported");
+        assert_eq!(leftovers.disposition, LeftoverDisposition::Swept);
+        let orphan: i32 = std::fs::read_to_string(fixture.root.join("orphan.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let alive = rustix::process::Pid::from_raw(orphan)
+            .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok());
+        assert!(!alive, "the group was swept");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_restart_interrupts_unfinished_jobs_and_kills_their_groups() {
+        let fixture = fixture();
+        fixture
+            .manager
+            .start(
+                &ctx(),
+                start("r", vec![job("long", "echo $$ > root.pid; sleep 30")]),
+            )
+            .await
+            .expect("start");
+        let pid_file = fixture.root.join("root.pid");
+        for _ in 0..250 {
+            if std::fs::read_to_string(&pid_file).is_ok_and(|pid| !pid.trim().is_empty()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let root: i32 = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // The running record reaches the disk through the store thread.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let restarted = manager_at(&fixture.root, &fixture.state_dir, limits());
+        let jobs = finished(&restarted, &["long"]).await;
+        assert_eq!(jobs[0].0.status, JobStatus::Interrupted);
+        assert_eq!(
+            jobs[0].0.error.as_ref().map(ProtocolError::kind),
+            Some(ProtocolErrorKind::Aborted)
+        );
+        for _ in 0..100 {
+            let alive = rustix::process::Pid::from_raw(root)
+                .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok());
+            if !alive {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the earlier instance's job group survived the restart");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn unreadable_records_are_quarantined_instead_of_failing_startup() {
+        let fixture = fixture();
+        let bad = fixture.state_dir.join("jobs").join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("record.json"), b"{not json").unwrap();
+        std::fs::write(fixture.state_dir.join("jobs").join("stray.json"), b"{}").unwrap();
+        let restarted = manager_at(&fixture.root, &fixture.state_dir, limits());
+        assert_eq!(restarted.running_count().await, 0);
+        assert!(!bad.exists());
+        let quarantined = std::fs::read_dir(fixture.state_dir.join("jobs-quarantine"))
+            .unwrap()
+            .count();
+        assert_eq!(quarantined, 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn request_bounds_are_ceilings_not_clamps() {
+        let fixture = fixture_with(JobLimits {
+            max_request_jobs: 2,
+            ..limits()
+        });
+        let error = fixture
+            .manager
+            .start(
+                &ctx(),
+                start(
+                    "r",
+                    vec![job("a", "true"), job("b", "true"), job("c", "true")],
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.data,
+            ErrorData::InvalidParams {
+                ceiling: Some(2),
+                ..
+            }
+        ));
+        let error = fixture
+            .manager
+            .read(
+                &ctx(),
+                ReadJobsParams {
+                    jobs: vec![JobReadRequest {
+                        max_bytes: Some(20),
+                        ..entry("a")
+                    }],
+                    max_bytes: 10,
+                    wait_ms: 0,
+                    return_on: ReturnOn::Exit,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ProtocolErrorKind::InvalidParams);
+        let error = fixture
+            .manager
+            .cancel(
+                &ctx(),
+                CancelJobsParams {
+                    job_ids: Vec::new(),
+                    scope: JobCancelScope::Job,
+                    force: false,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ProtocolErrorKind::InvalidParams);
     }
 }

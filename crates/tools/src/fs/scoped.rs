@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use harness::ToolEffect;
 
 use crate::fs::{
-    CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
-    FsPath, FsResult, ReadDirectoryEntry, RemoveOptions,
+    CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsPath,
+    FsRangedRead, FsResult, ReadDirectoryEntry, RemoveOptions, RenameOptions, VersionedRead,
+    WriteOptions,
 };
 
 #[derive(Clone)]
@@ -150,17 +151,52 @@ impl FileSystem for ScopedFileSystem {
         self.inner.remove(&resolved, options).await
     }
 
-    async fn copy(
+    async fn rename(
         &self,
         source_path: &FsPath,
         destination_path: &FsPath,
-        options: CopyOptions,
+        options: RenameOptions,
     ) -> FsResult<()> {
         let resolved_source = self.resolved_path(source_path)?;
         let resolved_destination = self.resolved_path(destination_path)?;
+        self.ensure_write_allowed(source_path, &resolved_source)?;
         self.ensure_write_allowed(destination_path, &resolved_destination)?;
         self.inner
-            .copy(&resolved_source, &resolved_destination, options)
+            .rename(&resolved_source, &resolved_destination, options)
+            .await
+    }
+
+    async fn read_file_versioned(&self, path: &FsPath) -> FsResult<VersionedRead> {
+        let resolved = self.resolved_path(path)?;
+        self.inner.read_file_versioned(&resolved).await
+    }
+
+    async fn write_file_with(
+        &self,
+        path: &FsPath,
+        contents: Vec<u8>,
+        options: WriteOptions,
+    ) -> FsResult<()> {
+        let resolved = self.resolved_path(path)?;
+        self.ensure_write_allowed(path, &resolved)?;
+        self.inner
+            .write_file_with(&resolved, contents, options)
+            .await
+    }
+
+    fn max_read_bytes(&self) -> Option<u64> {
+        self.inner.max_read_bytes()
+    }
+
+    async fn read_file_range(
+        &self,
+        path: &FsPath,
+        offset: u64,
+        max_bytes: Option<u64>,
+    ) -> FsResult<FsRangedRead> {
+        let resolved = self.resolved_path(path)?;
+        self.inner
+            .read_file_range(&resolved, offset, max_bytes)
             .await
     }
 

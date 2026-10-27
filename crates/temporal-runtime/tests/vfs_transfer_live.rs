@@ -13,11 +13,13 @@ use environment_daemon::{
     config::{DaemonConfig, RegistrationConfig},
 };
 use environment_protocol::{
+    bytes::SecretString,
     data::{
-        handshake::InitializeParams,
-        inventory::{ScanContent, ScanDigestAlgorithm, ScanParams},
+        fs::{TreeContent, TreeFilter},
+        scan::{ScanLimits, ScanParams, ScanRoot, ScanRootResult, ScanSkip, ScanSkipReason},
     },
-    shared::{CURRENT_PROTOCOL_VERSION, EnvironmentPath, SecretString},
+    paths::EnvironmentPath,
+    routes::CONNECT_PATH,
 };
 use environments::EnvironmentStore;
 use harness::{
@@ -112,97 +114,224 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
     let mut tasks = Tasks(vec![gateway.abort_handle()]);
     let sandbox = tempfile::tempdir()?;
     let root = sandbox.path().canonicalize()?;
+    let daemon_state = tempfile::tempdir()?;
     let context =
         support::live::local_request_context_for(api::AccessScope::Universe { universe_id })
             .await?;
     // Keep the large transfer scenario off the current-thread test stack.
-    let result = temporal_runtime::gateway::request_context::with_request_context(context, Box::pin(async {
-        let state = runtime.state_for(universe_id, false).await?;
-        let key = state.api.create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
-            display_name: "VFS transfer live".into(),
-            identity_mode: api::EnvironmentIdentityModeView::Ephemeral,
-            max_active_environments: Some(1),
-            ephemeral_disconnect_grace_ms: None,
-            expires_at_ms: None,
-        }).await?.result;
-        let connect_url = format!("ws://{address}/environment-gateway/connect");
-        let mut registration = RegistrationConfig::new(connect_url.clone(),
-            environment_daemon::upgrade::resolve_discovery_url(Some(&connect_url), None)?);
-        registration.registration_key = Some(SecretString::new(key.secret.0));
-        let daemon = DaemonRuntime::new(DaemonConfig {
-            listen: None, cwd: root.clone(), fs_root: root.clone(), state_dir: root.join(".envd"),
-            read_only_fs: false, registration: Some(registration), scrubbed_env: Vec::new(),
-        })?;
-        let daemon = tokio::spawn(environment_daemon::server::run(daemon));
-        tasks.0.push(daemon.abort_handle());
-        let environment = tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let environments = state.api.list_environments(api::EnvironmentListParams::default()).await?.result.environments;
-                if let Some(environment) = environments.into_iter().find(|e| e.status == api::EnvironmentLifecycleStatusView::Ready) {
-                    return anyhow::Ok(environment);
+    let result = temporal_runtime::gateway::request_context::with_request_context(
+        context,
+        Box::pin(async {
+            let state = runtime.state_for(universe_id, false).await?;
+            let key = state
+                .api
+                .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
+                    display_name: "VFS transfer live".into(),
+                    identity_mode: api::EnvironmentIdentityModeView::Ephemeral,
+                    max_active_environments: Some(1),
+                    ephemeral_disconnect_grace_ms: None,
+                    expires_at_ms: None,
+                })
+                .await?
+                .result;
+            let connect_url = format!("ws://{address}{CONNECT_PATH}");
+            let mut registration = RegistrationConfig::new(
+                connect_url.clone(),
+                environment_daemon::upgrade::resolve_discovery_url(Some(&connect_url), None)?,
+            );
+            registration.registration_key = Some(SecretString::new(key.secret.0));
+            let daemon = DaemonRuntime::new(DaemonConfig {
+                listen: None,
+                cwd: root.clone(),
+                fs_root: root.clone(),
+                state_dir: daemon_state.path().into(),
+                read_only_fs: false,
+                registration: Some(registration),
+                scrubbed_env: Vec::new(),
+            })?;
+            let daemon = tokio::spawn(environment_daemon::server::run(daemon));
+            tasks.0.push(daemon.abort_handle());
+            let environment = tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    let environments = state
+                        .api
+                        .list_environments(api::EnvironmentListParams::default())
+                        .await?
+                        .result
+                        .environments;
+                    if let Some(environment) = environments
+                        .into_iter()
+                        .find(|e| e.status == api::EnvironmentLifecycleStatusView::Ready)
+                    {
+                        return anyhow::Ok(environment);
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }).await??;
-        let hosted = Arc::new(SessionTools::from_pg_store(state.store.clone())
-            .with_environment_gateway(gateway_config.clone()));
-        let activities = WorkerActivities::for_universe(universe_id,
-            ActivityState::from_pg_store(state.store.clone(), Arc::new(TransferLlm { blobs: state.store.clone() }), hosted.clone())
-                .with_hosted_tools(hosted).with_environment_gateway(gateway_config.clone()));
-        let gateway_config = gateway_config.clone();
-        let store = state.store.clone();
-        run_with_live_worker(activities, |client, queue, base_session| async move {
-            let api = GatewayAgentApi::builder(client.clone(), store.clone())
-                .with_task_queue(queue).with_environment_gateway(gateway_config.clone()).build();
-            // All provider surfaces execute both directions. Additional sessions
-            // test the public grant boundary using the same profile path.
-            for (index, (provider, mode)) in [
-                (ProviderApiKind::OpenAiResponses, "edit"),
-                (ProviderApiKind::AnthropicMessages, "edit"),
-                (ProviderApiKind::OpenAiCompletions, "edit"),
-                (ProviderApiKind::OpenAiResponses, "readonly"),
-                (ProviderApiKind::OpenAiResponses, "sourcing"),
-                (ProviderApiKind::OpenAiResponses, "noenv"),
-                (ProviderApiKind::OpenAiResponses, "content"),
-                (ProviderApiKind::AnthropicMessages, "content"),
-                (ProviderApiKind::OpenAiCompletions, "content"),
-                (ProviderApiKind::OpenAiResponses, "contentread"),
-            ].into_iter().enumerate() {
-                let session = SessionId::new(format!("{base_session}_{index}_{mode}"));
-                let case = Box::pin(run_case(&api, store.as_ref(), &session, provider, mode, index, &root, &environment.environment_id)).await;
-                let handle = client.get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
-                    temporal_workflow::compose_workflow_id(universe_id, &session));
-                let _ = handle.terminate(WorkflowTerminateOptions::builder().reason("transfer live cleanup").build()).await;
-                case?;
-            }
-            // Scan negotiation and conditional observations use the same reverse route.
-            let record = store.read_environment(&harness::EnvironmentId::new(&environment.environment_id)).await?;
-            let connection = gateway_config.connection_for(universe_id, &record);
-            let mut remote = environment_client::EnvironmentDataClient::connect(&connection.endpoint, gateway_config.connect_options("transfer-live-scan")).await?;
-            let initialized = remote.initialize(&InitializeParams {
-                protocol_version: CURRENT_PROTOCOL_VERSION, client_name: "transfer-live-scan".into(),
-                scope: connection.scope, resume_connection_id: None,
-            }).await?;
-            anyhow::ensure!(initialized.capabilities.filesystem_scan && initialized.capabilities.filesystem_transfer);
-            let mut query = ScanParams {
-            follow_symlinks: false,
-                roots: vec![EnvironmentPath::new("./capture-source")?], include_patterns: vec!["new.bin".into()],
-                read_content: false, digest_algorithm: Some(ScanDigestAlgorithm::Sha256), limits: Default::default(), if_none_match: None,
-            };
-            let scan = remote.scan(&query).await?;
-            anyhow::ensure!(scan.complete && scan.diagnostics.is_empty());
-            assert!(scan.entries.iter().any(|entry| matches!(&entry.content, ScanContent::File { digest: Some(digest), .. }
-                if digest == BlobRef::from_bytes(&std::fs::read(root.join("capture-source/new.bin")).unwrap()).as_str())));
-            query.if_none_match = Some(scan.fingerprint.expect("complete scan fingerprint"));
-            let unchanged = remote.scan(&query).await?;
-            anyhow::ensure!(unchanged.unchanged && unchanged.entries.is_empty());
-            std::fs::write(root.join("capture-source/new.bin"), b"changed after observation")?;
-            let changed = remote.scan(&query).await?;
-            anyhow::ensure!(changed.complete && !changed.unchanged && changed.fingerprint != query.if_none_match);
-            remote.close().await?;
-            anyhow::Ok(())
-        }).await
-    })).await;
+            })
+            .await??;
+            let hosted = Arc::new(
+                SessionTools::from_pg_store(state.store.clone())
+                    .with_environment_gateway(gateway_config.clone()),
+            );
+            let activities = WorkerActivities::for_universe(
+                universe_id,
+                ActivityState::from_pg_store(
+                    state.store.clone(),
+                    Arc::new(TransferLlm {
+                        blobs: state.store.clone(),
+                    }),
+                    hosted.clone(),
+                )
+                .with_hosted_tools(hosted)
+                .with_environment_gateway(gateway_config.clone()),
+            );
+            let gateway_config = gateway_config.clone();
+            let store = state.store.clone();
+            run_with_live_worker(activities, |client, queue, base_session| async move {
+                let api = GatewayAgentApi::builder(client.clone(), store.clone())
+                    .with_task_queue(queue)
+                    .with_environment_gateway(gateway_config.clone())
+                    .build();
+                // All provider surfaces execute both directions. Additional sessions
+                // test the public grant boundary using the same profile path.
+                for (index, (provider, mode)) in [
+                    (ProviderApiKind::OpenAiResponses, "edit"),
+                    (ProviderApiKind::AnthropicMessages, "edit"),
+                    (ProviderApiKind::OpenAiCompletions, "edit"),
+                    (ProviderApiKind::OpenAiResponses, "readonly"),
+                    (ProviderApiKind::OpenAiResponses, "sourcing"),
+                    (ProviderApiKind::OpenAiResponses, "noenv"),
+                    (ProviderApiKind::OpenAiResponses, "content"),
+                    (ProviderApiKind::AnthropicMessages, "content"),
+                    (ProviderApiKind::OpenAiCompletions, "content"),
+                    (ProviderApiKind::OpenAiResponses, "contentread"),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let session = SessionId::new(format!("{base_session}_{index}_{mode}"));
+                    let case = Box::pin(run_case(
+                        &api,
+                        store.as_ref(),
+                        &session,
+                        provider,
+                        mode,
+                        index,
+                        &root,
+                        &environment.environment_id,
+                    ))
+                    .await;
+                    let handle = client
+                        .get_workflow_handle::<temporal_workflow::AgentSessionWorkflow>(
+                            temporal_workflow::compose_workflow_id(universe_id, &session),
+                        );
+                    let _ = handle
+                        .terminate(
+                            WorkflowTerminateOptions::builder()
+                                .reason("transfer live cleanup")
+                                .build(),
+                        )
+                        .await;
+                    case?;
+                }
+                // Scan negotiation and conditional observations use the same reverse route.
+                let record = store
+                    .read_environment(&harness::EnvironmentId::new(&environment.environment_id))
+                    .await?;
+                let (remote, initialized) = environment_client::DataClient::connect_initialized(
+                    &gateway_config.endpoint_for(universe_id, &record),
+                    gateway_config.connect_options("transfer-live-scan"),
+                )
+                .await?;
+                anyhow::ensure!(initialized.capabilities.filesystem.is_some());
+                let ceilings = initialized.limits.filesystem.scan;
+                // Scans observe small files such as skills and prompts: the
+                // large captured file is listed as skipped, never hashed,
+                // while a small sibling is observed with its digest.
+                std::fs::write(root.join("capture-source/observed.txt"), b"observed")?;
+                let mut query = ScanParams {
+                    roots: vec![ScanRoot {
+                        path: EnvironmentPath::new(root.join("capture-source").to_string_lossy())?,
+                        if_none_match: None,
+                        max_depth: None,
+                    }],
+                    filter: TreeFilter {
+                        include: vec!["new.bin".into(), "observed.txt".into()],
+                        ..TreeFilter::default()
+                    },
+                    read_content: false,
+                    include_digests: true,
+                    follow_symlinks: false,
+                    limits: ScanLimits {
+                        max_entries: ceilings.max_entries,
+                        max_file_bytes: ceilings.max_file_bytes,
+                        max_total_bytes: ceilings.max_total_bytes,
+                        max_duration_ms: ceilings.max_duration_ms,
+                    },
+                };
+                anyhow::ensure!(
+                    std::fs::metadata(root.join("capture-source/new.bin"))?.len()
+                        > ceilings.max_file_bytes,
+                    "the captured file must exceed the scan's per-file ceiling"
+                );
+                let expected =
+                    BlobRef::from_bytes(&std::fs::read(root.join("capture-source/observed.txt"))?);
+                let scan = remote.scan(&query).await?;
+                let fingerprint = match scan.roots.as_slice() {
+                    [
+                        ScanRootResult::Complete {
+                            fingerprint,
+                            entries,
+                            skipped,
+                            skipped_entry_count,
+                            ..
+                        },
+                    ] => {
+                        anyhow::ensure!(
+                            *skipped_entry_count == 1
+                                && matches!(skipped.as_slice(), [ScanSkip {
+                                    path: Some(path),
+                                    reason: ScanSkipReason::FileTooLarge,
+                                }] if path.as_str() == "new.bin"),
+                            "{scan:?}"
+                        );
+                        anyhow::ensure!(
+                            matches!(entries.as_slice(), [entry]
+                                if entry.path.as_str() == "observed.txt"
+                                    && matches!(&entry.content, TreeContent::File { digest: Some(digest), .. }
+                                        if format!("sha256:{}", digest.hex()) == expected.as_str())),
+                            "{scan:?}"
+                        );
+                        fingerprint.clone()
+                    }
+                    other => anyhow::bail!("capture-source scan did not complete: {other:?}"),
+                };
+                query.roots[0].if_none_match = Some(fingerprint.clone());
+                let unchanged = remote.scan(&query).await?;
+                anyhow::ensure!(
+                    matches!(
+                        unchanged.roots.as_slice(),
+                        [ScanRootResult::Unchanged { .. }]
+                    ),
+                    "{unchanged:?}"
+                );
+                std::fs::write(
+                    root.join("capture-source/observed.txt"),
+                    b"changed after observation",
+                )?;
+                let changed = remote.scan(&query).await?;
+                anyhow::ensure!(
+                    matches!(changed.roots.as_slice(),
+                [ScanRootResult::Complete { fingerprint: changed, .. }] if *changed != fingerprint),
+                    "{changed:?}"
+                );
+                remote.close().await?;
+                anyhow::Ok(())
+            })
+            .await
+        }),
+    )
+    .await;
     drop(tasks);
     let store = runtime.state_for(universe_id, false).await?.store.clone();
     runtime.evict(universe_id).await;

@@ -1,0 +1,4285 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AbortReason": {
+      "description": "Why an operation was `aborted`.",
+      "oneOf": [
+        {
+          "const": "cancelled",
+          "description": "`$/cancelRequest` named the request.",
+          "type": "string"
+        },
+        {
+          "const": "sourceChanged",
+          "description": "A file or directory changed while it was being read.",
+          "type": "string"
+        }
+      ]
+    },
+    "AppendTransferInventoryParams": {
+      "additionalProperties": false,
+      "description": "`transfer/append` params: add incoming inventory entries in order.\nRetrying an identical page is safe.",
+      "properties": {
+        "entries": {
+          "description": "At most `limits.filesystem.transfer.maxInventoryPageEntries`.",
+          "items": {
+            "$ref": "#/definitions/InventoryEntry"
+          },
+          "type": "array"
+        },
+        "index": {
+          "description": "Index of the page's first entry: the number of entries appended\nbefore it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last": {
+          "description": "This page completes the inventory.",
+          "type": "boolean"
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        }
+      },
+      "required": [
+        "operationId",
+        "index",
+        "entries"
+      ],
+      "type": "object"
+    },
+    "BeginTransferParams": {
+      "additionalProperties": false,
+      "description": "`transfer/begin` params. Idempotent: a repeat with identical input\nreturns the operation's status; different input under the same id is\n`failedPrecondition` (`operationIdInUse`).",
+      "properties": {
+        "limits": {
+          "$ref": "#/definitions/TransferLimits"
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        },
+        "selection": {
+          "$ref": "#/definitions/TransferSelection"
+        }
+      },
+      "required": [
+        "operationId",
+        "selection",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "BusyReason": {
+      "description": "What limit a `busy` request hit.",
+      "oneOf": [
+        {
+          "const": "requestLimit",
+          "description": "The connection's concurrent request limit.",
+          "type": "string"
+        },
+        {
+          "const": "transferCapacity",
+          "description": "The daemon's limit on active transfer operations.",
+          "type": "string"
+        },
+        {
+          "const": "rateLimited",
+          "description": "A rate limit on the caller's identity.",
+          "type": "string"
+        },
+        {
+          "const": "capacityExhausted",
+          "description": "A registration key's limit on active environments.",
+          "type": "string"
+        }
+      ]
+    },
+    "ByteChunk": {
+      "contentEncoding": "base64",
+      "description": "Payload bytes, always named `data` on the wire, as padded standard\nbase64.",
+      "pattern": "^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+      "type": "string"
+    },
+    "CancelJobsParams": {
+      "additionalProperties": false,
+      "description": "`job/cancel` params.",
+      "properties": {
+        "force": {
+          "description": "Kill at once instead of `SIGTERM`, `limits.job.cancelGraceMs`, then\n`SIGKILL`.",
+          "type": "boolean"
+        },
+        "jobIds": {
+          "description": "1 to `limits.job.maxRequestJobs` ids.",
+          "items": {
+            "$ref": "#/definitions/JobId"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/JobCancelScope"
+            }
+          ],
+          "description": "`job` by default."
+        }
+      },
+      "required": [
+        "jobIds"
+      ],
+      "type": "object"
+    },
+    "CancelJobsResponse": {
+      "additionalProperties": false,
+      "description": "`job/cancel` response: one entry per affected job, named jobs first in\nrequest order, then dependents, at most `limits.job.maxRequestJobs`\nentries in total.",
+      "properties": {
+        "jobs": {
+          "description": "Never empty.",
+          "items": {
+            "$ref": "#/definitions/JobSummaryEntry"
+          },
+          "type": "array"
+        },
+        "unlistedJobCount": {
+          "description": "Dependents cancelled as well but not listed, beyond the entry limit.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "CancelRequestParams": {
+      "additionalProperties": false,
+      "description": "`$/cancelRequest` params.",
+      "properties": {
+        "id": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Id"
+            }
+          ],
+          "description": "Id of the request to abort."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "Capability": {
+      "description": "A capability a request needed and the endpoint lacks.",
+      "oneOf": [
+        {
+          "const": "filesystem",
+          "description": "The `filesystem` family.",
+          "type": "string"
+        },
+        {
+          "const": "filesystemWrite",
+          "description": "`capabilities.filesystem.write`: the filesystem is writable.",
+          "type": "string"
+        },
+        {
+          "const": "process",
+          "description": "The `process` family.",
+          "type": "string"
+        },
+        {
+          "const": "processPty",
+          "description": "`capabilities.process.pty`.",
+          "type": "string"
+        },
+        {
+          "const": "job",
+          "description": "The `job` family.",
+          "type": "string"
+        },
+        {
+          "const": "adoptTarget",
+          "description": "The controller's `adoptTarget` capability.",
+          "type": "string"
+        },
+        {
+          "const": "ingress",
+          "description": "The controller's `ingress` capability.",
+          "type": "string"
+        }
+      ]
+    },
+    "CommandSpec": {
+      "additionalProperties": false,
+      "description": "What to run. Shared by `process/start` and `job/start`.",
+      "properties": {
+        "argv": {
+          "description": "Program and arguments; `argv[0]` is resolved through `PATH`. Not\nempty.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          ],
+          "description": "Working directory; the daemon's `defaultCwd` when absent."
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Variables added to the daemon's scrubbed environment.",
+          "type": "object"
+        },
+        "input": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ExecInput"
+            }
+          ],
+          "description": "Standard input; none by default."
+        },
+        "secretEnv": {
+          "additionalProperties": {
+            "$ref": "#/definitions/SecretString"
+          },
+          "description": "Like `env`, but every value is redacted from the command's output.",
+          "type": "object"
+        },
+        "timeoutMs": {
+          "description": "Stop deadline from start. On expiry the daemon terminates the process\ngroup (`SIGTERM`, the advertised grace, then `SIGKILL`) and records\n`stoppedBy: timeout`. Absent means no deadline.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "argv"
+      ],
+      "type": "object"
+    },
+    "ContentDigest": {
+      "description": "`sha256:` followed by 64 lowercase hex digits: the digest of a file's raw\nbytes, independent of its path and mode.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "CreateDirectoryParams": {
+      "additionalProperties": false,
+      "description": "`fs/createDirectory` params.",
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/EnvironmentPath"
+        },
+        "recursive": {
+          "description": "Create missing parents, and succeed when the directory exists.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "CreateDirectoryResponse": {
+      "additionalProperties": false,
+      "description": "`fs/createDirectory` response.",
+      "type": "object"
+    },
+    "DaemonInstanceId": {
+      "description": "`daemonInstanceId`: random per daemon start. A change between two\nconnections means the daemon restarted and every process handle from\nthe earlier instance is gone.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "DataCapabilities": {
+      "additionalProperties": false,
+      "description": "Capability families. A present family means its base methods exist; a\nfamily's fields are facts that vary per instance. A request to an\nabsent family, or one needing an absent fact, is\n`capabilityUnavailable`.",
+      "properties": {
+        "filesystem": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FilesystemCapabilities"
+            }
+          ],
+          "description": "`fs/*` (search, glob and scan included) and `transfer/*`."
+        },
+        "job": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JobCapabilities"
+            }
+          ],
+          "description": "`job/*`."
+        },
+        "process": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProcessCapabilities"
+            }
+          ],
+          "description": "`process/*`."
+        }
+      },
+      "type": "object"
+    },
+    "DataLimits": {
+      "additionalProperties": false,
+      "description": "Operational ceilings this daemon enforces. A request above a ceiling is\n`invalidParams` naming the field and the ceiling; nothing is clamped.",
+      "properties": {
+        "filesystem": {
+          "$ref": "#/definitions/FilesystemLimits"
+        },
+        "job": {
+          "$ref": "#/definitions/JobLimits"
+        },
+        "maxConcurrentRequests": {
+          "description": "Requests in flight per connection before `busy`; at least\n`MIN_CONCURRENT_REQUESTS`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxWaitMs": {
+          "description": "Largest `waitMs` of `process/read` and `job/read`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "process": {
+          "$ref": "#/definitions/ProcessLimits"
+        }
+      },
+      "required": [
+        "maxConcurrentRequests",
+        "maxWaitMs",
+        "process",
+        "job",
+        "filesystem"
+      ],
+      "type": "object"
+    },
+    "DirectoryCursor": {
+      "description": "`cursor` and `nextCursor` of `fs/readDirectory`: an opaque position\nthe daemon mints, echoed back unchanged.",
+      "maxLength": 255,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "DirectoryEntry": {
+      "additionalProperties": false,
+      "description": "One `fs/readDirectory` entry.",
+      "properties": {
+        "metadata": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/FileMetadata"
+            }
+          ],
+          "description": "The entry itself, not a symlink's target. Entries that vanish while\nthe page is built are left out."
+        },
+        "name": {
+          "$ref": "#/definitions/EntryName"
+        }
+      },
+      "required": [
+        "name",
+        "metadata"
+      ],
+      "type": "object"
+    },
+    "EntryName": {
+      "description": "One entry name: a single path segment, neither `.` nor `..`, without\n`/` or NUL, at most 4096 bytes. `fs/readDirectory` entries use it.",
+      "maxLength": 4096,
+      "minLength": 1,
+      "pattern": "^(?!\\.\\.?$)[^/\\u0000]+$",
+      "type": "string"
+    },
+    "EnvironmentPath": {
+      "description": "An absolute, normalized POSIX path in the environment: `/`, or `/` and\none or more segments joined by `/`. Empty, `.` and `..` segments and a\ntrailing `/` are rejected, never rewritten. At most 4096 bytes.\n`defaultCwd`, `homeDirectory`, every `cwd` and every path parameter use\nthis type; see the module's path model and confinement rule.",
+      "maxLength": 4096,
+      "minLength": 1,
+      "pattern": "^(/|(/(?!\\.\\.?(/|$))[^/\\u0000]+)+)$",
+      "type": "string"
+    },
+    "ErrorData": {
+      "description": "The `data` member of an error object: the kind and its typed fields.\n\nKinds without fields are empty struct variants rather than unit\nvariants: serde does not apply `deny_unknown_fields` to the unit\nvariants of an internally tagged enum, and every kind must refuse\nunknown members.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "parseError",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "invalidRequest",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "methodNotFound",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ceiling": {
+              "description": "The advertised ceiling the value exceeded.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "field": {
+              "description": "Wire path of the offending field, such as `limits.maxDurationMs`.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "invalidParams",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "notInitialized",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected": {
+              "description": "The version of the peer that sent this error.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "versionMismatch",
+              "type": "string"
+            },
+            "received": {
+              "description": "The version the requester stated.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "expected",
+            "received"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "notFound",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/NotFoundReason"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "alreadyExists",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "failedPrecondition",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/PreconditionReason"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "permissionDenied",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/PermissionReason"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "capability": {
+              "$ref": "#/definitions/Capability"
+            },
+            "kind": {
+              "const": "capabilityUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "capability"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "busy",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BusyReason"
+                }
+              ]
+            },
+            "retryAfterMs": {
+              "description": "Earliest useful retry, when the server knows it.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "deadlineExceeded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "expired",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "aborted",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AbortReason"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "payloadTooLarge",
+              "type": "string"
+            },
+            "limitBytes": {
+              "description": "The byte limit the payload exceeded.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "limitEntries": {
+              "description": "The entry-count limit the result exceeded.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "processFailed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "retryAfterMs": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExecInput": {
+      "description": "Standard input of a command.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "`/dev/null`: the command reads end of file. Model-facing tools use\nthis.",
+          "properties": {
+            "kind": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "These bytes, then end of file. Written by a writer task after the\noutput readers, the exit watcher and the deadline are in place.",
+          "properties": {
+            "data": {
+              "$ref": "#/definitions/ByteChunk"
+            },
+            "kind": {
+              "const": "bytes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A persistent pipe fed by `process/write` until closed. Processes\nonly; `job/start` refuses it with `invalidParams`.",
+          "properties": {
+            "kind": {
+              "const": "pipe",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExecState": {
+      "description": "Lifecycle state of a process.",
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "exited",
+          "description": "The root exited and its output settled.",
+          "type": "string"
+        }
+      ]
+    },
+    "ExitStatus": {
+      "description": "How the root process ended.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Normal exit with this status code.",
+          "properties": {
+            "code": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "code",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Killed by this signal.",
+          "properties": {
+            "coreDumped": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "signal",
+              "type": "string"
+            },
+            "signal": {
+              "$ref": "#/definitions/SignalName"
+            }
+          },
+          "required": [
+            "kind",
+            "signal"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "FileKind": {
+      "description": "Kind of a filesystem entry.",
+      "oneOf": [
+        {
+          "enum": [
+            "file",
+            "directory",
+            "symlink"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Device, FIFO, socket or another special file.",
+          "type": "string"
+        }
+      ]
+    },
+    "FileMetadata": {
+      "additionalProperties": false,
+      "description": "One file-entry shape for `fs/getMetadata` and `fs/readDirectory`.",
+      "properties": {
+        "createdAtMs": {
+          "description": "Absent when the filesystem records no birth time.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "executable": {
+          "description": "A regular file with any execute bit set; always false for\ndirectories, symlinks and special files.",
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/definitions/FileKind"
+        },
+        "modifiedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "sizeBytes": {
+          "description": "Size in bytes; for a symlink, the length of its target text.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "symlinkTarget": {
+          "description": "Target text of a symlink, when it is UTF-8.",
+          "type": "string"
+        },
+        "version": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/FileVersion"
+            }
+          ],
+          "description": "Changes whenever the entry's content or identity changes; compare it\nwith `ifMatch`."
+        }
+      },
+      "required": [
+        "kind",
+        "sizeBytes",
+        "modifiedAtMs",
+        "version"
+      ],
+      "type": "object"
+    },
+    "FileVersion": {
+      "description": "Opaque version token of a file's content and identity. Equal tokens for\none path mean the content is unchanged. 1 to 255 bytes without control\ncharacters.",
+      "maxLength": 255,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "FilesystemCapabilities": {
+      "additionalProperties": false,
+      "description": "The `filesystem` family: `fs/*` and `transfer/*`.",
+      "properties": {
+        "write": {
+          "description": "Methods that change the filesystem are served; false on a daemon\nstarted read-only.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "FilesystemLimits": {
+      "additionalProperties": false,
+      "description": "Ceilings of `fs/*` and `transfer/*`.",
+      "properties": {
+        "glob": {
+          "$ref": "#/definitions/GlobCeilings"
+        },
+        "maxDirectoryEntries": {
+          "description": "Largest `limit` of `fs/readDirectory`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxReadFileBytes": {
+          "description": "Largest `maxBytes` of `fs/readFile`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxWriteFileBytes": {
+          "description": "Largest `data` of `fs/writeFile`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scan": {
+          "$ref": "#/definitions/ScanCeilings"
+        },
+        "search": {
+          "$ref": "#/definitions/SearchCeilings"
+        },
+        "transfer": {
+          "$ref": "#/definitions/TransferCeilings"
+        }
+      },
+      "required": [
+        "maxReadFileBytes",
+        "maxWriteFileBytes",
+        "maxDirectoryEntries",
+        "search",
+        "glob",
+        "scan",
+        "transfer"
+      ],
+      "type": "object"
+    },
+    "GapReason": {
+      "description": "Why a range of output cannot be returned.",
+      "oneOf": [
+        {
+          "const": "overflow",
+          "description": "Never delivered: dropped from the middle because retained output\nexceeded the handle's cap. The head and the newest bytes are kept.",
+          "type": "string"
+        },
+        {
+          "const": "expired",
+          "description": "Already delivered through the daemon cursor (or acknowledged) and\nreleased since.",
+          "type": "string"
+        }
+      ]
+    },
+    "GetIdleParams": {
+      "additionalProperties": false,
+      "description": "`env/getIdle` params.",
+      "type": "object"
+    },
+    "GetIdleResponse": {
+      "additionalProperties": false,
+      "description": "`env/getIdle` response.",
+      "properties": {
+        "idleForMs": {
+          "description": "Milliseconds since the last `use` request, or since running work\nlast ended, whichever is later. Zero while any process or job runs.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leftoverProcessGroupCount": {
+          "description": "Process groups of exited processes that still have members alive:\nservices a command started and left running. They are not running\nwork and do not hold `idleForMs` at zero.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runningJobCount": {
+          "description": "Jobs that are `running`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runningProcessCount": {
+          "description": "Processes started with `process/start` whose root has not exited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "idleForMs"
+      ],
+      "type": "object"
+    },
+    "GetMetadataParams": {
+      "additionalProperties": false,
+      "description": "`fs/getMetadata` params.",
+      "properties": {
+        "followSymlinks": {
+          "description": "Describe the symlink's target instead of the link (subject to\nconfinement).",
+          "type": "boolean"
+        },
+        "path": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "GetMetadataResponse": {
+      "additionalProperties": false,
+      "description": "`fs/getMetadata` response.",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/FileMetadata"
+        }
+      },
+      "required": [
+        "metadata"
+      ],
+      "type": "object"
+    },
+    "GlobCeilings": {
+      "additionalProperties": false,
+      "description": "Ceilings of `fs/globFiles` quotas, field for field.",
+      "properties": {
+        "maxDurationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFiles": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxMatches": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxMatches",
+        "maxFiles",
+        "maxDurationMs"
+      ],
+      "type": "object"
+    },
+    "GlobFilesLimits": {
+      "additionalProperties": false,
+      "description": "Caller quotas of one enumeration; each at most its advertised ceiling.",
+      "properties": {
+        "maxDurationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFiles": {
+          "description": "Non-directory entries visited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxMatches": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxMatches",
+        "maxFiles",
+        "maxDurationMs"
+      ],
+      "type": "object"
+    },
+    "GlobFilesParams": {
+      "additionalProperties": false,
+      "description": "`fs/globFiles` params: bounded recursive enumeration of non-directory\nentries matching `filter.include`.",
+      "properties": {
+        "filter": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TreeFilter"
+            }
+          ],
+          "description": "`include` must not be empty."
+        },
+        "limits": {
+          "$ref": "#/definitions/GlobFilesLimits"
+        },
+        "root": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "root",
+        "filter",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "GlobFilesResponse": {
+      "additionalProperties": false,
+      "description": "`fs/globFiles` response.",
+      "properties": {
+        "elapsedMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "matches": {
+          "description": "In walk order (sorted by path).",
+          "items": {
+            "$ref": "#/definitions/EnvironmentPath"
+          },
+          "type": "array"
+        },
+        "skippedEntryCount": {
+          "description": "Entries the walk could not represent or list: names that are not\nUTF-8 and directories that could not be read.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stopped": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GlobFilesStop"
+            }
+          ]
+        },
+        "visitedFileCount": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "visitedFileCount",
+        "elapsedMs"
+      ],
+      "type": "object"
+    },
+    "GlobFilesStop": {
+      "description": "Why an enumeration stopped before finishing its walk.",
+      "oneOf": [
+        {
+          "const": "matchLimit",
+          "description": "`maxMatches` paths were found.",
+          "type": "string"
+        },
+        {
+          "const": "fileLimit",
+          "description": "`maxFiles` non-directory entries were visited.",
+          "type": "string"
+        },
+        {
+          "const": "timeLimit",
+          "description": "`maxDurationMs` ran out.",
+          "type": "string"
+        },
+        {
+          "const": "responseLimit",
+          "description": "The next match would push the encoded matches past\n`MAX_RESULT_BYTES`.",
+          "type": "string"
+        }
+      ]
+    },
+    "Id": {
+      "anyOf": [
+        {
+          "format": "int64",
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "A request id: an integer or a string, echoed in the response."
+    },
+    "ImplementationInfo": {
+      "additionalProperties": false,
+      "description": "What a peer says about its own build: `clientInfo`, `serverInfo` and a\ndaemon's registration `implementation`. Descriptive only; the protocol\nversion alone decides whether two peers can talk, and nothing here\nselects, authenticates or gates. Every field is 1 to 256 bytes without control characters,\nchecked on decode and by every constructor, so a value that would be\nrefused can never be built or sent.",
+      "properties": {
+        "gitSha": {
+          "description": "Full or abbreviated git commit of the build.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "name": {
+          "description": "Product name, such as `lightspeed-envd`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "target": {
+          "description": "Rust target triple of the build.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        },
+        "version": {
+          "description": "Release version, such as `0.5.0`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "InitializeParams": {
+      "additionalProperties": false,
+      "description": "`initialize` params on the data plane.",
+      "properties": {
+        "clientInfo": {
+          "$ref": "#/definitions/ImplementationInfo"
+        },
+        "protocolVersion": {
+          "description": "The client's `ENVD_PROTOCOL_VERSION`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "clientInfo"
+      ],
+      "type": "object"
+    },
+    "InitializeResponse": {
+      "additionalProperties": false,
+      "description": "`initialize` response on the data plane.",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/definitions/DataCapabilities"
+        },
+        "daemonInstanceId": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DaemonInstanceId"
+            }
+          ],
+          "description": "Random per daemon start; a different value than on an earlier\nconnection means the daemon restarted and the earlier instance's\nprocess handles are gone."
+        },
+        "defaultCwd": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          ],
+          "description": "The daemon's working directory: the default `cwd` of commands."
+        },
+        "homeDirectory": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          ],
+          "description": "Home directory of the user commands run as, when known."
+        },
+        "limits": {
+          "$ref": "#/definitions/DataLimits"
+        },
+        "plane": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Plane"
+            }
+          ],
+          "description": "Always `data`."
+        },
+        "protocolVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "serverInfo": {
+          "$ref": "#/definitions/ImplementationInfo"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "plane",
+        "daemonInstanceId",
+        "serverInfo",
+        "capabilities",
+        "limits",
+        "defaultCwd"
+      ],
+      "type": "object"
+    },
+    "InventoryEntry": {
+      "additionalProperties": false,
+      "description": "One inventory entry. Parents precede children.",
+      "properties": {
+        "content": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TreeContent"
+            }
+          ],
+          "description": "A file entry always carries its `digest`."
+        },
+        "path": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TreePath"
+            }
+          ],
+          "description": "Relative to the selected root; `.` is the root itself."
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "JobCancelScope": {
+      "description": "Which jobs a `job/cancel` affects.",
+      "oneOf": [
+        {
+          "const": "job",
+          "description": "Only the named jobs.",
+          "type": "string"
+        },
+        {
+          "const": "dependents",
+          "description": "The named jobs and every job that transitively depends on them.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobCapabilities": {
+      "additionalProperties": false,
+      "description": "The `job` family: `job/*`. It has no instance facts.",
+      "type": "object"
+    },
+    "JobDependency": {
+      "description": "A dependency reference.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "An existing job on this daemon, or one in the same request.",
+          "properties": {
+            "jobId": {
+              "$ref": "#/definitions/JobId"
+            },
+            "kind": {
+              "const": "jobId",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "jobId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `name` of a job in the same `job/start`.",
+          "properties": {
+            "kind": {
+              "const": "name",
+              "type": "string"
+            },
+            "name": {
+              "$ref": "#/definitions/JobName"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "JobDependencyPolicy": {
+      "description": "What a job waits for from its `dependsOn` jobs.",
+      "oneOf": [
+        {
+          "const": "allSucceeded",
+          "description": "Run once every dependency `succeeded`; any other terminal status\nmakes this job `dependencyFailed`.",
+          "type": "string"
+        },
+        {
+          "const": "allTerminal",
+          "description": "Run once every dependency is terminal, whatever its status.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobId": {
+      "description": "`jobId`: caller-chosen name of one job run on one daemon.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "JobLimits": {
+      "additionalProperties": false,
+      "description": "Ceilings of `job/*`.",
+      "properties": {
+        "cancelGraceMs": {
+          "description": "Grace between `SIGTERM` and `SIGKILL` for a non-forced cancel and\ntimeouts.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxReadBytes": {
+          "description": "Largest `maxBytes` of one `job/read`, across its entries.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxRequestJobs": {
+          "description": "Most jobs one `job/start`, `job/read` or `job/cancel` names, and most\nentries a `job/cancel` response lists.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxRetainedOutputBytes": {
+          "description": "Output a job retains: the head and the tail, each half of this; the\nmiddle is an `overflow` gap.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "recordRetentionMs": {
+          "description": "How long a terminal job's record and output are kept.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxReadBytes",
+        "maxRequestJobs",
+        "maxRetainedOutputBytes",
+        "recordRetentionMs",
+        "cancelGraceMs"
+      ],
+      "type": "object"
+    },
+    "JobName": {
+      "description": "`name` of a job and `dependsOn {kind: name}`: a caller-chosen name,\nunique within one `job/start`, 1 to 128 bytes without control\ncharacters.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "JobReadEntry": {
+      "description": "A `job/read` entry: the job's summary and output page, or why it could\nnot be read (`notFound` for an unknown or garbage-collected job).",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "job",
+              "type": "string"
+            },
+            "output": {
+              "$ref": "#/definitions/OutputPage"
+            },
+            "summary": {
+              "$ref": "#/definitions/JobSummary"
+            }
+          },
+          "required": [
+            "kind",
+            "summary",
+            "output"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "error": {
+              "$ref": "#/definitions/ProtocolError"
+            },
+            "jobId": {
+              "$ref": "#/definitions/JobId"
+            },
+            "kind": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "jobId",
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "JobReadRequest": {
+      "additionalProperties": false,
+      "description": "One entry of a `job/read`. Job reads never consume: without `after` and\n`tailBytes` the page starts at offset 0. One job may be named by several\nentries, such as a head and a tail page.",
+      "properties": {
+        "after": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "jobId": {
+          "$ref": "#/definitions/JobId"
+        },
+        "maxBytes": {
+          "description": "Most `data` bytes for this entry; the request's `maxBytes` still\nbounds the total. Absent: whatever of the request's budget remains.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tailBytes": {
+          "description": "Start at `end - tailBytes`; excludes `after`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "jobId"
+      ],
+      "type": "object"
+    },
+    "JobRequestId": {
+      "description": "`requestId` of a `job/start` call. Part of each job's identity: a\nretried start with the same request id and spec replays the job; any\nother reuse of the job id is refused.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "JobSpec": {
+      "additionalProperties": false,
+      "description": "One job of a `job/start`.",
+      "properties": {
+        "command": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommandSpec"
+            }
+          ],
+          "description": "`input` must be `none` or `bytes`."
+        },
+        "dependencyPolicy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/JobDependencyPolicy"
+            }
+          ],
+          "description": "What \"finish\" means for `dependsOn`; `allSucceeded` by default."
+        },
+        "dependsOn": {
+          "description": "Jobs that must finish first.",
+          "items": {
+            "$ref": "#/definitions/JobDependency"
+          },
+          "type": "array"
+        },
+        "jobId": {
+          "$ref": "#/definitions/JobId"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JobName"
+            }
+          ],
+          "description": "Local name other jobs of the same `job/start` can depend on; unique\nwithin the request."
+        },
+        "queueKey": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/QueueKey"
+            }
+          ]
+        }
+      },
+      "required": [
+        "jobId",
+        "command"
+      ],
+      "type": "object"
+    },
+    "JobStatus": {
+      "description": "Job lifecycle. `queued` and `running` are live; the rest are terminal.",
+      "oneOf": [
+        {
+          "enum": [
+            "running"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "queued",
+          "description": "Accepted; waiting for dependencies or its queue.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "Exited with code 0.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Exited otherwise, or could not start.",
+          "type": "string"
+        },
+        {
+          "const": "timedOut",
+          "description": "Its `timeoutMs` expired and the daemon stopped it.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Stopped or never started because of `job/cancel`.",
+          "type": "string"
+        },
+        {
+          "const": "dependencyFailed",
+          "description": "A dependency did not finish as the dependency policy requires.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "The daemon stopped while the job was queued or running.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobSummary": {
+      "additionalProperties": false,
+      "description": "What a job is and how it ended. Instants are the guest's wall clock.",
+      "properties": {
+        "cancelRequestedAtMs": {
+          "description": "When a `job/cancel` reached the job while it ran.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "createdAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "dependsOn": {
+          "description": "Resolved ids of the jobs this one depends on.",
+          "items": {
+            "$ref": "#/definitions/JobId"
+          },
+          "type": "array"
+        },
+        "durationMs": {
+          "description": "Monotonic run time from start to finish, immune to guest clock jumps.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProtocolError"
+            }
+          ],
+          "description": "Why a `failed` or `interrupted` job produced no exit, or an\ninfrastructure failure while it ran."
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ExitStatus"
+            }
+          ],
+          "description": "How the root process ended, once it ran and exited."
+        },
+        "finishedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "jobId": {
+          "$ref": "#/definitions/JobId"
+        },
+        "leftovers": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LeftoverReport"
+            }
+          ],
+          "description": "What the daemon swept from the job's group at completion\n(`disposition: swept`)."
+        },
+        "name": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/JobName"
+            }
+          ]
+        },
+        "queueKey": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/QueueKey"
+            }
+          ]
+        },
+        "queuedAtMs": {
+          "description": "When the job became runnable and waited for its queue.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "requestId": {
+          "$ref": "#/definitions/JobRequestId"
+        },
+        "startedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/definitions/JobStatus"
+        },
+        "stoppedBy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StoppedBy"
+            }
+          ],
+          "description": "Set when the daemon stopped the running job: `timeout` for\n`timedOut`, `terminate` or `kill` for a cancel without or with\n`force`."
+        }
+      },
+      "required": [
+        "jobId",
+        "requestId",
+        "status",
+        "createdAtMs"
+      ],
+      "type": "object"
+    },
+    "JobSummaryEntry": {
+      "description": "A job summary, or why the named job could not be found.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "job",
+              "type": "string"
+            },
+            "summary": {
+              "$ref": "#/definitions/JobSummary"
+            }
+          },
+          "required": [
+            "kind",
+            "summary"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "error": {
+              "$ref": "#/definitions/ProtocolError"
+            },
+            "jobId": {
+              "$ref": "#/definitions/JobId"
+            },
+            "kind": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "jobId",
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LeftoverDisposition": {
+      "description": "What the daemon did with leftovers. The policies differ on purpose.",
+      "oneOf": [
+        {
+          "const": "kept",
+          "description": "Left running (processes): they keep the environment's lifetime and\nare reported until they exit.",
+          "type": "string"
+        },
+        {
+          "const": "swept",
+          "description": "Terminated when the job finished (jobs); the submitter should fix\nits script's teardown.",
+          "type": "string"
+        }
+      ]
+    },
+    "LeftoverProcess": {
+      "additionalProperties": false,
+      "description": "One leftover process.",
+      "properties": {
+        "command": {
+          "description": "Command line when the platform exposes it, otherwise the executable\nname, cut to\n`MAX_LEFTOVER_COMMAND_BYTES`\non a character boundary; absent when neither could be read.",
+          "type": "string"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid"
+      ],
+      "type": "object"
+    },
+    "LeftoverReport": {
+      "additionalProperties": false,
+      "description": "Processes of a command's group still alive after its root exited.\nPresent only when there is at least one.",
+      "properties": {
+        "disposition": {
+          "$ref": "#/definitions/LeftoverDisposition"
+        },
+        "omittedProcessCount": {
+          "description": "Leftovers beyond the listed ones.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "processes": {
+          "description": "At most `MAX_LEFTOVER_PROCESSES`,\nlowest pid first; never empty.",
+          "items": {
+            "$ref": "#/definitions/LeftoverProcess"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "disposition",
+        "processes"
+      ],
+      "type": "object"
+    },
+    "ListTransferMissingParams": {
+      "additionalProperties": false,
+      "description": "`transfer/listMissing` params.",
+      "properties": {
+        "limit": {
+          "description": "Most digests to return, 1 to\n`limits.filesystem.transfer.maxInventoryPageEntries`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        }
+      },
+      "required": [
+        "operationId",
+        "limit"
+      ],
+      "type": "object"
+    },
+    "ListTransferMissingResponse": {
+      "additionalProperties": false,
+      "description": "`transfer/listMissing` response: digests whose content the daemon still\nneeds. The set shrinks as uploads complete; call again rather than\npaging.",
+      "properties": {
+        "digests": {
+          "items": {
+            "$ref": "#/definitions/ContentDigest"
+          },
+          "type": "array"
+        },
+        "remainingCount": {
+          "description": "Missing digests beyond this page.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "NotFoundReason": {
+      "description": "Why a handle, path or identity was not found.",
+      "oneOf": [
+        {
+          "const": "expired",
+          "description": "Its retention window ended; a tombstone remembers it.",
+          "type": "string"
+        },
+        {
+          "const": "daemonRestarted",
+          "description": "It belonged to an earlier daemon instance (see `daemonInstanceId`).",
+          "type": "string"
+        },
+        {
+          "const": "unknownDaemon",
+          "description": "A daemon identity the gateway has never admitted presented no\nregistration key.",
+          "type": "string"
+        }
+      ]
+    },
+    "OutputChunk": {
+      "additionalProperties": false,
+      "description": "Contiguous output bytes from one stream.",
+      "properties": {
+        "data": {
+          "$ref": "#/definitions/ByteChunk"
+        },
+        "offset": {
+          "description": "Byte offset of the chunk's first byte in the combined output.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stream": {
+          "$ref": "#/definitions/OutputStream"
+        }
+      },
+      "required": [
+        "offset",
+        "stream",
+        "data"
+      ],
+      "type": "object"
+    },
+    "OutputGap": {
+      "additionalProperties": false,
+      "description": "Output bytes in `[offset, offset + omittedBytes)` that a page cannot\nreturn.",
+      "properties": {
+        "offset": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "omittedBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "$ref": "#/definitions/GapReason"
+        }
+      },
+      "required": [
+        "offset",
+        "omittedBytes",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "OutputPage": {
+      "additionalProperties": false,
+      "description": "One page of a handle's output. Returned by `process/read` and in every\n`job/read` entry. A page holds at most\n`MAX_PAGE_CHUNKS` chunks and gaps\ntogether (for `job/read`, across all entries); one that reaches it ends\nearly, and `next` says where to continue.",
+      "properties": {
+        "chunks": {
+          "description": "In offset order, at most `maxBytes` of `data` in total.",
+          "items": {
+            "$ref": "#/definitions/OutputChunk"
+          },
+          "type": "array"
+        },
+        "end": {
+          "description": "Bytes produced so far; final once the handle has exited.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gaps": {
+          "description": "Unreturnable ranges between the requested start and `next`.",
+          "items": {
+            "$ref": "#/definitions/OutputGap"
+          },
+          "type": "array"
+        },
+        "next": {
+          "description": "Offset to read from next: past the last returned byte or gap.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "next",
+        "end"
+      ],
+      "type": "object"
+    },
+    "OutputStream": {
+      "description": "Which descriptor produced a chunk. Jobs never produce `pty`.",
+      "oneOf": [
+        {
+          "enum": [
+            "stdout",
+            "stderr"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "pty",
+          "description": "The PTY master, which merges stdout and stderr.",
+          "type": "string"
+        }
+      ]
+    },
+    "PermissionReason": {
+      "description": "Why a `permissionDenied` request was refused.",
+      "oneOf": [
+        {
+          "const": "outsideRoot",
+          "description": "The path, or a symlink it passes through, resolves outside the\ndaemon's filesystem root.",
+          "type": "string"
+        },
+        {
+          "const": "daemonState",
+          "description": "The path names or contains the daemon's state directory.",
+          "type": "string"
+        },
+        {
+          "const": "filePermission",
+          "description": "The operating system refused access.",
+          "type": "string"
+        },
+        {
+          "const": "invalidSignature",
+          "description": "The registration signature does not verify.",
+          "type": "string"
+        },
+        {
+          "const": "invalidRegistrationKey",
+          "description": "The registration key is unknown.",
+          "type": "string"
+        },
+        {
+          "const": "registrationKeyRevoked",
+          "description": "The registration key was revoked.",
+          "type": "string"
+        }
+      ]
+    },
+    "Plane": {
+      "description": "The plane a connection serves. Each `initialize` response names its\nplane, so a client that reached the wrong socket fails at the handshake.",
+      "oneOf": [
+        {
+          "const": "data",
+          "description": "envd's data plane, versioned by `ENVD_PROTOCOL_VERSION`.",
+          "type": "string"
+        },
+        {
+          "const": "controller",
+          "description": "A provider controller, versioned by `CONTROLLER_PROTOCOL_VERSION`.",
+          "type": "string"
+        },
+        {
+          "const": "registration",
+          "description": "The registration channel between a daemon and the gateway, versioned\nby `ENVD_PROTOCOL_VERSION`.",
+          "type": "string"
+        }
+      ]
+    },
+    "PreconditionReason": {
+      "description": "The state that forbids a `failedPrecondition` request.",
+      "oneOf": [
+        {
+          "const": "inputClosed",
+          "description": "The process has no open input: started without `pipe` or `pty`,\ninput already closed, or exited.",
+          "type": "string"
+        },
+        {
+          "const": "ifMatchFailed",
+          "description": "The file's current `version` differs from `ifMatch`.",
+          "type": "string"
+        },
+        {
+          "const": "createCondition",
+          "description": "`create: ifAbsent` met an existing file, or `create: ifPresent` a\nmissing one.",
+          "type": "string"
+        },
+        {
+          "const": "notEmpty",
+          "description": "The directory is not empty and `recursive` was not set.",
+          "type": "string"
+        },
+        {
+          "const": "isDirectory",
+          "description": "The path names a directory where a file is required.",
+          "type": "string"
+        },
+        {
+          "const": "notDirectory",
+          "description": "A path component or the path names a non-directory where a directory\nis required.",
+          "type": "string"
+        },
+        {
+          "const": "notRegularFile",
+          "description": "The path names a device, FIFO, socket or other non-regular file.",
+          "type": "string"
+        },
+        {
+          "const": "symlinkLoop",
+          "description": "A symlink chain loops.",
+          "type": "string"
+        },
+        {
+          "const": "symlinkRejected",
+          "description": "A capture met a symlink that leaves the selection, or one the\nselection's symlink policy rejects.",
+          "type": "string"
+        },
+        {
+          "const": "filesystemRoot",
+          "description": "The filesystem root itself cannot be replaced or removed.",
+          "type": "string"
+        },
+        {
+          "const": "crossDevice",
+          "description": "Rename across filesystems.",
+          "type": "string"
+        },
+        {
+          "const": "noSpace",
+          "description": "No space left on the device.",
+          "type": "string"
+        },
+        {
+          "const": "jobIdInUse",
+          "description": "A job id is in use by a job with another `requestId` or spec; choose\na new job id.",
+          "type": "string"
+        },
+        {
+          "const": "operationIdInUse",
+          "description": "A transfer `operationId` is in use for different input.",
+          "type": "string"
+        },
+        {
+          "const": "transferPhase",
+          "description": "The transfer action is not valid in the operation's current phase.",
+          "type": "string"
+        },
+        {
+          "const": "transferOffset",
+          "description": "A transfer write's `offset` is not the digest's next expected offset.",
+          "type": "string"
+        },
+        {
+          "const": "digestMismatch",
+          "description": "Uploaded bytes do not hash to their digest.",
+          "type": "string"
+        },
+        {
+          "const": "environmentClosed",
+          "description": "The environment is closed; its identity or target is spent.",
+          "type": "string"
+        },
+        {
+          "const": "identityInUse",
+          "description": "The daemon identity is bound to another universe.",
+          "type": "string"
+        },
+        {
+          "const": "ownerMismatch",
+          "description": "The target belongs to another owner, or (`target/adopt`) the owner\nalready holds a different target.",
+          "type": "string"
+        },
+        {
+          "const": "templateDeprecated",
+          "description": "The template is deprecated and creates no new targets.",
+          "type": "string"
+        },
+        {
+          "const": "ingressUnsupported",
+          "description": "`ingress/ensure` on a target whose template has no public ingress.",
+          "type": "string"
+        },
+        {
+          "const": "targetNotActive",
+          "description": "A power change on a target whose `phase` is not `active`\n(provisioning, closing, closed or failed).",
+          "type": "string"
+        },
+        {
+          "const": "notAdoptable",
+          "description": "`target/adopt`: the source target exists but the provider cannot take\nit over, for example an instance of a kind it does not manage.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProcessCapabilities": {
+      "additionalProperties": false,
+      "description": "The `process` family: `process/*`.",
+      "properties": {
+        "pty": {
+          "description": "`process/start` accepts `pty`.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "ProcessId": {
+      "description": "`processId`: caller-chosen handle of a process on one daemon.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "ProcessLimits": {
+      "additionalProperties": false,
+      "description": "Ceilings of `process/*`.",
+      "properties": {
+        "maxExitedRetainedBytes": {
+          "description": "Output retained across all exited processes; beyond it the oldest\nare evicted early.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxInputQueueBytes": {
+          "description": "Bytes queued for a process's input before `process/write` accepts\nfewer than it was sent.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxReadBytes": {
+          "description": "Largest `maxBytes` of one `process/read`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxRetainedOutputBytes": {
+          "description": "Output a process retains; beyond it the oldest delivered bytes are\nreleased (`expired` gaps), then the undelivered middle (`overflow`\ngaps).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retentionAfterExitMs": {
+          "description": "How long an exited process stays readable after a read first\nreturned its settled exit with nothing left unread.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminateGraceMs": {
+          "description": "Grace between `SIGTERM` and `SIGKILL` for `terminate` and timeouts.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unreadRetentionMs": {
+          "description": "How long an exited process whose output was never fully read stays\nreadable.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxReadBytes",
+        "maxRetainedOutputBytes",
+        "retentionAfterExitMs",
+        "unreadRetentionMs",
+        "maxExitedRetainedBytes",
+        "terminateGraceMs",
+        "maxInputQueueBytes"
+      ],
+      "type": "object"
+    },
+    "ProcessSignal": {
+      "description": "Signal delivered by `process/terminate`.",
+      "oneOf": [
+        {
+          "const": "interrupt",
+          "description": "`SIGINT` to the foreground process group (the terminal's under a\nPTY, otherwise the process group). Records nothing; the next read\nshows what the process did.",
+          "type": "string"
+        },
+        {
+          "const": "terminate",
+          "description": "`SIGTERM` to the group, then `SIGKILL` after\n`limits.process.terminateGraceMs` if members remain. Records\n`stoppedBy: terminate`.",
+          "type": "string"
+        },
+        {
+          "const": "kill",
+          "description": "`SIGKILL` to the group. Records `stoppedBy: kill`.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProtocolError": {
+      "additionalProperties": false,
+      "description": "A protocol error: one kind, its typed data and a message.\n\nSerializes as an `ErrorObject`. Displays as `{kind}: {message}`.",
+      "properties": {
+        "code": {
+          "description": "Fixed by `data.kind`; see `ProtocolErrorKind::code`.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "data": {
+          "$ref": "#/definitions/ErrorData"
+        },
+        "message": {
+          "description": "Human-readable description. Never parsed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "data"
+      ],
+      "type": "object"
+    },
+    "PtySize": {
+      "additionalProperties": false,
+      "description": "Terminal size of a PTY. Each dimension is 1 to 4096.",
+      "properties": {
+        "cols": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rows",
+        "cols"
+      ],
+      "type": "object"
+    },
+    "QueueKey": {
+      "description": "`queueKey`: jobs sharing a key run one at a time, in start order.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "ReadDirectoryParams": {
+      "additionalProperties": false,
+      "description": "`fs/readDirectory` params. Pages in name order.",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DirectoryCursor"
+            }
+          ],
+          "description": "`nextCursor` of the previous page; a cursor this daemon did not mint\nis `invalidParams`."
+        },
+        "limit": {
+          "description": "Most entries per page, 1 to `limits.filesystem.maxDirectoryEntries`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          ],
+          "description": "A directory, or a symlink to one inside the root."
+        }
+      },
+      "required": [
+        "path",
+        "limit"
+      ],
+      "type": "object"
+    },
+    "ReadDirectoryResponse": {
+      "additionalProperties": false,
+      "description": "`fs/readDirectory` response.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/DirectoryEntry"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DirectoryCursor"
+            }
+          ],
+          "description": "Opaque cursor of the next page; absent on the last page."
+        },
+        "skippedEntryCount": {
+          "description": "Entries in this page's range skipped because their names are not\nUTF-8. Entries that vanish while the page is built are left out and\nnot counted.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ReadFileParams": {
+      "additionalProperties": false,
+      "description": "`fs/readFile` params. Reads a regular file only; anything else is\n`failedPrecondition` (`notRegularFile`) and is never opened for a\nblocking read.",
+      "properties": {
+        "maxBytes": {
+          "description": "Most bytes to return, at most `limits.filesystem.maxReadFileBytes`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "description": "First byte to return; 0 by default.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "path",
+        "maxBytes"
+      ],
+      "type": "object"
+    },
+    "ReadFileResponse": {
+      "additionalProperties": false,
+      "description": "`fs/readFile` response.",
+      "properties": {
+        "data": {
+          "$ref": "#/definitions/ByteChunk"
+        },
+        "fileSize": {
+          "description": "Size of the whole file when it was read.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "truncated": {
+          "description": "Bytes exist after `offset` plus the length of `data`.",
+          "type": "boolean"
+        },
+        "version": {
+          "$ref": "#/definitions/FileVersion"
+        }
+      },
+      "required": [
+        "data",
+        "fileSize",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ReadJobsParams": {
+      "additionalProperties": false,
+      "description": "`job/read` params.",
+      "properties": {
+        "jobs": {
+          "description": "1 to `limits.job.maxRequestJobs` entries, each with its own position.",
+          "items": {
+            "$ref": "#/definitions/JobReadRequest"
+          },
+          "type": "array"
+        },
+        "maxBytes": {
+          "description": "Most `data` bytes across all entries, at most\n`limits.job.maxReadBytes`, filled in request order: an entry reached\nafter the budget is spent returns its summary and an empty page at\nits start position. 0 reads only summaries.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "returnOn": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReturnOn"
+            }
+          ],
+          "description": "`anyOutput`: return when any entry has output past its position or\nchanged status; `exit`: when every entry is terminal; `window`: wait\nthe whole window."
+        },
+        "waitMs": {
+          "description": "How long to wait, at most `limits.maxWaitMs`. 0 polls.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "jobs",
+        "maxBytes",
+        "waitMs",
+        "returnOn"
+      ],
+      "type": "object"
+    },
+    "ReadJobsResponse": {
+      "additionalProperties": false,
+      "description": "`job/read` response: one entry per requested job, in request order.",
+      "properties": {
+        "jobs": {
+          "description": "Never empty.",
+          "items": {
+            "$ref": "#/definitions/JobReadEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "ReadProcessParams": {
+      "additionalProperties": false,
+      "description": "`process/read` params.",
+      "properties": {
+        "ack": {
+          "description": "Acknowledge every byte before this offset first: the cursor moves to\nit (never backwards) whether or not this read's response arrives. A\ncaller that tracks positions reads with `after` and acknowledges\nwith `ack` for exactly-once delivery.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "after": {
+          "description": "Start offset. Absent: the daemon cursor, which this read advances to\n`next` once its response is written. Present: a non-consuming read\nthat leaves the cursor alone.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxBytes": {
+          "description": "Most `data` bytes to return, at most `limits.process.maxReadBytes`.\n0 reads only the state.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "processId": {
+          "$ref": "#/definitions/ProcessId"
+        },
+        "returnOn": {
+          "$ref": "#/definitions/ReturnOn"
+        },
+        "tailBytes": {
+          "description": "Start at `end - tailBytes` instead (clamped at 0). Non-consuming;\nexcludes `after`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "waitMs": {
+          "description": "How long to wait, at most `limits.maxWaitMs`. 0 polls.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "processId",
+        "maxBytes",
+        "waitMs",
+        "returnOn"
+      ],
+      "type": "object"
+    },
+    "ReadProcessResponse": {
+      "additionalProperties": false,
+      "description": "`process/read` response.",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProtocolError"
+            }
+          ],
+          "description": "Infrastructure failure after start (output capture or wait failed)."
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ExitStatus"
+            }
+          ],
+          "description": "How the root ended; present once `state` is `exited`, unless `error`\nexplains why it could not be observed."
+        },
+        "leftovers": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LeftoverReport"
+            }
+          ],
+          "description": "Group members alive after the root exited (`disposition: kept`),\nsampled when this response was built. Absent while running, when\nnone remain, and on platforms without process enumeration."
+        },
+        "output": {
+          "$ref": "#/definitions/OutputPage"
+        },
+        "pid": {
+          "description": "OS pid of the root process.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/definitions/ExecState"
+        },
+        "stoppedBy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StoppedBy"
+            }
+          ],
+          "description": "Set when the daemon stopped the process; absent on a natural exit."
+        }
+      },
+      "required": [
+        "output",
+        "state",
+        "pid"
+      ],
+      "type": "object"
+    },
+    "ReadTransferContentParams": {
+      "additionalProperties": false,
+      "description": "`transfer/read` params: read a captured file's content by digest.",
+      "properties": {
+        "digest": {
+          "$ref": "#/definitions/ContentDigest"
+        },
+        "maxBytes": {
+          "description": "1 to `limits.filesystem.transfer.maxContentChunkBytes`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        }
+      },
+      "required": [
+        "operationId",
+        "digest",
+        "offset",
+        "maxBytes"
+      ],
+      "type": "object"
+    },
+    "ReadTransferContentResponse": {
+      "additionalProperties": false,
+      "description": "`transfer/read` response.",
+      "properties": {
+        "data": {
+          "$ref": "#/definitions/ByteChunk"
+        },
+        "truncated": {
+          "description": "Bytes exist after `offset` plus the length of `data`, as for\n`fs/readFile`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "type": "object"
+    },
+    "ReadTransferInventoryParams": {
+      "additionalProperties": false,
+      "description": "`transfer/readInventory` params: page a sealed inventory by index.",
+      "properties": {
+        "index": {
+          "description": "Index of the first entry.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "description": "1 to `limits.filesystem.transfer.maxInventoryPageEntries`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        }
+      },
+      "required": [
+        "operationId",
+        "index",
+        "limit"
+      ],
+      "type": "object"
+    },
+    "ReadTransferInventoryResponse": {
+      "additionalProperties": false,
+      "description": "`transfer/readInventory` response.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/definitions/InventoryEntry"
+          },
+          "type": "array"
+        },
+        "nextIndex": {
+          "description": "Index of the next page; absent after the last entry.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "RemoveParams": {
+      "additionalProperties": false,
+      "description": "`fs/remove` params.",
+      "properties": {
+        "force": {
+          "description": "Succeed when the path does not exist.",
+          "type": "boolean"
+        },
+        "path": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          ],
+          "description": "A symlink is removed, never followed."
+        },
+        "recursive": {
+          "description": "Remove a directory and its contents.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "RemoveResponse": {
+      "additionalProperties": false,
+      "description": "`fs/remove` response.",
+      "type": "object"
+    },
+    "RenameParams": {
+      "additionalProperties": false,
+      "description": "`fs/rename` params. Atomic within one filesystem; across filesystems it\nis `failedPrecondition` (`crossDevice`). The entry keeps its mode.",
+      "properties": {
+        "destination": {
+          "$ref": "#/definitions/EnvironmentPath"
+        },
+        "ifMatch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileVersion"
+            }
+          ],
+          "description": "Rename only when the source's version equals this token."
+        },
+        "overwrite": {
+          "description": "Replace an existing destination file; otherwise an existing\ndestination is `alreadyExists`. A directory destination is never\nreplaced.",
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "source",
+        "destination"
+      ],
+      "type": "object"
+    },
+    "RenameResponse": {
+      "additionalProperties": false,
+      "description": "`fs/rename` response.",
+      "type": "object"
+    },
+    "ReturnOn": {
+      "description": "When a waiting read returns. Every mode also returns when `waitMs`\nelapses, when the handle reaches a settled exit, or at once when there\nis nothing left to wait for.",
+      "oneOf": [
+        {
+          "const": "window",
+          "description": "Collect for the whole window; return early only when unread output\nreaches `maxBytes`.",
+          "type": "string"
+        },
+        {
+          "const": "anyOutput",
+          "description": "Return as soon as any output past the start position exists.",
+          "type": "string"
+        },
+        {
+          "const": "exit",
+          "description": "Return only at the settled exit (for `job/read`: once every entry is\nterminal), even if more than `maxBytes` of output accumulates.",
+          "type": "string"
+        }
+      ]
+    },
+    "ScanCeilings": {
+      "additionalProperties": false,
+      "description": "Ceilings of `fs/scan`: root and pattern counts, then its quotas.",
+      "properties": {
+        "maxDurationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxEntries": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFileBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxPatterns": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxRoots": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxTotalBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxRoots",
+        "maxPatterns",
+        "maxEntries",
+        "maxFileBytes",
+        "maxTotalBytes",
+        "maxDurationMs"
+      ],
+      "type": "object"
+    },
+    "ScanEntry": {
+      "additionalProperties": false,
+      "description": "One selected entry below a root.",
+      "properties": {
+        "content": {
+          "$ref": "#/definitions/TreeContent"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ByteChunk"
+            }
+          ],
+          "description": "The file's bytes when `readContent` was set."
+        },
+        "path": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TreePath"
+            }
+          ],
+          "description": "Relative to the root as requested."
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "ScanFingerprint": {
+      "description": "Opaque fingerprint of one root's selection, prefixed `scan:v1:`, at most\n255 bytes without control characters.",
+      "maxLength": 255,
+      "minLength": 9,
+      "pattern": "^scan:v1:[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+      "type": "string"
+    },
+    "ScanLimits": {
+      "additionalProperties": false,
+      "description": "Caller quotas of one scan.",
+      "properties": {
+        "maxDurationMs": {
+          "description": "Walk time per root; exhausting it fails that root\n(`deadlineExceeded`).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxEntries": {
+          "description": "Selected entries per root; more fail that root (`payloadTooLarge`\nwith `limitEntries`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFileBytes": {
+          "description": "Larger selected files are skipped (`fileTooLarge`).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxTotalBytes": {
+          "description": "Content bytes returned across all roots, in root order: a root whose\ncontent would exceed the rest fails (`payloadTooLarge` with\n`limitBytes`) and later roots are still scanned. Independently, a\nroot whose encoded result (entries, skips and base64 content) would\npush the scan's results past\n`MAX_RESULT_BYTES` fails the same\nway.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxEntries",
+        "maxFileBytes",
+        "maxTotalBytes",
+        "maxDurationMs"
+      ],
+      "type": "object"
+    },
+    "ScanParams": {
+      "additionalProperties": false,
+      "description": "`fs/scan` params.",
+      "properties": {
+        "filter": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TreeFilter"
+            }
+          ],
+          "description": "Applied below every root; at most `limits.filesystem.scan.maxPatterns`\npatterns in total."
+        },
+        "followSymlinks": {
+          "description": "Follow symlinks whose targets stay inside the filesystem root; others\nare skipped (`symlinkOutsideRoot`). Without it symlinks are skipped\n(`symlink`).",
+          "type": "boolean"
+        },
+        "includeDigests": {
+          "description": "Return each selected file's `digest`.",
+          "type": "boolean"
+        },
+        "limits": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ScanLimits"
+            }
+          ],
+          "description": "Caller quotas; each at most its ceiling."
+        },
+        "readContent": {
+          "description": "Return the bytes of every selected file in `data`.",
+          "type": "boolean"
+        },
+        "roots": {
+          "description": "1 to `limits.filesystem.scan.maxRoots` roots.",
+          "items": {
+            "$ref": "#/definitions/ScanRoot"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "roots",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "ScanResponse": {
+      "additionalProperties": false,
+      "description": "`fs/scan` response: one result per requested root, in request order.",
+      "properties": {
+        "roots": {
+          "description": "Never empty.",
+          "items": {
+            "$ref": "#/definitions/ScanRootResult"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "roots"
+      ],
+      "type": "object"
+    },
+    "ScanRoot": {
+      "additionalProperties": false,
+      "description": "One root of a scan.",
+      "properties": {
+        "ifNoneMatch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ScanFingerprint"
+            }
+          ],
+          "description": "The root's previous `fingerprint`: when the selection is unchanged\nthe result is `unchanged` and carries no entries."
+        },
+        "maxDepth": {
+          "description": "Overrides `filter.maxDepth` for this root. `0` examines only the\nroot itself: a `complete` result without entries proves it is an\nexisting directory, which is how discovery checks a working\ndirectory in the same call.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "ScanRootResult": {
+      "description": "The outcome of one root.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Every selected entry, plus what was skipped and why.",
+          "properties": {
+            "canonicalPath": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentPath"
+                }
+              ],
+              "description": "Resolved absolute path of the root when it differs from `path`\n(the root is a symlink)."
+            },
+            "entries": {
+              "items": {
+                "$ref": "#/definitions/ScanEntry"
+              },
+              "type": "array"
+            },
+            "fingerprint": {
+              "$ref": "#/definitions/ScanFingerprint"
+            },
+            "kind": {
+              "const": "complete",
+              "type": "string"
+            },
+            "path": {
+              "$ref": "#/definitions/EnvironmentPath"
+            },
+            "skipped": {
+              "description": "The first\n`MAX_LISTED_SKIPS` skipped\nentries, in walk order.",
+              "items": {
+                "$ref": "#/definitions/ScanSkip"
+              },
+              "type": "array"
+            },
+            "skippedEntryCount": {
+              "description": "Total number of skipped entries, listed or not; present whenever\nit is not zero.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "fingerprint"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The selection matches `ifNoneMatch`.",
+          "properties": {
+            "fingerprint": {
+              "$ref": "#/definitions/ScanFingerprint"
+            },
+            "kind": {
+              "const": "unchanged",
+              "type": "string"
+            },
+            "path": {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "fingerprint"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The root does not exist.",
+          "properties": {
+            "kind": {
+              "const": "missing",
+              "type": "string"
+            },
+            "path": {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The root could not be scanned; no entries are returned for it.",
+          "properties": {
+            "error": {
+              "$ref": "#/definitions/ProtocolError"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "path": {
+              "$ref": "#/definitions/EnvironmentPath"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ScanSkip": {
+      "additionalProperties": false,
+      "description": "An entry a scan left out.",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TreePath"
+            }
+          ],
+          "description": "Absent when the entry's name is not UTF-8."
+        },
+        "reason": {
+          "$ref": "#/definitions/ScanSkipReason"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ScanSkipReason": {
+      "description": "Why a scan left an entry out.",
+      "oneOf": [
+        {
+          "const": "fileTooLarge",
+          "description": "Larger than `maxFileBytes`.",
+          "type": "string"
+        },
+        {
+          "const": "symlink",
+          "description": "A symlink, and `followSymlinks` is not set.",
+          "type": "string"
+        },
+        {
+          "const": "symlinkOutsideRoot",
+          "description": "A symlink whose target leaves the filesystem root, or a link cycle.",
+          "type": "string"
+        },
+        {
+          "const": "specialFile",
+          "description": "A device, FIFO, socket or another special file.",
+          "type": "string"
+        },
+        {
+          "const": "nonUtf8Name",
+          "description": "The name is not UTF-8.",
+          "type": "string"
+        },
+        {
+          "const": "unreadable",
+          "description": "The entry vanished or could not be read during the walk.",
+          "type": "string"
+        }
+      ]
+    },
+    "SearchCeilings": {
+      "additionalProperties": false,
+      "description": "Ceilings of `fs/searchText` quotas, field for field.",
+      "properties": {
+        "maxBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxDurationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFiles": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxLineBytes": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxMatches": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxMatches",
+        "maxFiles",
+        "maxBytes",
+        "maxDurationMs",
+        "maxLineBytes"
+      ],
+      "type": "object"
+    },
+    "SearchTextLimits": {
+      "additionalProperties": false,
+      "description": "Caller quotas of one search; each at most its advertised ceiling.",
+      "properties": {
+        "maxBytes": {
+          "description": "Bytes actually read across files.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxDurationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFiles": {
+          "description": "Files searched, not merely visited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxLineBytes": {
+          "description": "Longer matching lines are cut and marked `lineTruncated`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxMatches": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxMatches",
+        "maxFiles",
+        "maxBytes",
+        "maxDurationMs",
+        "maxLineBytes"
+      ],
+      "type": "object"
+    },
+    "SearchTextMatch": {
+      "additionalProperties": false,
+      "description": "One matching line.",
+      "properties": {
+        "line": {
+          "description": "The matching line without its terminator, cut at `maxLineBytes` on a\ncharacter boundary.",
+          "type": "string"
+        },
+        "lineNumber": {
+          "description": "1-based.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lineTruncated": {
+          "type": "boolean"
+        },
+        "path": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "path",
+        "lineNumber",
+        "line"
+      ],
+      "type": "object"
+    },
+    "SearchTextParams": {
+      "additionalProperties": false,
+      "description": "`fs/searchText` params: a bounded recursive regex search run by the\ndaemon. A file larger than the remaining byte budget is skipped and\ncounted; it never ends the walk.",
+      "properties": {
+        "filter": {
+          "$ref": "#/definitions/TreeFilter"
+        },
+        "limits": {
+          "$ref": "#/definitions/SearchTextLimits"
+        },
+        "pattern": {
+          "description": "Regular expression in the Rust `regex` crate's syntax, matched per\nline.",
+          "type": "string"
+        },
+        "patternIgnoreCase": {
+          "description": "Match `pattern` case-insensitively. `filter.ignoreCase` governs the\npath patterns instead.",
+          "type": "boolean"
+        },
+        "root": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "root",
+        "pattern",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "SearchTextResponse": {
+      "additionalProperties": false,
+      "description": "`fs/searchText` response.",
+      "properties": {
+        "elapsedMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "matches": {
+          "items": {
+            "$ref": "#/definitions/SearchTextMatch"
+          },
+          "type": "array"
+        },
+        "searchedBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "searchedFileCount": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skippedEntryCount": {
+          "description": "Entries the walk could not represent or list: names that are not\nUTF-8 and directories that could not be read.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skippedFileCount": {
+          "description": "Files skipped because they exceeded the remaining byte budget, are\nbinary or could not be read.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stopped": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SearchTextStop"
+            }
+          ],
+          "description": "Absent when the walk finished within its limits."
+        }
+      },
+      "required": [
+        "searchedFileCount",
+        "searchedBytes",
+        "elapsedMs"
+      ],
+      "type": "object"
+    },
+    "SearchTextStop": {
+      "description": "Why a search stopped before finishing its walk.",
+      "oneOf": [
+        {
+          "const": "matchLimit",
+          "description": "`maxMatches` matches were found.",
+          "type": "string"
+        },
+        {
+          "const": "fileLimit",
+          "description": "`maxFiles` files were searched.",
+          "type": "string"
+        },
+        {
+          "const": "byteLimit",
+          "description": "`maxBytes` bytes were read.",
+          "type": "string"
+        },
+        {
+          "const": "timeLimit",
+          "description": "`maxDurationMs` ran out.",
+          "type": "string"
+        },
+        {
+          "const": "responseLimit",
+          "description": "The next match would push the encoded matches past\n`MAX_RESULT_BYTES`.",
+          "type": "string"
+        }
+      ]
+    },
+    "SecretString": {
+      "description": "A secret value carried on the wire, such as a `secretEnv` value, a\nregistration key or a stream token. It serializes as a plain string;\n`Debug` is redacted so structured logging never prints it.",
+      "type": "string"
+    },
+    "SignalName": {
+      "description": "A POSIX signal name such as `SIGSEGV` or `SIGRTMIN+3`: `SIG` followed by\n1 to 16 uppercase letters, digits or `+`. Names, not numbers, because\nnumbers differ between platforms.",
+      "pattern": "^SIG[A-Z0-9+]{1,16}$",
+      "type": "string"
+    },
+    "SpecialFilePolicy": {
+      "description": "Devices, FIFOs and sockets met during a capture.",
+      "oneOf": [
+        {
+          "const": "reject",
+          "description": "Fail the operation (`notRegularFile`).",
+          "type": "string"
+        },
+        {
+          "const": "skip",
+          "description": "Leave them out and report them in `skipped`.",
+          "type": "string"
+        }
+      ]
+    },
+    "StartJobsParams": {
+      "additionalProperties": false,
+      "description": "`job/start` params. All-or-nothing: either every job is accepted (or\nreplayed) or none is.",
+      "properties": {
+        "jobs": {
+          "description": "1 to `limits.job.maxRequestJobs` jobs.",
+          "items": {
+            "$ref": "#/definitions/JobSpec"
+          },
+          "type": "array"
+        },
+        "requestId": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/JobRequestId"
+            }
+          ],
+          "description": "Idempotency key of this start. Retrying with the same request id and\nidentical jobs replays the existing jobs; reusing a job id with\nanother request id or spec is `failedPrecondition` (`jobIdInUse`)."
+        }
+      },
+      "required": [
+        "requestId",
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "StartJobsResponse": {
+      "additionalProperties": false,
+      "description": "`job/start` response: one summary per requested job, in request order.",
+      "properties": {
+        "jobs": {
+          "description": "Never empty.",
+          "items": {
+            "$ref": "#/definitions/JobSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "StartProcessParams": {
+      "additionalProperties": false,
+      "description": "`process/start` params.",
+      "properties": {
+        "command": {
+          "$ref": "#/definitions/CommandSpec"
+        },
+        "processId": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProcessId"
+            }
+          ],
+          "description": "Caller-chosen handle, reserved before any side effect: a start whose\nid is already in use (running, retained or remembered by a tombstone)\nis `alreadyExists` and runs nothing."
+        },
+        "pty": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PtySize"
+            }
+          ],
+          "description": "Run under a PTY of this size. The PTY master is the input: `input`\nmust then be `none` or `bytes`, and `process/write` is always\naccepted while the process runs. Requires\n`capabilities.process.pty`."
+        }
+      },
+      "required": [
+        "processId",
+        "command"
+      ],
+      "type": "object"
+    },
+    "StartProcessResponse": {
+      "additionalProperties": false,
+      "description": "`process/start` response, sent once the process runs.",
+      "properties": {
+        "pid": {
+          "description": "OS pid of the root process, which is also its process group id.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid"
+      ],
+      "type": "object"
+    },
+    "StoppedBy": {
+      "description": "Why the daemon stopped a process or job that did not exit on its own.\nSet only when the daemon signalled a root that was still running.",
+      "oneOf": [
+        {
+          "const": "timeout",
+          "description": "`timeoutMs` expired: `SIGTERM`, the grace, then `SIGKILL`.",
+          "type": "string"
+        },
+        {
+          "const": "terminate",
+          "description": "`process/terminate` with `terminate`, or `job/cancel` without\n`force`: `SIGTERM`, the grace, then `SIGKILL`.",
+          "type": "string"
+        },
+        {
+          "const": "kill",
+          "description": "`process/terminate` with `kill`, or `job/cancel` with `force`:\n`SIGKILL` at once.",
+          "type": "string"
+        }
+      ]
+    },
+    "SymlinkPolicy": {
+      "description": "Symlinks met during a capture.",
+      "oneOf": [
+        {
+          "const": "expandInside",
+          "description": "Capture a link whose target stays inside the selection as the entry\nit points to; a link leaving the selection or a cycle fails the\noperation (`symlinkRejected`). A dangling link inside the selection\nis left out and reported in `skipped` as `symlink`.",
+          "type": "string"
+        },
+        {
+          "const": "skip",
+          "description": "Leave every link out and report it in `skipped`.",
+          "type": "string"
+        },
+        {
+          "const": "reject",
+          "description": "Fail on the first link.",
+          "type": "string"
+        }
+      ]
+    },
+    "TerminateProcessParams": {
+      "additionalProperties": false,
+      "description": "`process/terminate` params.",
+      "properties": {
+        "processId": {
+          "$ref": "#/definitions/ProcessId"
+        },
+        "signal": {
+          "$ref": "#/definitions/ProcessSignal"
+        }
+      },
+      "required": [
+        "processId",
+        "signal"
+      ],
+      "type": "object"
+    },
+    "TerminateProcessResponse": {
+      "additionalProperties": false,
+      "description": "`process/terminate` response, sent once the signal was delivered (any\nescalation continues in the background).",
+      "properties": {
+        "running": {
+          "description": "True when the root process was still running when the signal was\nsent.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "TransferCeilings": {
+      "additionalProperties": false,
+      "description": "Ceilings of `transfer/*`: capacity, page and chunk sizes, receipt\nretention, then the per-operation quotas.",
+      "properties": {
+        "maxActiveOperations": {
+          "description": "Operations not yet complete, aborted or failed, across connections;\na begin beyond it is `busy` (`transferCapacity`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxContentChunkBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxDepth": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxDurationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxEntries": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFileBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxInventoryPageEntries": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxManifestBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxTotalBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "receiptRetentionMs": {
+          "description": "How long a finished operation's receipt is answered.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxActiveOperations",
+        "maxContentChunkBytes",
+        "maxInventoryPageEntries",
+        "receiptRetentionMs",
+        "maxEntries",
+        "maxDepth",
+        "maxFileBytes",
+        "maxTotalBytes",
+        "maxManifestBytes",
+        "maxDurationMs"
+      ],
+      "type": "object"
+    },
+    "TransferLimits": {
+      "additionalProperties": false,
+      "description": "Caller quotas of one operation; each at most its advertised ceiling.",
+      "properties": {
+        "maxDepth": {
+          "description": "The selected root has depth 0.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxDurationMs": {
+          "description": "From begin to commit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxEntries": {
+          "description": "Entries, the selected root included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFileBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxManifestBytes": {
+          "description": "Encoded inventory size.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxTotalBytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxEntries",
+        "maxDepth",
+        "maxFileBytes",
+        "maxTotalBytes",
+        "maxManifestBytes",
+        "maxDurationMs"
+      ],
+      "type": "object"
+    },
+    "TransferOnExisting": {
+      "description": "What a materialize does with an existing destination.",
+      "oneOf": [
+        {
+          "const": "error",
+          "description": "Refuse at begin (`alreadyExists`).",
+          "type": "string"
+        },
+        {
+          "const": "replace",
+          "description": "Replace it atomically at commit.",
+          "type": "string"
+        }
+      ]
+    },
+    "TransferOperationId": {
+      "description": "`operationId` of one transfer operation.",
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "type": "string"
+    },
+    "TransferOperationParams": {
+      "additionalProperties": false,
+      "description": "Params of `transfer/advance`, `transfer/getStatus`, `transfer/commit`\nand `transfer/abort`: each names only the operation.",
+      "properties": {
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "TransferPhase": {
+      "description": "Where an operation stands; see the module docs for the order per\nselection kind.",
+      "oneOf": [
+        {
+          "enum": [
+            "complete",
+            "aborted"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "scanning",
+          "description": "The daemon walks a tree: the capture source, or the destination of a\nmaterialize. Advance until the phase changes.",
+          "type": "string"
+        },
+        {
+          "const": "inventory",
+          "description": "Capture: the inventory is sealed and pageable. Materialize: waiting\nfor appended entries.",
+          "type": "string"
+        },
+        {
+          "const": "content",
+          "description": "Waiting for the content of `transfer/listMissing` digests.",
+          "type": "string"
+        },
+        {
+          "const": "staging",
+          "description": "The daemon assembles the staged tree. Advance until `ready`.",
+          "type": "string"
+        },
+        {
+          "const": "ready",
+          "description": "Ready for `transfer/commit`.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Stopped by an error; see `error`.",
+          "type": "string"
+        }
+      ]
+    },
+    "TransferSelection": {
+      "description": "What one operation transfers.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Read a file or tree out of the environment.",
+          "properties": {
+            "filter": {
+              "$ref": "#/definitions/TreeFilter"
+            },
+            "kind": {
+              "const": "capture",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/definitions/EnvironmentPath"
+            },
+            "specialFiles": {
+              "$ref": "#/definitions/SpecialFilePolicy"
+            },
+            "symlinks": {
+              "$ref": "#/definitions/SymlinkPolicy"
+            }
+          },
+          "required": [
+            "kind",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Write a tree into the environment, replacing `destination` atomically\nat commit.",
+          "properties": {
+            "destination": {
+              "$ref": "#/definitions/EnvironmentPath"
+            },
+            "kind": {
+              "const": "materialize",
+              "type": "string"
+            },
+            "onExisting": {
+              "$ref": "#/definitions/TransferOnExisting"
+            }
+          },
+          "required": [
+            "kind",
+            "destination"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Write exactly one file with `fs/writeFile` semantics: staged,\natomic, an existing target keeps its permissions, an in-root symlink\nat `destination` is followed.",
+          "properties": {
+            "create": {
+              "$ref": "#/definitions/WriteCondition"
+            },
+            "destination": {
+              "$ref": "#/definitions/EnvironmentPath"
+            },
+            "executable": {
+              "type": "boolean"
+            },
+            "ifMatch": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/FileVersion"
+                }
+              ]
+            },
+            "kind": {
+              "const": "writeFile",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "destination"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TransferSkip": {
+      "additionalProperties": false,
+      "description": "An entry a capture left out.",
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TreePath"
+            }
+          ],
+          "description": "Absent when the entry's name is not UTF-8."
+        },
+        "reason": {
+          "$ref": "#/definitions/TransferSkipReason"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "TransferSkipReason": {
+      "description": "Why a capture left an entry out.",
+      "oneOf": [
+        {
+          "const": "symlink",
+          "description": "`symlinks: skip`, or a dangling link under `symlinks: expandInside`.",
+          "type": "string"
+        },
+        {
+          "const": "specialFile",
+          "description": "`specialFiles: skip`.",
+          "type": "string"
+        },
+        {
+          "const": "nonUtf8Name",
+          "description": "The name is not UTF-8; such entries are always skipped.",
+          "type": "string"
+        }
+      ]
+    },
+    "TransferStatus": {
+      "additionalProperties": false,
+      "description": "The operation's status: the response of `transfer/begin`,\n`transfer/advance`, `transfer/getStatus`, `transfer/append`,\n`transfer/commit` and `transfer/abort`.",
+      "properties": {
+        "deadlineAtMs": {
+          "description": "When `maxDurationMs` runs out for an active operation.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "entryCount": {
+          "description": "Entries in the inventory so far.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProtocolError"
+            }
+          ],
+          "description": "Why the operation failed; present exactly when `phase` is `failed`."
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        },
+        "phase": {
+          "$ref": "#/definitions/TransferPhase"
+        },
+        "receiptExpiresAtMs": {
+          "description": "When the receipt of a finished (complete, aborted or failed)\noperation stops being answered; afterwards calls are `notFound`\n(`expired`).",
+          "format": "int64",
+          "type": "integer"
+        },
+        "reusedBytes": {
+          "description": "Content bytes satisfied from files already at the destination.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "skipped": {
+          "description": "The first\n`MAX_LISTED_SKIPS` entries a\ncapture left out under its policies.",
+          "items": {
+            "$ref": "#/definitions/TransferSkip"
+          },
+          "type": "array"
+        },
+        "skippedEntryCount": {
+          "description": "Total number of entries left out, listed or not; present whenever it\nis not zero.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "totalBytes": {
+          "description": "File bytes in the inventory so far.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "transferredBytes": {
+          "description": "Content bytes moved over the wire.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "operationId",
+        "phase",
+        "entryCount",
+        "totalBytes",
+        "transferredBytes",
+        "reusedBytes"
+      ],
+      "type": "object"
+    },
+    "TreeContent": {
+      "description": "What a tree entry is: a scan entry or a transfer inventory entry.\nDigests identify raw file bytes, not paths or modes.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "directory",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "digest": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ContentDigest"
+                }
+              ],
+              "description": "Scans: present when `includeDigests` was set. Transfer\ninventories: always present; an appended file entry without it\nis `invalidParams`."
+            },
+            "executable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "file",
+              "type": "string"
+            },
+            "sizeBytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "sizeBytes"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TreeFilter": {
+      "additionalProperties": false,
+      "description": "Which entries a walk visits. The default visits everything except\nhidden and ignored entries.",
+      "properties": {
+        "exclude": {
+          "description": "Drop entries matching any pattern; a matching directory is pruned.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ignoreCase": {
+          "description": "Match patterns case-insensitively.",
+          "type": "boolean"
+        },
+        "include": {
+          "description": "Select entries matching any pattern; empty selects every entry.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "includeHidden": {
+          "description": "Visit entries whose name starts with `.`.",
+          "type": "boolean"
+        },
+        "includeIgnored": {
+          "description": "Visit entries that ignore files exclude.",
+          "type": "boolean"
+        },
+        "maxDepth": {
+          "description": "Deepest entry depth visited: the root's direct children are depth\n1, so `1` selects direct children only. Unbounded when absent.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TreePath": {
+      "description": "A relative, normalized path below a selected root: segments joined by\n`/`, without empty, `.` or `..` segments. The single segment `.` names\nthe root itself. At most 4096 bytes. Used for scan, inventory and\ntransfer entries.",
+      "maxLength": 4096,
+      "minLength": 1,
+      "pattern": "^(\\.|(?!\\.\\.?(/|$))[^/\\u0000]+(/(?!\\.\\.?(/|$))[^/\\u0000]+)*)$",
+      "type": "string"
+    },
+    "WriteCondition": {
+      "description": "When `fs/writeFile` may write.",
+      "oneOf": [
+        {
+          "const": "always",
+          "description": "Create or replace.",
+          "type": "string"
+        },
+        {
+          "const": "ifAbsent",
+          "description": "Only create; an existing entry is `failedPrecondition`\n(`createCondition`).",
+          "type": "string"
+        },
+        {
+          "const": "ifPresent",
+          "description": "Only replace; a missing file is `failedPrecondition`\n(`createCondition`).",
+          "type": "string"
+        }
+      ]
+    },
+    "WriteFileParams": {
+      "additionalProperties": false,
+      "description": "`fs/writeFile` params. The write is staged in the target's directory and\npublished by an atomic rename: readers see the old or the new content,\nnever a mix. An existing target keeps its permissions. A symlink at\n`path` whose target stays inside the root is followed like any path: the\nfinal target is replaced and the link itself is kept (a dangling link\ncreates its target, subject to `create`); a link that leaves the root is\n`permissionDenied` (`outsideRoot`). A special file is\n`failedPrecondition` (`notRegularFile`), a directory\n`failedPrecondition` (`isDirectory`). The parent of the final target\nmust exist.",
+      "properties": {
+        "create": {
+          "$ref": "#/definitions/WriteCondition"
+        },
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteChunk"
+            }
+          ],
+          "description": "At most `limits.filesystem.maxWriteFileBytes`; larger files go\nthrough `transfer/*` with a `writeFile` selection."
+        },
+        "executable": {
+          "description": "Set the execute bits (the read bits' pattern). Without it a new file\ngets the default mode and an existing file keeps its mode.",
+          "type": "boolean"
+        },
+        "ifMatch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileVersion"
+            }
+          ],
+          "description": "Write only when the current file's version equals this token;\notherwise `failedPrecondition` (`ifMatchFailed`)."
+        },
+        "path": {
+          "$ref": "#/definitions/EnvironmentPath"
+        }
+      },
+      "required": [
+        "path",
+        "data"
+      ],
+      "type": "object"
+    },
+    "WriteFileResponse": {
+      "additionalProperties": false,
+      "description": "`fs/writeFile` response.",
+      "properties": {
+        "version": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/FileVersion"
+            }
+          ],
+          "description": "Version of the written file."
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "type": "object"
+    },
+    "WriteProcessParams": {
+      "additionalProperties": false,
+      "description": "`process/write` params.",
+      "properties": {
+        "closeInput": {
+          "description": "Close the input after `data`: end of file on a pipe, `VEOF` on a\nPTY. Applied only when every byte of `data` was accepted.",
+          "type": "boolean"
+        },
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteChunk"
+            }
+          ],
+          "description": "Bytes for the process's input pipe or PTY."
+        },
+        "processId": {
+          "$ref": "#/definitions/ProcessId"
+        }
+      },
+      "required": [
+        "processId"
+      ],
+      "type": "object"
+    },
+    "WriteProcessResponse": {
+      "additionalProperties": false,
+      "description": "`process/write` response.",
+      "properties": {
+        "acceptedBytes": {
+          "description": "Leading bytes of `data` queued to the process's writer. Fewer than\nsent (possibly 0) means the input queue is full: resend the rest\nlater.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "acceptedBytes"
+      ],
+      "type": "object"
+    },
+    "WriteTransferContentParams": {
+      "additionalProperties": false,
+      "description": "`transfer/write` params: upload content for a missing digest. Chunks for\none digest arrive in order; an identical chunk may be retried.\nDifferent digests may be uploaded concurrently.",
+      "properties": {
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ByteChunk"
+            }
+          ],
+          "description": "At most `limits.filesystem.transfer.maxContentChunkBytes`."
+        },
+        "digest": {
+          "$ref": "#/definitions/ContentDigest"
+        },
+        "offset": {
+          "description": "Must equal the digest's next expected offset.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "$ref": "#/definitions/TransferOperationId"
+        }
+      },
+      "required": [
+        "operationId",
+        "digest",
+        "offset",
+        "data"
+      ],
+      "type": "object"
+    },
+    "WriteTransferContentResponse": {
+      "additionalProperties": false,
+      "description": "`transfer/write` response.",
+      "properties": {
+        "nextOffset": {
+          "description": "The digest's next expected offset; equal to its size once complete\nand verified.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "nextOffset"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Every wire type of the data plane, protocol version 3.",
+  "title": "Lightspeed environment data plane"
+}

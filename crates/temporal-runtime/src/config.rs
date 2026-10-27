@@ -41,24 +41,6 @@ pub enum GatewayAuthMode {
     Authenticated,
 }
 
-/// Optional base URL outbound daemons are told to dial for data connections
-/// when it differs from the general public base URL (for example a dedicated
-/// hostname in front of the environment gateway).
-pub fn environment_public_url_from_env() -> anyhow::Result<Option<String>> {
-    let Some(value) = optional_env("LIGHTSPEED_ENVIRONMENT_PUBLIC_URL") else {
-        return Ok(None);
-    };
-    if !["https://", "http://", "wss://", "ws://"]
-        .iter()
-        .any(|scheme| value.starts_with(scheme))
-    {
-        anyhow::bail!(
-            "LIGHTSPEED_ENVIRONMENT_PUBLIC_URL must be an http(s) or ws(s) URL, got {value:?}"
-        );
-    }
-    Ok(Some(value.trim_end_matches('/').to_owned()))
-}
-
 pub fn gateway_auth_mode_from_env() -> anyhow::Result<GatewayAuthMode> {
     if optional_env("LIGHTSPEED_UNIVERSE_AUTO_CREATE").is_some() {
         anyhow::bail!(

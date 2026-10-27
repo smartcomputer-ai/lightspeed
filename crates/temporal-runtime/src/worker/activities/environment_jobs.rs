@@ -1,34 +1,58 @@
-use std::collections::{BTreeMap, BTreeSet};
+//! Activities of `EnvironmentJobWorkflow`.
+//!
+//! The workflow keeps its own job records and start payload in history;
+//! these activities are the only place that maps them to and from the
+//! environment protocol's `job/*` wire types.
 
-use environment_client::{EnvironmentClientError, EnvironmentDataClient};
-use environment_protocol::{
-    data::{
-        handshake::{InitializeParams, InitializedParams},
-        jobs::{CancelJobsParams, JobStatus, ReadJobsParams},
-    },
-    error::EnvironmentProtocolErrorCode,
-    shared::{CURRENT_PROTOCOL_VERSION, EnvironmentDataConnection, EnvironmentTransport},
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
 };
-use environments::{EnvironmentId, EnvironmentJobGroupId};
+
+use environment_client::{ClientError, DataClient};
+use environment_protocol::{
+    bytes::ByteChunk,
+    data::{
+        exec::{CommandSpec, ExecInput, ReturnOn},
+        job::{
+            CancelJobsParams, JobCancelScope, JobDependency, JobDependencyPolicy, JobReadEntry,
+            JobReadRequest, JobSpec, JobStatus, JobSummary, JobSummaryEntry, ReadJobsParams,
+            StartJobsParams,
+        },
+    },
+    error::{ProtocolError, ProtocolErrorKind},
+    ids::{JobId, JobName, JobRequestId, QueueKey},
+    paths::EnvironmentPath,
+};
+use environments::{EnvironmentId, EnvironmentJobGroupId, EnvironmentRecord};
 use harness::{BlobRef, PromiseSourceCheckResult, storage::BlobStore};
 use temporal_workflow::{
-    EnvironmentJobCancelActivityRequest, EnvironmentJobPollActivityRequest,
-    EnvironmentJobPollActivityResult, EnvironmentJobPrepareWorkflowToolRequest,
+    EnvironmentJobCancelActivityRequest, EnvironmentJobCancelActivityResult,
+    EnvironmentJobCancelScope, EnvironmentJobCommand, EnvironmentJobDependency,
+    EnvironmentJobDependencyPolicy, EnvironmentJobId, EnvironmentJobObservation,
+    EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
+    EnvironmentJobPrepareWorkflowToolRequest, EnvironmentJobRecord, EnvironmentJobSpec,
     EnvironmentJobStartActivityRequest, EnvironmentJobStartActivityResult,
-    EnvironmentJobStartPayload, EnvironmentJobSubscription, EnvironmentJobWorkflowArgs,
-    EnvironmentJobWorkflowToolContext,
+    EnvironmentJobStartPayloadV1, EnvironmentJobStatus, EnvironmentJobSubscription,
+    EnvironmentJobWorkflowArgs, EnvironmentJobWorkflowToolContext,
 };
 use temporalio_common::error::ApplicationFailure;
 use temporalio_sdk::activities::ActivityError;
 use tools::environment::jobs::{
-    JOB_RUN_WORKFLOW_SEMANTIC_TYPE, JOB_RUN_WORKFLOW_TOOL_ID, JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE,
-    JOB_SUBMIT_WORKFLOW_TOOL_ID, JobHandle, NormalizeJobResultInput, normalize_job_result,
+    DEFAULT_JOB_OUTPUT_BYTES, JOB_RUN_WORKFLOW_SEMANTIC_TYPE, JOB_RUN_WORKFLOW_TOOL_ID,
+    JOB_SUBMIT_WORKFLOW_SEMANTIC_TYPE, JOB_SUBMIT_WORKFLOW_TOOL_ID, JobHandle,
+    NormalizeJobResultInput, job_output_read, model_job_error, normalize_job_result,
     store_model_job_result,
 };
 
 use super::{common::activity_error, state::EnvironmentJobActivityDeps};
 
-const PROMISE_JOB_OUTPUT_BYTES: usize = 16 * 1024;
+/// `User-Agent` of the job activities' worker-route upgrades; `clientInfo`
+/// is always the runtime build.
+const JOB_ACTIVITY_USER_AGENT: &str = "lightspeed-environment-job-workflow";
+
+/// Deadline of every data-plane call these background activities make.
+const JOB_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy)]
 enum WorkflowJobToolKind {
@@ -49,11 +73,7 @@ pub(super) async fn prepare_workflow_tool(
     deps: Option<&EnvironmentJobActivityDeps>,
     request: EnvironmentJobPrepareWorkflowToolRequest,
 ) -> Result<EnvironmentJobWorkflowArgs, ActivityError> {
-    let deps = deps.ok_or_else(|| {
-        activity_error(anyhow::anyhow!(
-            "environment job activities are not configured"
-        ))
-    })?;
+    let deps = configured(deps)?;
     let start = request.start;
     let expected_holder =
         temporal_workflow::compose_workflow_id(start.universe_id, &start.invocation.session_id);
@@ -112,16 +132,16 @@ pub(super) async fn prepare_workflow_tool(
     }
     let environment_id =
         EnvironmentId::try_new(execution_context.environment_id).map_err(activity_error)?;
+    let working_directory = execution_context.working_directory.as_deref();
     // The executor admitted this call against the session's attachment
     // grant; the context names the machine it admitted.
-    let request_id = format!(
-        "jobreq:{}:{}:{}:{}",
+    let request_id = workflow_tool_request_id(
         start.invocation.run_id.as_u64(),
         start.invocation.turn_id.as_u64(),
         start.invocation.tool_batch_id.as_u64(),
-        start.invocation.tool_call_id.as_str()
+        start.invocation.tool_call_id.as_str(),
     );
-    let mut jobs = match tool_kind {
+    let wire_jobs = match tool_kind {
         WorkflowJobToolKind::Submit => {
             let args: tools::environment::jobs::JobSubmitArgs =
                 serde_json::from_slice(&arguments).map_err(activity_error)?;
@@ -134,7 +154,7 @@ pub(super) async fn prepare_workflow_tool(
                 .into_iter()
                 .map(|spec| {
                     let job_id = spec.job_id.clone();
-                    spec.into_protocol_spec(job_id)
+                    spec.into_job_spec(job_id, working_directory)
                         .map_err(|error| activity_error(anyhow::anyhow!(error.to_string())))
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -144,36 +164,17 @@ pub(super) async fn prepare_workflow_tool(
                 serde_json::from_slice(&arguments).map_err(activity_error)?;
             let job_id = derived_job_run_id(start.invocation.invocation_id.as_str());
             vec![
-                args.into_protocol_spec(job_id)
+                args.into_job_spec(job_id, working_directory)
                     .map_err(|error| activity_error(anyhow::anyhow!(error.to_string())))?,
             ]
         }
     };
-    if let Some(cwd) = &execution_context.working_directory {
-        for job in &mut jobs {
-            let path = tools::environment::sources::absolute(
-                std::path::Path::new(cwd),
-                job.cwd.as_ref().map(|path| path.as_str()).unwrap_or("."),
-            )
-            .map_err(|error| activity_error(anyhow::anyhow!(error)))?;
-            job.cwd = Some(
-                environment_protocol::shared::EnvironmentPath::new(path.to_string_lossy())
-                    .map_err(activity_error)?,
-            );
-        }
-    }
-    let params = environment_protocol::data::jobs::StartJobsParams {
-        namespace: environment_id.as_str().to_owned(),
-        request_id,
-        jobs,
-    };
-    let request_fingerprint =
-        BlobRef::from_bytes(&serde_json::to_vec(&params).map_err(activity_error)?);
-    let job_group_id = derived_workflow_tool_job_group_id(
-        &environment_id,
-        &params.request_id,
-        request_fingerprint.as_str(),
-    );
+    let jobs = wire_jobs
+        .into_iter()
+        .map(workflow_job_spec)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| activity_error(anyhow::anyhow!(error)))?;
+    let payload = EnvironmentJobStartPayloadV1::new(request_id.into_string(), jobs);
     let completion_promises = start
         .invocation
         .completion_promises
@@ -186,12 +187,12 @@ pub(super) async fn prepare_workflow_tool(
         })?;
     let subscriptions = match tool_kind {
         WorkflowJobToolKind::Submit => {
-            if completion_promises.len() != params.jobs.len() {
+            if completion_promises.len() != payload.jobs.len() {
                 return Err(activity_error(anyhow::anyhow!(
                     "job_submit completion promise count does not match job count"
                 )));
             }
-            params
+            payload
                 .jobs
                 .iter()
                 .map(|job| {
@@ -232,16 +233,16 @@ pub(super) async fn prepare_workflow_tool(
                 holder_workflow_id: start.holder_workflow_id.clone(),
                 promise_id: promise_id.as_str().to_owned(),
                 completion_key: harness::REPLY_COMPLETION_KEY.to_owned(),
-                job_id: params.jobs[0].job_id.clone(),
+                job_id: payload.jobs[0].job_id.clone(),
                 notified: false,
             }]
         }
     };
-    let job_ids = params.jobs.iter().map(|job| job.job_id.clone()).collect();
-    let payload = EnvironmentJobStartPayload { request: params };
+    let encoded = payload.encode().map_err(activity_error)?;
+    let job_group_id = derived_job_group_id(&environment_id, &BlobRef::from_bytes(&encoded));
     let request_ref = deps
         .blobs
-        .put_bytes(serde_json::to_vec(&payload).map_err(activity_error)?)
+        .put_bytes(encoded)
         .await
         .map_err(activity_error)?;
     Ok(EnvironmentJobWorkflowArgs {
@@ -252,7 +253,7 @@ pub(super) async fn prepare_workflow_tool(
             job_group_id: job_group_id.as_str().to_owned(),
             request_ref,
         },
-        job_ids,
+        job_ids: payload.job_ids(),
         subscriptions,
         started: false,
         jobs: Vec::new(),
@@ -266,67 +267,238 @@ pub(super) async fn prepare_workflow_tool(
     })
 }
 
-fn derived_job_run_id(invocation_id: &str) -> environment_protocol::shared::JobId {
-    let hash = BlobRef::from_bytes(invocation_id.as_bytes());
-    environment_protocol::shared::JobId::new(format!("job-{}", &hash.as_str()[7..31]))
+/// The start's idempotency key: one per model tool call, so a retried call
+/// replays its jobs and a new call reusing a job id is refused.
+fn workflow_tool_request_id(run: u64, turn: u64, batch: u64, call_id: &str) -> JobRequestId {
+    JobRequestId::new(format!("jobreq:{run}:{turn}:{batch}:{call_id}")).unwrap_or_else(|_| {
+        // A provider call id outside the id grammar is hashed instead.
+        let hash = BlobRef::from_bytes(format!("{run}:{turn}:{batch}:{call_id}").as_bytes());
+        JobRequestId::new(format!("jobreq-{}", &hash.as_str()[7..39]))
+            .expect("hex request id fits the id grammar")
+    })
 }
 
-fn derived_workflow_tool_job_group_id(
+fn derived_job_run_id(invocation_id: &str) -> JobId {
+    let hash = BlobRef::from_bytes(invocation_id.as_bytes());
+    JobId::new(format!("job-{}", &hash.as_str()[7..31])).expect("hex job id fits the id grammar")
+}
+
+/// A group is named by its environment and the content address of its
+/// encoded start payload, which is also the payload's CAS `request_ref`.
+fn derived_job_group_id(
     environment_id: &EnvironmentId,
-    request_id: &str,
-    request_fingerprint: &str,
+    payload_ref: &BlobRef,
 ) -> EnvironmentJobGroupId {
-    let hash = BlobRef::from_bytes(
-        format!("{environment_id}:{request_id}:{request_fingerprint}").as_bytes(),
-    );
+    let hash = BlobRef::from_bytes(format!("{environment_id}:{payload_ref}").as_bytes());
     EnvironmentJobGroupId::new(format!("ejg_{}", &hash.as_str()[7..31]))
+}
+
+/// The workflow's record of a wire job spec built by the model-facing
+/// arguments. The spec never carries secrets here: the start activity
+/// resolves credential-bound variables.
+fn workflow_job_spec(spec: JobSpec) -> Result<EnvironmentJobSpec, String> {
+    let JobSpec {
+        job_id,
+        name,
+        command,
+        depends_on,
+        dependency_policy,
+        queue_key,
+    } = spec;
+    let CommandSpec {
+        argv,
+        cwd,
+        env,
+        secret_env,
+        input,
+        timeout_ms,
+    } = command;
+    if !secret_env.is_empty() {
+        return Err(format!(
+            "job {job_id} carries secret variables before credential resolution"
+        ));
+    }
+    let stdin = match input {
+        ExecInput::None {} => None,
+        ExecInput::Bytes { data } => Some(
+            String::from_utf8(data.into_inner())
+                .map_err(|_| format!("job {job_id} stdin is not UTF-8"))?,
+        ),
+        ExecInput::Pipe {} => return Err(format!("job {job_id} cannot read a pipe")),
+    };
+    Ok(EnvironmentJobSpec {
+        job_id: EnvironmentJobId::new(job_id.into_string()),
+        name: name.map(JobName::into_string),
+        command: EnvironmentJobCommand {
+            argv,
+            cwd: cwd.map(|cwd| cwd.as_str().to_owned()),
+            env,
+            stdin,
+            timeout_ms,
+        },
+        depends_on: depends_on
+            .into_iter()
+            .map(|dependency| match dependency {
+                JobDependency::JobId { job_id } => EnvironmentJobDependency::JobId {
+                    job_id: EnvironmentJobId::new(job_id.into_string()),
+                },
+                JobDependency::Name { name } => EnvironmentJobDependency::Name {
+                    name: name.into_string(),
+                },
+            })
+            .collect(),
+        dependency_policy: match dependency_policy {
+            JobDependencyPolicy::AllSucceeded => EnvironmentJobDependencyPolicy::AllSucceeded,
+            JobDependencyPolicy::AllTerminal => EnvironmentJobDependencyPolicy::AllTerminal,
+        },
+        queue_key: queue_key.map(QueueKey::into_string),
+    })
+}
+
+/// The wire spec of a stored job, without its secret variables.
+fn wire_job_spec(spec: EnvironmentJobSpec) -> Result<JobSpec, String> {
+    let EnvironmentJobSpec {
+        job_id,
+        name,
+        command,
+        depends_on,
+        dependency_policy,
+        queue_key,
+    } = spec;
+    let job_id = wire_job_id(&job_id)?;
+    Ok(JobSpec {
+        name: name
+            .map(|name| JobName::new(name).map_err(|error| format!("job {job_id} name: {error}")))
+            .transpose()?,
+        command: CommandSpec {
+            argv: command.argv,
+            cwd: command
+                .cwd
+                .map(|cwd| {
+                    EnvironmentPath::new(cwd).map_err(|error| format!("job {job_id} cwd: {error}"))
+                })
+                .transpose()?,
+            env: command.env,
+            secret_env: BTreeMap::new(),
+            input: match command.stdin {
+                Some(stdin) => ExecInput::Bytes {
+                    data: ByteChunk::from(stdin.into_bytes()),
+                },
+                None => ExecInput::None {},
+            },
+            timeout_ms: command.timeout_ms,
+        },
+        depends_on: depends_on
+            .into_iter()
+            .map(|dependency| match dependency {
+                EnvironmentJobDependency::JobId { job_id } => {
+                    wire_job_id(&job_id).map(|job_id| JobDependency::JobId { job_id })
+                }
+                EnvironmentJobDependency::Name { name } => JobName::new(name)
+                    .map(|name| JobDependency::Name { name })
+                    .map_err(|error| format!("job dependency name: {error}")),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        dependency_policy: match dependency_policy {
+            EnvironmentJobDependencyPolicy::AllSucceeded => JobDependencyPolicy::AllSucceeded,
+            EnvironmentJobDependencyPolicy::AllTerminal => JobDependencyPolicy::AllTerminal,
+        },
+        queue_key: queue_key
+            .map(|key| {
+                QueueKey::new(key).map_err(|error| format!("job {job_id} queue key: {error}"))
+            })
+            .transpose()?,
+        job_id,
+    })
+}
+
+fn wire_job_id(job_id: &EnvironmentJobId) -> Result<JobId, String> {
+    JobId::new(job_id.as_str()).map_err(|error| format!("job id {job_id}: {error}"))
+}
+
+/// The workflow's record of a daemon summary.
+fn job_record(summary: &JobSummary) -> EnvironmentJobRecord {
+    EnvironmentJobRecord {
+        job_id: EnvironmentJobId::new(summary.job_id.as_str()),
+        name: summary.name.as_ref().map(|name| name.as_str().to_owned()),
+        status: job_status(summary.status),
+        depends_on: summary
+            .depends_on
+            .iter()
+            .map(|job_id| EnvironmentJobId::new(job_id.as_str()))
+            .collect(),
+        queue_key: summary
+            .queue_key
+            .as_ref()
+            .map(|key| key.as_str().to_owned()),
+    }
+}
+
+fn job_status(status: JobStatus) -> EnvironmentJobStatus {
+    match status {
+        JobStatus::Queued => EnvironmentJobStatus::Queued,
+        JobStatus::Running => EnvironmentJobStatus::Running,
+        JobStatus::Succeeded => EnvironmentJobStatus::Succeeded,
+        JobStatus::Failed => EnvironmentJobStatus::Failed,
+        JobStatus::TimedOut => EnvironmentJobStatus::TimedOut,
+        JobStatus::Cancelled => EnvironmentJobStatus::Cancelled,
+        JobStatus::DependencyFailed => EnvironmentJobStatus::DependencyFailed,
+        JobStatus::Interrupted => EnvironmentJobStatus::Interrupted,
+    }
+}
+
+/// A per-entry error: `notFound` is the workflow's `lost` outcome; any
+/// other entry error means the daemon broke the contract.
+fn entry_error_observation(
+    job_id: &JobId,
+    error: ProtocolError,
+) -> Result<EnvironmentJobObservation, ActivityError> {
+    if error.kind() == ProtocolErrorKind::NotFound {
+        Ok(EnvironmentJobObservation::NotFound {
+            job_id: EnvironmentJobId::new(job_id.as_str()),
+        })
+    } else {
+        Err(activity_error(anyhow::anyhow!(
+            "environment answered job {job_id} with {error}"
+        )))
+    }
 }
 
 pub(super) async fn start(
     deps: Option<&EnvironmentJobActivityDeps>,
     request: EnvironmentJobStartActivityRequest,
 ) -> Result<EnvironmentJobStartActivityResult, ActivityError> {
-    let deps = deps.ok_or_else(|| {
-        activity_error(anyhow::anyhow!(
-            "environment job activities are not configured"
-        ))
-    })?;
+    let deps = configured(deps)?;
     let environment_id =
         EnvironmentId::try_new(request.environment_id.clone()).map_err(activity_error)?;
-    let mut payload: EnvironmentJobStartPayload = serde_json::from_slice(
+    let payload = EnvironmentJobStartPayloadV1::decode(
         &deps
             .blobs
             .read_bytes(&request.request_ref)
             .await
             .map_err(activity_error)?,
     )
-    .map_err(activity_error)?;
-    if payload.request.namespace != environment_id.as_str() {
-        return Err(activity_error(anyhow::anyhow!(
-            "environment job start namespace does not match instance {environment_id}"
-        )));
-    }
-
-    for job in &mut payload.request.jobs {
+    .map_err(non_retryable_activity_error)?;
+    let request_id = JobRequestId::new(payload.request_id.clone()).map_err(|error| {
+        non_retryable_activity_error(anyhow::anyhow!("job request id: {error}"))
+    })?;
+    let requested_ids = payload.job_ids().into_iter().collect::<BTreeSet<_>>();
+    let mut jobs = Vec::with_capacity(payload.jobs.len());
+    for spec in payload.jobs {
+        let mut job = wire_job_spec(spec)
+            .map_err(|error| non_retryable_activity_error(anyhow::anyhow!(error)))?;
         let secret_env = deps
             .credentials
-            .resolve_secret_env(&environment_id, &job.env)
+            .resolve_secret_env(&environment_id, &job.command.env)
             .await
             .map_err(activity_error)?;
-        job.secret_env.extend(secret_env);
+        job.command.secret_env.extend(secret_env);
+        jobs.push(job);
     }
 
-    start_on_provider(deps, &environment_id, &payload).await
-}
-
-async fn start_on_provider(
-    deps: &EnvironmentJobActivityDeps,
-    environment_id: &EnvironmentId,
-    payload: &EnvironmentJobStartPayload,
-) -> Result<EnvironmentJobStartActivityResult, ActivityError> {
     let instance = deps
         .environments
-        .read_environment(environment_id)
+        .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
     if matches!(
@@ -337,131 +509,152 @@ async fn start_on_provider(
             "cannot start jobs on closing environment instance {environment_id}"
         )));
     }
-    let gateway = deps.gateway.as_ref().ok_or_else(|| {
-        non_retryable_activity_error(anyhow::anyhow!(
-            "environment gateway is not configured on this worker"
-        ))
-    })?;
-    let connection = gateway.connection_for(deps.universe_id, &instance);
-    let (mut client, capabilities) = initialized_client(&connection, gateway).await?;
-    if !capabilities.job_start {
-        return Err(non_retryable_activity_error(anyhow::anyhow!(
-            "environment does not support durable job start: {environment_id}"
-        )));
-    }
+    let client = job_client(deps, &instance).await?;
     let response = client
-        .start_jobs(&payload.request)
-        .await
-        .map_err(start_environment_activity_error)?;
-    let requested_ids = payload
-        .request
-        .jobs
+        .start_jobs(&StartJobsParams { request_id, jobs })
+        .await;
+    let _ = client.close().await;
+    let response = response.map_err(client_activity_error)?;
+    let records = response.jobs.iter().map(job_record).collect::<Vec<_>>();
+    let returned_ids = records
         .iter()
-        .map(|job| job.job_id.clone())
-        .collect::<BTreeSet<_>>();
-    let returned_ids = response
-        .jobs
-        .iter()
-        .map(|job| job.job_id.clone())
+        .map(|record| record.job_id.clone())
         .collect::<BTreeSet<_>>();
     if requested_ids != returned_ids {
         return Err(non_retryable_activity_error(anyhow::anyhow!(
-            "environment provider start response job ids do not match the request"
+            "environment start response job ids do not match the request"
         )));
     }
-    Ok(EnvironmentJobStartActivityResult {
-        jobs: response.jobs,
-    })
-}
-
-fn start_environment_activity_error(error: EnvironmentClientError) -> ActivityError {
-    match &error {
-        EnvironmentClientError::Protocol(error)
-            if matches!(
-                error.code,
-                EnvironmentProtocolErrorCode::InvalidRequest
-                    | EnvironmentProtocolErrorCode::Unauthorized
-                    | EnvironmentProtocolErrorCode::Forbidden
-                    | EnvironmentProtocolErrorCode::NotFound
-                    | EnvironmentProtocolErrorCode::Conflict
-                    | EnvironmentProtocolErrorCode::Unsupported
-                    | EnvironmentProtocolErrorCode::CapabilityUnavailable
-            ) =>
-        {
-            non_retryable_activity_error(anyhow::anyhow!(error.message.clone()))
-        }
-        _ => activity_error(error),
-    }
-}
-
-fn non_retryable_activity_error(error: impl Into<anyhow::Error>) -> ActivityError {
-    ActivityError::application(ApplicationFailure::non_retryable(error.into()))
+    Ok(EnvironmentJobStartActivityResult { jobs: records })
 }
 
 pub(super) async fn poll(
     deps: Option<&EnvironmentJobActivityDeps>,
     request: EnvironmentJobPollActivityRequest,
 ) -> Result<EnvironmentJobPollActivityResult, ActivityError> {
-    let deps = deps.ok_or_else(|| {
-        activity_error(anyhow::anyhow!(
-            "environment job activities are not configured"
-        ))
-    })?;
+    let deps = configured(deps)?;
     let environment_id = EnvironmentId::try_new(request.environment_id).map_err(activity_error)?;
+    let job_ids = request
+        .job_ids
+        .iter()
+        .map(wire_job_id)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| non_retryable_activity_error(anyhow::anyhow!(error)))?;
+    if job_ids.is_empty() {
+        return Ok(EnvironmentJobPollActivityResult {
+            jobs: Vec::new(),
+            resolutions: BTreeMap::new(),
+        });
+    }
     let instance = deps
         .environments
         .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
-    let gateway = deps.gateway.as_ref().ok_or_else(|| {
-        non_retryable_activity_error(anyhow::anyhow!(
-            "environment gateway is not configured on this worker"
-        ))
-    })?;
-    let connection = gateway.connection_for(deps.universe_id, &instance);
-    let (mut client, _) = initialized_client(&connection, gateway).await?;
-    let requested_job_ids = request.job_ids.iter().cloned().collect::<BTreeSet<_>>();
-    let response = client
-        .read_jobs(&ReadJobsParams {
-            namespace: environment_id.as_str().to_owned(),
-            jobs: request.job_ids,
-            after_seq: None,
-            max_bytes: Some(PROMISE_JOB_OUTPUT_BYTES),
-            include_artifacts: true,
-            wait_ms: None,
-        })
-        .await
-        .map_err(activity_error)?;
-    let mut jobs = Vec::with_capacity(response.jobs.len());
-    let mut resolutions = BTreeMap::new();
-    for result in response.jobs {
-        let summary = result.summary.clone();
-        if summary.status.is_terminal() {
-            let error = (summary.status != JobStatus::Succeeded).then(|| {
-                summary.failure.clone().unwrap_or_else(|| {
-                    format!(
-                        "environment job {} ended as {:?}",
-                        summary.job_id, summary.status
-                    )
-                })
-            });
-            let normalized = normalize_job_result(
-                deps.blobs.as_ref(),
-                NormalizeJobResultInput {
-                    handle: Some(JobHandle {
-                        environment_id: environment_id.as_str().to_owned(),
-                        job_id: summary.job_id.clone(),
-                    }),
-                    summary: Some(result.summary),
-                    output_chunks: result.output_chunks,
-                    output_next_seq: result.output_next_seq,
-                    artifacts: result.artifacts,
-                    error,
-                    output_bytes: Some(PROMISE_JOB_OUTPUT_BYTES),
-                },
-            )
+    let client = job_client(deps, &instance).await?;
+    let result = poll_jobs(deps, &client, &environment_id, &job_ids).await;
+    let _ = client.close().await;
+    result
+}
+
+async fn poll_jobs(
+    deps: &EnvironmentJobActivityDeps,
+    client: &DataClient,
+    environment_id: &EnvironmentId,
+    job_ids: &[JobId],
+) -> Result<EnvironmentJobPollActivityResult, ActivityError> {
+    let limits = client.initialize_response().limits.job.clone();
+    let per_request = (limits.max_request_jobs as usize).max(1);
+    let mut jobs = Vec::with_capacity(job_ids.len());
+    let mut terminal = Vec::new();
+    // Summaries first, without output: most polls find running jobs.
+    for chunk in job_ids.chunks(per_request) {
+        let response = client
+            .read_jobs(&ReadJobsParams {
+                jobs: chunk
+                    .iter()
+                    .map(|job_id| JobReadRequest {
+                        job_id: job_id.clone(),
+                        after: None,
+                        tail_bytes: None,
+                        max_bytes: None,
+                    })
+                    .collect(),
+                max_bytes: 0,
+                wait_ms: 0,
+                return_on: ReturnOn::AnyOutput,
+            })
             .await
-            .map_err(activity_error)?;
+            .map_err(client_activity_error)?;
+        for (job_id, entry) in chunk.iter().zip(response.jobs) {
+            match entry {
+                JobReadEntry::Job { summary, .. } => {
+                    let record = job_record(&summary);
+                    if record.status.is_terminal() {
+                        terminal.push((job_id.clone(), record.status));
+                    }
+                    jobs.push(EnvironmentJobObservation::Job { record });
+                }
+                JobReadEntry::Error { job_id, error } => {
+                    jobs.push(entry_error_observation(&job_id, error)?);
+                }
+            }
+        }
+    }
+
+    let mut resolutions = BTreeMap::new();
+    for observation in &jobs {
+        if let EnvironmentJobObservation::NotFound { job_id } = observation {
+            let handle = job_handle(environment_id, job_id)?;
+            let result = model_job_error(
+                Some(handle),
+                format!("environment no longer knows job {job_id}"),
+            );
+            let result_ref =
+                store_model_job_result(deps.blobs.as_ref(), deps.blob_graph.as_deref(), &result)
+                    .await
+                    .map_err(activity_error)?;
+            resolutions.insert(
+                job_id.as_str().to_owned(),
+                PromiseSourceCheckResult::Failed {
+                    error_ref: Some(result_ref),
+                },
+            );
+        }
+    }
+
+    // Each terminal job's result shows the head and the tail of its output.
+    let per_read = (per_request / 2).max(1);
+    for chunk in terminal.chunks(per_read) {
+        let ids = chunk
+            .iter()
+            .map(|(job_id, _)| job_id.clone())
+            .collect::<Vec<_>>();
+        let output_bytes = DEFAULT_JOB_OUTPUT_BYTES.min(limits.max_read_bytes / ids.len() as u64);
+        let response = client
+            .read_jobs(&job_output_read(&ids, None, output_bytes))
+            .await
+            .map_err(client_activity_error)?;
+        let mut entries = response.jobs.into_iter();
+        for (job_id, status) in chunk {
+            let handle = job_handle(environment_id, &EnvironmentJobId::new(job_id.as_str()))?;
+            let mut input = NormalizeJobResultInput::from_entries(
+                Some(handle),
+                entries.by_ref().take(2).collect::<Vec<_>>(),
+            );
+            if !status.is_success() && input.error.is_none() {
+                input.error = Some(
+                    match input.summary.as_ref().and_then(|s| s.error.as_ref()) {
+                        Some(error) => {
+                            format!("environment job {job_id} ended {status:?}: {error}")
+                        }
+                        None => format!("environment job {job_id} ended {status:?}"),
+                    },
+                );
+            }
+            let normalized = normalize_job_result(deps.blobs.as_ref(), input)
+                .await
+                .map_err(activity_error)?;
             let result_ref = store_model_job_result(
                 deps.blobs.as_ref(),
                 deps.blob_graph.as_deref(),
@@ -469,7 +662,7 @@ pub(super) async fn poll(
             )
             .await
             .map_err(activity_error)?;
-            let resolution = if summary.status == JobStatus::Succeeded {
+            let resolution = if status.is_success() {
                 PromiseSourceCheckResult::Resolved {
                     payload_ref: Some(result_ref),
                 }
@@ -478,99 +671,311 @@ pub(super) async fn poll(
                     error_ref: Some(result_ref),
                 }
             };
-            resolutions.insert(summary.job_id.as_str().to_owned(), resolution);
+            resolutions.insert(job_id.as_str().to_owned(), resolution);
         }
-        jobs.push(summary);
     }
-    let returned_job_ids = jobs
-        .iter()
-        .map(|job| job.job_id.clone())
-        .collect::<BTreeSet<_>>();
-    let terminal = returned_job_ids == requested_job_ids
-        && !jobs.is_empty()
-        && jobs.iter().all(|job| job.status.is_terminal());
-    Ok(EnvironmentJobPollActivityResult {
-        jobs,
-        resolutions,
-        terminal,
+    Ok(EnvironmentJobPollActivityResult { jobs, resolutions })
+}
+
+fn job_handle(
+    environment_id: &EnvironmentId,
+    job_id: &EnvironmentJobId,
+) -> Result<JobHandle, ActivityError> {
+    Ok(JobHandle {
+        environment_id: environment_id.as_str().to_owned(),
+        job_id: wire_job_id(job_id)
+            .map_err(|error| non_retryable_activity_error(anyhow::anyhow!(error)))?,
     })
 }
 
 pub(super) async fn cancel(
     deps: Option<&EnvironmentJobActivityDeps>,
     request: EnvironmentJobCancelActivityRequest,
-) -> Result<Vec<environment_protocol::data::jobs::JobSummary>, ActivityError> {
-    let deps = deps.ok_or_else(|| {
-        activity_error(anyhow::anyhow!(
-            "environment job activities are not configured"
-        ))
-    })?;
+) -> Result<EnvironmentJobCancelActivityResult, ActivityError> {
+    let deps = configured(deps)?;
     let environment_id = EnvironmentId::try_new(request.environment_id).map_err(activity_error)?;
+    let job_ids = request
+        .jobs
+        .iter()
+        .map(wire_job_id)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| non_retryable_activity_error(anyhow::anyhow!(error)))?;
+    if job_ids.is_empty() {
+        return Ok(EnvironmentJobCancelActivityResult { jobs: Vec::new() });
+    }
     let instance = deps
         .environments
         .read_environment(&environment_id)
         .await
         .map_err(activity_error)?;
+    let client = job_client(deps, &instance).await?;
+    let result = cancel_jobs(&client, &job_ids, request.scope, request.force).await;
+    let _ = client.close().await;
+    result
+}
+
+async fn cancel_jobs(
+    client: &DataClient,
+    job_ids: &[JobId],
+    scope: EnvironmentJobCancelScope,
+    force: bool,
+) -> Result<EnvironmentJobCancelActivityResult, ActivityError> {
+    let per_request = (client.initialize_response().limits.job.max_request_jobs as usize).max(1);
+    let scope = match scope {
+        EnvironmentJobCancelScope::Job => JobCancelScope::Job,
+        EnvironmentJobCancelScope::Dependents => JobCancelScope::Dependents,
+    };
+    let mut jobs = Vec::new();
+    for chunk in job_ids.chunks(per_request) {
+        let response = client
+            .cancel_jobs(&CancelJobsParams {
+                job_ids: chunk.to_vec(),
+                scope,
+                force,
+            })
+            .await
+            .map_err(client_activity_error)?;
+        for entry in response.jobs {
+            jobs.push(match entry {
+                JobSummaryEntry::Job { summary } => EnvironmentJobObservation::Job {
+                    record: job_record(&summary),
+                },
+                JobSummaryEntry::Error { job_id, error } => {
+                    entry_error_observation(&job_id, error)?
+                }
+            });
+        }
+    }
+    Ok(EnvironmentJobCancelActivityResult { jobs })
+}
+
+fn configured(
+    deps: Option<&EnvironmentJobActivityDeps>,
+) -> Result<&EnvironmentJobActivityDeps, ActivityError> {
+    deps.ok_or_else(|| {
+        activity_error(anyhow::anyhow!(
+            "environment job activities are not configured"
+        ))
+    })
+}
+
+/// An initialized data client for the environment's current incarnation;
+/// the daemon must serve the `job` family.
+async fn job_client(
+    deps: &EnvironmentJobActivityDeps,
+    instance: &EnvironmentRecord,
+) -> Result<DataClient, ActivityError> {
     let gateway = deps.gateway.as_ref().ok_or_else(|| {
         non_retryable_activity_error(anyhow::anyhow!(
             "environment gateway is not configured on this worker"
         ))
     })?;
-    let connection = gateway.connection_for(deps.universe_id, &instance);
-    let (mut client, _) = initialized_client(&connection, gateway).await?;
-    let response = client
-        .cancel_jobs(&CancelJobsParams {
-            namespace: environment_id.as_str().to_owned(),
-            jobs: request.jobs,
-            scope: request.scope,
-            force: request.force,
-        })
-        .await
-        .map_err(activity_error)?;
-    Ok(response.jobs)
-}
-
-async fn initialized_client(
-    connection: &EnvironmentDataConnection,
-    gateway: &crate::environments::gateway::EnvironmentGatewayClientConfig,
-) -> Result<
-    (
-        EnvironmentDataClient<environment_client::WebSocketTransport>,
-        environment_protocol::shared::EnvironmentCapabilities,
-    ),
-    ActivityError,
-> {
-    if connection.transport != EnvironmentTransport::WebSocket {
-        return Err(activity_error(anyhow::anyhow!(
-            "unsupported environment job transport: {:?}",
-            connection.transport
-        )));
-    }
-    let mut client = EnvironmentDataClient::connect(
-        &connection.endpoint,
-        gateway.connect_options("lightspeed-environment-job-workflow"),
+    let endpoint = gateway.endpoint_for(deps.universe_id, instance);
+    let (client, initialized) = DataClient::connect_initialized(
+        &endpoint,
+        gateway
+            .connect_options(JOB_ACTIVITY_USER_AGENT)
+            .with_request_timeout(JOB_REQUEST_TIMEOUT),
     )
     .await
-    .map_err(activity_error)?;
-    let response = client
-        .initialize(&InitializeParams {
-            protocol_version: CURRENT_PROTOCOL_VERSION,
-            client_name: "lightspeed-environment-job-workflow".to_owned(),
-            scope: connection.scope.clone(),
-            resume_connection_id: None,
-        })
-        .await
-        .map_err(activity_error)?;
-    if response.protocol_version != CURRENT_PROTOCOL_VERSION {
-        return Err(activity_error(anyhow::anyhow!(
-            "unsupported environment protocol version {}",
-            response.protocol_version
+    .map_err(client_activity_error)?;
+    if initialized.capabilities.job.is_none() {
+        let _ = client.close().await;
+        return Err(non_retryable_activity_error(anyhow::anyhow!(
+            "environment does not serve durable jobs: {}",
+            instance.environment_id
         )));
     }
-    let capabilities = response.capabilities;
-    client
-        .initialized(&InitializedParams {})
-        .await
-        .map_err(activity_error)?;
-    Ok((client, capabilities))
+    Ok(client)
+}
+
+/// Retry what may pass on a later attempt (transport trouble, busy or
+/// unavailable daemons, server defects); refusals of the request itself,
+/// such as `invalidParams` or `failedPrecondition {jobIdInUse}`, and
+/// version or plane mismatches fail the activity for good.
+fn client_activity_error(error: ClientError) -> ActivityError {
+    if is_transient(&error) {
+        activity_error(error)
+    } else {
+        non_retryable_activity_error(error)
+    }
+}
+
+fn is_transient(error: &ClientError) -> bool {
+    error.is_retryable()
+        || matches!(
+            error,
+            ClientError::Decode(_) | ClientError::InvalidMessage(_)
+        )
+        || error.protocol_kind() == Some(ProtocolErrorKind::Internal)
+}
+
+fn non_retryable_activity_error(error: impl Into<anyhow::Error>) -> ActivityError {
+    ActivityError::application(ApplicationFailure::non_retryable(error.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use environment_protocol::error::PreconditionReason;
+
+    use super::*;
+
+    fn submitted_spec() -> JobSpec {
+        JobSpec {
+            job_id: JobId::new("build").unwrap(),
+            name: Some(JobName::new("build & test").unwrap()),
+            command: CommandSpec {
+                argv: vec!["make".to_owned(), "test".to_owned()],
+                cwd: Some(EnvironmentPath::new("/workspace").unwrap()),
+                env: BTreeMap::from([("CI".to_owned(), "1".to_owned())]),
+                secret_env: BTreeMap::new(),
+                input: ExecInput::Bytes {
+                    data: ByteChunk::from(b"input".to_vec()),
+                },
+                timeout_ms: Some(1_000),
+            },
+            depends_on: vec![
+                JobDependency::JobId {
+                    job_id: JobId::new("setup").unwrap(),
+                },
+                JobDependency::Name {
+                    name: JobName::new("lint").unwrap(),
+                },
+            ],
+            dependency_policy: JobDependencyPolicy::AllTerminal,
+            queue_key: Some(QueueKey::new("ci").unwrap()),
+        }
+    }
+
+    #[test]
+    fn stored_specs_map_back_onto_the_wire_unchanged() {
+        let spec = submitted_spec();
+        let stored = workflow_job_spec(spec.clone()).unwrap();
+        assert_eq!(stored.command.stdin.as_deref(), Some("input"));
+        assert_eq!(stored.command.cwd.as_deref(), Some("/workspace"));
+        assert_eq!(wire_job_spec(stored).unwrap(), spec);
+    }
+
+    #[test]
+    fn stored_specs_never_hold_secrets_or_pipes() {
+        let mut secret = submitted_spec();
+        secret
+            .command
+            .secret_env
+            .insert("TOKEN".to_owned(), "value".into());
+        assert!(workflow_job_spec(secret).is_err());
+        let mut piped = submitted_spec();
+        piped.command.input = ExecInput::Pipe {};
+        assert!(workflow_job_spec(piped).is_err());
+    }
+
+    #[test]
+    fn invalid_stored_ids_are_refused_at_the_wire_boundary() {
+        let mut stored = workflow_job_spec(submitted_spec()).unwrap();
+        stored.job_id = EnvironmentJobId::new("not a job id");
+        assert!(wire_job_spec(stored).is_err());
+    }
+
+    #[test]
+    fn request_ids_fit_the_id_grammar_for_any_call_id() {
+        assert_eq!(
+            workflow_tool_request_id(1, 2, 3, "toolu_01").as_str(),
+            "jobreq:1:2:3:toolu_01"
+        );
+        let hashed = workflow_tool_request_id(1, 2, 3, "call id/with spaces");
+        assert!(hashed.as_str().starts_with("jobreq-"));
+        assert_eq!(
+            hashed,
+            workflow_tool_request_id(1, 2, 3, "call id/with spaces")
+        );
+        assert!(
+            derived_job_run_id("invocation")
+                .as_str()
+                .starts_with("job-")
+        );
+    }
+
+    #[test]
+    fn job_group_ids_follow_the_encoded_payload() {
+        let environment_id = EnvironmentId::new("environment_1");
+        let payload = EnvironmentJobStartPayloadV1::new(
+            "jobreq:1:1:1:call",
+            vec![workflow_job_spec(submitted_spec()).unwrap()],
+        );
+        let encoded = payload.encode().unwrap();
+        let first = derived_job_group_id(&environment_id, &BlobRef::from_bytes(&encoded));
+        assert_eq!(
+            first,
+            derived_job_group_id(&environment_id, &BlobRef::from_bytes(&encoded))
+        );
+        let other = EnvironmentJobStartPayloadV1::new("jobreq:1:1:1:other", payload.jobs.clone());
+        assert_ne!(
+            first,
+            derived_job_group_id(
+                &environment_id,
+                &BlobRef::from_bytes(&other.encode().unwrap())
+            )
+        );
+    }
+
+    #[test]
+    fn not_found_entries_become_lost_observations() {
+        let job_id = JobId::new("build").unwrap();
+        assert_eq!(
+            entry_error_observation(&job_id, ProtocolError::not_found("unknown job")).unwrap(),
+            EnvironmentJobObservation::NotFound {
+                job_id: EnvironmentJobId::new("build")
+            }
+        );
+        assert!(entry_error_observation(&job_id, ProtocolError::internal("broken")).is_err());
+    }
+
+    #[test]
+    fn refusals_are_terminal_and_transport_trouble_is_retried() {
+        let retryable = |error: ClientError| is_transient(&error);
+        assert!(!retryable(ClientError::Protocol(
+            ProtocolError::failed_precondition(PreconditionReason::JobIdInUse, "job id in use")
+        )));
+        assert!(!retryable(ClientError::Protocol(
+            ProtocolError::invalid_params("bad")
+        )));
+        assert!(retryable(ClientError::Protocol(
+            ProtocolError::unavailable("daemon restarting")
+        )));
+        assert!(retryable(ClientError::Protocol(ProtocolError::internal(
+            "bug"
+        ))));
+        assert!(retryable(ClientError::Connect {
+            endpoint: "ws://gateway.test".to_owned(),
+            message: "refused".to_owned(),
+        }));
+        assert!(retryable(ClientError::DeadlineExceeded {
+            elapsed_ms: 60_000
+        }));
+    }
+
+    #[test]
+    fn daemon_summaries_map_onto_workflow_records() {
+        let summary: JobSummary = serde_json::from_value(serde_json::json!({
+            "jobId": "build",
+            "requestId": "jobreq:1:1:1:call",
+            "name": "build",
+            "status": "timedOut",
+            "dependsOn": ["setup"],
+            "queueKey": "ci",
+            "createdAtMs": 1,
+            "stoppedBy": "timeout",
+        }))
+        .unwrap();
+        assert_eq!(
+            job_record(&summary),
+            EnvironmentJobRecord {
+                job_id: EnvironmentJobId::new("build"),
+                name: Some("build".to_owned()),
+                status: EnvironmentJobStatus::TimedOut,
+                depends_on: vec![EnvironmentJobId::new("setup")],
+                queue_key: Some("ci".to_owned()),
+            }
+        );
+    }
 }

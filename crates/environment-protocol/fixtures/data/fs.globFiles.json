@@ -1,0 +1,33 @@
+{
+  "params": {
+    "root": "/workspace",
+    "filter": {
+      "include": [
+        "**/SKILL.md"
+      ],
+      "ignoreCase": true,
+      "includeHidden": true,
+      "includeIgnored": true
+    },
+    "limits": {
+      "maxMatches": 1000,
+      "maxFiles": 5000,
+      "maxDurationMs": 30000
+    }
+  },
+  "response": {
+    "matches": [
+      "/workspace/.agents/skills/review/SKILL.md"
+    ],
+    "visitedFileCount": 310,
+    "elapsedMs": 12
+  },
+  "error": {
+    "code": -32017,
+    "message": "request cancelled",
+    "data": {
+      "kind": "aborted",
+      "reason": "cancelled"
+    }
+  }
+}

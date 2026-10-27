@@ -10,10 +10,12 @@ use temporalio_sdk::{
 
 use crate::{
     AgentSessionWorkflow, DEFAULT_CONTINUE_AS_NEW_HISTORY_THRESHOLD,
-    EnvironmentJobCancelActivityRequest, EnvironmentJobCancelSignal,
-    EnvironmentJobPollActivityRequest, EnvironmentJobSubscription, EnvironmentJobWorkflowInput,
-    EnvironmentJobWorkflowSnapshot, EnvironmentJobWorkflowToolContext, WorkflowActivities,
-    WorkflowToolRecoveryResult, compose_environment_job_workflow_id,
+    EnvironmentJobCancelActivityRequest, EnvironmentJobCancelScope, EnvironmentJobCancelSignal,
+    EnvironmentJobId, EnvironmentJobObservation, EnvironmentJobPollActivityRequest,
+    EnvironmentJobPollActivityResult, EnvironmentJobRecord, EnvironmentJobStatus,
+    EnvironmentJobSubscription, EnvironmentJobWorkflowInput, EnvironmentJobWorkflowSnapshot,
+    EnvironmentJobWorkflowToolContext, WorkflowActivities, WorkflowToolRecoveryResult,
+    compose_environment_job_workflow_id,
 };
 
 #[workflow]
@@ -82,6 +84,7 @@ impl EnvironmentJobWorkflow {
             state.snapshot.started = args.started;
             state.snapshot.jobs = args.jobs.clone();
             state.snapshot.resolutions = args.resolutions.clone();
+            refresh_terminal(&mut state.snapshot, &args.job_ids);
             state.workflow_tool = args.workflow_tool.clone();
             for subscription in args.subscriptions.drain(..) {
                 if !state.subscriptions.iter().any(|existing| {
@@ -137,17 +140,9 @@ impl EnvironmentJobWorkflow {
                     )
                     .await
                 {
-                    Ok(jobs) => ctx.state_mut(|state| {
-                        for job in jobs {
-                            if let Some(existing) = state
-                                .snapshot
-                                .jobs
-                                .iter_mut()
-                                .find(|existing| existing.job_id == job.job_id)
-                            {
-                                *existing = job;
-                            }
-                        }
+                    Ok(result) => ctx.state_mut(|state| {
+                        apply_observations(&mut state.snapshot, &args.job_ids, result.jobs);
+                        refresh_terminal(&mut state.snapshot, &args.job_ids);
                         state.snapshot.last_error = None;
                     }),
                     Err(error) => {
@@ -156,7 +151,8 @@ impl EnvironmentJobWorkflow {
                 }
             }
 
-            if !ctx.state(|state| state.snapshot.terminal) {
+            let unsettled = ctx.state(|state| unsettled_job_ids(&state.snapshot, &args.job_ids));
+            if !unsettled.is_empty() {
                 match ctx
                     .execute_local_activity(
                         WorkflowActivities::environment_job_poll,
@@ -164,7 +160,7 @@ impl EnvironmentJobWorkflow {
                             universe_id: args.universe_id,
                             environment_id: args.start.environment_id.clone(),
                             job_group_id: args.start.job_group_id.clone(),
-                            job_ids: args.job_ids.clone(),
+                            job_ids: unsettled,
                         },
                         environment_job_activity_options(),
                     )
@@ -172,9 +168,7 @@ impl EnvironmentJobWorkflow {
                 {
                     Ok(result) => {
                         ctx.state_mut(|state| {
-                            state.snapshot.jobs = result.jobs;
-                            state.snapshot.resolutions.extend(result.resolutions);
-                            state.snapshot.terminal = result.terminal;
+                            apply_poll_result(&mut state.snapshot, &args.job_ids, result);
                             state.snapshot.last_error = None;
                         });
                     }
@@ -298,12 +292,92 @@ async fn cancel_workflow_jobs(
                 universe_id: args.universe_id,
                 environment_id: args.start.environment_id.clone(),
                 jobs,
-                scope: environment_protocol::data::jobs::JobCancelScope::Job,
+                scope: EnvironmentJobCancelScope::Job,
                 force: false,
             },
             environment_job_activity_options(),
         )
         .await;
+}
+
+/// Apply a poll: record the resolutions, then the observations. A job the
+/// daemon answered `notFound` for is `lost`; when the activity returned no
+/// resolution for it, the job still settles as a failure without a payload,
+/// so its subscribers are released.
+fn apply_poll_result(
+    snapshot: &mut EnvironmentJobWorkflowSnapshot,
+    job_ids: &[EnvironmentJobId],
+    result: EnvironmentJobPollActivityResult,
+) {
+    snapshot.resolutions.extend(
+        result
+            .resolutions
+            .into_iter()
+            .filter(|(job_id, _)| job_ids.iter().any(|id| id.as_str() == job_id)),
+    );
+    for observation in &result.jobs {
+        if let EnvironmentJobObservation::NotFound { job_id } = observation
+            && job_ids.contains(job_id)
+        {
+            snapshot
+                .resolutions
+                .entry(job_id.as_str().to_owned())
+                .or_insert(harness::PromiseSourceCheckResult::Failed { error_ref: None });
+        }
+    }
+    apply_observations(snapshot, job_ids, result.jobs);
+    refresh_terminal(snapshot, job_ids);
+}
+
+/// A summary replaces the job's record; `notFound` marks the job `lost`,
+/// keeping what the workflow already knew about it. Observations of jobs
+/// outside the group (such as dependents a cancel reached) are ignored.
+fn apply_observations(
+    snapshot: &mut EnvironmentJobWorkflowSnapshot,
+    job_ids: &[EnvironmentJobId],
+    observations: Vec<EnvironmentJobObservation>,
+) {
+    for observation in observations {
+        if !job_ids.contains(observation.job_id()) {
+            continue;
+        }
+        let existing = snapshot
+            .jobs
+            .iter_mut()
+            .find(|existing| &existing.job_id == observation.job_id());
+        match (observation, existing) {
+            (EnvironmentJobObservation::Job { record }, Some(existing)) => *existing = record,
+            (EnvironmentJobObservation::Job { record }, None) => snapshot.jobs.push(record),
+            (EnvironmentJobObservation::NotFound { .. }, Some(existing)) => {
+                existing.status = EnvironmentJobStatus::Lost;
+            }
+            (EnvironmentJobObservation::NotFound { job_id }, None) => {
+                snapshot.jobs.push(EnvironmentJobRecord::lost(job_id));
+            }
+        }
+    }
+}
+
+/// Jobs of the group without both a terminal record and a resolution.
+fn unsettled_job_ids(
+    snapshot: &EnvironmentJobWorkflowSnapshot,
+    job_ids: &[EnvironmentJobId],
+) -> Vec<EnvironmentJobId> {
+    job_ids
+        .iter()
+        .filter(|job_id| {
+            let terminal = snapshot
+                .jobs
+                .iter()
+                .any(|job| &job.job_id == *job_id && job.status.is_terminal());
+            !(terminal && snapshot.resolutions.contains_key(job_id.as_str()))
+        })
+        .cloned()
+        .collect()
+}
+
+fn refresh_terminal(snapshot: &mut EnvironmentJobWorkflowSnapshot, job_ids: &[EnvironmentJobId]) {
+    snapshot.terminal = !job_ids.is_empty() && unsettled_job_ids(snapshot, job_ids).is_empty();
 }
 
 /// Environment jobs deliberately remain co-located with the core environment
@@ -358,7 +432,7 @@ fn queue_workflow_tool_cancellation(
     {
         state.pending_cancels.push(EnvironmentJobCancelSignal {
             jobs: vec![subscription.job_id.clone()],
-            scope: environment_protocol::data::jobs::JobCancelScope::Job,
+            scope: EnvironmentJobCancelScope::Job,
             force: false,
         });
     }
@@ -456,7 +530,8 @@ fn workflow_tool_recovery(state: &EnvironmentJobWorkflow) -> WorkflowToolRecover
 
 #[cfg(test)]
 mod tests {
-    use environment_protocol::shared::JobId;
+    use std::collections::BTreeMap;
+
     use harness::{BlobRef, PromiseSourceCheckResult};
 
     use super::*;
@@ -466,7 +541,7 @@ mod tests {
             holder_workflow_id: "universe/session_1".to_owned(),
             promise_id: "promise_1".to_owned(),
             completion_key: "job_1".to_owned(),
-            job_id: JobId::new("job_1"),
+            job_id: EnvironmentJobId::new("job_1"),
             notified: false,
         }
     }
@@ -515,6 +590,143 @@ mod tests {
         assert!(second.is_empty());
     }
 
+    fn record(job_id: &str, status: EnvironmentJobStatus) -> EnvironmentJobRecord {
+        EnvironmentJobRecord {
+            job_id: EnvironmentJobId::new(job_id),
+            name: Some(job_id.to_owned()),
+            status,
+            depends_on: Vec::new(),
+            queue_key: None,
+        }
+    }
+
+    #[test]
+    fn not_found_settles_the_job_as_lost() {
+        let job_ids = vec![
+            EnvironmentJobId::new("job_1"),
+            EnvironmentJobId::new("job_2"),
+        ];
+        let mut snapshot = EnvironmentJobWorkflowSnapshot {
+            started: true,
+            jobs: vec![
+                record("job_1", EnvironmentJobStatus::Running),
+                record("job_2", EnvironmentJobStatus::Queued),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(unsettled_job_ids(&snapshot, &job_ids), job_ids);
+
+        let done = BlobRef::from_bytes(b"done");
+        apply_poll_result(
+            &mut snapshot,
+            &job_ids,
+            EnvironmentJobPollActivityResult {
+                jobs: vec![
+                    EnvironmentJobObservation::Job {
+                        record: record("job_1", EnvironmentJobStatus::Succeeded),
+                    },
+                    EnvironmentJobObservation::NotFound {
+                        job_id: EnvironmentJobId::new("job_2"),
+                    },
+                    EnvironmentJobObservation::NotFound {
+                        job_id: EnvironmentJobId::new("elsewhere"),
+                    },
+                ],
+                resolutions: BTreeMap::from([(
+                    "job_1".to_owned(),
+                    PromiseSourceCheckResult::Resolved {
+                        payload_ref: Some(done.clone()),
+                    },
+                )]),
+            },
+        );
+
+        assert!(snapshot.terminal);
+        assert!(unsettled_job_ids(&snapshot, &job_ids).is_empty());
+        assert_eq!(snapshot.jobs.len(), 2);
+        assert_eq!(snapshot.jobs[1].status, EnvironmentJobStatus::Lost);
+        // The record keeps what the workflow knew before the job was lost.
+        assert_eq!(snapshot.jobs[1].name.as_deref(), Some("job_2"));
+        assert_eq!(
+            snapshot.resolutions.get("job_2"),
+            Some(&PromiseSourceCheckResult::Failed { error_ref: None })
+        );
+        assert!(!snapshot.resolutions.contains_key("elsewhere"));
+    }
+
+    #[test]
+    fn activity_resolution_of_a_lost_job_wins_and_running_jobs_stay_unsettled() {
+        let job_ids = vec![
+            EnvironmentJobId::new("job_1"),
+            EnvironmentJobId::new("job_2"),
+        ];
+        let mut snapshot = EnvironmentJobWorkflowSnapshot::default();
+        let lost = BlobRef::from_bytes(b"lost");
+        apply_poll_result(
+            &mut snapshot,
+            &job_ids,
+            EnvironmentJobPollActivityResult {
+                jobs: vec![
+                    EnvironmentJobObservation::NotFound {
+                        job_id: EnvironmentJobId::new("job_1"),
+                    },
+                    EnvironmentJobObservation::Job {
+                        record: record("job_2", EnvironmentJobStatus::Running),
+                    },
+                ],
+                resolutions: BTreeMap::from([(
+                    "job_1".to_owned(),
+                    PromiseSourceCheckResult::Failed {
+                        error_ref: Some(lost.clone()),
+                    },
+                )]),
+            },
+        );
+
+        assert!(!snapshot.terminal);
+        assert_eq!(
+            snapshot.jobs[0],
+            EnvironmentJobRecord::lost(EnvironmentJobId::new("job_1"))
+        );
+        assert_eq!(
+            snapshot.resolutions.get("job_1"),
+            Some(&PromiseSourceCheckResult::Failed {
+                error_ref: Some(lost)
+            })
+        );
+        assert_eq!(
+            unsettled_job_ids(&snapshot, &job_ids),
+            vec![EnvironmentJobId::new("job_2")]
+        );
+    }
+
+    #[test]
+    fn cancel_not_found_marks_lost_but_waits_for_the_poll_resolution() {
+        let job_ids = vec![EnvironmentJobId::new("job_1")];
+        let mut snapshot = EnvironmentJobWorkflowSnapshot {
+            jobs: vec![record("job_1", EnvironmentJobStatus::Running)],
+            ..Default::default()
+        };
+        apply_observations(
+            &mut snapshot,
+            &job_ids,
+            vec![
+                EnvironmentJobObservation::NotFound {
+                    job_id: EnvironmentJobId::new("job_1"),
+                },
+                EnvironmentJobObservation::Job {
+                    record: record("dependent", EnvironmentJobStatus::Cancelled),
+                },
+            ],
+        );
+        refresh_terminal(&mut snapshot, &job_ids);
+
+        assert_eq!(snapshot.jobs.len(), 1);
+        assert_eq!(snapshot.jobs[0].status, EnvironmentJobStatus::Lost);
+        assert!(!snapshot.terminal);
+        assert_eq!(unsettled_job_ids(&snapshot, &job_ids), job_ids);
+    }
+
     #[test]
     fn workflow_tool_cancellation_targets_only_the_matching_job() {
         let invocation_id =
@@ -545,7 +757,10 @@ mod tests {
         );
 
         assert_eq!(workflow.pending_cancels.len(), 1);
-        assert_eq!(workflow.pending_cancels[0].jobs, vec![JobId::new("job_1")]);
+        assert_eq!(
+            workflow.pending_cancels[0].jobs,
+            vec![EnvironmentJobId::new("job_1")]
+        );
         assert!(workflow.nudged);
 
         queue_workflow_tool_cancellation(

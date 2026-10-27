@@ -161,10 +161,11 @@ impl ProfileSourceExt for ProfileSource {
 }
 
 pub fn validate_profile_document(document: &ProfileDocument) -> Result<(), ProfileError> {
-    environment_protocol::registration::validate_registration_metadata(None, &document.metadata)
-        .map_err(|message| ProfileError::InvalidInput {
-            message: format!("invalid metadata: {message}"),
-        })?;
+    environment_protocol::metadata::validate_caller_metadata(&document.metadata).map_err(
+        |error| ProfileError::InvalidInput {
+            message: format!("invalid metadata: {error}"),
+        },
+    )?;
     if let Some(value) = document
         .retention
         .as_ref()

@@ -182,8 +182,8 @@ fn env_flag(name: &str) -> bool {
 pub(super) fn validate_caller_metadata(
     metadata: &BTreeMap<String, String>,
 ) -> Result<(), AgentApiError> {
-    environment_protocol::registration::validate_registration_metadata(None, metadata)
-        .map_err(|message| AgentApiError::invalid_request(format!("invalid metadata: {message}")))
+    environment_protocol::metadata::validate_caller_metadata(metadata)
+        .map_err(|error| AgentApiError::invalid_request(format!("invalid metadata: {error}")))
 }
 
 fn validate_delete_after_close_ms(value: Option<u64>) -> Result<(), AgentApiError> {
@@ -830,7 +830,7 @@ impl GatewayAgentApi {
             github_api_client: None,
             model_discovery_openai: None,
             model_discovery_anthropic: None,
-            provider_controller_connector: Arc::new(WebSocketProviderControllerConnector::default()),
+            provider_controller_connector: Arc::new(WebSocketProviderControllerConnector),
             environment_gateway,
         }
     }

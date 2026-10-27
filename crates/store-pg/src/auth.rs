@@ -21,11 +21,11 @@ use sqlx::Row;
 
 use crate::PgStore;
 
-const LOCAL_KEY_ID: &str = "local-v1";
+pub(crate) const LOCAL_KEY_ID: &str = "local-v1";
 const NONCE_LEN: usize = 12;
 
 impl PgStore {
-    fn secrets_cipher(&self) -> Result<(Aes256Gcm, &'static str), AuthRegistryError> {
+    pub(crate) fn secrets_cipher(&self) -> Result<(Aes256Gcm, &'static str), AuthRegistryError> {
         let Some(key) = &self.config.secrets_master_key else {
             return Err(AuthRegistryError::Store {
                 message: "secrets master key is not configured; set LIGHTSPEED_SECRETS_MASTER_KEY"
@@ -49,7 +49,7 @@ impl PgStore {
     }
 }
 
-fn seal_secret(
+pub(crate) fn seal_secret(
     cipher: &Aes256Gcm,
     aad: &[u8],
     value: &SecretValue,
@@ -72,7 +72,7 @@ fn seal_secret(
     Ok((nonce.to_vec(), ciphertext))
 }
 
-fn open_secret(
+pub(crate) fn open_secret(
     cipher: &Aes256Gcm,
     aad: &[u8],
     nonce: &[u8],

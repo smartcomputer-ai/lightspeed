@@ -1,5 +1,7 @@
 //! Provider-owned public hostname allocation.
 
+use environment_protocol::routes::PublicUrl;
+
 use crate::{Config, incus::OwnedTarget, policy};
 
 pub fn hostname(target: &OwnedTarget, public_base_url: &str) -> anyhow::Result<String> {
@@ -10,15 +12,15 @@ pub fn hostname(target: &OwnedTarget, public_base_url: &str) -> anyhow::Result<S
     let label = policy::stable_component(
         "ingress",
         &[
-            &target.universe_id,
-            &target.binding_id,
-            &target.environment_id,
+            target.owner.universe_id.as_str(),
+            target.owner.binding_id.as_str(),
+            target.owner.environment_id.as_str(),
         ],
     );
     Ok(format!("{label}.{domain}"))
 }
 
-pub fn public_endpoint(config: &Config, hostname: &str) -> anyhow::Result<String> {
+pub fn public_endpoint(config: &Config, hostname: &str) -> anyhow::Result<PublicUrl> {
     let ingress = config
         .ingress
         .as_ref()
@@ -26,36 +28,32 @@ pub fn public_endpoint(config: &Config, hostname: &str) -> anyhow::Result<String
     let mut base = reqwest::Url::parse(&ingress.public_base_url)?;
     base.set_host(Some(hostname))
         .map_err(|_| anyhow::anyhow!("invalid ingress hostname"))?;
-    Ok(base.to_string().trim_end_matches('/').to_owned())
+    Ok(PublicUrl::new(base.to_string().trim_end_matches('/'))?)
 }
 
-pub fn endpoint(config: &Config, target: &OwnedTarget) -> anyhow::Result<(String, String)> {
+/// The hostname the provider allocates for the target.
+pub fn allocated_hostname(config: &Config, target: &OwnedTarget) -> anyhow::Result<String> {
     let ingress = config
         .ingress
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("provider ingress is not configured"))?;
-    let hostname = hostname(target, &ingress.public_base_url)?;
-    Ok((hostname.clone(), public_endpoint(config, &hostname)?))
+    hostname(target, &ingress.public_base_url)
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use environment_protocol::{control::targets::ProviderTargetStatus, shared::ProviderTargetId};
+    use crate::incus::InstanceStatus;
 
-    fn target() -> OwnedTarget {
+    pub(crate) fn target() -> OwnedTarget {
+        let owner = policy::tests::owner("universe-a", "binding-a", "environment-a");
         OwnedTarget {
-            target_id: ProviderTargetId::new("target-a"),
-            name: "target-a".to_owned(),
-            universe_id: "universe-a".to_owned(),
-            binding_id: "binding-a".to_owned(),
-            environment_id: "environment-a".to_owned(),
-            incarnation_id: "incarnation-a".to_owned(),
-            request_id: "request-a".to_owned(),
+            target_id: policy::instance_name(&owner).try_into().unwrap(),
+            owner,
             template_id: "template-a".to_owned(),
             image_fingerprint: "fingerprint-a".to_owned(),
             adoption_source: None,
-            status: ProviderTargetStatus::Ready,
+            status: InstanceStatus::Running,
             ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: None,
             ingress_port: None,

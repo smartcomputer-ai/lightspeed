@@ -1,9 +1,0 @@
-{
-  "clientName": "lightspeed-test",
-  "protocolVersion": 2,
-  "resumeConnectionId": "conn-prev",
-  "scope": {
-    "sessionId": "sandbox-123",
-    "type": "session"
-  }
-}

@@ -55,6 +55,13 @@ Use `wss://` for a remote gateway. The daemon accepts plain `ws://` only for
 loopback. For a private certificate authority, configure
 `LIGHTSPEED_ENVD_CA_FILE` with the additional trust anchors.
 
+The daemon derives the data path from its configured connect URL, on the same
+origin and under the same path prefix, so both paths must be published on one
+host. The daemon signs the origin it dialed when it proves its identity, and
+the gateway accepts only the origin of its `LIGHTSPEED_PUBLIC_BASE_URL`.
+Point daemons at that public URL; a daemon that dials the gateway under
+another hostname is refused.
+
 The first connection uses a registration key and the daemon's identity. Later
 connections use the retained identity, and requested data sockets use a
 one-time pairing token. Publishing only the control path can therefore make
@@ -82,12 +89,15 @@ with the network or transport boundary. A filesystem root setting or default
 working directory does not make a publicly reachable process service safe to
 expose.
 
-For Incus, the environment gateway reaches the provider's private `/control`
-and derived `/routes/...` endpoints. The provider then dials the guest daemon
-over the private guest IPv4 network, normally on port 19091. Provider endpoints
-also currently rely on the deployment boundary rather than application
-authentication. The provider's connection to the Incus API uses HTTPS client
-credentials and server trust separately.
+For a provider, the environment gateway reaches the controller URL registered
+for it and the data routes the controller advertises during its handshake.
+Both require the provider credential as a bearer token. For Incus, those are
+the provider's `/control` and `/routes/...` paths, advertised through its
+`dataRouteBase`. The provider then dials the guest daemon over the private
+guest IPv4 network, normally on port 19091. That guest listener has no
+authentication of its own, so keep guest networks private. The provider's
+connection to the Incus API uses HTTPS client credentials and server trust
+separately.
 
 Standalone Incus uses a managed bridge per universe binding. Cluster mode
 uses a managed OVN network over the configured uplink. The provider and its
@@ -102,6 +112,11 @@ specific rules are not a general application-aware egress policy.
 Relay connection timeouts and VM idle policies control different resources.
 An idle relay can close without closing the machine or deleting its files.
 The next operation can open another route while the daemon remains available.
+Every hop between a worker and a daemon, including reverse proxies in front of
+the environment gateway, must pass WebSocket ping frames through and must not
+close a connection that has been quiet for less than 60 seconds: a worker
+waiting on a long command read pings every 20 seconds and otherwise sends
+nothing. Hops must also accept WebSocket messages of up to 16 MiB.
 
 ## Configure public application ingress
 

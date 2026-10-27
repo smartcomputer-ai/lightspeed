@@ -2,16 +2,21 @@
 
 use std::time::{Duration, Instant};
 
-use glob::Pattern;
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::ToolResult,
-    fs::{FsPath, FsSearchLimits, FsSearchStop, FsTextSearchRequest, FsToolContext},
+    fs::{
+        FsPath, FsSearchLimits, FsSearchStop, FsTextSearchRequest, FsToolContext,
+        pattern::PathPattern,
+    },
 };
 
-use super::{collect_file_paths_bounded, invalid_request, relative_path_string, resolve_path};
+use super::{
+    collect_file_paths_bounded, invalid_request, relative_path_string, resolve_path,
+    root_relative_pattern,
+};
 
 pub const DEFAULT_GREP_LIMIT: usize = 1_000;
 
@@ -31,6 +36,9 @@ pub struct GrepMatch {
     pub path: FsPath,
     pub line_number: usize,
     pub line: String,
+    /// The line was cut at the environment's line length bound.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub line_truncated: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -43,6 +51,14 @@ pub struct GrepResult {
     /// within its bounds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stopped: Option<FsSearchStop>,
+    /// Files left out because they exceeded the remaining byte budget, were
+    /// binary or could not be read. Skipping never ends the search.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub skipped_file_count: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<GrepResult> {
@@ -53,12 +69,6 @@ pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<Grep
         .case_insensitive(!args.case_sensitive)
         .build()
         .map_err(|error| invalid_request(format!("invalid grep regex: {error}")))?;
-    let include = args
-        .include
-        .as_deref()
-        .map(Pattern::new)
-        .transpose()
-        .map_err(|error| invalid_request(format!("invalid grep include glob: {error}")))?;
     let requested_limit = args.limit.unwrap_or(DEFAULT_GREP_LIMIT);
     if requested_limit == 0 {
         return Err(invalid_request("grep limit must be 1 or greater"));
@@ -77,6 +87,15 @@ pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<Grep
         Some(path) => resolve_path(ctx, path)?,
         None => ctx.fs_cwd.clone().unwrap_or_else(FsPath::current_dir),
     };
+    let wire_include = args
+        .include
+        .as_deref()
+        .map(|include| root_relative_pattern(include, &root));
+    let include = wire_include
+        .as_deref()
+        .map(|include| PathPattern::new(include, false))
+        .transpose()
+        .map_err(|error| invalid_request(format!("invalid grep include: {error}")))?;
 
     // A backend with a native search (e.g. a remote host) performs the
     // traversal and matching locally under the same bounds and returns only
@@ -84,7 +103,7 @@ pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<Grep
     let native_request = FsTextSearchRequest {
         root: root.clone(),
         pattern: args.pattern.clone(),
-        include: args.include.clone(),
+        include: wire_include,
         case_sensitive: args.case_sensitive,
         max_depth: args.max_depth,
         limits,
@@ -97,6 +116,7 @@ pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<Grep
                 path: item.path,
                 line_number: item.line_number as usize,
                 line: item.line,
+                line_truncated: item.line_truncated,
             })
             .collect::<Vec<_>>();
         return Ok(GrepResult {
@@ -105,6 +125,7 @@ pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<Grep
             matches,
             truncated: native.stopped.is_some(),
             stopped: native.stopped,
+            skipped_file_count: native.skipped_files,
         });
     }
 
@@ -113,13 +134,16 @@ pub async fn invoke_grep(ctx: &FsToolContext, args: GrepArgs) -> ToolResult<Grep
 
 /// Generic fallback over the `FileSystem` interface, bounded by files
 /// visited, cumulative bytes read, matches returned, and elapsed time. It
-/// returns a typed truncated outcome instead of scanning without bound.
+/// returns a typed truncated outcome instead of scanning without bound. A
+/// file larger than the remaining byte budget is skipped and counted, as an
+/// environment's native search does, so one large file never hides the
+/// rest of the tree.
 async fn bounded_generic_grep(
     ctx: &FsToolContext,
     args: GrepArgs,
     root: FsPath,
     regex: regex::Regex,
-    include: Option<Pattern>,
+    include: Option<PathPattern>,
     limits: FsSearchLimits,
 ) -> ToolResult<GrepResult> {
     let started = Instant::now();
@@ -136,10 +160,17 @@ async fn bounded_generic_grep(
     let mut stopped = enumeration_stop;
     let mut matches = Vec::new();
     let mut bytes_searched = 0u64;
+    let mut skipped_file_count = 0u64;
 
     'files: for path in paths {
+        // A file root is matched by its name, as if its parent were walked.
+        let relative = if path == root {
+            root.file_name().unwrap_or_default().to_owned()
+        } else {
+            relative_path_string(&path, &root)
+        };
         if let Some(include) = &include
-            && !path_matches_include(include, &path, &root)
+            && !include.matches(&relative, false)
         {
             continue;
         }
@@ -147,38 +178,24 @@ async fn bounded_generic_grep(
             stopped = Some(FsSearchStop::TimeLimit);
             break;
         }
-
-        // Ranged read: a file beyond the per-file cap or the remaining byte
-        // budget is truncated at the source instead of transferred in full.
         let remaining_budget = limits.max_bytes.saturating_sub(bytes_searched);
-        let per_file_cap = ctx.limits.max_file_read_bytes.saturating_add(1);
-        let read = ctx
-            .fs
-            .read_file_range(
-                &path,
-                0,
-                Some(per_file_cap.min(remaining_budget.saturating_add(1))),
-            )
-            .await?;
-        if read.file_size > ctx.limits.max_file_read_bytes {
-            return Err(invalid_request(format!(
-                "grep would read {} bytes from {}, exceeding max_file_read_bytes={}",
-                read.file_size, path, ctx.limits.max_file_read_bytes
-            )));
-        }
-        if read.truncated {
-            // The file did not fit into the remaining byte budget; partial
-            // content is not searched.
+        if remaining_budget == 0 {
             stopped = Some(FsSearchStop::ByteLimit);
             break;
         }
+
+        // Ranged read: a file beyond the per-file cap or the remaining byte
+        // budget is truncated at the source instead of transferred in full,
+        // and then skipped.
+        let file_budget = remaining_budget.min(ctx.limits.max_file_read_bytes);
+        let read = ctx.fs.read_file_range(&path, 0, Some(file_budget)).await?;
+        if read.truncated {
+            skipped_file_count += 1;
+            continue;
+        }
         bytes_searched = bytes_searched.saturating_add(read.bytes.len() as u64);
-        let over_byte_limit = bytes_searched > limits.max_bytes;
         let Ok(contents) = String::from_utf8(read.bytes) else {
-            if over_byte_limit {
-                stopped = Some(FsSearchStop::ByteLimit);
-                break;
-            }
+            skipped_file_count += 1;
             continue;
         };
 
@@ -192,12 +209,9 @@ async fn bounded_generic_grep(
                     path: path.clone(),
                     line_number: line_index + 1,
                     line: line.to_string(),
+                    line_truncated: false,
                 });
             }
-        }
-        if over_byte_limit {
-            stopped = Some(FsSearchStop::ByteLimit);
-            break;
         }
     }
 
@@ -207,15 +221,8 @@ async fn bounded_generic_grep(
         matches,
         truncated: stopped.is_some(),
         stopped,
+        skipped_file_count,
     })
-}
-
-fn path_matches_include(pattern: &Pattern, path: &FsPath, root: &FsPath) -> bool {
-    let relative = relative_path_string(path, root);
-    pattern.matches(&relative)
-        || path
-            .file_name()
-            .is_some_and(|file_name| pattern.matches(file_name))
 }
 
 #[cfg(test)]
@@ -226,7 +233,6 @@ mod tests {
 
     use super::*;
     use crate::{
-        error::ToolError,
         fs::{CreateDirectoryOptions, FileSystem, InMemoryFileSystem},
         limits::ToolLimits,
     };
@@ -278,6 +284,7 @@ mod tests {
                 path: FsPath::new("/workspace/src/lib.rs").unwrap(),
                 line_number: 1,
                 line: "pub fn target() {}".to_string(),
+                line_truncated: false,
             }]
         );
         assert!(!result.truncated);
@@ -344,7 +351,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn invoke_grep_stops_at_byte_budget_with_a_typed_reason() {
+    async fn invoke_grep_skips_files_over_the_remaining_byte_budget() {
         let fs = InMemoryFileSystem::full_access();
         fs.write_file(
             &FsPath::new("/a.txt").unwrap(),
@@ -377,10 +384,10 @@ mod tests {
         .await
         .expect("grep");
 
-        assert_eq!(result.stopped, Some(FsSearchStop::ByteLimit));
-        assert!(result.truncated);
         // The file that would exceed the remaining budget is truncated at the
-        // source and never searched.
+        // source, never searched, and counted; the walk goes on.
+        assert_eq!(result.stopped, None);
+        assert_eq!(result.skipped_file_count, 1);
         assert_eq!(result.matches.len(), 1);
     }
 
@@ -465,17 +472,6 @@ mod tests {
             self.inner.remove(path, options).await
         }
 
-        async fn copy(
-            &self,
-            source_path: &FsPath,
-            destination_path: &FsPath,
-            options: crate::fs::CopyOptions,
-        ) -> crate::fs::FsResult<()> {
-            self.inner
-                .copy(source_path, destination_path, options)
-                .await
-        }
-
         async fn search_text(
             &self,
             request: &crate::fs::FsTextSearchRequest,
@@ -495,9 +491,11 @@ mod tests {
                     path: FsPath::new("/remote/file.rs").unwrap(),
                     line_number: 7,
                     line: "native target".to_owned(),
+                    line_truncated: false,
                 }],
                 files_searched: 12,
                 bytes_searched: 1024,
+                skipped_files: 0,
                 stopped: Some(FsSearchStop::TimeLimit),
             },
         };
@@ -523,6 +521,7 @@ mod tests {
                 path: FsPath::new("/remote/file.rs").unwrap(),
                 line_number: 7,
                 line: "native target".to_string(),
+                line_truncated: false,
             }]
         );
         assert!(result.truncated);
@@ -530,7 +529,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn invoke_grep_enforces_read_byte_limit() {
+    async fn invoke_grep_skips_files_over_the_read_byte_limit() {
         let fs = InMemoryFileSystem::full_access();
         fs.write_file(&FsPath::new("/file.txt").unwrap(), b"hello\n".to_vec())
             .await
@@ -540,7 +539,7 @@ mod tests {
             ..ToolLimits::default()
         });
 
-        let error = invoke_grep(
+        let result = invoke_grep(
             &ctx,
             GrepArgs {
                 pattern: "hello".to_string(),
@@ -552,8 +551,9 @@ mod tests {
             },
         )
         .await
-        .expect_err("grep should fail");
+        .expect("grep");
 
-        assert!(matches!(error, ToolError::InvalidRequest { .. }));
+        assert!(result.matches.is_empty());
+        assert_eq!(result.skipped_file_count, 1);
     }
 }

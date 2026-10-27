@@ -164,8 +164,10 @@ cargo test -p temporal-runtime --test sessions_live \
 It doesn't need a model key. The
 [development service guide](../../../scripts/dev/README.md#manual-runtime-roles)
 also gives commands for real provider execution and environment lifecycle
-tests. The `environment_provider_live` suite uses an in-process provider with
-the real database and reconciler; it does not require Incus.
+tests. The `environment_provider_live` suite uses the runtime's fake
+controller, served on loopback with a bearer credential, with the real
+database and reconciler; it does not require Incus. The same fake controller
+runs the client's controller conformance suite in the ordinary test run.
 
 VFS transfer coverage uses real Temporal, PostgreSQL, MinIO, and an envd that
 registers with a temporary local gateway. Its scripted model exercises each

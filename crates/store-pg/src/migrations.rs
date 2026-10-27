@@ -113,9 +113,14 @@ pub const MIGRATIONS: &[EmbeddedMigration] = &[
         name: "session_deletion",
         sql: include_str!("../migrations/011_session_deletion.sql"),
     },
+    EmbeddedMigration {
+        version: 12,
+        name: "environment_endpoints",
+        sql: include_str!("../migrations/012_environment_endpoints.sql"),
+    },
 ];
 
-pub const REQUIRED_SCHEMA_REVISION: i64 = 11;
+pub const REQUIRED_SCHEMA_REVISION: i64 = 12;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaStatus {

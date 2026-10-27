@@ -5,6 +5,18 @@ mod code_execution;
 mod code_tools;
 pub use code_tools::*;
 mod config;
+mod environment_jobs;
+pub use environment_jobs::{
+    EnvironmentJobCancelActivityRequest, EnvironmentJobCancelActivityResult,
+    EnvironmentJobCancelScope, EnvironmentJobCancelSignal, EnvironmentJobCommand,
+    EnvironmentJobDependency, EnvironmentJobDependencyPolicy, EnvironmentJobId,
+    EnvironmentJobObservation, EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
+    EnvironmentJobPrepareWorkflowToolRequest, EnvironmentJobRecord, EnvironmentJobSpec,
+    EnvironmentJobStartActivityRequest, EnvironmentJobStartActivityResult,
+    EnvironmentJobStartPayloadError, EnvironmentJobStartPayloadV1, EnvironmentJobStatus,
+    EnvironmentJobSubscription, EnvironmentJobWorkflowArgs, EnvironmentJobWorkflowInput,
+    EnvironmentJobWorkflowSnapshot, EnvironmentJobWorkflowToolContext,
+};
 mod rehydrate;
 mod session_preparation;
 mod temporal_helpers;
@@ -62,28 +74,22 @@ pub use types::{
     AwaitEnvironmentReadyActivityRequest, AwaitEnvironmentReadyActivityResult,
     AwaitMaterializationRequest, AwaitMaterializationResult, AwaitOutcome, AwaitPromiseResult,
     CancellingWatchdog, ContextCompactActivityRequest, CreateOrLoadSessionRequest,
-    CreateOrLoadSessionResult, EnvironmentJobCancelActivityRequest, EnvironmentJobCancelSignal,
-    EnvironmentJobPollActivityRequest, EnvironmentJobPollActivityResult,
-    EnvironmentJobPrepareWorkflowToolRequest, EnvironmentJobStartActivityRequest,
-    EnvironmentJobStartActivityResult, EnvironmentJobStartPayload, EnvironmentJobSubscription,
-    EnvironmentJobWorkflowArgs, EnvironmentJobWorkflowInput, EnvironmentJobWorkflowSnapshot,
-    EnvironmentJobWorkflowToolContext, JoinedContextPreparationRequest,
-    LLM_PROVIDER_TRANSIENT_ERROR_TYPE, LLM_TRANSIENT_FAILURE_DETAILS_VERSION,
-    LlmGenerateActivityRequest, LlmTransientFailureDetails, PendingEmission,
-    PendingPromiseCancellation, PendingSourceResolution, PendingToolBatchResume, PromiseSourcePoll,
-    PutBlobRequest, ReadBlobRequest, ReadBlobResult, RuntimeProjectionRefreshActivityRequest,
-    RuntimeProjectionRefreshActivityResult, SessionBootstrapPayloadTooLarge, SubagentChildRef,
-    SubagentCloseActivityRequest, SubagentExecutionPhase, SubagentExecutionSnapshot,
-    SubagentPrepareActivityRequest, SubagentPrepareActivityResult, SubagentResolveActivityRequest,
-    SubagentTerminal, ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest,
-    ToolInvokeCallActivityResult, ToolPreparePromiseControlsActivityRequest,
-    WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX, WORKFLOW_TOOL_RECIPE_FORMAT_V1,
-    WORKFLOW_TOOL_RECOVERY_QUERY, WorkflowToolExecutionCancelRequest,
-    WorkflowToolExecutionCheckRequest, WorkflowToolRecipeV1, WorkflowToolRecoveryResult,
-    WorkflowToolReplyValidationRequest, WorkflowToolReplyValidationResult,
-    WorkflowToolStartActivityRequest, WorkflowToolStartActivityResult, WorkflowToolStartArgs,
-    compose_environment_job_workflow_id, compose_workflow_id, split_workflow_id,
-    workflow_tool_recipe_fingerprint,
+    CreateOrLoadSessionResult, JoinedContextPreparationRequest, LLM_PROVIDER_TRANSIENT_ERROR_TYPE,
+    LLM_TRANSIENT_FAILURE_DETAILS_VERSION, LlmGenerateActivityRequest, LlmTransientFailureDetails,
+    PendingEmission, PendingPromiseCancellation, PendingSourceResolution, PendingToolBatchResume,
+    PromiseSourcePoll, PutBlobRequest, ReadBlobRequest, ReadBlobResult,
+    RuntimeProjectionRefreshActivityRequest, RuntimeProjectionRefreshActivityResult,
+    SessionBootstrapPayloadTooLarge, SubagentChildRef, SubagentCloseActivityRequest,
+    SubagentExecutionPhase, SubagentExecutionSnapshot, SubagentPrepareActivityRequest,
+    SubagentPrepareActivityResult, SubagentResolveActivityRequest, SubagentTerminal,
+    ToolInvokeBatchActivityRequest, ToolInvokeCallActivityRequest, ToolInvokeCallActivityResult,
+    ToolPreparePromiseControlsActivityRequest, WORKFLOW_TOOL_RECIPE_FINGERPRINT_PREFIX,
+    WORKFLOW_TOOL_RECIPE_FORMAT_V1, WORKFLOW_TOOL_RECOVERY_QUERY,
+    WorkflowToolExecutionCancelRequest, WorkflowToolExecutionCheckRequest, WorkflowToolRecipeV1,
+    WorkflowToolRecoveryResult, WorkflowToolReplyValidationRequest,
+    WorkflowToolReplyValidationResult, WorkflowToolStartActivityRequest,
+    WorkflowToolStartActivityResult, WorkflowToolStartArgs, compose_environment_job_workflow_id,
+    compose_workflow_id, split_workflow_id, workflow_tool_recipe_fingerprint,
 };
 pub use workflows::bots;
 pub use workflows::channels;

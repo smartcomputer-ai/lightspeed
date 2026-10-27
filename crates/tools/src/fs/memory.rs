@@ -8,8 +8,8 @@ use std::{
 use async_trait::async_trait;
 
 use crate::fs::{
-    CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
-    FsPath, FsResult, ReadDirectoryEntry, RemoveOptions,
+    CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsPath, FsResult,
+    ReadDirectoryEntry, RemoveOptions, RenameOptions,
 };
 
 #[derive(Clone, Debug)]
@@ -185,18 +185,18 @@ impl FileSystem for InMemoryFileSystem {
         inner.remove(&path, options)
     }
 
-    async fn copy(
+    async fn rename(
         &self,
         source_path: &FsPath,
         destination_path: &FsPath,
-        options: CopyOptions,
+        options: RenameOptions,
     ) -> FsResult<()> {
         let source_path = self.key(source_path)?;
         let destination_path = self.key(destination_path)?;
-        self.ensure_can_read(&source_path)?;
+        self.ensure_can_write(&source_path)?;
         self.ensure_can_write(&destination_path)?;
         let mut inner = self.write_inner()?;
-        inner.copy(&source_path, &destination_path, options)
+        inner.rename(&source_path, &destination_path, options)
     }
 }
 
@@ -294,56 +294,54 @@ impl InMemoryFileSystemInner {
         Ok(())
     }
 
-    fn copy(
+    fn rename(
         &mut self,
         source_path: &FsPath,
         destination_path: &FsPath,
-        options: CopyOptions,
+        options: RenameOptions,
     ) -> FsResult<()> {
-        let source = self
-            .nodes
-            .get(source_path)
-            .cloned()
-            .ok_or_else(|| FsError::NotFound {
+        if !self.nodes.contains_key(source_path) {
+            return Err(FsError::NotFound {
                 path: source_path.clone(),
-            })?;
-        self.ensure_parent_directory(destination_path)?;
-
-        match source {
-            Node::File { contents, .. } => self.write_file(destination_path, contents),
-            Node::Directory { .. } => {
-                if !options.recursive {
-                    return Err(FsError::InvalidInput {
-                        message: "copy requires recursive: true when source is a directory"
-                            .to_string(),
-                    });
-                }
-                if destination_path.starts_with(source_path) {
-                    return Err(FsError::InvalidInput {
-                        message: "cannot copy a directory to itself or one of its descendants"
-                            .to_string(),
-                    });
-                }
-                let entries = self
-                    .nodes
-                    .iter()
-                    .filter(|(path, _)| path.starts_with(source_path))
-                    .map(|(path, node)| (path.clone(), node.clone()))
-                    .collect::<Vec<_>>();
-                for (path, node) in entries {
-                    let relative_segments = path
-                        .segments()
-                        .skip(source_path.segments().count())
-                        .collect::<Vec<_>>();
-                    let destination = destination_path.join_segments(relative_segments)?;
-                    let timestamp = self.next_timestamp();
-                    self.nodes
-                        .insert(destination, node.with_timestamp(timestamp));
-                }
-                self.touch_parent(destination_path);
-                Ok(())
-            }
+            });
         }
+        match self.nodes.get(destination_path) {
+            Some(Node::Directory { .. }) => {
+                return Err(FsError::AlreadyExists {
+                    path: destination_path.clone(),
+                });
+            }
+            Some(Node::File { .. }) if !options.overwrite => {
+                return Err(FsError::AlreadyExists {
+                    path: destination_path.clone(),
+                });
+            }
+            _ => {}
+        }
+        if destination_path.starts_with(source_path) {
+            return Err(FsError::InvalidInput {
+                message: "cannot move a directory into itself".to_string(),
+            });
+        }
+        self.ensure_parent_directory(destination_path)?;
+        let moved = self
+            .nodes
+            .keys()
+            .filter(|path| path.starts_with(source_path))
+            .cloned()
+            .collect::<Vec<_>>();
+        for path in moved {
+            let node = self.nodes.remove(&path).expect("listed node");
+            let relative_segments = path
+                .segments()
+                .skip(source_path.segments().count())
+                .collect::<Vec<_>>();
+            let destination = destination_path.join_segments(relative_segments)?;
+            self.nodes.insert(destination, node);
+        }
+        self.touch_parent(source_path);
+        self.touch_parent(destination_path);
+        Ok(())
     }
 
     fn ensure_parent_directory(&self, path: &FsPath) -> FsResult<()> {
@@ -420,13 +418,6 @@ impl Node {
 
     fn is_file(&self) -> bool {
         matches!(self, Self::File { .. })
-    }
-
-    fn with_timestamp(self, timestamp: i64) -> Self {
-        match self {
-            Self::Directory { .. } => Self::directory(timestamp),
-            Self::File { contents, .. } => Self::file(contents, timestamp),
-        }
     }
 }
 

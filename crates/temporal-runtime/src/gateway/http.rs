@@ -18,18 +18,28 @@ use axum::{
     routing::{get, post},
 };
 use environment_protocol::{
-    gateway::{PROVIDER_DATA_PATH_PREFIX, ROUTE_PATH_PREFIX},
-    registration::{CONNECT_PATH, DATA_PATH},
+    control::target::TargetOwner,
+    ids::{BindingId, EnvironmentId, IncarnationId, ProviderTargetId, UniverseId},
+    limits::MAX_MESSAGE_BYTES,
+    routes::{CONNECT_PATH, CanonicalOrigin, DATA_PATH, canonical_origin, provider_data_route},
 };
+use environments::{EndpointScheme, EnvironmentEndpoint};
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use store_pg::PgApiKeyStore;
-use tokio_tungstenite::{connect_async, tungstenite::Message as ProviderMessage};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_tungstenite::{
+    WebSocketStream, client_async_with_config, connect_async_with_config,
+    tungstenite::{
+        Message as UpstreamMessage, client::IntoClientRequest as _,
+        http::HeaderValue as UpstreamHeaderValue, protocol::WebSocketConfig,
+    },
+};
 use uuid::Uuid;
 
 use crate::{
     config::{DeploymentStores, GatewayAuthMode, gateway_auth_mode_from_env},
-    environments::gateway::{RouteKey, bearer_matches, close_message},
+    environments::gateway::{ROUTE_PATH_PREFIX, RouteKey, bearer_matches, close_message},
     universe::{UniverseError, UniverseRuntime},
 };
 
@@ -51,8 +61,9 @@ pub struct GatewayServerConfig {
     pub temporal_target: String,
     pub namespace: String,
     pub max_request_body_bytes: usize,
-    /// Externally reachable base URL for the OAuth callback
-    /// (`{base}/auth/callback`). Defaults to `http://{bind}`.
+    /// Externally reachable base URL: the OAuth callback
+    /// (`{base}/auth/callback`) and the origin registered daemons sign.
+    /// Defaults to `http://{bind}`, which only a loopback bind may rely on.
     pub public_base_url: Option<String>,
 }
 
@@ -80,8 +91,10 @@ pub struct GatewayState {
     resolution: UniverseResolution,
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
-    /// Public base URL daemons are told to dial for data connections.
-    public_base_url: String,
+    /// The origin daemons sign registrations for: the canonical origin of
+    /// the public base URL. Absent when that URL has no WebSocket origin;
+    /// the connect route then refuses every daemon.
+    registration_origin: Option<CanonicalOrigin>,
 }
 
 /// Which route families one HTTP listener serves, derived from the
@@ -106,11 +119,11 @@ impl GatewayRoutes {
 impl GatewayState {
     /// Route every request to one existing service instance.
     pub fn for_api(api: Arc<GatewayAgentApi>) -> Self {
-        let public_base_url = api.public_base_url().to_owned();
+        let registration_origin = registration_origin_of(api.public_base_url());
         Self {
             resolution: UniverseResolution::FixedApi { api },
             registrations: Arc::new(RegisteredConnections::new()),
-            public_base_url,
+            registration_origin,
         }
     }
 
@@ -118,17 +131,8 @@ impl GatewayState {
         &self.registrations
     }
 
-    /// Tell daemons to dial a different public base than the general one.
-    pub fn with_environment_public_url(mut self, url: Option<String>) -> Self {
-        if let Some(url) = url {
-            self.public_base_url = url;
-        }
-        self
-    }
-
-    /// Public data route for reverse-dialed daemon sockets.
-    pub(super) fn registration_data_url(&self) -> String {
-        registration::data_url(&self.public_base_url)
+    pub(super) fn registration_origin(&self) -> Option<&CanonicalOrigin> {
+        self.registration_origin.as_ref()
     }
 
     /// The universe a register request belongs to: the environment's
@@ -148,7 +152,7 @@ impl GatewayState {
                 let universe_id = store.config().universe_id;
                 let known = environments::EnvironmentStore::read_environment_by_daemon_public_key(
                     store.as_ref(),
-                    &params.daemon_public_key,
+                    &params.daemon_public_key.to_hex(),
                 )
                 .await
                 .map_err(|error| AgentApiError::internal(error.to_string()))?;
@@ -168,10 +172,12 @@ impl GatewayState {
             }
             UniverseResolution::Multi { runtime, .. } => {
                 let pool = runtime.stores().pool();
-                if let Some(universe_id) =
-                    store_pg::find_registered_environment_universe(pool, &params.daemon_public_key)
-                        .await
-                        .map_err(|error| AgentApiError::internal(error.to_string()))?
+                if let Some(universe_id) = store_pg::find_registered_environment_universe(
+                    pool,
+                    &params.daemon_public_key.to_hex(),
+                )
+                .await
+                .map_err(|error| AgentApiError::internal(error.to_string()))?
                 {
                     return Ok(Some(universe_id));
                 }
@@ -192,16 +198,17 @@ impl GatewayState {
     ) -> Self {
         let api_keys = PgApiKeyStore::new(runtime.stores().pool().clone());
         let deployment = Arc::new(GatewayDeploymentApi::new(runtime.clone()));
+        let registration_origin = registration_origin_of(&public_base_url);
         Self {
             resolution: UniverseResolution::Multi {
                 mode,
                 runtime,
-                public_base_url: public_base_url.clone(),
+                public_base_url,
                 api_keys,
                 deployment,
             },
             registrations: Arc::new(RegisteredConnections::new()),
-            public_base_url,
+            registration_origin,
         }
     }
 
@@ -321,18 +328,74 @@ impl GatewayState {
         }
     }
 
+    fn deployment_store(&self) -> Arc<store_pg::PgStore> {
+        match &self.resolution {
+            UniverseResolution::FixedApi { api } => api.store().clone(),
+            UniverseResolution::Multi { runtime, .. } => runtime.stores().store_for(Uuid::nil()),
+        }
+    }
+
     async fn environment_provider(
         &self,
         provider_id: &environments::EnvironmentProviderId,
-    ) -> Result<environments::EnvironmentProviderRecord, AgentApiError> {
-        let store = match &self.resolution {
-            UniverseResolution::FixedApi { api } => api.store().clone(),
-            UniverseResolution::Multi { runtime, .. } => runtime.stores().store_for(Uuid::nil()),
-        };
-        environments::EnvironmentProviderStore::read_provider(store.as_ref(), provider_id)
-            .await
-            .map_err(|error| AgentApiError::rejected(error.to_string()))
+    ) -> Result<environments::EnvironmentProviderRecord, environments::EnvironmentRegistryError>
+    {
+        environments::EnvironmentProviderStore::read_provider(
+            self.deployment_store().as_ref(),
+            provider_id,
+        )
+        .await
     }
+
+    async fn environment_provider_credential(
+        &self,
+        provider_id: &environments::EnvironmentProviderId,
+    ) -> Result<auth::SecretValue, environments::EnvironmentRegistryError> {
+        environments::EnvironmentProviderStore::read_provider_credential(
+            self.deployment_store().as_ref(),
+            provider_id,
+        )
+        .await
+    }
+}
+
+/// The registration signature origin of a public base URL, if it has one.
+fn registration_origin_of(public_base_url: &str) -> Option<CanonicalOrigin> {
+    match canonical_origin(public_base_url) {
+        Ok(origin) => Some(origin),
+        Err(error) => {
+            tracing::error!(
+                target: "temporal_runtime",
+                %error,
+                public_base_url,
+                "the public base URL has no WebSocket origin; daemon registration is refused"
+            );
+            None
+        }
+    }
+}
+
+/// The origin registered daemons must sign for, checked once at startup by
+/// a process that serves the registration route: the canonical origin of
+/// `LIGHTSPEED_PUBLIC_BASE_URL`. Without that variable the default
+/// `http://{bind}` is the true origin only on a loopback bind, so any other
+/// bind refuses to start rather than reject every remote daemon.
+pub fn registration_origin(
+    public_base_url: Option<&str>,
+    bind: SocketAddr,
+) -> anyhow::Result<CanonicalOrigin> {
+    let Some(public_base_url) = public_base_url else {
+        if !bind.ip().is_loopback() {
+            anyhow::bail!(
+                "LIGHTSPEED_PUBLIC_BASE_URL is required to serve environment registration on {bind}: \
+                 daemons sign the gateway origin they dial, and only that URL names it"
+            );
+        }
+        return Ok(canonical_origin(&format!("http://{bind}"))?);
+    };
+    canonical_origin(public_base_url).map_err(|error| {
+        anyhow::anyhow!("LIGHTSPEED_PUBLIC_BASE_URL has no WebSocket origin: {error}")
+    })
 }
 
 fn map_universe_error(error: UniverseError) -> AgentApiError {
@@ -350,6 +413,7 @@ pub async fn serve_gateway(config: GatewayServerConfig) -> anyhow::Result<()> {
     let stores = DeploymentStores::from_env()
         .await?
         .with_blob_cache(crate::config::blob_cache_from_env()?);
+    registration_origin(config.public_base_url.as_deref(), config.bind)?;
     let public_base_url = public_base_url_or_default(&config);
     let runtime = Arc::new(UniverseRuntime::new(
         client,
@@ -535,89 +599,58 @@ async fn environment_route_upgrade(
     if environment.incarnation.incarnation_id.as_str() != key.incarnation_id {
         return StatusCode::CONFLICT.into_response();
     }
+    let upgrade = upgrade
+        .max_message_size(MAX_MESSAGE_BYTES as usize)
+        .max_frame_size(MAX_MESSAGE_BYTES as usize);
     match &environment.source {
-        environments::EnvironmentSource::External { connection } => {
-            if connection.transport != environment_protocol::shared::EnvironmentTransport::WebSocket
-            {
-                return StatusCode::BAD_GATEWAY.into_response();
-            }
-            let endpoint = daemon_data_endpoint(&connection.endpoint);
-            let daemon_socket = match connect_async(&endpoint).await {
-                Ok((socket, _)) => socket,
-                Err(error) => {
-                    tracing::warn!(target: "temporal_runtime", %error, %endpoint, "external environment connection failed");
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
+        environments::EnvironmentSource::External { endpoint } => {
+            let upstream =
+                match dial_upstream(endpoint.as_str(), external_target(endpoint), None).await {
+                    Ok(upstream) => upstream,
+                    Err(failure) => return failure.respond(endpoint.as_str()),
+                };
+            let route = UpstreamRoute::External {
+                endpoint: endpoint.clone(),
             };
             upgrade
-                .max_message_size(64 * 1024 * 1024)
-                .on_upgrade(move |socket| {
-                    proxy_external_route(state, key, endpoint, socket, daemon_socket)
-                })
+                .on_upgrade(move |socket| proxy_upstream(state, key, route, socket, upstream))
                 .into_response()
         }
         environments::EnvironmentSource::Provisioned {
             provider_id,
             binding_id,
         } => {
-            let Some(target_id) = environment.incarnation.provider_target_id.as_ref() else {
+            let Some(target_id) = environment.incarnation.provider_target_id.clone() else {
                 return StatusCode::CONFLICT.into_response();
             };
-            if authorize_provisioned_route(
-                &state,
-                &key,
-                provider_id,
-                binding_id,
-                target_id.as_str(),
-            )
-            .await
-            .is_err()
-            {
+            let route = UpstreamRoute::Provider {
+                provider_id: provider_id.clone(),
+                binding_id: binding_id.clone(),
+                target_id,
+            };
+            if authorize_upstream(&state, &key, &route).await.is_err() {
                 return StatusCode::CONFLICT.into_response();
             }
-            let provider = match state.environment_provider(provider_id).await {
-                Ok(provider) => provider,
-                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            let (endpoint, credential) = match provider_route(&state, &key, &route).await {
+                Ok(route) => route,
+                Err(refusal) => return refusal.respond(),
             };
-            let endpoint = match provider_data_endpoint(
-                &provider.controller_connection.endpoint,
-                &key,
-                binding_id.as_str(),
-                target_id.as_str(),
-            ) {
-                Ok(endpoint) => endpoint,
-                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            let upstream = match dial_upstream(
+                &endpoint,
+                UpstreamTarget::Url,
+                Some(credential.expose()),
+            )
+            .await
+            {
+                Ok(upstream) => upstream,
+                Err(failure) => return failure.respond(&endpoint),
             };
-            let provider_socket = match connect_async(&endpoint).await {
-                Ok((socket, _)) => socket,
-                Err(error) => {
-                    tracing::warn!(target: "temporal_runtime", %error, %endpoint, "provider data connection failed");
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                }
-            };
-            let provider_id = provider_id.clone();
-            let binding_id = binding_id.clone();
-            let target_id = target_id.to_string();
             upgrade
-                .max_message_size(64 * 1024 * 1024)
-                .on_upgrade(move |socket| {
-                    proxy_provider_route(
-                        state,
-                        key,
-                        provider_id,
-                        binding_id,
-                        target_id,
-                        socket,
-                        provider_socket,
-                    )
-                })
+                .on_upgrade(move |socket| proxy_upstream(state, key, route, socket, upstream))
                 .into_response()
         }
         environments::EnvironmentSource::Registered { .. } => {
-            if matches!(
-                environment.status,
-                environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
-            ) {
+            if environment.status.is_closing_or_closed() {
                 return StatusCode::CONFLICT.into_response();
             }
             let (daemon_socket, control_connection_id) = match registration::open_registered_route(
@@ -632,7 +665,6 @@ async fn environment_route_upgrade(
                 }
             };
             upgrade
-                .max_message_size(64 * 1024 * 1024)
                 .on_upgrade(move |socket| {
                     registration::proxy_registered_route(
                         state,
@@ -647,158 +679,312 @@ async fn environment_route_upgrade(
     }
 }
 
-fn provider_data_endpoint(
-    controller_endpoint: &str,
-    key: &RouteKey,
-    binding_id: &str,
-    target_id: &str,
-) -> anyhow::Result<String> {
-    let mut endpoint = url::Url::parse(controller_endpoint)?;
-    let scheme = match endpoint.scheme() {
-        "http" => "ws",
-        "https" => "wss",
-        "ws" => "ws",
-        "wss" => "wss",
-        other => anyhow::bail!("unsupported provider controller URL scheme: {other}"),
-    };
-    endpoint
-        .set_scheme(scheme)
-        .map_err(|_| anyhow::anyhow!("invalid provider controller URL scheme"))?;
-    endpoint.set_query(None);
-    endpoint.set_fragment(None);
-    let base_path = endpoint
-        .path()
-        .trim_end_matches('/')
-        .strip_suffix("/control")
-        .ok_or_else(|| anyhow::anyhow!("provider controller endpoint must end in /control"))?;
-    endpoint.set_path(&format!("{base_path}{PROVIDER_DATA_PATH_PREFIX}"));
-    endpoint
-        .path_segments_mut()
-        .map_err(|_| anyhow::anyhow!("provider controller URL cannot be a base URL"))?
-        .pop_if_empty()
-        .push(&key.universe_id.to_string())
-        .push(binding_id)
-        .push(&key.environment_id)
-        .push(&key.incarnation_id)
-        .push(target_id);
-    Ok(endpoint.into())
+/// How long the gateway waits for a provider route or external envd to
+/// accept the upstream WebSocket.
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A provider that has not yet advertised its data routes is asked again
+/// after this long.
+const PROVIDER_ROUTES_RETRY_AFTER_SECS: u64 = 5;
+
+/// The upstream a worker route is proxied to, and what keeps it
+/// authorized.
+enum UpstreamRoute {
+    External {
+        endpoint: EnvironmentEndpoint,
+    },
+    Provider {
+        provider_id: environments::EnvironmentProviderId,
+        binding_id: environments::EnvironmentProviderBindingId,
+        target_id: ProviderTargetId,
+    },
 }
 
-fn daemon_data_endpoint(endpoint: &str) -> String {
-    if let Some(rest) = endpoint.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else if let Some(rest) = endpoint.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else {
-        endpoint.to_owned()
+/// Why a provisioned target's data route cannot be dialed now.
+enum ProviderRouteRefusal {
+    /// The provider's controller has not advertised its data routes yet.
+    NotAdvertised,
+    Status(StatusCode),
+}
+
+impl ProviderRouteRefusal {
+    fn respond(self) -> Response {
+        match self {
+            Self::NotAdvertised => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(PROVIDER_ROUTES_RETRY_AFTER_SECS),
+                )],
+            )
+                .into_response(),
+            Self::Status(status) => status.into_response(),
+        }
     }
 }
 
-async fn authorize_external_route(
+/// The provider data route for a provisioned target and the credential it
+/// is dialed with. The route comes only from the base the controller
+/// advertised; a provider that has not advertised one yet is asked to
+/// retry, one without a credential is a configuration error.
+async fn provider_route(
     state: &GatewayState,
     key: &RouteKey,
-    endpoint: &str,
-) -> anyhow::Result<()> {
-    let api = state
-        .api_for_daemon(key.universe_id)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.message))?;
-    let environment_id = environments::EnvironmentId::try_new(key.environment_id.clone())?;
-    let environment =
-        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
-            .await?;
-    let environments::EnvironmentSource::External {
-        connection: assigned_connection,
-    } = &environment.source
-    else {
-        anyhow::bail!("external route no longer belongs to an external environment")
-    };
-    if assigned_connection.transport
-        != environment_protocol::shared::EnvironmentTransport::WebSocket
-        || daemon_data_endpoint(&assigned_connection.endpoint) != endpoint
-        || environment.incarnation.incarnation_id.as_str() != key.incarnation_id
-        || matches!(
-            environment.status,
-            environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
-        )
-    {
-        anyhow::bail!("external environment route is stale or no longer authorized")
-    }
-    Ok(())
-}
-
-async fn authorize_provisioned_route(
-    state: &GatewayState,
-    key: &RouteKey,
-    provider_id: &environments::EnvironmentProviderId,
-    binding_id: &environments::EnvironmentProviderBindingId,
-    target_id: &str,
-) -> anyhow::Result<()> {
-    let api = state
-        .api_for_daemon(key.universe_id)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.message))?;
-    let environment_id = environments::EnvironmentId::try_new(key.environment_id.clone())?;
-    let environment =
-        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
-            .await?;
-    let environments::EnvironmentSource::Provisioned {
-        provider_id: assigned_provider,
-        binding_id: assigned_binding,
-    } = &environment.source
-    else {
-        anyhow::bail!("provider data routes require a provisioned environment")
-    };
-    if assigned_provider != provider_id
-        || assigned_binding != binding_id
-        || environment.incarnation.incarnation_id.as_str() != key.incarnation_id
-        || environment
-            .incarnation
-            .provider_target_id
-            .as_ref()
-            .map(|id| id.as_str())
-            != Some(target_id)
-        || matches!(
-            environment.status,
-            environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
-        )
-    {
-        anyhow::bail!("provider data route is stale or no longer owned")
-    }
-    let binding = environments::EnvironmentProviderBindingStore::read_provider_binding(
-        api.store().as_ref(),
-        key.universe_id,
+    route: &UpstreamRoute,
+) -> Result<(String, auth::SecretValue), ProviderRouteRefusal> {
+    let UpstreamRoute::Provider {
+        provider_id,
         binding_id,
-    )
-    .await?;
-    if binding.status != environments::EnvironmentProviderBindingStatus::Enabled
-        || binding.provider_id != *provider_id
-    {
-        anyhow::bail!("provider binding is disabled or changed")
-    }
-    Ok(())
+        target_id,
+    } = route
+    else {
+        return Err(ProviderRouteRefusal::Status(StatusCode::BAD_GATEWAY));
+    };
+    let unavailable = |error: environments::EnvironmentRegistryError| match error {
+        environments::EnvironmentRegistryError::Store { .. } => {
+            tracing::warn!(target: "temporal_runtime", %error, provider = %provider_id, "provider record unavailable");
+            ProviderRouteRefusal::Status(StatusCode::SERVICE_UNAVAILABLE)
+        }
+        error => {
+            tracing::error!(target: "temporal_runtime", %error, provider = %provider_id, "provider data route is misconfigured");
+            ProviderRouteRefusal::Status(StatusCode::BAD_GATEWAY)
+        }
+    };
+    let provider = state
+        .environment_provider(provider_id)
+        .await
+        .map_err(unavailable)?;
+    let Some(base) = provider.data_route_base.as_ref() else {
+        return Err(ProviderRouteRefusal::NotAdvertised);
+    };
+    let credential = state
+        .environment_provider_credential(provider_id)
+        .await
+        .map_err(unavailable)?;
+    let owner = target_owner(key, binding_id).map_err(|error| {
+        tracing::error!(target: "temporal_runtime", %error, environment = %key.environment_id, "route identity is not a valid target owner");
+        ProviderRouteRefusal::Status(StatusCode::BAD_REQUEST)
+    })?;
+    Ok((provider_data_route(base, &owner, target_id), credential))
 }
 
-async fn proxy_provider_route(
+fn target_owner(
+    key: &RouteKey,
+    binding_id: &environments::EnvironmentProviderBindingId,
+) -> Result<TargetOwner, environment_protocol::ids::IdError> {
+    Ok(TargetOwner {
+        universe_id: UniverseId::new(key.universe_id.to_string())?,
+        binding_id: BindingId::new(binding_id.as_str())?,
+        environment_id: EnvironmentId::new(key.environment_id.as_str())?,
+        incarnation_id: IncarnationId::new(key.incarnation_id.as_str())?,
+    })
+}
+
+/// Where an upstream socket is dialed.
+#[derive(Clone, Copy)]
+enum UpstreamTarget<'a> {
+    /// `ws://` or `wss://`, dialed as written.
+    Url,
+    /// A Unix socket path; the upgrade targets `/` with `Host: localhost`.
+    Unix(&'a str),
+}
+
+fn external_target(endpoint: &EnvironmentEndpoint) -> UpstreamTarget<'_> {
+    match (endpoint.scheme(), endpoint.unix_socket_path()) {
+        (EndpointScheme::Unix, Some(path)) => UpstreamTarget::Unix(path),
+        _ => UpstreamTarget::Url,
+    }
+}
+
+enum Upstream {
+    Tcp(Box<WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>),
+    Unix(Box<WebSocketStream<tokio::net::UnixStream>>),
+}
+
+/// Why an upstream dial failed, and what the worker is told.
+enum UpstreamFailure {
+    /// Unreachable, slow or answering 5xx/429: the worker may retry.
+    Unavailable(String),
+    /// The upstream refused the upgrade for good (wrong credential, no such
+    /// route) or the URL is unusable.
+    Refused(String),
+}
+
+impl UpstreamFailure {
+    fn respond(self, endpoint: &str) -> Response {
+        match self {
+            Self::Unavailable(error) => {
+                tracing::warn!(target: "temporal_runtime", %error, %endpoint, "environment upstream unavailable");
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
+            Self::Refused(error) => {
+                tracing::error!(target: "temporal_runtime", %error, %endpoint, "environment upstream refused the connection");
+                StatusCode::BAD_GATEWAY.into_response()
+            }
+        }
+    }
+}
+
+fn upstream_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(Some(MAX_MESSAGE_BYTES as usize))
+        .max_frame_size(Some(MAX_MESSAGE_BYTES as usize))
+}
+
+/// Dial an upstream data socket with the protocol's message limits, an
+/// optional bearer credential and a connect bound.
+async fn dial_upstream(
+    endpoint: &str,
+    target: UpstreamTarget<'_>,
+    bearer: Option<&str>,
+) -> Result<Upstream, UpstreamFailure> {
+    let url = match target {
+        UpstreamTarget::Url => endpoint,
+        UpstreamTarget::Unix(_) => "ws://localhost/",
+    };
+    let mut request = url
+        .into_client_request()
+        .map_err(|error| UpstreamFailure::Refused(error.to_string()))?;
+    if let Some(bearer) = bearer {
+        let mut value =
+            UpstreamHeaderValue::from_str(&format!("Bearer {bearer}")).map_err(|_| {
+                UpstreamFailure::Refused("the credential is not a valid header value".to_owned())
+            })?;
+        value.set_sensitive(true);
+        request.headers_mut().insert(
+            tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
+            value,
+        );
+    }
+    let dialed = tokio::time::timeout(UPSTREAM_CONNECT_TIMEOUT, async {
+        match target {
+            UpstreamTarget::Url => {
+                connect_async_with_config(request, Some(upstream_config()), true)
+                    .await
+                    .map(|(socket, _)| Upstream::Tcp(Box::new(socket)))
+                    .map_err(upstream_failure)
+            }
+            UpstreamTarget::Unix(path) => {
+                let stream = tokio::net::UnixStream::connect(path)
+                    .await
+                    .map_err(|error| UpstreamFailure::Unavailable(error.to_string()))?;
+                client_async_with_config(request, stream, Some(upstream_config()))
+                    .await
+                    .map(|(socket, _)| Upstream::Unix(Box::new(socket)))
+                    .map_err(upstream_failure)
+            }
+        }
+    })
+    .await;
+    dialed.unwrap_or_else(|_| {
+        Err(UpstreamFailure::Unavailable(format!(
+            "no upgrade within {} s",
+            UPSTREAM_CONNECT_TIMEOUT.as_secs()
+        )))
+    })
+}
+
+fn upstream_failure(error: tokio_tungstenite::tungstenite::Error) -> UpstreamFailure {
+    use tokio_tungstenite::tungstenite::Error;
+    match error {
+        Error::Http(response) => {
+            let status = response.status();
+            let message = format!("upgrade refused with HTTP {status}");
+            if status.is_server_error() || status.as_u16() == 429 {
+                UpstreamFailure::Unavailable(message)
+            } else {
+                UpstreamFailure::Refused(message)
+            }
+        }
+        Error::Url(error) => UpstreamFailure::Refused(error.to_string()),
+        error => UpstreamFailure::Unavailable(error.to_string()),
+    }
+}
+
+async fn authorize_upstream(
+    state: &GatewayState,
+    key: &RouteKey,
+    route: &UpstreamRoute,
+) -> anyhow::Result<()> {
+    let api = state
+        .api_for_daemon(key.universe_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    let environment_id = environments::EnvironmentId::try_new(key.environment_id.clone())?;
+    let environment =
+        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
+            .await?;
+    if environment.incarnation.incarnation_id.as_str() != key.incarnation_id
+        || environment.status.is_closing_or_closed()
+    {
+        anyhow::bail!("environment route is stale or the environment is closing")
+    }
+    match (route, &environment.source) {
+        (
+            UpstreamRoute::External { endpoint },
+            environments::EnvironmentSource::External { endpoint: assigned },
+        ) if assigned == endpoint => Ok(()),
+        (
+            UpstreamRoute::Provider {
+                provider_id,
+                binding_id,
+                target_id,
+            },
+            environments::EnvironmentSource::Provisioned {
+                provider_id: assigned_provider,
+                binding_id: assigned_binding,
+            },
+        ) if assigned_provider == provider_id
+            && assigned_binding == binding_id
+            && environment.incarnation.provider_target_id.as_ref() == Some(target_id) =>
+        {
+            let binding = environments::EnvironmentProviderBindingStore::read_provider_binding(
+                api.store().as_ref(),
+                key.universe_id,
+                binding_id,
+            )
+            .await?;
+            if binding.status != environments::EnvironmentProviderBindingStatus::Enabled
+                || binding.provider_id != *provider_id
+            {
+                anyhow::bail!("provider binding is disabled or changed")
+            }
+            Ok(())
+        }
+        _ => anyhow::bail!("environment route no longer matches its environment"),
+    }
+}
+
+async fn proxy_upstream(
     state: Arc<GatewayState>,
     key: RouteKey,
-    provider_id: environments::EnvironmentProviderId,
-    binding_id: environments::EnvironmentProviderBindingId,
-    target_id: String,
-    mut worker: WebSocket,
-    provider: tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    route: UpstreamRoute,
+    worker: WebSocket,
+    upstream: Upstream,
 ) {
-    let (mut provider_writer, mut provider_reader) = provider.split();
+    match upstream {
+        Upstream::Tcp(socket) => proxy_frames(state, key, route, worker, *socket).await,
+        Upstream::Unix(socket) => proxy_frames(state, key, route, worker, *socket).await,
+    }
+}
+
+/// Pipe one worker route and its upstream frame for frame, pings and pongs
+/// included, re-checking the route's authorization on an interval.
+async fn proxy_frames<S>(
+    state: Arc<GatewayState>,
+    key: RouteKey,
+    route: UpstreamRoute,
+    mut worker: WebSocket,
+    upstream: WebSocketStream<S>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let (mut upstream_writer, mut upstream_reader) = upstream.split();
     let mut reauthorize = tokio::time::interval(Duration::from_secs(5));
     loop {
         tokio::select! {
             _ = reauthorize.tick() => {
-                if authorize_provisioned_route(
-                    &state, &key, &provider_id, &binding_id, &target_id,
-                ).await.is_err() {
-                    let _ = worker.send(close_message("provider route authorization changed")).await;
+                if authorize_upstream(&state, &key, &route).await.is_err() {
+                    let _ = worker.send(close_message("environment route authorization changed")).await;
                     break;
                 }
             }
@@ -806,24 +992,24 @@ async fn proxy_provider_route(
                 let Some(Ok(message)) = message else { break };
                 let close = matches!(message, Message::Close(_));
                 let message = match message {
-                    Message::Text(value) => ProviderMessage::Text(value.to_string().into()),
-                    Message::Binary(value) => ProviderMessage::Binary(value),
-                    Message::Ping(value) => ProviderMessage::Ping(value),
-                    Message::Pong(value) => ProviderMessage::Pong(value),
-                    Message::Close(_) => ProviderMessage::Close(None),
+                    Message::Text(value) => UpstreamMessage::Text(value.to_string().into()),
+                    Message::Binary(value) => UpstreamMessage::Binary(value),
+                    Message::Ping(value) => UpstreamMessage::Ping(value),
+                    Message::Pong(value) => UpstreamMessage::Pong(value),
+                    Message::Close(_) => UpstreamMessage::Close(None),
                 };
-                if provider_writer.send(message).await.is_err() || close { break }
+                if upstream_writer.send(message).await.is_err() || close { break }
             }
-            message = provider_reader.next() => {
+            message = upstream_reader.next() => {
                 let Some(Ok(message)) = message else { break };
-                let close = matches!(message, ProviderMessage::Close(_));
+                let close = matches!(message, UpstreamMessage::Close(_));
                 let message = match message {
-                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string().into())),
-                    ProviderMessage::Binary(value) => Some(Message::Binary(value)),
-                    ProviderMessage::Ping(value) => Some(Message::Ping(value)),
-                    ProviderMessage::Pong(value) => Some(Message::Pong(value)),
-                    ProviderMessage::Close(_) => Some(Message::Close(None)),
-                    ProviderMessage::Frame(_) => None,
+                    UpstreamMessage::Text(value) => Some(Message::Text(value.to_string().into())),
+                    UpstreamMessage::Binary(value) => Some(Message::Binary(value)),
+                    UpstreamMessage::Ping(value) => Some(Message::Ping(value)),
+                    UpstreamMessage::Pong(value) => Some(Message::Pong(value)),
+                    UpstreamMessage::Close(_) => Some(Message::Close(None)),
+                    UpstreamMessage::Frame(_) => None,
                 };
                 if let Some(message) = message
                     && worker.send(message).await.is_err()
@@ -833,63 +1019,9 @@ async fn proxy_provider_route(
         }
     }
     // Whichever leg ended first, complete the WebSocket closing handshake on
-    // both sides instead of dropping the opposite TCP stream abruptly.
-    let _ = provider_writer.send(ProviderMessage::Close(None)).await;
-    let _ = worker.send(Message::Close(None)).await;
-}
-
-async fn proxy_external_route(
-    state: Arc<GatewayState>,
-    key: RouteKey,
-    endpoint: String,
-    mut worker: WebSocket,
-    daemon: tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) {
-    let (mut daemon_writer, mut daemon_reader) = daemon.split();
-    let mut reauthorize = tokio::time::interval(Duration::from_secs(5));
-    loop {
-        tokio::select! {
-            _ = reauthorize.tick() => {
-                if authorize_external_route(&state, &key, &endpoint).await.is_err() {
-                    let _ = worker.send(close_message("external route authorization changed")).await;
-                    break;
-                }
-            }
-            message = worker.recv() => {
-                let Some(Ok(message)) = message else { break };
-                let close = matches!(message, Message::Close(_));
-                let message = match message {
-                    Message::Text(value) => ProviderMessage::Text(value.to_string().into()),
-                    Message::Binary(value) => ProviderMessage::Binary(value),
-                    Message::Ping(value) => ProviderMessage::Ping(value),
-                    Message::Pong(value) => ProviderMessage::Pong(value),
-                    Message::Close(_) => ProviderMessage::Close(None),
-                };
-                if daemon_writer.send(message).await.is_err() || close { break }
-            }
-            message = daemon_reader.next() => {
-                let Some(Ok(message)) = message else { break };
-                let close = matches!(message, ProviderMessage::Close(_));
-                let message = match message {
-                    ProviderMessage::Text(value) => Some(Message::Text(value.to_string().into())),
-                    ProviderMessage::Binary(value) => Some(Message::Binary(value)),
-                    ProviderMessage::Ping(value) => Some(Message::Ping(value)),
-                    ProviderMessage::Pong(value) => Some(Message::Pong(value)),
-                    ProviderMessage::Close(_) => Some(Message::Close(None)),
-                    ProviderMessage::Frame(_) => None,
-                };
-                if let Some(message) = message
-                    && worker.send(message).await.is_err()
-                { break }
-                if close { break }
-            }
-        }
-    }
-    // A worker activity may be cancelled or its client may disappear without
-    // a close frame. Do not propagate that abrupt teardown to envd.
-    let _ = daemon_writer.send(ProviderMessage::Close(None)).await;
+    // both sides instead of dropping the opposite stream abruptly; a worker
+    // that vanished without a close frame never tears envd down abruptly.
+    let _ = upstream_writer.send(UpstreamMessage::Close(None)).await;
     let _ = worker.send(Message::Close(None)).await;
 }
 
@@ -1151,32 +1283,65 @@ mod tests {
     }
 
     #[test]
-    fn provider_data_url_is_derived_and_path_segments_are_escaped() {
+    fn provider_data_routes_come_from_the_advertised_base() {
         let key = RouteKey {
             universe_id: Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").unwrap(),
-            environment_id: "environment with space".to_owned(),
-            incarnation_id: "incarnation/one".to_owned(),
+            environment_id: "environment_1".to_owned(),
+            incarnation_id: "incarnation_1".to_owned(),
         };
-        let endpoint = provider_data_endpoint(
-            "https://provider.example/control",
+        let owner = target_owner(
             &key,
-            "primary",
-            "target-one",
+            &environments::EnvironmentProviderBindingId::new("primary"),
         )
         .unwrap();
+        let base =
+            environment_protocol::routes::DataRouteBase::new("wss://provider.example/routes")
+                .unwrap();
         assert_eq!(
-            endpoint,
-            "wss://provider.example/routes/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/primary/environment%20with%20space/incarnation%2Fone/target-one"
+            provider_data_route(
+                &base,
+                &owner,
+                &ProviderTargetId::new("default/pod one").unwrap()
+            ),
+            "wss://provider.example/routes/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/primary/environment_1/incarnation_1/default%2Fpod%20one"
         );
-        let nested = provider_data_endpoint(
-            "https://provider.example/services/incus/control",
-            &key,
-            "primary",
-            "target-one",
-        )
-        .unwrap();
-        assert!(nested.starts_with("wss://provider.example/services/incus/routes/"));
-        assert!(provider_data_endpoint("wss://provider.example/custom", &key, "b", "t").is_err());
+    }
+
+    #[test]
+    fn upstream_refusals_split_into_retryable_and_permanent() {
+        let refused = |status: u16| {
+            upstream_failure(tokio_tungstenite::tungstenite::Error::Http(Box::new(
+                tokio_tungstenite::tungstenite::http::Response::builder()
+                    .status(status)
+                    .body(None)
+                    .unwrap(),
+            )))
+        };
+        assert!(matches!(refused(401), UpstreamFailure::Refused(_)));
+        assert!(matches!(refused(404), UpstreamFailure::Refused(_)));
+        assert!(matches!(refused(503), UpstreamFailure::Unavailable(_)));
+        assert!(matches!(refused(429), UpstreamFailure::Unavailable(_)));
+    }
+
+    #[test]
+    fn the_registration_origin_comes_from_the_public_base_url() {
+        let loopback: SocketAddr = "127.0.0.1:18080".parse().unwrap();
+        let public: SocketAddr = "0.0.0.0:18080".parse().unwrap();
+        assert_eq!(
+            registration_origin(None, loopback).unwrap().as_str(),
+            "ws://127.0.0.1:18080"
+        );
+        assert!(
+            registration_origin(None, public).is_err(),
+            "a non-loopback bind needs the public base URL"
+        );
+        assert_eq!(
+            registration_origin(Some("https://Lightspeed.example/base/"), public)
+                .unwrap()
+                .as_str(),
+            "wss://lightspeed.example"
+        );
+        assert!(registration_origin(Some("lightspeed.example"), public).is_err());
     }
 
     #[test]

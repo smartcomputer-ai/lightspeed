@@ -11,7 +11,6 @@ harness = { path = "../harness", features = ["contract"] }
 schemars = { version = "1", features = ["uuid1"] }
 sha2 = "0.11"
 hex = "0.4"
-environment-protocol = { path = "../environment-protocol" }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 futures = "0.3"

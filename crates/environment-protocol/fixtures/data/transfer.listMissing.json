@@ -1,0 +1,20 @@
+{
+  "params": {
+    "operationId": "op-2",
+    "limit": 64
+  },
+  "response": {
+    "digests": [
+      "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    ],
+    "remainingCount": 3
+  },
+  "error": {
+    "code": -32007,
+    "message": "listMissing is not valid in the inventory phase",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "transferPhase"
+    }
+  }
+}

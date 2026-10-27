@@ -1,0 +1,47 @@
+{
+  "params": {
+    "root": "/workspace",
+    "pattern": "fn main",
+    "patternIgnoreCase": true,
+    "filter": {
+      "include": [
+        "**/*.rs"
+      ],
+      "exclude": [
+        "target/**"
+      ],
+      "maxDepth": 8
+    },
+    "limits": {
+      "maxMatches": 1000,
+      "maxFiles": 5000,
+      "maxBytes": 67108864,
+      "maxDurationMs": 30000,
+      "maxLineBytes": 4096
+    }
+  },
+  "response": {
+    "matches": [
+      {
+        "path": "/workspace/src/main.rs",
+        "lineNumber": 3,
+        "line": "fn main() {"
+      }
+    ],
+    "searchedFileCount": 120,
+    "searchedBytes": 480000,
+    "skippedFileCount": 2,
+    "skippedEntryCount": 1,
+    "elapsedMs": 41,
+    "stopped": "matchLimit"
+  },
+  "error": {
+    "code": -32602,
+    "message": "limits.maxDurationMs is 90000; the ceiling is 60000",
+    "data": {
+      "kind": "invalidParams",
+      "field": "limits.maxDurationMs",
+      "ceiling": 60000
+    }
+  }
+}

@@ -8763,21 +8763,6 @@
         ],
         "type": "object"
       },
-      "DeploymentEnvironmentProviderConnection": {
-        "properties": {
-          "endpoint": {
-            "type": "string"
-          },
-          "transport": {
-            "$ref": "#/components/schemas/DeploymentEnvironmentProviderTransport"
-          }
-        },
-        "required": [
-          "endpoint",
-          "transport"
-        ],
-        "type": "object"
-      },
       "DeploymentEnvironmentProviderDeleteParams": {
         "properties": {
           "providerId": {
@@ -8800,6 +8785,24 @@
         ],
         "type": "object"
       },
+      "DeploymentEnvironmentProviderFeaturesView": {
+        "description": "Optional controller methods the provider's controller advertised.",
+        "properties": {
+          "adoptTarget": {
+            "description": "Existing targets can be adopted (`environment/adopt`).",
+            "type": "boolean"
+          },
+          "ingress": {
+            "description": "Public ingress can be enabled on environments.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "adoptTarget",
+          "ingress"
+        ],
+        "type": "object"
+      },
       "DeploymentEnvironmentProviderListParams": {
         "type": "object"
       },
@@ -8818,9 +8821,18 @@
         "type": "object"
       },
       "DeploymentEnvironmentProviderPutParams": {
+        "description": "Register or replace a provider. `credential` is the bearer token\nLightspeed presents to the provider's controller and data routes: it is\nsealed on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
         "properties": {
-          "controllerConnection": {
-            "$ref": "#/components/schemas/DeploymentEnvironmentProviderConnection"
+          "controllerEndpoint": {
+            "description": "`ws://`, `wss://` or `unix://` URL of the provider controller.",
+            "type": "string"
+          },
+          "credential": {
+            "description": "Required when the provider is new; omit to keep the stored one.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "displayName": {
             "type": [
@@ -8840,7 +8852,7 @@
         },
         "required": [
           "providerId",
-          "controllerConnection"
+          "controllerEndpoint"
         ],
         "type": "object"
       },
@@ -8877,82 +8889,33 @@
         ],
         "type": "object"
       },
-      "DeploymentEnvironmentProviderTransport": {
-        "oneOf": [
-          {
-            "properties": {
-              "type": {
-                "const": "webSocket",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "type": {
-                "const": "http",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "type": {
-                "const": "stdio",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "type": {
-                "const": "ssh",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "providerType": {
-                "type": "string"
-              },
-              "type": {
-                "const": "provider",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "providerType"
-            ],
-            "type": "object"
-          }
-        ]
-      },
       "DeploymentEnvironmentProviderView": {
         "properties": {
-          "controllerConnection": {
-            "$ref": "#/components/schemas/DeploymentEnvironmentProviderConnection"
+          "controllerEndpoint": {
+            "description": "`ws://`, `wss://` or `unix://` URL of the provider controller.",
+            "type": "string"
+          },
+          "controllerFeatures": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeploymentEnvironmentProviderFeaturesView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the controller advertised at its last successful handshake;\nabsent until Lightspeed first reached it at this endpoint."
           },
           "createdAtMs": {
             "format": "int64",
             "type": "integer"
+          },
+          "dataRouteBase": {
+            "description": "Base URL of the provider's data routes, as its controller advertised\nit; absent until then.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "displayName": {
             "type": [
@@ -8976,7 +8939,7 @@
         },
         "required": [
           "providerId",
-          "controllerConnection",
+          "controllerEndpoint",
           "createdAtMs",
           "updatedAtMs"
         ],
@@ -9339,54 +9302,6 @@
         ],
         "type": "object"
       },
-      "EnvironmentConnectionTransportView": {
-        "oneOf": [
-          {
-            "enum": [
-              "webSocket",
-              "http",
-              "stdio",
-              "ssh"
-            ],
-            "type": "string"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "provider": {
-                "properties": {
-                  "provider_type": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "provider_type"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "provider"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "EnvironmentConnectionView": {
-        "properties": {
-          "endpoint": {
-            "type": "string"
-          },
-          "transport": {
-            "$ref": "#/components/schemas/EnvironmentConnectionTransportView"
-          }
-        },
-        "required": [
-          "endpoint",
-          "transport"
-        ],
-        "type": "object"
-      },
       "EnvironmentCreateParams": {
         "properties": {
           "bindingId": {
@@ -9609,7 +9524,7 @@
             "type": "string"
           },
           "protocolVersion": {
-            "description": "Environment protocol version the gateway speaks. A daemon registers\nonly when it reports exactly this number.",
+            "description": "The envd protocol version (data plane and registration channel)\nthe gateway speaks. A daemon registers only when it reports exactly\nthis number.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -9635,19 +9550,15 @@
       },
       "EnvironmentExternalCreateParams": {
         "properties": {
-          "connection": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/EnvironmentConnectionView"
-              }
-            ],
-            "description": "Connection to an envd instance reachable from Lightspeed."
-          },
           "displayName": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "endpoint": {
+            "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
+            "type": "string"
           },
           "metadata": {
             "additionalProperties": {
@@ -9661,7 +9572,7 @@
         },
         "required": [
           "requestId",
-          "connection"
+          "endpoint"
         ],
         "type": "object"
       },
@@ -9918,7 +9829,8 @@
       },
       "EnvironmentJobReadParams": {
         "properties": {
-          "afterSeq": {
+          "after": {
+            "description": "Byte offset to read each job's output from: a previous entry's\n`outputNext`. Omitted with `tailBytes` omitted reads from the start.",
             "format": "uint64",
             "minimum": 0,
             "type": [
@@ -9926,18 +9838,24 @@
               "null"
             ]
           },
-          "includeArtifacts": {
-            "default": false,
-            "type": "boolean"
-          },
           "jobs": {
             "items": {
               "$ref": "#/components/schemas/SessionJobHandleInput"
             },
             "type": "array"
           },
-          "outputBytes": {
-            "format": "uint",
+          "maxBytes": {
+            "description": "Most output bytes per job; omit for the server's default page.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tailBytes": {
+            "description": "Read each job's last `tailBytes` of output instead; excludes `after`.",
+            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -9960,6 +9878,29 @@
             "type": "array"
           }
         },
+        "type": "object"
+      },
+      "EnvironmentLifecycleErrorView": {
+        "properties": {
+          "firstAtMs": {
+            "description": "When the current run of errors began.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "lastAtMs": {
+            "description": "When `message` was recorded.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "firstAtMs",
+          "lastAtMs"
+        ],
         "type": "object"
       },
       "EnvironmentLifecycleStatusView": {
@@ -10500,8 +10441,9 @@
           },
           {
             "properties": {
-              "connection": {
-                "$ref": "#/components/schemas/EnvironmentConnectionView"
+              "endpoint": {
+                "description": "`ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.",
+                "type": "string"
               },
               "type": {
                 "const": "external",
@@ -10510,7 +10452,7 @@
             },
             "required": [
               "type",
-              "connection"
+              "endpoint"
             ],
             "type": "object"
           },
@@ -10592,6 +10534,36 @@
         ],
         "type": "object"
       },
+      "EnvironmentTemplateResourcesView": {
+        "description": "A template's compute, in provider-neutral units. Each field is absent\nwhen the provider does not fix it.",
+        "properties": {
+          "diskBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "vcpus": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "EnvironmentTemplateView": {
         "properties": {
           "bindingId": {
@@ -10620,6 +10592,17 @@
           },
           "publicIngress": {
             "type": "boolean"
+          },
+          "resources": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentTemplateResourcesView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compute targets of this template get; absent when the provider does\nnot fix it."
           },
           "templateId": {
             "type": "string"
@@ -10679,6 +10662,17 @@
               "null"
             ]
           },
+          "lifecycleError": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnvironmentLifecycleErrorView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why the environment failed, or the latest error (or what the\nprovider reports it is waiting on) while its lifecycle converges;\nabsent once it reaches a steady state."
+          },
           "metadata": {
             "additionalProperties": {
               "type": "string"
@@ -10686,12 +10680,14 @@
             "type": "object"
           },
           "publicEndpoint": {
+            "description": "The public endpoint the provider last reported. It lags\n`publicIngressEnabled` while the lifecycle reconciler converges.",
             "type": [
               "string",
               "null"
             ]
           },
           "publicIngressEnabled": {
+            "description": "Lightspeed-owned public ingress intent; `publicEndpoint` is what the\nprovider realized.",
             "type": "boolean"
           },
           "requestId": {
@@ -15777,29 +15773,6 @@
         ],
         "type": "object"
       },
-      "SessionJobArtifactView": {
-        "properties": {
-          "kind": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object"
-          },
-          "path": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "path"
-        ],
-        "type": "object"
-      },
       "SessionJobCancelEntryView": {
         "properties": {
           "error": {
@@ -15862,6 +15835,49 @@
         ],
         "type": "string"
       },
+      "SessionJobExitView": {
+        "description": "How a job's root process ended.",
+        "oneOf": [
+          {
+            "description": "Normal exit with this status code.",
+            "properties": {
+              "code": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "type": {
+                "const": "code",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Killed by this signal, named like `SIGSEGV`.",
+            "properties": {
+              "coreDumped": {
+                "type": "boolean"
+              },
+              "signal": {
+                "type": "string"
+              },
+              "type": {
+                "const": "signal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "signal"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "SessionJobHandleInput": {
         "properties": {
           "environmentId": {
@@ -15897,7 +15913,8 @@
           "dataBase64": {
             "type": "string"
           },
-          "seq": {
+          "offset": {
+            "description": "Byte offset of the chunk's first byte in the job's combined output.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
@@ -15907,9 +15924,47 @@
           }
         },
         "required": [
-          "seq",
+          "offset",
           "stream",
           "dataBase64"
+        ],
+        "type": "object"
+      },
+      "SessionJobOutputGapReasonView": {
+        "oneOf": [
+          {
+            "const": "overflow",
+            "description": "Dropped from the middle because the job's retained output exceeded\nits cap; the head and the newest bytes are kept.",
+            "type": "string"
+          },
+          {
+            "const": "expired",
+            "description": "Released after it was delivered.",
+            "type": "string"
+          }
+        ]
+      },
+      "SessionJobOutputGapView": {
+        "description": "Output bytes in `[offset, offset + omittedBytes)` that cannot be\nreturned.",
+        "properties": {
+          "offset": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "omittedBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/SessionJobOutputGapReasonView"
+          }
+        },
+        "required": [
+          "offset",
+          "omittedBytes",
+          "reason"
         ],
         "type": "object"
       },
@@ -15921,13 +15976,8 @@
         "type": "string"
       },
       "SessionJobReadEntryView": {
+        "description": "One job's summary and output page, or why it could not be read: an\nentry with `error` and no summary names a job the environment does not\nknow (never created, or garbage-collected).",
         "properties": {
-          "artifacts": {
-            "items": {
-              "$ref": "#/components/schemas/SessionJobArtifactView"
-            },
-            "type": "array"
-          },
           "error": {
             "type": [
               "string",
@@ -15945,12 +15995,27 @@
             ]
           },
           "outputChunks": {
+            "description": "Output in offset order.",
             "items": {
               "$ref": "#/components/schemas/SessionJobOutputChunkView"
             },
             "type": "array"
           },
-          "outputNextSeq": {
+          "outputEnd": {
+            "description": "Output bytes the job produced so far; final once it is terminal.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outputGaps": {
+            "description": "Output ranges between the requested start and `outputNext` that\ncannot be returned.",
+            "items": {
+              "$ref": "#/components/schemas/SessionJobOutputGapView"
+            },
+            "type": "array"
+          },
+          "outputNext": {
+            "description": "Byte offset to continue reading from: pass it as `after`.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
@@ -15967,7 +16032,8 @@
           }
         },
         "required": [
-          "outputNextSeq"
+          "outputNext",
+          "outputEnd"
         ],
         "type": "object"
       },
@@ -16087,26 +16153,84 @@
         "type": "object"
       },
       "SessionJobStatusView": {
-        "enum": [
-          "accepted",
-          "queued",
-          "running",
-          "succeeded",
-          "failed",
-          "cancelRequested",
-          "cancelled",
-          "timedOut",
-          "dependencyFailed",
-          "interrupted",
-          "lost"
-        ],
-        "type": "string"
+        "description": "Job lifecycle. `queued` and `running` are live; the rest are terminal.",
+        "oneOf": [
+          {
+            "enum": [
+              "running"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "queued",
+            "description": "Waiting for dependencies or its queue.",
+            "type": "string"
+          },
+          {
+            "const": "succeeded",
+            "description": "Exited with code 0.",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "description": "Exited otherwise, or could not start.",
+            "type": "string"
+          },
+          {
+            "const": "timedOut",
+            "description": "Its timeout expired and it was stopped.",
+            "type": "string"
+          },
+          {
+            "const": "cancelled",
+            "description": "Stopped or never started because of a cancel.",
+            "type": "string"
+          },
+          {
+            "const": "dependencyFailed",
+            "description": "A dependency did not finish as the dependency policy requires.",
+            "type": "string"
+          },
+          {
+            "const": "interrupted",
+            "description": "The environment daemon stopped while the job was queued or running.",
+            "type": "string"
+          }
+        ]
+      },
+      "SessionJobStoppedByView": {
+        "description": "Why Lightspeed stopped a running job.",
+        "oneOf": [
+          {
+            "const": "timeout",
+            "description": "Its timeout expired: terminate, a grace period, then kill.",
+            "type": "string"
+          },
+          {
+            "const": "terminate",
+            "description": "A cancel without `force`: terminate, a grace period, then kill.",
+            "type": "string"
+          },
+          {
+            "const": "kill",
+            "description": "A cancel with `force`: killed at once.",
+            "type": "string"
+          }
+        ]
       },
       "SessionJobSummaryView": {
+        "description": "What a job is and how it ended. Instants are the environment's wall\nclock.",
         "properties": {
+          "cancelRequestedAtMs": {
+            "description": "When a cancel reached the job while it ran.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "createdAtMs": {
-            "format": "uint64",
-            "minimum": 0,
+            "format": "int64",
             "type": "integer"
           },
           "dependencies": {
@@ -16115,12 +16239,25 @@
             },
             "type": "array"
           },
-          "exitCode": {
-            "format": "int32",
+          "durationMs": {
+            "description": "Run time from start to finish, immune to clock jumps.",
+            "format": "uint64",
+            "minimum": 0,
             "type": [
               "integer",
               "null"
             ]
+          },
+          "exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionJobExitView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the job's root process ended, once it ran and exited."
           },
           "failure": {
             "type": [
@@ -16129,8 +16266,7 @@
             ]
           },
           "finishedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
+            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -16145,9 +16281,6 @@
               "null"
             ]
           },
-          "namespace": {
-            "type": "string"
-          },
           "orphanedDescendants": {
             "description": "True when the job's root process exited while descendants it spawned\nwere still running; the host terminated them best-effort at job\ncompletion.",
             "type": "boolean"
@@ -16159,16 +16292,18 @@
             ]
           },
           "queuedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
+            "format": "int64",
             "type": [
               "integer",
               "null"
             ]
           },
+          "requestId": {
+            "description": "The start request that created the job; part of its identity.",
+            "type": "string"
+          },
           "startedAtMs": {
-            "format": "uint64",
-            "minimum": 0,
+            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -16176,11 +16311,22 @@
           },
           "status": {
             "$ref": "#/components/schemas/SessionJobStatusView"
+          },
+          "stoppedBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionJobStoppedByView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when Lightspeed stopped the running job."
           }
         },
         "required": [
-          "namespace",
           "jobId",
+          "requestId",
           "status",
           "createdAtMs"
         ],
@@ -19905,7 +20051,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+      "description": "Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.",
       "name": "environments/ingress/put",
       "paramStructure": "by-name",
       "params": [
@@ -20129,7 +20275,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Reads selected job handles with bounded output, optional sequence continuation, and optional artifacts; use returned status/sequence data for polling.",
+      "description": "Reads selected job handles with bounded output from a byte offset or the output tail; continue from each entry's outputNext and poll on the returned status.",
       "name": "environments/jobs/read",
       "paramStructure": "by-name",
       "params": [
@@ -22579,7 +22725,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Registers or replaces one deployment provider and its controller connection. The provider does not call this API or require access to Lightspeed.",
+      "description": "Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.",
       "name": "deployment/environment-providers/put",
       "paramStructure": "by-name",
       "params": [
@@ -22606,7 +22752,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns every deployment-registered deployment provider and its controller connection.",
+      "description": "Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
       "name": "deployment/environment-providers/list",
       "paramStructure": "by-name",
       "params": [
@@ -22633,7 +22779,7 @@
       "x-lightspeed-target": null
     },
     {
-      "description": "Returns one deployment-registered deployment provider and its controller connection.",
+      "description": "Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
       "name": "deployment/environment-providers/read",
       "paramStructure": "by-name",
       "params": [

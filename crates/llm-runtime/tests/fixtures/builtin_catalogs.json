@@ -3304,7 +3304,7 @@
                       "type": "object"
                     },
                     "job_id": {
-                      "description": "Your name for the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read.",
+                      "description": "Your name for this run of the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read. An id names one run: to run a command again, choose a new id.",
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
                       "type": "string"
                     },
@@ -6672,7 +6672,7 @@
                       "type": "object"
                     },
                     "job_id": {
-                      "description": "Your name for the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read.",
+                      "description": "Your name for this run of the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read. An id names one run: to run a command again, choose a new id.",
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
                       "type": "string"
                     },
@@ -10112,7 +10112,7 @@
                         "type": "object"
                       },
                       "job_id": {
-                        "description": "Your name for the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read.",
+                        "description": "Your name for this run of the job (for example \"build\"). It keys the job's promise in the result and identifies the job to job_read. An id names one run: to run a command again, choose a new id.",
                         "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
                         "type": "string"
                       },

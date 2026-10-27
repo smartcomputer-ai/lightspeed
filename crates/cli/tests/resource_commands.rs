@@ -556,11 +556,9 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
                 assert_eq!(params["metadata"], json!({"project":"audit"}));
                 json!({"type":"provisioned","providerId":"incus","bindingId":"local"})
             } else {
-                assert_eq!(
-                    params["connection"],
-                    json!({"endpoint":"wss://env.example/ws","transport":"webSocket"})
-                );
-                json!({"type":"external","connection":params["connection"]})
+                assert_eq!(params["endpoint"], "wss://env.example/ws");
+                assert!(params.get("connection").is_none(), "{params}");
+                json!({"type":"external","endpoint":params["endpoint"]})
             };
             assert_eq!(params["requestId"], "retry-1");
             json!({"environment":{"environmentId":"env1","requestId":params["requestId"],"source":source,"status":"provisioning","desiredPower":"running","incarnation":{"incarnationId":"i1","createdAtMs":0,"updatedAtMs":0},"publicIngressEnabled":false,"createdAtMs":0,"updatedAtMs":0}})

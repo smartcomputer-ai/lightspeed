@@ -65,10 +65,9 @@ export function seedPlatform(store: DemoStore): void {
   store.environmentProviders.set(INCUS_PROVIDER_ID, {
     providerId: INCUS_PROVIDER_ID,
     displayName: "Incus (eu-1)",
-    controllerConnection: {
-      endpoint: "wss://incus-eu-1.lightspeed.demo:19090",
-      transport: { type: "webSocket" },
-    },
+    controllerEndpoint: "wss://incus-eu-1.lightspeed.demo:19090/control",
+    controllerFeatures: { adoptTarget: true, ingress: true },
+    dataRouteBase: "wss://incus-eu-1.lightspeed.demo:19090/routes",
     metadata: { region: "eu-1", mode: "cluster" },
     createdAtMs: Date.parse("2026-06-05T12:00:00.000Z"),
     updatedAtMs: Date.parse("2026-08-10T09:00:00.000Z"),

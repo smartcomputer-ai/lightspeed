@@ -6,21 +6,22 @@
 //! before it can replace the running executable.
 
 use std::{
-    collections::BTreeMap,
     io::{Read as _, Seek as _, Write as _},
     net::IpAddr,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, anyhow};
+use environment_protocol::{
+    bootstrap::{ArtifactSha256, BuildFacts, DiscoveryArtifact, DiscoveryDocument},
+    routes::{DISCOVERY_PATH, canonical_origin},
+};
 use flate2::read::GzDecoder;
 use futures_util::StreamExt as _;
 use reqwest::Url;
-use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
-const DISCOVERY_PATH: &str = "/.well-known/lightspeed-envd";
 const MAX_DISCOVERY_BYTES: usize = 1_048_576;
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_BINARY_BYTES: u64 = 256 * 1024 * 1024;
@@ -36,6 +37,10 @@ pub struct UpgradeRequest {
     /// challenge. Manual upgrades install whichever protocol the deployment
     /// currently publishes.
     pub expected_protocol: Option<u32>,
+    /// A protocol that installing would not change, refused as terminal:
+    /// an automatic upgrade after an unreadable first frame installs any
+    /// protocol but the daemon's own.
+    pub other_than: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,38 +51,61 @@ pub struct InstalledBuild {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DiscoveryDocument {
-    version: String,
-    git_sha: String,
-    protocol_version: u32,
-    artifacts: BTreeMap<String, DiscoveryArtifact>,
+/// Why an upgrade did not install anything.
+#[derive(Debug, thiserror::Error)]
+pub enum UpgradeError {
+    /// A network failure, timeout, HTTP 5xx or 429 while fetching the
+    /// discovery document or the archive: retry later.
+    #[error("{0:#}")]
+    Transient(anyhow::Error),
+    /// Everything else: an integrity failure (checksum, candidate build
+    /// facts, a discovery protocol other than the challenge's), a document
+    /// without this target, or a local install failure. Retrying cannot
+    /// help.
+    #[error("{0:#}")]
+    Terminal(anyhow::Error),
 }
 
-#[derive(Debug, Deserialize)]
-struct DiscoveryArtifact {
-    file: String,
-    sha256: String,
-    url: Option<String>,
+impl UpgradeError {
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::Transient(_))
+    }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CandidateBuild {
-    name: String,
-    version: String,
-    git_sha: String,
-    target: String,
-    protocol_version: u32,
+type UpgradeResult<T> = Result<T, UpgradeError>;
+
+fn terminal(error: impl Into<anyhow::Error>) -> UpgradeError {
+    UpgradeError::Terminal(error.into())
+}
+
+/// Classify a failed HTTP exchange: transport trouble and server-side
+/// statuses are transient, a client-side status is terminal.
+fn http_failure(error: reqwest::Error, context: String) -> UpgradeError {
+    let transient = match error.status() {
+        Some(status) => status.is_server_error() || status.as_u16() == 429,
+        None => true,
+    };
+    let error = anyhow::Error::new(error).context(context);
+    if transient {
+        UpgradeError::Transient(error)
+    } else {
+        UpgradeError::Terminal(error)
+    }
+}
+
+macro_rules! fail {
+    ($($arg:tt)*) => {
+        return Err(terminal(anyhow!($($arg)*)))
+    };
 }
 
 /// Resolve an explicit override or derive the deployment discovery endpoint
-/// from an outbound WebSocket gateway URL.
+/// from an outbound WebSocket gateway URL: its canonical origin, as HTTP,
+/// with `DISCOVERY_PATH`.
 pub fn resolve_discovery_url(
     gateway_url: Option<&str>,
     override_url: Option<&str>,
-) -> Result<String> {
+) -> anyhow::Result<String> {
     if let Some(url) = override_url {
         validate_discovery_url(url)?;
         return Ok(url.to_owned());
@@ -85,123 +113,133 @@ pub fn resolve_discovery_url(
     let gateway_url = gateway_url.ok_or_else(|| {
         anyhow!("upgrade needs LIGHTSPEED_ENVD_GATEWAY_URL or LIGHTSPEED_ENVD_DISCOVERY_URL")
     })?;
-    let mut url = Url::parse(gateway_url).context("parse environment gateway URL")?;
-    let http_scheme = match url.scheme() {
-        "wss" => "https",
-        "ws" => "http",
-        scheme => bail!("cannot derive discovery URL from gateway scheme {scheme}"),
+    if !gateway_url.starts_with("ws://") && !gateway_url.starts_with("wss://") {
+        anyhow::bail!("cannot derive a discovery URL from gateway URL {gateway_url}");
+    }
+    let origin = canonical_origin(gateway_url).context("parse environment gateway URL")?;
+    let resolved = match origin.as_str().strip_prefix("wss://") {
+        Some(authority) => format!("https://{authority}{DISCOVERY_PATH}"),
+        None => format!(
+            "http://{}{DISCOVERY_PATH}",
+            origin.as_str().trim_start_matches("ws://")
+        ),
     };
-    url.set_scheme(http_scheme)
-        .map_err(|_| anyhow!("derive discovery URL scheme"))?;
-    url.set_path(DISCOVERY_PATH);
-    url.set_query(None);
-    url.set_fragment(None);
-    let resolved = url.to_string();
     validate_discovery_url(&resolved)?;
     Ok(resolved)
 }
 
 /// Discovery and archive downloads require HTTPS. Plain HTTP exists only for
 /// loopback development and the local automatic-upgrade acceptance fixture.
-pub fn validate_discovery_url(value: &str) -> Result<()> {
+pub fn validate_discovery_url(value: &str) -> anyhow::Result<()> {
     validate_download_url(value, "discovery URL").map(|_| ())
 }
 
-pub async fn install(request: UpgradeRequest) -> Result<InstalledBuild> {
+pub async fn install(request: UpgradeRequest) -> UpgradeResult<InstalledBuild> {
     crate::install_crypto_provider();
-    validate_discovery_url(&request.discovery_url)?;
-    let client = http_client(request.ca_file.as_deref()).await?;
+    validate_discovery_url(&request.discovery_url).map_err(terminal)?;
+    let client = http_client(request.ca_file.as_deref())
+        .await
+        .map_err(terminal)?;
     let discovery = fetch_discovery(&client, &request.discovery_url).await?;
     if let Some(expected) = request.expected_protocol
         && discovery.protocol_version != expected
     {
-        bail!(
+        fail!(
             "discovery document {} advertises protocol {}, but the gateway challenged with protocol {expected}",
             request.discovery_url,
             discovery.protocol_version
         );
     }
-    validate_git_sha(&discovery.git_sha, "discovery gitSha")?;
-    let artifact = discovery.artifacts.get(&request.target).ok_or_else(|| {
-        anyhow!(
+    if request.other_than == Some(discovery.protocol_version) {
+        fail!(
+            "discovery document {} advertises protocol {}, which this daemon already speaks",
+            request.discovery_url,
+            discovery.protocol_version
+        );
+    }
+    validate_git_sha(&discovery.git_sha, "discovery gitSha").map_err(terminal)?;
+    let Some(artifact) = discovery.artifacts.get(&request.target) else {
+        fail!(
             "discovery document {} has no envd artifact for target {}",
             request.discovery_url,
             request.target
-        )
-    })?;
-    validate_artifact(artifact)?;
-    let artifact_url = artifact.url.as_deref().ok_or_else(|| {
-        anyhow!(
+        );
+    };
+    validate_artifact(artifact).map_err(terminal)?;
+    let Some(artifact_url) = artifact.url.as_deref() else {
+        fail!(
             "deployment discovery document {} has no public URL for target {}",
             request.discovery_url,
             request.target
-        )
-    })?;
-    let artifact_url = validate_download_url(artifact_url, "envd artifact URL")?;
+        );
+    };
+    let artifact_url =
+        validate_download_url(artifact_url, "envd artifact URL").map_err(terminal)?;
     if !artifact_url
         .path()
         .ends_with(&format!("/{}", artifact.file))
     {
-        bail!("envd artifact URL does not end with its declared filename");
+        fail!("envd artifact URL does not end with its declared filename");
     }
 
     let (mut archive_file, actual_sha) =
         download_archive(&client, &artifact_url, MAX_ARCHIVE_BYTES).await?;
     if actual_sha != artifact.sha256 {
-        bail!(
+        fail!(
             "envd archive checksum mismatch: expected {}, downloaded {actual_sha}",
             artifact.sha256
         );
     }
 
-    let parent = request.install_path.parent().ok_or_else(|| {
-        anyhow!(
+    let manual = || {
+        manual_install_command(
+            artifact_url.as_str(),
+            &artifact.sha256.to_hex(),
+            &request.install_path,
+        )
+    };
+    let Some(parent) = request.install_path.parent() else {
+        fail!(
             "envd executable has no parent directory: {}",
             request.install_path.display()
-        )
-    })?;
+        );
+    };
     let mut candidate = tempfile::Builder::new()
         .prefix(".lightspeed-envd-upgrade-")
         .tempfile_in(parent)
         .map_err(|error| {
-            anyhow!(
+            terminal(anyhow!(
                 "cannot write next to {}: {error}\n{}",
                 request.install_path.display(),
-                manual_install_command(
-                    artifact_url.as_str(),
-                    &artifact.sha256,
-                    &request.install_path
-                )
-            )
+                manual()
+            ))
         })?;
-    extract_binary(&mut archive_file, candidate.as_file_mut())?;
-    make_executable(candidate.path())?;
+    extract_binary(&mut archive_file, candidate.as_file_mut()).map_err(terminal)?;
+    make_executable(candidate.path()).map_err(terminal)?;
     candidate
         .as_file_mut()
         .sync_all()
-        .context("sync candidate envd executable")?;
+        .context("sync candidate envd executable")
+        .map_err(terminal)?;
     // Close the write handle before executing the candidate: Linux refuses
     // to run a file that is still open for writing (ETXTBSY). The path stays
     // reserved and is removed on every failure path.
     let candidate = candidate.into_temp_path();
 
-    let build = inspect_candidate(&candidate).await?;
-    verify_candidate(&build, &discovery, &request.target)?;
+    let build = inspect_candidate(&candidate).await.map_err(terminal)?;
+    verify_candidate(&build, &discovery, &request.target).map_err(terminal)?;
     candidate.persist(&request.install_path).map_err(|error| {
-        anyhow!(
+        terminal(anyhow!(
             "replace {} atomically: {}\n{}",
             request.install_path.display(),
             error.error,
-            manual_install_command(
-                artifact_url.as_str(),
-                &artifact.sha256,
-                &request.install_path
-            )
-        )
+            manual()
+        ))
     })?;
     std::fs::File::open(&request.install_path)
         .and_then(|installed| installed.sync_all())
-        .context("sync installed envd executable")?;
+        .context("sync installed envd executable")
+        .map_err(terminal)?;
 
     Ok(InstalledBuild {
         version: build.version,
@@ -211,7 +249,7 @@ pub async fn install(request: UpgradeRequest) -> Result<InstalledBuild> {
     })
 }
 
-async fn http_client(ca_file: Option<&Path>) -> Result<reqwest::Client> {
+async fn http_client(ca_file: Option<&Path>) -> anyhow::Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
@@ -223,7 +261,7 @@ async fn http_client(ca_file: Option<&Path>) -> Result<reqwest::Client> {
         let certificates = reqwest::tls::Certificate::from_pem_bundle(&pem)
             .with_context(|| format!("parse CA file {}", ca_file.display()))?;
         if certificates.is_empty() {
-            bail!("CA file {} holds no certificates", ca_file.display());
+            anyhow::bail!("CA file {} holds no certificates", ca_file.display());
         }
         for certificate in certificates {
             builder = builder.add_root_certificate(certificate);
@@ -232,79 +270,91 @@ async fn http_client(ca_file: Option<&Path>) -> Result<reqwest::Client> {
     builder.build().context("build envd upgrade HTTP client")
 }
 
-async fn fetch_discovery(client: &reqwest::Client, url: &str) -> Result<DiscoveryDocument> {
+/// Fetch and decode the discovery document. It is part of the frozen
+/// bootstrap surface: members this daemon does not know are ignored.
+async fn fetch_discovery(client: &reqwest::Client, url: &str) -> UpgradeResult<DiscoveryDocument> {
+    let context = || format!("fetch envd discovery document {url}");
     let response = client
         .get(url)
         .send()
         .await
-        .with_context(|| format!("fetch envd discovery document {url}"))?
-        .error_for_status()
-        .with_context(|| format!("fetch envd discovery document {url}"))?;
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| http_failure(error, context()))?;
     if response
         .content_length()
         .is_some_and(|length| length > MAX_DISCOVERY_BYTES as u64)
     {
-        bail!("envd discovery document exceeds {MAX_DISCOVERY_BYTES} bytes");
+        fail!("envd discovery document exceeds {MAX_DISCOVERY_BYTES} bytes");
     }
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("read envd discovery document")?;
+        let chunk = chunk.map_err(|error| http_failure(error, context()))?;
         if bytes.len().saturating_add(chunk.len()) > MAX_DISCOVERY_BYTES {
-            bail!("envd discovery document exceeds {MAX_DISCOVERY_BYTES} bytes");
+            fail!("envd discovery document exceeds {MAX_DISCOVERY_BYTES} bytes");
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).context("decode envd discovery document")
+    serde_json::from_slice(&bytes)
+        .context("decode envd discovery document")
+        .map_err(terminal)
 }
 
 async fn download_archive(
     client: &reqwest::Client,
     url: &Url,
     max_bytes: u64,
-) -> Result<(tempfile::NamedTempFile, String)> {
+) -> UpgradeResult<(tempfile::NamedTempFile, ArtifactSha256)> {
+    let context = || format!("download envd archive {url}");
     let response = client
         .get(url.clone())
         .send()
         .await
-        .with_context(|| format!("download envd archive {url}"))?
-        .error_for_status()
-        .with_context(|| format!("download envd archive {url}"))?;
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| http_failure(error, context()))?;
     if response
         .content_length()
         .is_some_and(|length| length > max_bytes)
     {
-        bail!("envd archive exceeds {max_bytes} bytes");
+        fail!("envd archive exceeds {max_bytes} bytes");
     }
-    let mut file = tempfile::NamedTempFile::new().context("create temporary envd archive")?;
+    let mut file = tempfile::NamedTempFile::new()
+        .context("create temporary envd archive")
+        .map_err(terminal)?;
     let mut stream = response.bytes_stream();
     let mut size = 0_u64;
     let mut sha = Sha256::new();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("read envd archive response")?;
-        size = size
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| anyhow!("envd archive size overflow"))?;
+        let chunk = chunk.map_err(|error| http_failure(error, context()))?;
+        size = size.saturating_add(chunk.len() as u64);
         if size > max_bytes {
-            bail!("envd archive exceeds {max_bytes} bytes");
+            fail!("envd archive exceeds {max_bytes} bytes");
         }
         sha.update(&chunk);
         file.write_all(&chunk)
-            .context("write temporary envd archive")?;
+            .context("write temporary envd archive")
+            .map_err(terminal)?;
     }
     file.as_file_mut()
         .sync_all()
-        .context("sync temporary envd archive")?;
+        .context("sync temporary envd archive")
+        .map_err(terminal)?;
     file.as_file_mut()
         .rewind()
-        .context("rewind temporary envd archive")?;
-    Ok((file, hex::encode(sha.finalize())))
+        .context("rewind temporary envd archive")
+        .map_err(terminal)?;
+    let digest: [u8; 32] = sha
+        .finalize()
+        .as_slice()
+        .try_into()
+        .expect("sha256 is 32 bytes");
+    Ok((file, ArtifactSha256::from_bytes(digest)))
 }
 
 fn extract_binary(
     archive_file: &mut tempfile::NamedTempFile,
     destination: &mut std::fs::File,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     archive_file
         .as_file_mut()
         .rewind()
@@ -316,27 +366,27 @@ fn extract_binary(
         let mut entry = entry.context("read envd archive entry")?;
         let path = entry.path().context("read envd archive path")?;
         if path.as_ref() != Path::new("lightspeed-envd") {
-            bail!("envd archive contains unexpected entry {}", path.display());
+            anyhow::bail!("envd archive contains unexpected entry {}", path.display());
         }
         if found {
-            bail!("envd archive contains lightspeed-envd more than once");
+            anyhow::bail!("envd archive contains lightspeed-envd more than once");
         }
         if !entry.header().entry_type().is_file() {
-            bail!("envd archive entry lightspeed-envd is not a regular file");
+            anyhow::bail!("envd archive entry lightspeed-envd is not a regular file");
         }
         let size = entry.size();
         if size == 0 || size > MAX_BINARY_BYTES {
-            bail!("envd executable has invalid size {size}");
+            anyhow::bail!("envd executable has invalid size {size}");
         }
         let copied = std::io::copy(&mut entry.by_ref().take(MAX_BINARY_BYTES + 1), destination)
             .context("extract envd executable")?;
         if copied != size {
-            bail!("envd executable size differs from its archive header");
+            anyhow::bail!("envd executable size differs from its archive header");
         }
         found = true;
     }
     if !found {
-        bail!("envd archive does not contain lightspeed-envd");
+        anyhow::bail!("envd archive does not contain lightspeed-envd");
     }
     destination
         .flush()
@@ -344,18 +394,20 @@ fn extract_binary(
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> Result<()> {
+fn make_executable(path: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
         .with_context(|| format!("make candidate executable {}", path.display()))
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &Path) -> Result<()> {
-    bail!("envd self-upgrade is supported only on Unix")
+fn make_executable(_path: &Path) -> anyhow::Result<()> {
+    anyhow::bail!("envd self-upgrade is supported only on Unix")
 }
 
-async fn inspect_candidate(path: &Path) -> Result<CandidateBuild> {
+/// Run the candidate's `--print-build`, decoded as the frozen
+/// [`BuildFacts`].
+async fn inspect_candidate(path: &Path) -> anyhow::Result<BuildFacts> {
     let output = tokio::time::timeout(
         CANDIDATE_TIMEOUT,
         tokio::process::Command::new(path)
@@ -367,7 +419,7 @@ async fn inspect_candidate(path: &Path) -> Result<CandidateBuild> {
     .context("candidate envd --print-build timed out")?
     .with_context(|| format!("run candidate envd {}", path.display()))?;
     if !output.status.success() {
-        bail!(
+        anyhow::bail!(
             "candidate envd --print-build exited with {}: {}",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
@@ -377,38 +429,39 @@ async fn inspect_candidate(path: &Path) -> Result<CandidateBuild> {
 }
 
 fn verify_candidate(
-    build: &CandidateBuild,
+    build: &BuildFacts,
     discovery: &DiscoveryDocument,
     target: &str,
-) -> Result<()> {
-    if build.name != "lightspeed-envd" {
-        bail!(
-            "candidate build name is {}, expected lightspeed-envd",
-            build.name
+) -> anyhow::Result<()> {
+    if build.name != crate::DAEMON_NAME {
+        anyhow::bail!(
+            "candidate build name is {}, expected {}",
+            build.name,
+            crate::DAEMON_NAME
         );
     }
     if build.version != discovery.version {
-        bail!(
+        anyhow::bail!(
             "candidate version {} differs from discovery version {}",
             build.version,
             discovery.version
         );
     }
     if build.git_sha != discovery.git_sha {
-        bail!(
+        anyhow::bail!(
             "candidate gitSha {} differs from discovery gitSha {}",
             build.git_sha,
             discovery.git_sha
         );
     }
     if build.target != target {
-        bail!(
+        anyhow::bail!(
             "candidate target {} differs from requested target {target}",
             build.target
         );
     }
     if build.protocol_version != discovery.protocol_version {
-        bail!(
+        anyhow::bail!(
             "candidate protocol {} differs from discovery protocol {}",
             build.protocol_version,
             discovery.protocol_version
@@ -417,55 +470,47 @@ fn verify_candidate(
     Ok(())
 }
 
-fn validate_artifact(artifact: &DiscoveryArtifact) -> Result<()> {
+fn validate_artifact(artifact: &DiscoveryArtifact) -> anyhow::Result<()> {
     if artifact.file.is_empty()
         || Path::new(&artifact.file)
             .file_name()
             .and_then(|name| name.to_str())
             != Some(artifact.file.as_str())
     {
-        bail!("envd artifact has an unsafe filename");
+        anyhow::bail!("envd artifact has an unsafe filename");
     }
     if !artifact.file.ends_with(".tar.gz") {
-        bail!("envd artifact is not a .tar.gz archive");
-    }
-    if artifact.sha256.len() != 64
-        || !artifact
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        bail!("envd artifact has an invalid SHA-256 checksum");
+        anyhow::bail!("envd artifact is not a .tar.gz archive");
     }
     Ok(())
 }
 
-fn validate_git_sha(value: &str, label: &str) -> Result<()> {
+fn validate_git_sha(value: &str, label: &str) -> anyhow::Result<()> {
     if value.len() != 40
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     {
-        bail!("{label} must be a full lowercase hexadecimal commit");
+        anyhow::bail!("{label} must be a full lowercase hexadecimal commit");
     }
     Ok(())
 }
 
-fn validate_download_url(value: &str, label: &str) -> Result<Url> {
+fn validate_download_url(value: &str, label: &str) -> anyhow::Result<Url> {
     let url = Url::parse(value).with_context(|| format!("parse {label}"))?;
     if !url.username().is_empty() || url.password().is_some() {
-        bail!("{label} must not contain credentials");
+        anyhow::bail!("{label} must not contain credentials");
     }
     if url.fragment().is_some() {
-        bail!("{label} must not contain a fragment");
+        anyhow::bail!("{label} must not contain a fragment");
     }
     match url.scheme() {
         "https" => {}
         "http" if is_loopback(&url) => {}
-        _ => bail!("{label} must use https (or http toward loopback)"),
+        _ => anyhow::bail!("{label} must use https (or http toward loopback)"),
     }
     if url.host_str().is_none() {
-        bail!("{label} has no host");
+        anyhow::bail!("{label} has no host");
     }
     Ok(url)
 }
@@ -474,6 +519,7 @@ fn is_loopback(url: &Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
     host == "localhost"
         || host
             .parse::<IpAddr>()
@@ -539,7 +585,7 @@ mod tests {
             release_info::TARGET
         );
         let archive = envd_archive(script.as_bytes());
-        let archive_sha = hex::encode(Sha256::digest(&archive));
+        let archive_sha = environment_protocol::bytes::encode_hex(&Sha256::digest(&archive));
         let (origin, server) = serve_upgrade_with_document(archive, |origin| {
             discovery_json(origin, &archive_sha, &git_sha, 3)
         })
@@ -551,6 +597,7 @@ mod tests {
             install_path: install_path.clone(),
             target: release_info::TARGET.to_owned(),
             expected_protocol: Some(3),
+            other_than: None,
         })
         .await
         .expect("install");
@@ -581,15 +628,47 @@ mod tests {
             install_path: install_path.clone(),
             target: release_info::TARGET.to_owned(),
             expected_protocol: Some(3),
+            other_than: None,
         })
         .await
         .expect_err("protocol mismatch");
         server.abort();
+        assert!(!error.is_transient());
         assert!(
             error
                 .to_string()
                 .contains("gateway challenged with protocol 3")
         );
+        assert_eq!(
+            std::fs::read(&install_path).expect("old executable"),
+            b"old envd"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_upgrade_to_the_daemons_own_protocol_is_refused() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let install_path = temp.path().join("lightspeed-envd");
+        std::fs::write(&install_path, b"old envd").expect("old executable");
+        let git_sha = "d".repeat(40);
+        let archive = envd_archive(b"#!/bin/sh\nexit 1\n");
+        let (origin, server) = serve_upgrade_with_document(archive, |origin| {
+            discovery_json(origin, &"0".repeat(64), &git_sha, 3)
+        })
+        .await;
+        let error = install(UpgradeRequest {
+            discovery_url: format!("{origin}/envd.json"),
+            ca_file: None,
+            install_path: install_path.clone(),
+            target: release_info::TARGET.to_owned(),
+            expected_protocol: None,
+            other_than: Some(3),
+        })
+        .await
+        .expect_err("own protocol");
+        server.abort();
+        assert!(!error.is_transient(), "reinstalling cannot help");
         assert_eq!(
             std::fs::read(&install_path).expect("old executable"),
             b"old envd"
@@ -614,15 +693,62 @@ mod tests {
             install_path: install_path.clone(),
             target: release_info::TARGET.to_owned(),
             expected_protocol: Some(4),
+            other_than: None,
         })
         .await
         .expect_err("checksum mismatch");
         server.await.expect("server");
+        assert!(!error.is_transient(), "integrity failures are terminal");
         assert!(error.to_string().contains("archive checksum mismatch"));
         assert_eq!(
             std::fs::read(&install_path).expect("old executable"),
             b"old envd"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn server_errors_are_transient_and_client_errors_terminal() {
+        for (status, transient) in [(503, true), (429, true), (404, false)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listener");
+            let origin = format!("http://{}", listener.local_addr().expect("address"));
+            let server = tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                let mut request = vec![0_u8; 4096];
+                let _ = socket.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 {status} Status\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.expect("write");
+            });
+            let temp = tempfile::tempdir().expect("tempdir");
+            let error = install(UpgradeRequest {
+                discovery_url: format!("{origin}/envd.json"),
+                ca_file: None,
+                install_path: temp.path().join("lightspeed-envd"),
+                target: release_info::TARGET.to_owned(),
+                expected_protocol: Some(3),
+                other_than: None,
+            })
+            .await
+            .expect_err("no document");
+            server.await.expect("server");
+            assert_eq!(error.is_transient(), transient, "HTTP {status}: {error}");
+        }
+
+        let unreachable = install(UpgradeRequest {
+            discovery_url: "http://127.0.0.1:9/envd.json".to_owned(),
+            ca_file: None,
+            install_path: PathBuf::from("/nonexistent/lightspeed-envd"),
+            target: release_info::TARGET.to_owned(),
+            expected_protocol: None,
+            other_than: None,
+        })
+        .await
+        .expect_err("nothing listens");
+        assert!(unreachable.is_transient(), "{unreachable}");
     }
 
     #[cfg(unix)]

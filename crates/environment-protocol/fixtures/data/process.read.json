@@ -1,0 +1,63 @@
+{
+  "params": {
+    "processId": "proc-7",
+    "after": 16384,
+    "ack": 16384,
+    "maxBytes": 65536,
+    "waitMs": 20000,
+    "returnOn": "anyOutput"
+  },
+  "response": {
+    "output": {
+      "chunks": [
+        {
+          "offset": 16384,
+          "stream": "stdout",
+          "data": "aGVsbG8="
+        },
+        {
+          "offset": 1048581,
+          "stream": "stderr",
+          "data": "ZmFpbA=="
+        }
+      ],
+      "next": 1048585,
+      "end": 1048585,
+      "gaps": [
+        {
+          "offset": 16389,
+          "omittedBytes": 1032192,
+          "reason": "overflow"
+        }
+      ]
+    },
+    "state": "exited",
+    "exit": {
+      "kind": "signal",
+      "signal": "SIGSEGV",
+      "coreDumped": true
+    },
+    "stoppedBy": "terminate",
+    "pid": 4242,
+    "leftovers": {
+      "disposition": "kept",
+      "processes": [
+        {
+          "pid": 4250,
+          "command": "postgres -D /data"
+        },
+        {
+          "pid": 4251
+        }
+      ]
+    }
+  },
+  "error": {
+    "code": -32004,
+    "message": "unknown process id: proc-7",
+    "data": {
+      "kind": "notFound",
+      "reason": "expired"
+    }
+  }
+}

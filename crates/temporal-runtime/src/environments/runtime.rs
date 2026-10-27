@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use environment_client::WebSocketTransport;
 use environments::EnvironmentRecord;
 use tools::{
     environment::EnvironmentToolContext, environment_protocol::RemoteEnvironmentConnection,
@@ -12,7 +11,7 @@ use tools::{
 pub struct RuntimeEnvironment {
     resource: EnvironmentRecord,
     tool_context: EnvironmentToolContext,
-    remote_connection: Option<RemoteEnvironmentConnection<WebSocketTransport>>,
+    remote_connection: Option<RemoteEnvironmentConnection>,
 }
 
 impl RuntimeEnvironment {
@@ -34,10 +33,7 @@ impl RuntimeEnvironment {
         }
     }
 
-    pub fn with_remote_connection(
-        mut self,
-        connection: RemoteEnvironmentConnection<WebSocketTransport>,
-    ) -> Self {
+    pub fn with_remote_connection(mut self, connection: RemoteEnvironmentConnection) -> Self {
         self.remote_connection = Some(connection);
         self
     }
@@ -143,7 +139,7 @@ impl SessionEnvironmentManager {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use environment_protocol::shared::ProviderTargetId;
+    use environment_protocol::ids::ProviderTargetId;
     use environments::{
         EnvironmentIncarnationId, EnvironmentIncarnationRecord, EnvironmentProviderBindingId,
         EnvironmentProviderId, EnvironmentProvisionRequestId, EnvironmentSource, EnvironmentStatus,
@@ -155,7 +151,7 @@ mod tests {
     use super::*;
 
     fn resource() -> EnvironmentRecord {
-        let target_id = ProviderTargetId::new("target-a");
+        let target_id = ProviderTargetId::new("target-a").unwrap();
         EnvironmentRecord {
             environment_id: harness::EnvironmentId::new("environment-a"),
             request_id: EnvironmentProvisionRequestId::new("request-a"),
@@ -181,6 +177,7 @@ mod tests {
             public_endpoint: None,
             metadata: BTreeMap::from([("fsRoot".to_owned(), "/sandbox".to_owned())]),
             last_seen_at_ms: None,
+            lifecycle_error: None,
             created_at_ms: 1,
             updated_at_ms: 1,
         }

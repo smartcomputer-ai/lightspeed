@@ -20,17 +20,17 @@ pub(crate) async fn refresh(
         let connection = discovery.connection().await?;
         let query = tools::environment::sources::scan_query(
             source.roots.as_deref(),
-            &connection.cwd,
-            connection.initialized.home_directory.as_deref(),
+            connection.cwd.as_str(),
+            connection
+                .initialized
+                .home_directory
+                .as_ref()
+                .map(|home| home.as_str()),
             "prompts",
         )?;
         let scan = {
             let _timer = PhaseTimer::new("prompts_scan");
-            connection
-                .client
-                .scan(&query)
-                .await
-                .map_err(|e| e.to_string())?
+            connection.scan(query).await?
         };
         tools::prompts::environment::assemble(&scan)
     };
@@ -53,10 +53,23 @@ mod tests {
         ENVIRONMENT_PROMPT_CONTEXT_KEY, EnvironmentPromptReport, assemble, publication,
     };
 
+    fn daemon(root: &std::path::Path, cwd: &std::path::Path) -> environment_daemon::DaemonRuntime {
+        environment_daemon::DaemonRuntime::new(environment_daemon::config::DaemonConfig {
+            listen: None,
+            cwd: cwd.to_owned(),
+            fs_root: root.to_owned(),
+            state_dir: root.parent().unwrap().join("state"),
+            read_only_fs: true,
+            registration: None,
+            scrubbed_env: Vec::new(),
+        })
+        .unwrap()
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn local_environment_prompts_scan_in_order_and_replace_on_failure() {
         let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().canonicalize().unwrap();
+        let root = directory.path().canonicalize().unwrap().join("root");
         let cwd = root.join("project");
         let home = root.join("home");
         std::fs::create_dir_all(cwd.join(".agents/prompts")).unwrap();
@@ -85,8 +98,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(cwd.join(".agents/prompts/notes.json"), "Must not load").unwrap();
-        let fs =
-            environment_daemon::filesystem::LocalFileSystem::new(root.clone(), cwd.clone(), true);
+        let runtime = daemon(&root, &cwd);
         let query = tools::environment::sources::scan_query(
             None,
             cwd.to_str().unwrap(),
@@ -94,15 +106,23 @@ mod tests {
             "prompts",
         )
         .unwrap();
-        let scan = fs.scan(query).await.unwrap();
-        let (text, paths) = assemble(&scan).unwrap();
+        let scan = runtime
+            .filesystem()
+            .scan(
+                &environment_daemon::dispatch::RequestContext::detached(),
+                query,
+            )
+            .await
+            .unwrap();
+        let observation = assemble(&scan).unwrap();
         assert_eq!(
-            text,
+            observation.text,
             "First instructions\n\nLast instructions\n\nBase instructions"
         );
-        assert_eq!(paths.len(), 3);
+        assert_eq!(observation.paths.len(), 3);
+        assert!(observation.warnings.is_empty());
         let blobs = InMemoryBlobStore::new();
-        let entries = publication(&blobs, "machine", Ok((text, paths)))
+        let entries = publication(&blobs, "machine", Ok(observation.clone()))
             .await
             .unwrap();
         let entry = &entries[&ContextEntryKey::new(ENVIRONMENT_PROMPT_CONTEXT_KEY)];
@@ -114,10 +134,36 @@ mod tests {
         )
         .unwrap();
         assert!(report.available);
-        let mut incomplete = scan.clone();
-        incomplete.complete = false;
-        assert!(assemble(&incomplete).is_err());
-        let failed = publication(&blobs, "other-machine", assemble(&incomplete))
+        // A root that cannot be scanned is a warning naming it; the other
+        // roots' prompts still load.
+        let mut partial = scan.clone();
+        let failed_root = environment_protocol::paths::EnvironmentPath::new(
+            home.join(".agents/prompts").to_str().unwrap(),
+        )
+        .unwrap();
+        partial
+            .roots
+            .push(environment_protocol::data::scan::ScanRootResult::Failed {
+                path: failed_root.clone(),
+                error: environment_protocol::error::ProtocolError::deadline_exceeded("slow"),
+            });
+        let degraded = assemble(&partial).unwrap();
+        assert_eq!(degraded.text, observation.text);
+        assert_eq!(degraded.warnings.len(), 1);
+        assert!(degraded.warnings[0].starts_with(failed_root.as_str()));
+        // Prompts need a full observation of every root.
+        let mut unchanged = scan.clone();
+        unchanged.roots.push(
+            environment_protocol::data::scan::ScanRootResult::Unchanged {
+                path: failed_root,
+                fingerprint: environment_protocol::data::scan::ScanFingerprint::new(format!(
+                    "scan:v1:{}",
+                    "0".repeat(64)
+                ))
+                .unwrap(),
+            },
+        );
+        let failed = publication(&blobs, "other-machine", assemble(&unchanged))
             .await
             .unwrap();
         let failed = &failed[&ContextEntryKey::new(ENVIRONMENT_PROMPT_CONTEXT_KEY)];
@@ -130,10 +176,14 @@ mod tests {
         assert!(text.contains("unavailable"));
         assert!(!text.contains("Base instructions"));
         assert!(
-            publication(&blobs, "machine", Ok((String::new(), vec![])))
-                .await
-                .unwrap()
-                .is_empty()
+            publication(
+                &blobs,
+                "machine",
+                Ok(tools::prompts::environment::PromptObservation::default())
+            )
+            .await
+            .unwrap()
+            .is_empty()
         );
         let feature = EnvironmentsFeature {
             skills: Some(Default::default()),

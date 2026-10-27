@@ -1,5 +1,7 @@
 {
   "controllerListen": "127.0.0.1:19090",
+  "credentialFile": "/run/secrets/lightspeed-provider-credential",
+  "dataRouteBase": "ws://127.0.0.1:19090/routes",
   "incus": {
     "mode": "single",
     "endpoints": ["https://hz02.example.ts.net:8443"],

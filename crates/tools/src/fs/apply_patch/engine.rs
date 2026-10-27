@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     error::{ToolError, ToolResult},
     fs::{
-        CreateDirectoryOptions, FileMetadata, FileSystem, FsError, FsPath, RemoveOptions,
+        CreateDirectoryOptions, FileMetadata, FileSystem, FsError, FsPath, FsVersion,
+        RemoveOptions, RenameOptions, WriteOptions,
         apply_patch::{
             parser::{Hunk, ParseError, UpdateFileChunk, parse_patch},
             seek_sequence,
@@ -86,16 +87,26 @@ pub async fn apply_hunks(
                 chunks,
             } => {
                 let path = resolve_patch_path(cwd, path)?;
-                let new_contents =
+                let (new_contents, version) =
                     derive_new_contents_from_chunks(fs, max_file_read_bytes, &path, chunks).await?;
+                // The write is conditional on the version read, so a file
+                // changed since then is a conflict instead of a lost edit.
+                fs.write_file_with(
+                    &path,
+                    new_contents.into_bytes(),
+                    WriteOptions { if_match: version },
+                )
+                .await?;
                 if let Some(move_path) = move_path {
                     let destination = resolve_patch_path(cwd, move_path)?;
-                    write_file_with_parent_dirs(fs, &destination, new_contents.into_bytes())
+                    if let Some(parent) = destination.parent()
+                        && !parent.is_root()
+                    {
+                        fs.create_directory(&parent, CreateDirectoryOptions::recursive())
+                            .await?;
+                    }
+                    fs.rename(&path, &destination, RenameOptions { overwrite: true })
                         .await?;
-                    ensure_file_not_directory(fs, &path).await?;
-                    fs.remove(&path, RemoveOptions::file()).await?;
-                } else {
-                    fs.write_file(&path, new_contents.into_bytes()).await?;
                 }
                 summary.modified.push(affected_path);
             }
@@ -163,8 +174,8 @@ async fn derive_new_contents_from_chunks(
     max_file_read_bytes: Option<u64>,
     path: &FsPath,
     chunks: &[UpdateFileChunk],
-) -> ToolResult<String> {
-    let original_contents = read_file_text(fs, max_file_read_bytes, path).await?;
+) -> ToolResult<(String, Option<FsVersion>)> {
+    let (original_contents, version) = read_file_text(fs, max_file_read_bytes, path).await?;
     let mut original_lines = original_contents
         .split('\n')
         .map(String::from)
@@ -179,15 +190,16 @@ async fn derive_new_contents_from_chunks(
     if !new_lines.last().is_some_and(String::is_empty) {
         new_lines.push(String::new());
     }
-    Ok(new_lines.join("\n"))
+    Ok((new_lines.join("\n"), version))
 }
 
 async fn read_file_text(
     fs: &dyn FileSystem,
     max_file_read_bytes: Option<u64>,
     path: &FsPath,
-) -> ToolResult<String> {
-    let bytes = fs.read_file(path).await?;
+) -> ToolResult<(String, Option<FsVersion>)> {
+    let read = fs.read_file_versioned(path).await?;
+    let bytes = read.bytes;
     if let Some(max_file_read_bytes) = max_file_read_bytes
         && bytes.len() as u64 > max_file_read_bytes
     {
@@ -198,9 +210,8 @@ async fn read_file_text(
             max_file_read_bytes
         )));
     }
-    String::from_utf8(bytes)
-        .map_err(FsError::invalid_data)
-        .map_err(Into::into)
+    let text = String::from_utf8(bytes).map_err(FsError::invalid_data)?;
+    Ok((text, read.version))
 }
 
 fn compute_replacements(

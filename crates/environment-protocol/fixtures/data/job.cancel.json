@@ -1,0 +1,43 @@
+{
+  "params": {
+    "jobIds": [
+      "build"
+    ],
+    "scope": "dependents",
+    "force": true
+  },
+  "response": {
+    "jobs": [
+      {
+        "kind": "job",
+        "summary": {
+          "jobId": "build",
+          "requestId": "jobreq-run1-turn2-call3",
+          "status": "running",
+          "createdAtMs": 1761400000000,
+          "startedAtMs": 1761400000200,
+          "cancelRequestedAtMs": 1761400005000
+        }
+      },
+      {
+        "kind": "error",
+        "jobId": "deploy",
+        "error": {
+          "code": -32004,
+          "message": "unknown job id: deploy",
+          "data": {
+            "kind": "notFound"
+          }
+        }
+      }
+    ]
+  },
+  "error": {
+    "code": -32602,
+    "message": "jobIds must not be empty",
+    "data": {
+      "kind": "invalidParams",
+      "field": "jobIds"
+    }
+  }
+}

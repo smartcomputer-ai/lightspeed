@@ -1,0 +1,45 @@
+{
+  "params": {
+    "target": {
+      "owner": {
+        "universeId": "u1",
+        "bindingId": "primary",
+        "environmentId": "env_1",
+        "incarnationId": "inc_1"
+      },
+      "targetId": "ls-3f2a"
+    }
+  },
+  "response": {
+    "target": {
+      "targetId": "ls-3f2a",
+      "owner": {
+        "universeId": "u1",
+        "bindingId": "primary",
+        "environmentId": "env_1",
+        "incarnationId": "inc_1"
+      },
+      "displayName": "env_1",
+      "state": {
+        "phase": "active",
+        "power": "running",
+        "daemonReady": true
+      },
+      "supportedPowerStates": [
+        "running",
+        "paused",
+        "stopped"
+      ],
+      "metadata": {
+        "incusMember": "node-1"
+      }
+    }
+  },
+  "error": {
+    "code": -32004,
+    "message": "target ls-3f2a no longer exists",
+    "data": {
+      "kind": "notFound"
+    }
+  }
+}

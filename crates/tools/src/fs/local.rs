@@ -9,8 +9,8 @@ use std::{
 use async_trait::async_trait;
 
 use crate::fs::{
-    CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
-    FsPath, FsResult, ReadDirectoryEntry, RemoveOptions,
+    CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsPath, FsResult,
+    ReadDirectoryEntry, RemoveOptions, RenameOptions,
 };
 
 #[derive(Clone, Debug)]
@@ -149,80 +149,49 @@ impl FileSystem for LocalFileSystem {
         .map_err(|error| map_io_error(path, error))
     }
 
-    async fn copy(
+    async fn rename(
         &self,
         source_path: &FsPath,
         destination_path: &FsPath,
-        options: CopyOptions,
+        options: RenameOptions,
     ) -> FsResult<()> {
-        copy_path(
+        rename_path(
             source_path,
             destination_path,
             &self.host_path(source_path),
             &self.host_path(destination_path),
             options,
         )
+        .await
     }
 }
 
-fn copy_path(
+/// `rename(2)`: atomic within one filesystem and mode-preserving. Without
+/// `overwrite` an existing destination is refused first; a directory
+/// destination is never replaced.
+pub(crate) async fn rename_path(
     source_fs_path: &FsPath,
     destination_fs_path: &FsPath,
     source_host_path: &Path,
     destination_host_path: &Path,
-    options: CopyOptions,
+    options: RenameOptions,
 ) -> FsResult<()> {
-    let metadata = std::fs::symlink_metadata(source_host_path)
+    tokio::fs::symlink_metadata(source_host_path)
+        .await
         .map_err(|error| map_io_error(source_fs_path, error))?;
-    let file_type = metadata.file_type();
-
-    if file_type.is_symlink() {
-        return Err(FsError::Unsupported {
-            message: "copying symlinks is not supported by LocalFileSystem".to_string(),
-        });
-    }
-
-    if file_type.is_dir() {
-        if !options.recursive {
-            return Err(FsError::InvalidInput {
-                message: "copy requires recursive: true when source is a directory".to_string(),
+    match tokio::fs::symlink_metadata(destination_host_path).await {
+        Ok(metadata) if metadata.is_dir() || !options.overwrite => {
+            return Err(FsError::AlreadyExists {
+                path: destination_fs_path.clone(),
             });
         }
-        return copy_dir_recursive(source_host_path, destination_host_path)
-            .map_err(|error| map_io_error(destination_fs_path, error));
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(map_io_error(destination_fs_path, error)),
     }
-
-    if file_type.is_file() {
-        std::fs::copy(source_host_path, destination_host_path)
-            .map(|_| ())
-            .map_err(|error| map_io_error(destination_fs_path, error))?;
-        return Ok(());
-    }
-
-    Err(FsError::Unsupported {
-        message: format!("unsupported source file type: {}", source_fs_path),
-    })
-}
-
-fn copy_dir_recursive(source: &Path, destination: &Path) -> io::Result<()> {
-    std::fs::create_dir(destination)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let metadata = std::fs::symlink_metadata(&source_path)?;
-        if metadata.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if metadata.is_file() {
-            std::fs::copy(&source_path, &destination_path)?;
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("unsupported file type: {}", source_path.display()),
-            ));
-        }
-    }
-    Ok(())
+    tokio::fs::rename(source_host_path, destination_host_path)
+        .await
+        .map_err(|error| map_io_error(destination_fs_path, error))
 }
 
 fn system_time_to_unix_ms(time: SystemTime) -> i64 {

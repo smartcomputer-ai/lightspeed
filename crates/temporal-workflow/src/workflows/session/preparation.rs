@@ -380,8 +380,8 @@ async fn prepare_operation(
                     "session configuration revision changed",
                 ));
             }
-            summary.config_changed = drive.state().lifecycle.config.as_ref() != Some(&config);
             configure(ctx, drive, &mut candidate, config, expected_revision).await?;
+            summary.config_changed = config_changed(drive, &candidate);
         }
         SessionOperation::ApplyProfile {
             profile,
@@ -416,6 +416,14 @@ async fn prepare_operation(
         candidate.push(command, workflow_time_ms(ctx))?;
     }
     Ok((candidate, summary))
+}
+
+/// Whether the candidate's admitted configuration differs from the live one.
+/// Admission materializes defaults (such as the compaction policy) into the
+/// requested document, so comparing the request itself would report a
+/// change for a replacement the harness admits as a no-op.
+fn config_changed(live: &CoreAgentDrive, candidate: &PreparationCandidate) -> bool {
+    live.state().lifecycle.config != candidate.state().lifecycle.config
 }
 
 async fn configure(
@@ -504,7 +512,6 @@ async fn apply_profile(
         workflow_time_ms(ctx),
     )?;
     if profile.config.is_some() {
-        summary.config_changed = drive.state().lifecycle.config.as_ref() != Some(&config);
         candidate.push(
             CoreAgentCommand::ReplaceSessionConfig {
                 expected_revision,
@@ -512,6 +519,7 @@ async fn apply_profile(
             },
             workflow_time_ms(ctx),
         )?;
+        summary.config_changed = config_changed(drive, candidate);
     }
     // The default fills an empty pointer and never overrides a live
     // selection. The configuration replacement above has already cleared a
@@ -689,6 +697,68 @@ pub(super) fn abandon_pending_run(state: &mut AgentSessionWorkflow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A live session opened with the default configuration, whose admission
+    /// materialized the default compaction policy.
+    fn opened_live() -> CoreAgentDrive {
+        let empty = CoreAgentDrive::from_replayed(
+            SessionId::new("config-changed"),
+            CoreAgentState::new(),
+            None,
+        );
+        let mut opening = PreparationCandidate::new(&empty);
+        opening
+            .push(
+                CoreAgentCommand::OpenSession {
+                    config: crate::default_session_config(harness::ModelSelection {
+                        api_kind: harness::ProviderApiKind::OpenAiResponses,
+                        provider_id: "openai".into(),
+                        model: "gpt-test".into(),
+                    }),
+                },
+                1,
+            )
+            .unwrap();
+        let state = opening.state().clone();
+        let head = state.reduced_to.clone();
+        CoreAgentDrive::from_replayed(empty.session_id().clone(), state, head)
+    }
+
+    #[test]
+    fn config_change_compares_the_admitted_configuration() {
+        let live = opened_live();
+        let current = live.state().lifecycle.config.clone().unwrap();
+        assert!(current.context.compaction.is_some());
+        // A profile document omits the defaults admission fills in: the same
+        // configuration is no change.
+        let mut same = current.clone();
+        same.context.compaction = None;
+        let mut candidate = PreparationCandidate::new(&live);
+        candidate
+            .push(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: same,
+                },
+                2,
+            )
+            .unwrap();
+        assert!(!config_changed(&live, &candidate));
+
+        let mut other = current;
+        other.model.model = "gpt-other".into();
+        let mut candidate = PreparationCandidate::new(&live);
+        candidate
+            .push(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: other,
+                },
+                2,
+            )
+            .unwrap();
+        assert!(config_changed(&live, &candidate));
+    }
 
     fn pending() -> PendingRunPreparation {
         let config = crate::default_session_config(harness::ModelSelection {

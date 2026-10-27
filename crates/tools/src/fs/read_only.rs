@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use harness::ToolEffect;
 
 use crate::fs::{
-    CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
-    FsPath, FsResult, ReadDirectoryEntry, RemoveOptions,
+    CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsGlobRequest,
+    FsGlobResponse, FsPath, FsRangedRead, FsResult, FsTextSearchRequest, FsTextSearchResponse,
+    ReadDirectoryEntry, RemoveOptions, RenameOptions, VersionedRead, WriteOptions,
 };
 
 #[derive(Clone)]
@@ -91,13 +92,50 @@ impl FileSystem for ReadOnlyFileSystem {
         Err(self.deny_write(path))
     }
 
-    async fn copy(
+    async fn rename(
         &self,
-        _source_path: &FsPath,
-        destination_path: &FsPath,
-        _options: CopyOptions,
+        source_path: &FsPath,
+        _destination_path: &FsPath,
+        _options: RenameOptions,
     ) -> FsResult<()> {
-        Err(self.deny_write(destination_path))
+        Err(self.deny_write(source_path))
+    }
+
+    async fn read_file_versioned(&self, path: &FsPath) -> FsResult<VersionedRead> {
+        self.inner.read_file_versioned(path).await
+    }
+
+    async fn write_file_with(
+        &self,
+        path: &FsPath,
+        _contents: Vec<u8>,
+        _options: WriteOptions,
+    ) -> FsResult<()> {
+        Err(self.deny_write(path))
+    }
+
+    async fn search_text(
+        &self,
+        request: &FsTextSearchRequest,
+    ) -> FsResult<Option<FsTextSearchResponse>> {
+        self.inner.search_text(request).await
+    }
+
+    async fn glob_files(&self, request: &FsGlobRequest) -> FsResult<Option<FsGlobResponse>> {
+        self.inner.glob_files(request).await
+    }
+
+    fn max_read_bytes(&self) -> Option<u64> {
+        self.inner.max_read_bytes()
+    }
+
+    async fn read_file_range(
+        &self,
+        path: &FsPath,
+        offset: u64,
+        max_bytes: Option<u64>,
+    ) -> FsResult<FsRangedRead> {
+        self.inner.read_file_range(path, offset, max_bytes).await
     }
 
     fn drain_tool_effects(&self) -> Vec<ToolEffect> {

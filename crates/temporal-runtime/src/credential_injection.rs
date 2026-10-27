@@ -8,8 +8,14 @@ use auth::{
     RegistryTokenBroker, SecretStore, TokenAudience,
 };
 use environment_protocol::{
-    data::jobs::{StartJobsParams, StartJobsResponse},
-    shared::SecretString,
+    bytes::SecretString,
+    data::{
+        handshake::JobLimits,
+        job::{
+            CancelJobsParams, CancelJobsResponse, ReadJobsParams, ReadJobsResponse,
+            StartJobsParams, StartJobsResponse,
+        },
+    },
 };
 use environments::{
     EnvironmentCredentialSource, EnvironmentCredentialStore, EnvironmentId,
@@ -245,33 +251,29 @@ struct CredentialInjectingJobExecutor {
 
 #[async_trait]
 impl JobExecutor for CredentialInjectingJobExecutor {
+    fn limits(&self) -> Option<JobLimits> {
+        self.inner.limits()
+    }
+
     async fn start_jobs(&self, mut request: StartJobsParams) -> JobExecResult<StartJobsResponse> {
         for job in &mut request.jobs {
             let secret_env = self
                 .resolver
-                .resolve_secret_env(&self.environment_id, &job.env)
+                .resolve_secret_env(&self.environment_id, &job.command.env)
                 .await
                 .map_err(|error| JobError::InvalidRequest {
                     message: error.to_string(),
                 })?;
-            for (name, value) in secret_env {
-                job.secret_env.insert(name, value);
-            }
+            job.command.secret_env.extend(secret_env);
         }
         self.inner.start_jobs(request).await
     }
 
-    async fn read_jobs(
-        &self,
-        request: environment_protocol::data::jobs::ReadJobsParams,
-    ) -> JobExecResult<environment_protocol::data::jobs::ReadJobsResponse> {
+    async fn read_jobs(&self, request: ReadJobsParams) -> JobExecResult<ReadJobsResponse> {
         self.inner.read_jobs(request).await
     }
 
-    async fn cancel_jobs(
-        &self,
-        request: environment_protocol::data::jobs::CancelJobsParams,
-    ) -> JobExecResult<environment_protocol::data::jobs::CancelJobsResponse> {
+    async fn cancel_jobs(&self, request: CancelJobsParams) -> JobExecResult<CancelJobsResponse> {
         self.inner.cancel_jobs(request).await
     }
 }
@@ -409,6 +411,114 @@ mod tests {
             .expect("resolve environment credentials");
 
         assert_eq!(resolved["GH_TOKEN"].expose(), "environment-token");
+    }
+
+    #[derive(Default)]
+    struct RecordingJobExecutor {
+        started: std::sync::Mutex<Vec<StartJobsParams>>,
+    }
+
+    #[async_trait]
+    impl JobExecutor for RecordingJobExecutor {
+        fn limits(&self) -> Option<JobLimits> {
+            Some(JobLimits {
+                max_read_bytes: 1024,
+                max_request_jobs: 4,
+                max_retained_output_bytes: 2048,
+                record_retention_ms: 1,
+                cancel_grace_ms: 1,
+            })
+        }
+
+        async fn start_jobs(&self, request: StartJobsParams) -> JobExecResult<StartJobsResponse> {
+            self.started.lock().unwrap().push(request);
+            Err(JobError::Failed {
+                message: "recorded".to_owned(),
+            })
+        }
+
+        async fn read_jobs(&self, _request: ReadJobsParams) -> JobExecResult<ReadJobsResponse> {
+            unreachable!("not read")
+        }
+
+        async fn cancel_jobs(
+            &self,
+            _request: CancelJobsParams,
+        ) -> JobExecResult<CancelJobsResponse> {
+            unreachable!("not cancelled")
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn job_wrapper_injects_credentials_into_each_command_and_keeps_limits() {
+        let environment_id = EnvironmentId::new("environment_1");
+        let secret_id = SecretId::new("secret_1");
+        let secrets = Arc::new(InMemorySecretStore::new());
+        secrets
+            .put_secret(PutSecretRecord {
+                secret_id: secret_id.clone(),
+                secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+                value: SecretValue::new("environment-token"),
+                created_at_ms: 1,
+            })
+            .await
+            .expect("store secret");
+        let resolver = EnvironmentCredentialResolver::new(
+            Arc::new(FixedCredentialStore {
+                credentials: vec![EnvironmentCredentialRecord {
+                    environment_id: environment_id.clone(),
+                    env_name: "GH_TOKEN".to_owned(),
+                    source: EnvironmentCredentialSource::DirectSecret { secret_id },
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                }],
+            }),
+            Arc::new(InMemoryAuthGrantStore::new()),
+            Arc::new(InMemoryAuthProviderStore::new()),
+            secrets,
+            None,
+        );
+        let inner = Arc::new(RecordingJobExecutor::default());
+        let wrapper = CredentialInjectingJobExecutor {
+            inner: inner.clone(),
+            resolver,
+            environment_id,
+        };
+        assert_eq!(
+            wrapper.limits().map(|limits| limits.max_request_jobs),
+            Some(4)
+        );
+
+        let job = |job_id: &str| environment_protocol::data::job::JobSpec {
+            job_id: environment_protocol::ids::JobId::new(job_id).unwrap(),
+            name: None,
+            command: environment_protocol::data::exec::CommandSpec {
+                argv: vec!["true".to_owned()],
+                cwd: None,
+                env: BTreeMap::from([("CI".to_owned(), "1".to_owned())]),
+                secret_env: BTreeMap::new(),
+                input: Default::default(),
+                timeout_ms: None,
+            },
+            depends_on: Vec::new(),
+            dependency_policy: Default::default(),
+            queue_key: None,
+        };
+        let _ = wrapper
+            .start_jobs(StartJobsParams {
+                request_id: environment_protocol::ids::JobRequestId::new("req-1").unwrap(),
+                jobs: vec![job("a"), job("b")],
+            })
+            .await;
+
+        let started = inner.started.lock().unwrap();
+        for job in &started[0].jobs {
+            assert_eq!(
+                job.command.secret_env["GH_TOKEN"].expose(),
+                "environment-token"
+            );
+            assert_eq!(job.command.env["CI"], "1");
+        }
     }
 
     #[test]

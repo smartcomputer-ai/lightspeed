@@ -1,0 +1,40 @@
+{
+  "params": {
+    "path": "/workspace",
+    "limit": 2,
+    "cursor": "c:src"
+  },
+  "response": {
+    "entries": [
+      {
+        "name": "src",
+        "metadata": {
+          "kind": "directory",
+          "sizeBytes": 4096,
+          "executable": true,
+          "modifiedAtMs": 1761400000000,
+          "version": "v1:1761400000000000000:4096:7"
+        }
+      },
+      {
+        "name": "link",
+        "metadata": {
+          "kind": "symlink",
+          "sizeBytes": 6,
+          "modifiedAtMs": 1761400000000,
+          "symlinkTarget": "target",
+          "version": "v1:1761400000000000000:6:9"
+        }
+      }
+    ],
+    "nextCursor": "c:link",
+    "skippedEntryCount": 1
+  },
+  "error": {
+    "code": -32004,
+    "message": "/workspace/missing does not exist",
+    "data": {
+      "kind": "notFound"
+    }
+  }
+}

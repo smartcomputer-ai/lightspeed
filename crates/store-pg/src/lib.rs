@@ -388,21 +388,24 @@ pub async fn list_universes(pool: &PgPool) -> Result<Vec<(Uuid, Option<String>)>
 /// Universes with lifecycle intents requiring provider reconciliation.
 pub async fn list_universes_with_pending_environments(
     pool: &PgPool,
+    scope: environments::ReconcileScope,
 ) -> Result<Vec<Uuid>, PgStoreError> {
-    // Include pending provider work and registered-environment heartbeat repair.
-    let rows: Vec<(Uuid,)> = sqlx::query_as(
+    // Pending provider work, registered-environment heartbeat repair and,
+    // for a steady pass, every steady provisioned environment.
+    let converging = environment::CONVERGING_SQL;
+    let steady = match scope {
+        environments::ReconcileScope::Converging => String::new(),
+        environments::ReconcileScope::WithSteady => format!(" OR {}", environment::STEADY_SQL),
+    };
+    let query = format!(
         "SELECT DISTINCT e.universe_id FROM environments e \
-         WHERE e.status IN ('provisioning','booting','closing','unknown') \
-            OR (e.source_kind = 'registered' AND e.status NOT IN ('closing','closed')) \
-            OR (e.source_kind = 'provisioned' AND ( \
-                (e.status = 'ready' AND e.desired_power <> 'running') \
-                OR (e.status = 'paused' AND e.desired_power <> 'paused') \
-                OR (e.status = 'suspended' AND e.desired_power <> 'suspended') \
-                OR (e.status = 'offline' AND e.desired_power <> 'stopped'))) \
-         ORDER BY e.universe_id",
-    )
-    .fetch_all(pool)
-    .await?;
+         WHERE {converging} \
+            OR (e.source_kind = 'registered' AND e.status NOT IN ('closing','closed')){steady} \
+         ORDER BY e.universe_id"
+    );
+    let rows: Vec<(Uuid,)> = sqlx::query_as(sqlx::AssertSqlSafe(query))
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().map(|(universe_id,)| universe_id).collect())
 }
 

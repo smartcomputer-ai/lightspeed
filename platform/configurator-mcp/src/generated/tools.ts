@@ -5288,19 +5288,15 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "connection": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/EnvironmentConnectionView"
-            }
-          ],
-          "description": "Connection to an envd instance reachable from Lightspeed."
-        },
         "displayName": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "endpoint": {
+          "description": "`ws://`, `wss://` or `unix://` URL of an envd instance reachable from\nLightspeed.",
+          "type": "string"
         },
         "metadata": {
           "additionalProperties": {
@@ -5314,61 +5310,9 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       },
       "required": [
         "requestId",
-        "connection"
+        "endpoint"
       ],
-      "type": "object",
-      "definitions": {
-        "EnvironmentConnectionTransportView": {
-          "oneOf": [
-            {
-              "enum": [
-                "webSocket",
-                "http",
-                "stdio",
-                "ssh"
-              ],
-              "type": "string"
-            },
-            {
-              "additionalProperties": {
-                "not": {}
-              },
-              "properties": {
-                "provider": {
-                  "properties": {
-                    "provider_type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "provider_type"
-                  ],
-                  "type": "object"
-                }
-              },
-              "required": [
-                "provider"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "EnvironmentConnectionView": {
-          "properties": {
-            "endpoint": {
-              "type": "string"
-            },
-            "transport": {
-              "$ref": "#/definitions/EnvironmentConnectionTransportView"
-            }
-          },
-          "required": [
-            "endpoint",
-            "transport"
-          ],
-          "type": "object"
-        }
-      }
+      "type": "object"
     }
   },
   {
@@ -5376,7 +5320,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/ingress/put",
     "group": "environments",
     "summary": "Configure environment public ingress",
-    "description": "Synchronously enables or disables one provider-authorized HTTPS endpoint for a provisioned environment. The provider owns hostname allocation, the approved guest port, routing, TLS, and health.",
+    "description": "Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.",
     "paramsType": "EnvironmentIngressPutParams",
     "resultType": "AgentApiOutcome<EnvironmentIngressPutResponse>",
     "inputSchema": {

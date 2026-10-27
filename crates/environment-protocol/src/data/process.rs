@@ -1,203 +1,167 @@
-//! Process method payloads.
+//! `process/*`: interactive processes read through byte-offset pages.
 //!
-//! A process is started as the leader of its own process group and read
-//! through a daemon-owned cursor: `process/read` without `afterSeq` returns
-//! the output produced since the previous cursor read and advances the
-//! cursor, so a handle used from a later connection never re-reads output.
-//! The root's natural exit never sweeps the group; whatever it left running
-//! is reported and keeps the environment's lifetime.
-
-use std::collections::BTreeMap;
+//! A process runs as the leader of its own process group. Its root's
+//! natural exit never sweeps the group: whatever it left running is
+//! reported in `leftovers` and keeps the environment's lifetime. Each
+//! process has a daemon-owned cursor; a read without `after` starts there,
+//! and the cursor advances to `next` only after the response frame was
+//! written to the connection.
 
 use serde::{Deserialize, Serialize};
 
-use crate::shared::{ByteChunk, EnvironmentPath, ProcessId, SecretString};
+use crate::{
+    bytes::ByteChunk,
+    data::exec::{
+        CommandSpec, ExecState, ExitStatus, LeftoverReport, OutputPage, PtySize, ReturnOn,
+        StoppedBy,
+    },
+    error::ProtocolError,
+    ids::ProcessId,
+    serde_util::is_false,
+};
 
+/// `process/start` params.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartProcessParams {
+    /// Caller-chosen handle, reserved before any side effect: a start whose
+    /// id is already in use (running, retained or remembered by a tombstone)
+    /// is `alreadyExists` and runs nothing.
     pub process_id: ProcessId,
-    pub argv: Vec<String>,
+    pub command: CommandSpec,
+    /// Run under a PTY of this size. The PTY master is the input: `input`
+    /// must then be `none` or `bytes`, and `process/write` is always
+    /// accepted while the process runs. Requires
+    /// `capabilities.process.pty`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<EnvironmentPath>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub secret_env: BTreeMap<String, SecretString>,
-    /// One-shot standard input, written and closed at start. Plain-pipe
-    /// processes otherwise read end of file from `/dev/null`; interactive
-    /// input requires `tty`, whose master is the process's input.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stdin: Option<ByteChunk>,
-    /// Kill deadline. Absent means the call never kills a running process.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
-    #[serde(default)]
-    pub tty: bool,
+    pub pty: Option<PtySize>,
 }
 
+/// `process/start` response, sent once the process runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartProcessResponse {
-    pub process_id: ProcessId,
+    /// OS pid of the root process, which is also its process group id.
+    pub pid: u32,
 }
 
+/// `process/read` params.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadProcessParams {
     pub process_id: ProcessId,
-    /// Explicit re-read from a sequence number over the retained output. It
-    /// does not move the daemon's cursor; omit it to read after the last
-    /// delivered chunk and advance the cursor.
+    /// Start offset. Absent: the daemon cursor, which this read advances to
+    /// `next` once its response is written. Present: a non-consuming read
+    /// that leaves the cursor alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after_seq: Option<u64>,
+    pub after: Option<u64>,
+    /// Start at `end - tailBytes` instead (clamped at 0). Non-consuming;
+    /// excludes `after`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_bytes: Option<usize>,
-    /// Collect output for this long, returning early only when the process
-    /// exits or `max_bytes` is reached. Absent blocks until exit.
+    pub tail_bytes: Option<u64>,
+    /// Acknowledge every byte before this offset first: the cursor moves to
+    /// it (never backwards) whether or not this read's response arrives. A
+    /// caller that tracks positions reads with `after` and acknowledges
+    /// with `ack` for exactly-once delivery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait_ms: Option<u64>,
+    pub ack: Option<u64>,
+    /// Most `data` bytes to return, at most `limits.process.maxReadBytes`.
+    /// 0 reads only the state.
+    pub max_bytes: u64,
+    /// How long to wait, at most `limits.maxWaitMs`. 0 polls.
+    pub wait_ms: u64,
+    pub return_on: ReturnOn,
 }
 
+/// `process/read` response.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProcessOutputChunk {
-    pub seq: u64,
-    pub stream: ProcessOutputStream,
-    pub chunk: ByteChunk,
-}
-
-/// A process still running in the command's group after the root exited.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LeftoverProcess {
-    pub pid: u32,
-    /// Command line when the platform exposes it, otherwise the executable
-    /// name; may be empty when neither could be read.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub command: String,
-}
-
-/// Why a process that did not exit on its own stopped.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ProcessTermination {
-    /// The start deadline (`timeoutMs`) expired and the group was killed.
-    TimedOut,
-    /// `process/terminate` with `kill` ended the group.
-    Killed,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReadProcessResponse {
-    pub chunks: Vec<ProcessOutputChunk>,
-    pub next_seq: u64,
-    pub exited: bool,
+    pub output: OutputPage,
+    pub state: ExecState,
+    /// How the root ended; present once `state` is `exited`, unless `error`
+    /// explains why it could not be observed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    pub closed: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub failure: Option<String>,
+    pub exit: Option<ExitStatus>,
     /// Set when the daemon stopped the process; absent on a natural exit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub termination: Option<ProcessTermination>,
-    /// OS pid of the root process, which is also its process group id.
+    pub stopped_by: Option<StoppedBy>,
+    /// Infrastructure failure after start (output capture or wait failed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid: Option<u32>,
-    /// Bytes dropped from the middle of the retained output since the last
-    /// cursor read because the retained buffer overflowed. The gap sits at
-    /// the sequence discontinuity between two returned chunks.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub omitted_bytes: u64,
-    /// Processes still running in the command's group after the root
-    /// exited, sampled when this read was answered. Empty until the exit is
-    /// observed and on platforms without process enumeration.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub leftover_processes: Vec<LeftoverProcess>,
+    pub error: Option<ProtocolError>,
+    /// OS pid of the root process.
+    pub pid: u32,
+    /// Group members alive after the root exited (`disposition: kept`),
+    /// sampled when this response was built. Absent while running, when
+    /// none remain, and on platforms without process enumeration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leftovers: Option<LeftoverReport>,
 }
 
-fn is_zero(value: &u64) -> bool {
-    *value == 0
-}
-
+/// `process/write` params.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WriteProcessParams {
     pub process_id: ProcessId,
-    /// Bytes for the process's input. Requires an open input (a PTY); an
-    /// absent or empty chunk with `closeStdin: false` is a wait and is
-    /// accepted whether or not the process has exited.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chunk: Option<ByteChunk>,
-    #[serde(default)]
-    pub close_stdin: bool,
+    /// Bytes for the process's input pipe or PTY.
+    #[serde(default, skip_serializing_if = "ByteChunk::is_empty")]
+    pub data: ByteChunk,
+    /// Close the input after `data`: end of file on a pipe, `VEOF` on a
+    /// PTY. Applied only when every byte of `data` was accepted.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub close_input: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum WriteProcessStatus {
-    Accepted,
-    /// The entry is gone: the process finished and its retention elapsed.
-    UnknownProcess,
-    /// Input was given but the process has no open input, or has exited.
-    StdinClosed,
-    Starting,
-}
-
+/// `process/write` response.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WriteProcessResponse {
-    pub status: WriteProcessStatus,
+    /// Leading bytes of `data` queued to the process's writer. Fewer than
+    /// sent (possibly 0) means the input queue is full: resend the rest
+    /// later.
+    pub accepted_bytes: u64,
 }
 
 /// Signal delivered by `process/terminate`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum ProcessSignal {
-    /// `SIGINT` to the process group; changes no daemon state, the next
-    /// read observes whatever the process did.
+    /// `SIGINT` to the foreground process group (the terminal's under a
+    /// PTY, otherwise the process group). Records nothing; the next read
+    /// shows what the process did.
     Interrupt,
-    /// Kill the whole group; the process is recorded as killed.
+    /// `SIGTERM` to the group, then `SIGKILL` after
+    /// `limits.process.terminateGraceMs` if members remain. Records
+    /// `stoppedBy: terminate`.
+    Terminate,
+    /// `SIGKILL` to the group. Records `stoppedBy: kill`.
     Kill,
 }
 
+/// `process/terminate` params.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminateProcessParams {
     pub process_id: ProcessId,
     pub signal: ProcessSignal,
 }
 
+/// `process/terminate` response, sent once the signal was delivered (any
+/// escalation continues in the background).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TerminateProcessResponse {
-    /// True when the process was still running when the signal was sent.
+    /// True when the root process was still running when the signal was
+    /// sent.
+    #[serde(default, skip_serializing_if = "is_false")]
     pub running: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalSize {
-    pub rows: u16,
-    pub cols: u16,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResizeProcessParams {
-    pub process_id: ProcessId,
-    pub size: TerminalSize,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResizeProcessResponse {}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ProcessOutputStream {
-    Stdout,
-    Stderr,
-    Pty,
 }

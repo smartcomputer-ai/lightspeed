@@ -1,20 +1,42 @@
 use std::collections::BTreeMap;
 
-use environment_protocol::shared::{EnvironmentTransport, ProviderTargetId};
+use environment_protocol::{ids::ProviderTargetId, metadata::MAX_METADATA_ENTRIES};
 use uuid::Uuid;
 
 use super::*;
+
+fn endpoint(value: &str) -> EnvironmentEndpoint {
+    EnvironmentEndpoint::parse(value).expect("endpoint")
+}
+
+fn target(value: &str) -> ProviderTargetId {
+    ProviderTargetId::new(value).expect("target id")
+}
 
 fn provider() -> PutEnvironmentProvider {
     PutEnvironmentProvider {
         provider_id: EnvironmentProviderId::new("incus-local"),
         display_name: Some("Local Incus".to_owned()),
-        controller_connection: EnvironmentConnectionSpec::new(
-            "ws://127.0.0.1:19090/control",
-            EnvironmentTransport::WebSocket,
-        ),
+        controller_endpoint: endpoint("ws://127.0.0.1:19090/control"),
         metadata: BTreeMap::new(),
+        credential: Some(SecretValue::new("provider-secret")),
         updated_at_ms: 1_000,
+    }
+}
+
+fn observe(
+    environment_id: &EnvironmentId,
+    target_id: Option<&str>,
+    status: EnvironmentStatus,
+    at: i64,
+) -> ObserveProvisionedEnvironment {
+    ObserveProvisionedEnvironment {
+        environment_id: environment_id.clone(),
+        provider_target_id: target_id.map(target),
+        status,
+        power_states: vec![PowerState::Running, PowerState::Paused],
+        daemon_build: None,
+        observed_at_ms: at,
     }
 }
 
@@ -200,6 +222,7 @@ async fn lightspeed_does_not_enforce_provider_quota() {
         .fail_environment_lifecycle(FailEnvironmentLifecycle {
             environment_id: first.environment_id.clone(),
             message: "provider failed".to_owned(),
+            daemon_build: None,
             observed_at_ms: 3_000,
         })
         .await
@@ -217,15 +240,14 @@ async fn provider_observation_populates_only_the_current_incarnation() {
         .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
         .await
         .expect("create");
-    let target_id = ProviderTargetId::new("target-1");
+    let target_id = target("target-1");
     let observed = store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment.environment_id.clone(),
-            provider_target_id: target_id.clone(),
-            status: EnvironmentStatus::Ready,
-            power_states: vec![PowerState::Running, PowerState::Paused],
-            observed_at_ms: 3_000,
-        })
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some("target-1"),
+            EnvironmentStatus::Ready,
+            3_000,
+        ))
         .await
         .expect("observe");
     assert_eq!(observed.status, EnvironmentStatus::Ready);
@@ -241,37 +263,76 @@ async fn provider_observation_populates_only_the_current_incarnation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn public_ingress_is_a_realized_environment_facet() {
+async fn public_ingress_intent_and_realized_endpoint_are_recorded_apart() {
     let (_, store) = store().await;
     let environment = store
         .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
         .await
         .expect("create");
+    store
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some("target-1"),
+            EnvironmentStatus::Ready,
+            2_500,
+        ))
+        .await
+        .expect("observe");
     let enabled = store
         .set_environment_ingress(SetEnvironmentIngress {
             environment_id: environment.environment_id.clone(),
             enabled: true,
-            public_endpoint: Some("https://opaque.env.example".to_owned()),
             updated_at_ms: 3_000,
         })
         .await
         .expect("enable ingress");
     assert!(enabled.public_ingress_enabled);
+    assert_eq!(enabled.public_endpoint, None);
+    // The intent is pending until the provider reports an endpoint.
+    assert!(enabled.ingress_diverges());
     assert_eq!(
-        enabled.public_endpoint.as_deref(),
+        store
+            .list_environments_needing_reconcile(ReconcileScope::Converging)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let realized = store
+        .record_environment_ingress(RecordEnvironmentIngress {
+            environment_id: environment.environment_id.clone(),
+            public_endpoint: Some("https://opaque.env.example".to_owned()),
+            observed_at_ms: 3_500,
+        })
+        .await
+        .expect("record realized ingress");
+    assert_eq!(
+        realized.public_endpoint.as_deref(),
         Some("https://opaque.env.example")
     );
+    assert!(!realized.ingress_diverges());
     let disabled = store
         .set_environment_ingress(SetEnvironmentIngress {
-            environment_id: environment.environment_id,
+            environment_id: environment.environment_id.clone(),
             enabled: false,
-            public_endpoint: None,
             updated_at_ms: 4_000,
         })
         .await
         .expect("disable ingress");
     assert!(!disabled.public_ingress_enabled);
-    assert_eq!(disabled.public_endpoint, None);
+    // The endpoint stays recorded until the provider removed it.
+    assert!(disabled.public_endpoint.is_some());
+    assert!(disabled.ingress_diverges());
+    let removed = store
+        .record_environment_ingress(RecordEnvironmentIngress {
+            environment_id: environment.environment_id,
+            public_endpoint: None,
+            observed_at_ms: 4_500,
+        })
+        .await
+        .expect("record removed ingress");
+    assert_eq!(removed.public_endpoint, None);
+    assert!(!removed.ingress_diverges());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -282,10 +343,7 @@ async fn external_environment_cannot_enable_provider_managed_ingress() {
             request_id: EnvironmentProvisionRequestId::new("external-request"),
             environment_id: EnvironmentId::new("external-environment"),
             incarnation_id: EnvironmentIncarnationId::new("external-incarnation"),
-            connection: EnvironmentConnectionSpec::new(
-                "ws://envd.example",
-                EnvironmentTransport::WebSocket,
-            ),
+            endpoint: endpoint("ws://envd.example"),
             display_name: None,
             metadata: BTreeMap::new(),
             created_at_ms: 1_000,
@@ -297,7 +355,6 @@ async fn external_environment_cannot_enable_provider_managed_ingress() {
             .set_environment_ingress(SetEnvironmentIngress {
                 environment_id: environment.environment_id,
                 enabled: true,
-                public_endpoint: Some("https://invalid.example".to_owned()),
                 updated_at_ms: 2_000,
             })
             .await,
@@ -306,27 +363,24 @@ async fn external_environment_cannot_enable_provider_managed_ingress() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn external_environment_persists_a_typed_connection() {
+async fn external_environment_persists_its_endpoint() {
     let store = InMemoryEnvironmentRegistryStore::new();
     let environment = store
         .create_external_environment(CreateExternalEnvironment {
             request_id: EnvironmentProvisionRequestId::new("external-request"),
             environment_id: EnvironmentId::new("external-environment"),
             incarnation_id: EnvironmentIncarnationId::new("external-incarnation"),
-            connection: EnvironmentConnectionSpec::new(
-                "ws://envd.example:19091",
-                EnvironmentTransport::WebSocket,
-            ),
+            endpoint: endpoint("unix:///run/lightspeed/envd.sock"),
             display_name: None,
             metadata: BTreeMap::new(),
             created_at_ms: 1_000,
         })
         .await
         .expect("create external environment");
-    let EnvironmentSource::External { connection } = environment.source else {
+    let EnvironmentSource::External { endpoint } = environment.source else {
         panic!("external source")
     };
-    assert_eq!(connection.endpoint, "ws://envd.example:19091");
+    assert_eq!(endpoint.as_str(), "unix:///run/lightspeed/envd.sock");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -450,22 +504,30 @@ async fn power_intent_and_idle_policy_are_provisioned_only_and_drive_reconcile_l
     assert!(environment.idle_policy.is_none());
 
     store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment.environment_id.clone(),
-            provider_target_id: ProviderTargetId::new("target-1"),
-            status: EnvironmentStatus::Ready,
-            power_states: vec![PowerState::Running, PowerState::Paused],
-            observed_at_ms: 3_000,
-        })
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some("target-1"),
+            EnvironmentStatus::Ready,
+            3_000,
+        ))
         .await
         .expect("observe");
-    // Ready and converged: nothing to reconcile.
+    // Ready and converged: nothing to reconcile, but a steady pass still
+    // observes the target.
     assert!(
         store
-            .list_environments_needing_reconcile()
+            .list_environments_needing_reconcile(ReconcileScope::Converging)
             .await
             .unwrap()
             .is_empty()
+    );
+    assert_eq!(
+        store
+            .list_environments_needing_reconcile(ReconcileScope::WithSteady)
+            .await
+            .unwrap()
+            .len(),
+        1
     );
     let paused = store
         .set_environment_power(SetEnvironmentPower {
@@ -477,23 +539,25 @@ async fn power_intent_and_idle_policy_are_provisioned_only_and_drive_reconcile_l
         .expect("set power");
     assert_eq!(paused.desired_power, PowerState::Paused);
     assert!(paused.power_diverges());
-    let pending = store.list_environments_needing_reconcile().await.unwrap();
+    let pending = store
+        .list_environments_needing_reconcile(ReconcileScope::Converging)
+        .await
+        .unwrap();
     assert_eq!(pending.len(), 1);
 
     // Observed paused: converged again.
     store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment.environment_id.clone(),
-            provider_target_id: ProviderTargetId::new("target-1"),
-            status: EnvironmentStatus::Paused,
-            power_states: vec![PowerState::Running, PowerState::Paused],
-            observed_at_ms: 5_000,
-        })
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some("target-1"),
+            EnvironmentStatus::Paused,
+            5_000,
+        ))
         .await
         .expect("observe paused");
     assert!(
         store
-            .list_environments_needing_reconcile()
+            .list_environments_needing_reconcile(ReconcileScope::Converging)
             .await
             .unwrap()
             .is_empty()
@@ -520,13 +584,12 @@ async fn power_intent_and_idle_policy_are_provisioned_only_and_drive_reconcile_l
             .is_empty()
     );
     store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment.environment_id.clone(),
-            provider_target_id: ProviderTargetId::new("target-1"),
-            status: EnvironmentStatus::Ready,
-            power_states: vec![PowerState::Running, PowerState::Paused],
-            observed_at_ms: 7_000,
-        })
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some("target-1"),
+            EnvironmentStatus::Ready,
+            7_000,
+        ))
         .await
         .expect("observe ready");
     let candidates = store.list_environments_with_idle_policy().await.unwrap();
@@ -539,10 +602,7 @@ async fn power_intent_and_idle_policy_are_provisioned_only_and_drive_reconcile_l
             request_id: EnvironmentProvisionRequestId::new("external-1"),
             environment_id: EnvironmentId::new("external-env"),
             incarnation_id: EnvironmentIncarnationId::new("external-inc"),
-            connection: EnvironmentConnectionSpec::new(
-                "ws://envd.test:9000",
-                environment_protocol::shared::EnvironmentTransport::WebSocket,
-            ),
+            endpoint: endpoint("ws://envd.test:9000"),
             display_name: None,
             metadata: BTreeMap::new(),
             created_at_ms: 8_000,
@@ -752,7 +812,7 @@ async fn registered_admission_is_keyed_by_daemon_identity() {
             environment_id: created.environment_id.clone(),
             observation: RegisteredConnectionObservation::Connected,
             observed_at_ms: 4_000,
-            metadata: RegisteredDaemonBuild {
+            metadata: DaemonBuild {
                 version: Some("0.2.0".to_owned()),
                 git_sha: Some("bbbb".to_owned()),
                 protocol_version: 3,
@@ -994,8 +1054,6 @@ async fn registered_environments_list_by_key() {
 /// itself stays enforced on the caller's keys.
 #[tokio::test(flavor = "current_thread")]
 async fn reserved_metadata_sits_on_top_of_the_caller_allowance() {
-    use environment_protocol::registration::MAX_METADATA_ENTRIES;
-
     let (_universe_id, store) = store().await;
     minted_key(
         &store,
@@ -1003,7 +1061,7 @@ async fn reserved_metadata_sits_on_top_of_the_caller_allowance() {
         registration_policy(RegisteredIdentityMode::Persistent),
     )
     .await;
-    let reserved = RegisteredDaemonBuild {
+    let reserved = DaemonBuild {
         version: Some("0.1.0".to_owned()),
         git_sha: Some("a".repeat(40)),
         protocol_version: 2,
@@ -1011,7 +1069,7 @@ async fn reserved_metadata_sits_on_top_of_the_caller_allowance() {
     .metadata();
 
     let mut full = register("rk-meta", "env-meta", &daemon_key(0x31), 1_000);
-    full.metadata = (0..MAX_METADATA_ENTRIES)
+    full.metadata = (0..MAX_METADATA_ENTRIES as usize)
         .map(|index| (format!("caller.key{index}"), "v".to_owned()))
         .collect();
     full.metadata.extend(reserved.clone());
@@ -1021,15 +1079,290 @@ async fn reserved_metadata_sits_on_top_of_the_caller_allowance() {
         .expect("full caller allowance plus reserved entries");
     assert_eq!(
         created.metadata.len(),
-        MAX_METADATA_ENTRIES + reserved.len()
+        MAX_METADATA_ENTRIES as usize + reserved.len()
     );
 
     let mut over = register("rk-meta", "env-over", &daemon_key(0x32), 1_000);
-    over.metadata = (0..=MAX_METADATA_ENTRIES)
+    over.metadata = (0..=MAX_METADATA_ENTRIES as usize)
         .map(|index| (format!("caller.key{index}"), "v".to_owned()))
         .collect();
     assert!(matches!(
         store.create_registered_environment(over).await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_credentials_are_required_once_and_kept_across_puts() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    let provider_id = EnvironmentProviderId::new("incus-local");
+    let mut without = provider();
+    without.credential = None;
+    assert!(matches!(
+        store.put_provider(without.clone()).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    let mut unprintable = provider();
+    unprintable.credential = Some(SecretValue::new("two words"));
+    assert!(matches!(
+        store.put_provider(unprintable).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+
+    store.put_provider(provider()).await.expect("create");
+    without.updated_at_ms = 2_000;
+    let replaced = store.put_provider(without).await.expect("replace");
+    assert_eq!(replaced.created_at_ms, 1_000);
+    assert_eq!(
+        store
+            .read_provider_credential(&provider_id)
+            .await
+            .expect("credential")
+            .expose(),
+        "provider-secret"
+    );
+    let debug = format!("{:?}", provider());
+    assert!(!debug.contains("provider-secret"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn controller_facts_follow_the_registered_endpoint() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    let provider_id = EnvironmentProviderId::new("incus-local");
+    let created = store.put_provider(provider()).await.expect("create");
+    assert_eq!(created.controller_features, None);
+    assert_eq!(created.data_route_base, None);
+
+    let base = DataRouteBase::new("ws://127.0.0.1:19090/data").expect("base");
+    let features = ControllerFeatures {
+        adopt_target: true,
+        ingress: false,
+    };
+    let recorded = store
+        .record_provider_controller(RecordProviderController {
+            provider_id: provider_id.clone(),
+            controller_endpoint: created.controller_endpoint.clone(),
+            features,
+            data_route_base: base.clone(),
+        })
+        .await
+        .expect("record");
+    assert_eq!(recorded.controller_features, Some(features));
+    assert_eq!(recorded.data_route_base, Some(base.clone()));
+
+    // A put that keeps the endpoint keeps the facts.
+    let mut same = provider();
+    same.credential = None;
+    same.display_name = Some("Renamed".to_owned());
+    let kept = store.put_provider(same).await.expect("rename");
+    assert_eq!(kept.data_route_base, Some(base.clone()));
+
+    // A new endpoint clears them, and an initialize that raced the change
+    // cannot write facts of the old endpoint back.
+    let mut moved = provider();
+    moved.credential = None;
+    moved.controller_endpoint = endpoint("wss://incus.example.com/control");
+    let moved = store.put_provider(moved).await.expect("move");
+    assert_eq!(moved.controller_features, None);
+    assert_eq!(moved.data_route_base, None);
+    let stale = store
+        .record_provider_controller(RecordProviderController {
+            provider_id,
+            controller_endpoint: created.controller_endpoint,
+            features,
+            data_route_base: base,
+        })
+        .await
+        .expect("stale record");
+    assert_eq!(stale.data_route_base, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_racing_observation_never_overwrites_a_close() {
+    let (_, store) = store().await;
+    let environment = store
+        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
+        .await
+        .expect("create");
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: environment.environment_id.clone(),
+            updated_at_ms: 2_500,
+        })
+        .await
+        .expect("begin close");
+
+    // The create that was in flight when the close arrived answers: the
+    // target id is still recorded so the close can address it, but the
+    // status stays closing.
+    let observed = store
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some("ls-3f2a"),
+            EnvironmentStatus::Ready,
+            3_000,
+        ))
+        .await
+        .expect("observe");
+    assert_eq!(observed.status, EnvironmentStatus::Closing);
+    assert_eq!(
+        observed.incarnation.provider_target_id,
+        Some(target("ls-3f2a"))
+    );
+
+    let failed = store
+        .fail_environment_lifecycle(FailEnvironmentLifecycle {
+            environment_id: environment.environment_id.clone(),
+            message: "power change failed".to_owned(),
+            daemon_build: None,
+            observed_at_ms: 3_500,
+        })
+        .await
+        .expect("fail");
+    assert_eq!(failed.status, EnvironmentStatus::Closing);
+    assert_eq!(failed.lifecycle_error, None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn observations_without_a_target_id_keep_the_recorded_one() {
+    let (_, store) = store().await;
+    let environment = store
+        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
+        .await
+        .expect("create");
+    let pending = store
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            None,
+            EnvironmentStatus::Provisioning,
+            2_500,
+        ))
+        .await
+        .expect("no id yet");
+    assert_eq!(pending.incarnation.provider_target_id, None);
+    // Natural provider ids are opaque: slashes and colons are fine.
+    let natural = "arn:aws:ec2:eu-west-1:123456789012:instance/i-0abc";
+    store
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            Some(natural),
+            EnvironmentStatus::Booting,
+            3_000,
+        ))
+        .await
+        .expect("id assigned");
+    let kept = store
+        .observe_provisioned_environment(observe(
+            &environment.environment_id,
+            None,
+            EnvironmentStatus::Booting,
+            3_500,
+        ))
+        .await
+        .expect("id kept");
+    assert_eq!(kept.incarnation.provider_target_id, Some(target(natural)));
+    assert!(matches!(
+        store
+            .observe_provisioned_environment(observe(
+                &environment.environment_id,
+                Some("another-target"),
+                EnvironmentStatus::Ready,
+                4_000,
+            ))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn lifecycle_errors_accumulate_until_a_steady_observation() {
+    let (_, store) = store().await;
+    let environment = store
+        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
+        .await
+        .expect("create");
+    let first = store
+        .record_environment_lifecycle_error(RecordEnvironmentLifecycleError {
+            environment_id: environment.environment_id.clone(),
+            message: "controller unavailable".to_owned(),
+            observed_at_ms: 3_000,
+        })
+        .await
+        .expect("first error");
+    assert_eq!(first.status, EnvironmentStatus::Provisioning);
+    let second = store
+        .record_environment_lifecycle_error(RecordEnvironmentLifecycleError {
+            environment_id: environment.environment_id.clone(),
+            message: format!("connect failed\u{7}{}", "x".repeat(2_000)),
+            observed_at_ms: 4_000,
+        })
+        .await
+        .expect("second error");
+    let error = second.lifecycle_error.expect("recorded");
+    assert_eq!(error.first_at_ms, 3_000);
+    assert_eq!(error.last_at_ms, 4_000);
+    assert!(error.message.len() <= 1024);
+    assert!(!error.message.contains('\u{7}'));
+
+    let ready = store
+        .observe_provisioned_environment(ObserveProvisionedEnvironment {
+            daemon_build: Some(DaemonBuild {
+                version: Some("0.5.0".to_owned()),
+                git_sha: None,
+                protocol_version: 3,
+            }),
+            ..observe(
+                &environment.environment_id,
+                Some("target-1"),
+                EnvironmentStatus::Ready,
+                5_000,
+            )
+        })
+        .await
+        .expect("ready");
+    assert_eq!(ready.lifecycle_error, None);
+    assert_eq!(
+        ready
+            .metadata
+            .get(ENVD_PROTOCOL_VERSION_METADATA_KEY)
+            .map(String::as_str),
+        Some("3")
+    );
+}
+
+/// A change whose result fails validation must leave the stored record as
+/// it was, so a bad value can never become durable.
+#[tokio::test(flavor = "current_thread")]
+async fn refused_changes_leave_the_stored_record_untouched() {
+    let (_universe_id, store) = store().await;
+    minted_key(
+        &store,
+        "rk-poison",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    let created = store
+        .create_registered_environment(register("rk-poison", "env-p", &daemon_key(0x41), 1_000))
+        .await
+        .expect("register");
+    let refused = store
+        .observe_registered_environment(ObserveRegisteredEnvironment {
+            environment_id: created.environment_id.clone(),
+            observation: RegisteredConnectionObservation::Connected,
+            observed_at_ms: 2_000,
+            metadata: BTreeMap::from([(
+                ENVD_VERSION_METADATA_KEY.to_owned(),
+                "bad\u{0}version".to_owned(),
+            )]),
+        })
+        .await;
+    assert!(matches!(
+        refused,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    let stored = store
+        .read_environment(&created.environment_id)
+        .await
+        .expect("still readable");
+    assert_eq!(stored, created);
 }

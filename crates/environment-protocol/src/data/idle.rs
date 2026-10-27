@@ -1,41 +1,38 @@
-//! Daemon activity report used by idle power policy.
+//! `env/getIdle`: the daemon's activity report for idle power policy.
 //!
-//! The daemon reports a monotonic idle *duration*, never a wall-clock
-//! timestamp: after a freeze, stateful stop, or snapshot restore the guest
-//! clock is stale until it resyncs, while a monotonic duration stays correct.
+//! The daemon reports a monotonic idle duration, never a wall-clock
+//! timestamp: after a freeze, stateful stop or snapshot restore the guest
+//! clock is stale until it resyncs, while a monotonic duration stays
+//! correct. Policy decides on `idleForMs` alone; the counts are
+//! diagnostics.
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IdleParams {}
+use crate::serde_util::is_zero_u32;
 
+/// `env/getIdle` params.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IdleResponse {
-    /// Milliseconds since the last data-plane request or since the last
-    /// process/job finished, whichever is later. Zero while anything runs.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetIdleParams {}
+
+/// `env/getIdle` response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetIdleResponse {
+    /// Milliseconds since the last `use` request, or since running work
+    /// last ended, whichever is later. Zero while any process or job runs.
     pub idle_for_ms: u64,
-    /// Processes started through `process/start` that have not exited.
-    pub running_processes: u32,
-    /// Jobs that are running or cancelling.
-    pub running_jobs: u32,
-    /// Process groups of finished commands that still have members alive:
-    /// services and other leftovers a command started and did not stop.
-    /// They are not running work, so they never block idle power policy;
-    /// a policy may prefer freezing over stopping while the count is
-    /// non-zero.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub leftover_process_groups: u32,
-}
-
-fn is_zero(value: &u32) -> bool {
-    *value == 0
-}
-
-impl IdleResponse {
-    /// True when nothing is executing inside the environment.
-    pub fn is_quiescent(&self) -> bool {
-        self.running_processes == 0 && self.running_jobs == 0
-    }
+    /// Processes started with `process/start` whose root has not exited.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub running_process_count: u32,
+    /// Jobs that are `running`.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub running_job_count: u32,
+    /// Process groups of exited processes that still have members alive:
+    /// services a command started and left running. They are not running
+    /// work and do not hold `idleForMs` at zero.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub leftover_process_group_count: u32,
 }

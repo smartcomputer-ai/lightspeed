@@ -289,24 +289,22 @@ async fn process_schema_requires_one_typed_encoding_per_stream() {
 fn durable_job_and_agent_results_preserve_their_exact_serialized_names() {
     use crate::environment::jobs::{
         JobHandle, JobSubmitResult, JobSubmitted, ModelJobOutputSegment, ModelJobResult,
-        ModelJobResultSet,
+        ModelJobResultSet, ModelJobStatus, ModelJobSummary, ModelOutputOmission, ModelOutputStream,
+        ModelStoppedBy,
     };
     use crate::subagents::{SubagentResultEnvelope, SubagentResultStatus, SubagentToolKind};
-    use environment_protocol::{
-        data::jobs::{JobArtifact, JobOutputStream, JobStatus, JobSummary},
-        shared::{EnvironmentPath, JobId},
-    };
+    use environment_protocol::ids::JobId;
 
     let handle = JobHandle {
         environment_id: "env-1".into(),
-        job_id: JobId::new("build"),
+        job_id: JobId::new("build").unwrap(),
     };
     let submitted = JobSubmitResult {
         jobs: vec![JobSubmitted {
             name: Some("Build".into()),
             job_id: handle.job_id.clone(),
             handle: Some(handle.clone()),
-            status: JobStatus::Queued,
+            status: ModelJobStatus::Queued,
             dependencies: vec![],
             queue_key: None,
             promise: Some("promise_1".into()),
@@ -319,35 +317,48 @@ fn durable_job_and_agent_results_preserve_their_exact_serialized_names() {
     .expect("submitted jobs");
     let result = ModelJobResult {
         handle: Some(handle),
-        summary: Some(JobSummary {
-            namespace: "session".into(),
-            job_id: JobId::new("build"),
+        summary: Some(ModelJobSummary {
+            job_id: JobId::new("build").unwrap(),
             name: None,
-            status: JobStatus::TimedOut,
-            dependencies: vec![],
+            status: ModelJobStatus::TimedOut,
+            depends_on: vec![],
+            queue_key: None,
             created_at_ms: 1,
-            queued_at_ms: None,
             started_at_ms: Some(2),
             finished_at_ms: Some(3),
+            duration_ms: Some(1),
             exit_code: None,
-            orphaned_descendants: true,
-            failure: None,
-            queue_key: None,
+            signal: Some("SIGTERM".into()),
+            core_dumped: false,
+            stopped_by: Some(ModelStoppedBy::Timeout),
+            swept_processes: vec![crate::environment::process::LeftoverProcess {
+                pid: 7,
+                command: "sleep 100".into(),
+            }],
+            error: None,
         }),
         output: vec![ModelJobOutputSegment {
-            stream: JobOutputStream::Stdout,
+            stream: ModelOutputStream::Stdout,
+            text: Some("start".into()),
+            blob_ref: None,
+            media_type: None,
+            byte_len: None,
+        }],
+        omitted: Some(ModelOutputOmission {
+            offset: 5,
+            bytes: 90,
+            lost_bytes: 0,
+        }),
+        tail: vec![ModelJobOutputSegment {
+            stream: ModelOutputStream::Stderr,
             text: Some("done".into()),
             blob_ref: None,
             media_type: None,
             byte_len: Some(4),
         }],
-        output_next_seq: 9,
+        output_next: 99,
+        output_end: 99,
         truncated: false,
-        artifacts: vec![JobArtifact {
-            path: EnvironmentPath::new("/out").unwrap(),
-            kind: None,
-            metadata: Default::default(),
-        }],
         error: None,
     };
     let schema = validator(BuiltinTool::environment_canonical(
@@ -355,8 +366,8 @@ fn durable_job_and_agent_results_preserve_their_exact_serialized_names() {
     ));
     schema.validate(&serialized(&result)).expect("joined job");
     let mut invalid = serialized(&result);
-    invalid["summary"]["status"] = json!("timed_out");
-    assert!(!schema.is_valid(&invalid), "job statuses use camelCase");
+    invalid["summary"]["status"] = json!("timedOut");
+    assert!(!schema.is_valid(&invalid), "job statuses use snake_case");
     validator(BuiltinTool::environment_canonical(
         BuiltinToolOperation::JobRead,
     ))

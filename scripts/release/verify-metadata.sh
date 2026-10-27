@@ -10,8 +10,10 @@ grep -F "pub const REQUIRED_SCHEMA_REVISION: i64 = $LIGHTSPEED_SCHEMA_REVISION;"
   crates/store-pg/src/migrations.rs >/dev/null
 grep -F "pub const PROTOCOL_VERSION: &str = \"$LIGHTSPEED_API_PROTOCOL_VERSION\";" \
   crates/api/src/constants.rs >/dev/null
-grep -F "pub const CURRENT_PROTOCOL_VERSION: u32 = $LIGHTSPEED_ENVIRONMENT_PROTOCOL_VERSION;" \
-  crates/environment-protocol/src/shared.rs >/dev/null
+grep -F "pub const ENVD_PROTOCOL_VERSION: u32 = $LIGHTSPEED_ENVD_PROTOCOL_VERSION;" \
+  crates/environment-protocol/src/version.rs >/dev/null
+grep -F "pub const CONTROLLER_PROTOCOL_VERSION: u32 = $LIGHTSPEED_CONTROLLER_PROTOCOL_VERSION;" \
+  crates/environment-protocol/src/version.rs >/dev/null
 if [[ ! "$LIGHTSPEED_ENVD_TARGET" =~ -linux-musl$ ]]; then
   echo "LIGHTSPEED_ENVD_TARGET must be a static musl target" >&2
   exit 1

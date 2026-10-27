@@ -1,0 +1,40 @@
+{
+  "params": {
+    "operationId": "op-2",
+    "index": 0,
+    "entries": [
+      {
+        "path": ".",
+        "content": {
+          "kind": "directory"
+        }
+      },
+      {
+        "path": "README.md",
+        "content": {
+          "kind": "file",
+          "sizeBytes": 12,
+          "digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+        }
+      }
+    ],
+    "last": true
+  },
+  "response": {
+    "operationId": "op-2",
+    "phase": "scanning",
+    "entryCount": 2,
+    "totalBytes": 12,
+    "transferredBytes": 0,
+    "reusedBytes": 0,
+    "deadlineAtMs": 1761400000000
+  },
+  "error": {
+    "code": -32007,
+    "message": "operation op-2 was begun with different input",
+    "data": {
+      "kind": "failedPrecondition",
+      "reason": "operationIdInUse"
+    }
+  }
+}

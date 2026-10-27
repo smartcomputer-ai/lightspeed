@@ -9,8 +9,8 @@ use std::{
 use async_trait::async_trait;
 
 use crate::fs::{
-    CopyOptions, CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError,
-    FsPath, FsResult, ReadDirectoryEntry, RemoveOptions,
+    CreateDirectoryOptions, FileAccessPolicy, FileMetadata, FileSystem, FsError, FsPath, FsResult,
+    ReadDirectoryEntry, RemoveOptions, RenameOptions,
 };
 
 #[derive(Clone, Debug)]
@@ -286,102 +286,34 @@ impl FileSystem for ScopedLocalFileSystem {
         .map_err(|error| map_io_error(path, error))
     }
 
-    async fn copy(
+    async fn rename(
         &self,
         source_path: &FsPath,
         destination_path: &FsPath,
-        options: CopyOptions,
+        options: RenameOptions,
     ) -> FsResult<()> {
         if !self.writable {
             return Err(FsError::PermissionDenied {
-                path: destination_path.clone(),
+                path: source_path.clone(),
             });
         }
-        let source_host_path = self.resolve_existing(source_path)?;
+        if source_path.is_root() {
+            return Err(FsError::InvalidInput {
+                message: "cannot move scoped local filesystem root".to_string(),
+            });
+        }
+        let source_host_path = self.unresolved_host_path(source_path)?;
+        self.ensure_parent_inside_root(source_path, &source_host_path)?;
         let destination_host_path = self.resolve_mutation_target(destination_path)?;
-        copy_path(
+        crate::fs::local::rename_path(
             source_path,
             destination_path,
             &source_host_path,
             &destination_host_path,
             options,
         )
+        .await
     }
-}
-
-fn copy_path(
-    source_fs_path: &FsPath,
-    destination_fs_path: &FsPath,
-    source_host_path: &Path,
-    destination_host_path: &Path,
-    options: CopyOptions,
-) -> FsResult<()> {
-    let metadata = std::fs::symlink_metadata(source_host_path)
-        .map_err(|error| map_io_error(source_fs_path, error))?;
-    let file_type = metadata.file_type();
-
-    if file_type.is_symlink() {
-        return Err(FsError::Unsupported {
-            message: "copying symlinks is not supported by ScopedLocalFileSystem".to_string(),
-        });
-    }
-
-    if file_type.is_dir() {
-        if !options.recursive {
-            return Err(FsError::InvalidInput {
-                message: "copy requires recursive: true when source is a directory".to_string(),
-            });
-        }
-        if destination_host_path.starts_with(source_host_path) {
-            return Err(FsError::InvalidInput {
-                message: "cannot copy a directory to itself or one of its descendants".to_string(),
-            });
-        }
-        return copy_dir_recursive(source_host_path, destination_host_path)
-            .map_err(|error| map_io_error(destination_fs_path, error));
-    }
-
-    if file_type.is_file() {
-        std::fs::copy(source_host_path, destination_host_path)
-            .map(|_| ())
-            .map_err(|error| map_io_error(destination_fs_path, error))?;
-        return Ok(());
-    }
-
-    Err(FsError::Unsupported {
-        message: format!("unsupported source file type: {}", source_fs_path),
-    })
-}
-
-fn copy_dir_recursive(source: &Path, destination: &Path) -> io::Result<()> {
-    std::fs::create_dir(destination)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let metadata = std::fs::symlink_metadata(&source_path)?;
-        let file_type = metadata.file_type();
-        if file_type.is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!(
-                    "copying symlinks is not supported: {}",
-                    source_path.display()
-                ),
-            ));
-        }
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            std::fs::copy(&source_path, &destination_path)?;
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("unsupported file type: {}", source_path.display()),
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn system_time_to_unix_ms(time: SystemTime) -> i64 {

@@ -134,7 +134,7 @@ async fn resolve<B: IncusBackend>(
 fn resolve_targets(targets: Vec<crate::incus::OwnedTarget>, hostname: &str) -> Option<Route> {
     for target in targets {
         if target.ingress_hostname.as_deref() == Some(hostname)
-            && target.status == environment_protocol::control::targets::ProviderTargetStatus::Ready
+            && target.status == crate::incus::InstanceStatus::Running
             && let (Some(address), Some(port)) = (target.ipv4_address, target.ingress_port)
         {
             return Some(Route { address, port });
@@ -188,32 +188,20 @@ async fn proxy_websocket(mut client: WebSocket, endpoint: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::incus::OwnedTarget;
+    use crate::incus::{InstanceStatus, OwnedTarget};
     use axum::{Router, extract::WebSocketUpgrade, routing::get};
-    use environment_protocol::{control::targets::ProviderTargetStatus, shared::ProviderTargetId};
     use std::time::Duration;
 
-    fn target(status: ProviderTargetStatus, hostname: Option<&str>) -> OwnedTarget {
+    fn target(status: InstanceStatus, hostname: Option<&str>) -> OwnedTarget {
         OwnedTarget {
-            target_id: ProviderTargetId::new("target-a"),
-            name: "target-a".to_owned(),
-            universe_id: "universe-a".to_owned(),
-            binding_id: "binding-a".to_owned(),
-            environment_id: "environment-a".to_owned(),
-            incarnation_id: "incarnation-a".to_owned(),
-            request_id: "request-a".to_owned(),
-            template_id: "template-a".to_owned(),
-            image_fingerprint: "fingerprint-a".to_owned(),
-            adoption_source: None,
             status,
-            ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: hostname.map(ToOwned::to_owned),
             ingress_port: Some(8080),
-            location: None,
+            ..crate::ingress::tests::target()
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn ingress_proxy_closes_upstream_when_client_disappears() {
         let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -268,7 +256,7 @@ mod tests {
     fn authorization_resolves_only_the_exact_ready_ingress_hostname() {
         let hostname = "route.env.example.com";
         let route = resolve_targets(
-            vec![target(ProviderTargetStatus::Ready, Some(hostname))],
+            vec![target(InstanceStatus::Running, Some(hostname))],
             hostname,
         )
         .expect("ready route");
@@ -277,14 +265,14 @@ mod tests {
 
         assert!(
             resolve_targets(
-                vec![target(ProviderTargetStatus::Starting, Some(hostname))],
+                vec![target(InstanceStatus::Starting, Some(hostname))],
                 hostname,
             )
             .is_none()
         );
         assert!(
             resolve_targets(
-                vec![target(ProviderTargetStatus::Ready, Some(hostname))],
+                vec![target(InstanceStatus::Running, Some(hostname))],
                 "other.env.example.com",
             )
             .is_none()

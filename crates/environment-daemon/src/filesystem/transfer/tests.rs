@@ -1,1331 +1,964 @@
-use super::*;
-use async_trait::async_trait;
-use environment_client::{EnvironmentClientResult, EnvironmentDataClient, JsonRpcTransport};
+//! Transfer state machine tests against the handlers, without sockets.
+
+use std::{os::unix::fs::symlink, path::Path};
+
 use environment_protocol::{
-    data::{inventory::*, transfer_session::*},
-    shared::EnvironmentPath,
-};
-use harness::{
-    BlobRef,
-    storage::{BlobSource, BlobStore, BlobStoreError},
-};
-use serde_json::json;
-use std::path::Path;
-use std::{
-    os::unix::fs::{PermissionsExt, symlink},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
-};
-use tools::{
-    environment_protocol::RemoteEnvironmentConnection,
-    transfer::{self},
-};
-
-struct Transport {
-    runtime: DaemonRuntime,
-    pending: Option<Value>,
-    largest: Arc<AtomicUsize>,
-    lose_commit: Arc<AtomicBool>,
-}
-#[async_trait]
-impl JsonRpcTransport for Transport {
-    async fn send(&mut self, message: Value) -> EnvironmentClientResult<()> {
-        let wire = serde_json::to_vec(&message)?;
-        self.largest.fetch_max(wire.len(), Ordering::Relaxed);
-        let message: Value = serde_json::from_slice(&wire)?;
-        let result = handle_data(
-            &self.runtime,
-            message["method"].as_str().unwrap(),
-            message["params"].clone(),
-        )
-        .await;
-        if message["params"]["action"] == "commit"
-            && self.lose_commit.swap(false, Ordering::Relaxed)
-        {
-            return Err(environment_client::EnvironmentClientError::TransportClosed);
-        }
-        self.pending = Some(match result {
-            Ok(result) => success_response(message["id"].clone(), result),
-            Err(error) => error_response(Some(message["id"].clone()), error),
-        });
-        Ok(())
-    }
-    async fn recv(&mut self) -> EnvironmentClientResult<Option<Value>> {
-        let Some(response) = self.pending.take() else {
-            return Ok(None);
-        };
-        let wire = serde_json::to_vec(&response)?;
-        self.largest.fetch_max(wire.len(), Ordering::Relaxed);
-        Ok(Some(serde_json::from_slice(&wire)?))
-    }
-}
-fn runtime(root: &Path, read_only: bool) -> DaemonRuntime {
-    DaemonRuntime::new(crate::config::DaemonConfig {
-        listen: None,
-        cwd: root.into(),
-        fs_root: root.into(),
-        state_dir: root.join("state"),
-        read_only_fs: read_only,
-        registration: None,
-        scrubbed_env: vec![],
-    })
-    .unwrap()
-}
-fn path(value: &str) -> EnvironmentPath {
-    EnvironmentPath::new(value).unwrap()
-}
-fn remote(
-    runtime: DaemonRuntime,
-) -> (
-    RemoteEnvironmentConnection<Transport>,
-    Arc<AtomicUsize>,
-    Arc<AtomicBool>,
-) {
-    let largest = Arc::new(AtomicUsize::new(0));
-    let lose_commit = Arc::new(AtomicBool::new(false));
-    let caps = runtime.capabilities();
-    (
-        RemoteEnvironmentConnection::new(
-            EnvironmentDataClient::new(Transport {
-                runtime,
-                pending: None,
-                largest: largest.clone(),
-                lose_commit: lose_commit.clone(),
-            }),
-            caps,
-        ),
-        largest,
-        lose_commit,
-    )
-}
-struct Repeated {
-    remaining: u64,
-}
-#[async_trait]
-impl BlobSource for Repeated {
-    async fn read_chunk(&mut self, max_bytes: usize) -> Result<Vec<u8>, BlobStoreError> {
-        let size = self.remaining.min(max_bytes as u64) as usize;
-        self.remaining -= size as u64;
-        Ok(vec![0x83; size])
-    }
-}
-fn repeated_ref(size: u64) -> BlobRef {
-    use sha2::{Digest, Sha256};
-    let mut hash = Sha256::new();
-    let chunk = [0x83; 65536];
-    let mut remaining = size;
-    while remaining > 0 {
-        let n = remaining.min(chunk.len() as u64) as usize;
-        hash.update(&chunk[..n]);
-        remaining -= n as u64;
-    }
-    BlobRef::parse(format!("sha256:{}", hex::encode(hash.finalize()))).unwrap()
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn blob_file_tools_stream_without_vfs_and_keep_receipts_across_retries() {
-    use tools::builtin::{
-        BuiltinTool, BuiltinToolContext, BuiltinToolOperation as Op, BuiltinToolSurface as Surface,
-    };
-    for surface in [
-        Surface::Canonical,
-        Surface::CodexLike,
-        Surface::ClaudeCodeLike,
-    ] {
-        let environment = tempfile::tempdir().unwrap();
-        let cas = tempfile::tempdir().unwrap();
-        let store = Arc::new(store_fs::FsBlobStore::open(cas.path()).await.unwrap());
-        let size = 9 * 1024 * 1024 + 7;
-        let content = repeated_ref(size);
-        store
-            .put_stream(&content, size, &mut Repeated { remaining: size })
-            .await
-            .unwrap();
-        let (connection, largest, lose_commit) = remote(runtime(environment.path(), false));
-        let (_, context) = connection
-            .with_cwd(tools::fs::FsPath::new(environment.path().to_str().unwrap()).unwrap())
-            .into_contexts(store.clone());
-        let context = context.with_environment_id("test-env");
-        let key = if surface == Surface::ClaudeCodeLike {
-            "file_path"
-        } else {
-            "path"
-        };
-        let write = BuiltinTool::environment(Op::WriteFile, surface);
-        let capture = BuiltinTool::environment(Op::Reference, surface);
-        let writer = context.clone().with_operation_id("write-binary");
-        let output = write
-            .invoke_json(
-                BuiltinToolContext::Environment(&writer),
-                json!({key:"nested/source.bin","content_ref":content}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(output.output_json["bytes_written"], size);
-        assert_eq!(output.output_json["receipt"]["phase"], "complete");
-        assert_eq!(
-            std::fs::metadata(environment.path().join("nested/source.bin"))
-                .unwrap()
-                .len(),
-            size
-        );
-        let capture_cas = tempfile::tempdir().unwrap();
-        let capture_store = Arc::new(
-            store_fs::FsBlobStore::open(capture_cas.path())
-                .await
-                .unwrap(),
-        );
-        let mut capture_context = context.clone().with_operation_id("capture-binary");
-        capture_context.blobs = capture_store.clone();
-        let captured = capture
-            .invoke_json(
-                BuiltinToolContext::Environment(&capture_context),
-                json!({"path":"nested/source.bin"}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(captured.output_json["content_ref"], content.to_string());
-        assert_eq!(captured.output_json["byte_len"], size);
-        assert_eq!(captured.attachments.len(), 1);
-        assert_eq!(captured.output_json["source"]["id"], "test-env");
-        assert_eq!(
-            capture_store.stat_blob(&content).await.unwrap().byte_len,
-            size
-        );
-        assert_eq!(
-            capture_store
-                .read_blob_range(&content, size - 7, 7)
-                .await
-                .unwrap(),
-            vec![0x83; 7]
-        );
-        std::fs::write(
-            environment.path().join("nested/source.bin"),
-            b"changed live file",
-        )
-        .unwrap();
-        let changed_source_retry = capture
-            .invoke_json(
-                BuiltinToolContext::Environment(&capture_context),
-                json!({"path":"nested/source.bin"}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            changed_source_retry.output_json, captured.output_json,
-            "same-operation capture retry must keep the original immutable version"
-        );
-        std::fs::remove_file(environment.path().join("nested/source.bin")).unwrap();
-        let retry = capture
-            .invoke_json(
-                BuiltinToolContext::Environment(&capture_context),
-                json!({"path":"nested/source.bin"}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            retry.output_json, captured.output_json,
-            "completed capture must not revisit the deleted live path"
-        );
-
-        // Materialization's receipt must make a lost commit response unambiguous.
-        std::fs::write(environment.path().join("result.bin"), b"original").unwrap();
-        std::fs::set_permissions(
-            environment.path().join("result.bin"),
-            std::fs::Permissions::from_mode(0o751),
-        )
-        .unwrap();
-        let writer = context.clone().with_operation_id("lost-write-receipt");
-        lose_commit.store(true, Ordering::Relaxed);
-        assert!(
-            write
-                .invoke_json(
-                    BuiltinToolContext::Environment(&writer),
-                    json!({key:"result.bin","content_ref":content})
-                )
-                .await
-                .is_err()
-        );
-        assert_eq!(
-            std::fs::metadata(environment.path().join("result.bin"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o751
-        );
-        std::fs::write(environment.path().join("result.bin"), b"later local edit").unwrap();
-        let retry = write
-            .invoke_json(
-                BuiltinToolContext::Environment(&writer),
-                json!({key:"result.bin","content_ref":content}),
-            )
-            .await
-            .unwrap();
-        assert_eq!(retry.output_json["receipt"]["phase"], "complete");
-        assert_eq!(
-            std::fs::read(environment.path().join("result.bin")).unwrap(),
-            b"later local edit"
-        );
-
-        std::fs::create_dir(environment.path().join("directory")).unwrap();
-        std::fs::write(environment.path().join("directory/keep"), b"keep").unwrap();
-        let writer = context.clone().with_operation_id("reject-directory-write");
-        assert!(
-            write
-                .invoke_json(
-                    BuiltinToolContext::Environment(&writer),
-                    json!({key:"directory","content_ref":content})
-                )
-                .await
-                .is_err()
-        );
-        assert_eq!(
-            std::fs::read(environment.path().join("directory/keep")).unwrap(),
-            b"keep"
-        );
-        let reader = context
-            .clone()
-            .with_operation_id("reject-directory-capture");
-        assert!(
-            capture
-                .invoke_json(
-                    BuiltinToolContext::Environment(&reader),
-                    json!({"path":"directory"})
-                )
-                .await
-                .is_err()
-        );
-        assert!(
-            largest.load(Ordering::Relaxed) < 400_000,
-            "large binary transfers must use bounded chunks"
-        );
-    }
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn rpc_vfs_roundtrip_streams_large_files_reuses_bytes_and_preserves_retry_receipt() {
-    let environment = tempfile::tempdir().unwrap();
-    let cas = tempfile::tempdir().unwrap();
-    let store = store_fs::FsBlobStore::open(cas.path()).await.unwrap();
-    let size = 10 * 1024 * 1024 + 7;
-    let blob = repeated_ref(size);
-    store
-        .put_stream(&blob, size, &mut Repeated { remaining: size })
-        .await
-        .unwrap();
-    let mut directory = vfs::VfsDirectory::default();
-    directory.entries.insert(
-        "run".into(),
-        vfs::VfsEntry::File(vfs::VfsFile {
-            blob_ref: blob.clone(),
-            size_bytes: size,
-            executable: true,
-            media_type: None,
-        }),
-    );
-    directory.entries.insert(
-        "empty".into(),
-        vfs::VfsEntry::Directory(vfs::VfsDirectory::default()),
-    );
-    let selection = vfs::VfsEntry::Directory(directory.clone());
-    let (remote, largest, lose) = remote(runtime(environment.path(), false));
-    let first = transfer::materialize(
-        &remote,
-        &store,
-        "first",
-        &selection,
-        path("selected"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-    assert_eq!(first.bytes, size);
-    assert_eq!(first.transferred_bytes, size);
-    assert_eq!(first.reused_bytes, 0);
-    assert!(environment.path().join("selected/empty").is_dir());
-    assert_eq!(
-        std::fs::metadata(environment.path().join("selected/run"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o111,
-        0o111
-    );
-    use std::os::unix::fs::MetadataExt;
-    let inode = std::fs::metadata(environment.path().join("selected/run"))
-        .unwrap()
-        .ino();
-    let unchanged = transfer::materialize(
-        &remote,
-        &store,
-        "unchanged",
-        &selection,
-        path("selected"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-    assert_eq!(unchanged.transferred_bytes, 0);
-    assert_eq!(unchanged.reused_bytes, size);
-    assert_eq!(
-        std::fs::metadata(environment.path().join("selected/run"))
-            .unwrap()
-            .ino(),
-        inode,
-        "identical complete trees need no restaging"
-    );
-    // Rename, mode-only edit and deletion reuse raw bytes while replacing the whole boundary.
-    let vfs::VfsEntry::File(mut file) = directory.entries.remove("run").unwrap() else {
-        unreachable!()
-    };
-    file.executable = false;
-    directory.entries.remove("empty");
-    directory
-        .entries
-        .insert("renamed".into(), vfs::VfsEntry::File(file));
-    let selection = vfs::VfsEntry::Directory(directory);
-    std::fs::write(environment.path().join("sibling"), b"preserved").unwrap();
-    lose.store(true, Ordering::Relaxed);
-    assert!(
-        transfer::materialize(
-            &remote,
-            &store,
-            "replace",
-            &selection,
-            path("selected"),
-            TransferOnExisting::Replace
-        )
-        .await
-        .is_err()
-    );
-    assert!(!environment.path().join("selected/run").exists());
-    assert!(!environment.path().join("selected/empty").exists());
-    std::fs::write(
-        environment.path().join("selected/local-edit"),
-        b"keep on retry",
-    )
-    .unwrap();
-    let retry = transfer::materialize(
-        &remote,
-        &store,
-        "replace",
-        &selection,
-        path("selected"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-    assert_eq!(retry.phase, TransferPhase::Complete);
-    assert_eq!(retry.transferred_bytes, 0);
-    assert_eq!(retry.reused_bytes, size);
-    assert!(environment.path().join("selected/local-edit").exists());
-    std::fs::remove_file(environment.path().join("selected/local-edit")).unwrap();
-    let captured = transfer::capture(&remote, &store, None, "capture-existing", path("selected"))
-        .await
-        .unwrap();
-    assert_eq!(captured.entry, selection);
-    assert_eq!(captured.status.transferred_bytes, 0);
-    let empty_cas = tempfile::tempdir().unwrap();
-    let empty_store = store_fs::FsBlobStore::open(empty_cas.path()).await.unwrap();
-    let captured = transfer::capture(
-        &remote,
-        &empty_store,
-        None,
-        "capture-missing",
-        path("selected"),
-    )
-    .await
-    .unwrap();
-    assert_eq!(captured.entry, selection);
-    assert_eq!(captured.status.transferred_bytes, size);
-    assert!(empty_store.has_blob(&blob).await.unwrap());
-    assert!(
-        largest.load(Ordering::Relaxed) < 512 * 1024,
-        "every JSON message remains bounded"
-    );
-    assert_eq!(
-        std::fs::read(environment.path().join("sibling")).unwrap(),
-        b"preserved"
-    );
-}
-#[tokio::test(flavor = "current_thread")]
-async fn inventories_are_paged_and_twenty_gib_files_do_not_block_begin_or_one_advance() {
-    let temp = tempfile::tempdir().unwrap();
-    std::fs::create_dir(temp.path().join("many")).unwrap();
-    for index in 0..300 {
-        std::fs::write(temp.path().join(format!("many/{index:04}")), b"same").unwrap();
-    }
-    let runtime = runtime(temp.path(), false);
-    let fs = runtime.filesystem();
-    fs.transfer(TransferRequest::Begin {
-        operation_id: "pages".into(),
-        selection: TransferSelection::Capture {
-            source: path("many"),
+    data::{
+        fs::{TreeContent, TreeFilter, WriteCondition},
+        transfer::{
+            AppendTransferInventoryParams, BeginTransferParams, InventoryEntry,
+            ListTransferMissingParams, ReadTransferContentParams, ReadTransferInventoryParams,
+            SpecialFilePolicy, SymlinkPolicy, TransferLimits, TransferOnExisting,
+            TransferOperationParams, TransferPhase, TransferSelection, TransferSkipReason,
+            TransferStatus, WriteTransferContentParams,
         },
-        limits: Default::default(),
-    })
-    .await
-    .unwrap();
-    loop {
-        if let TransferResponse::Status(status) = fs
-            .transfer(TransferRequest::Advance {
-                operation_id: "pages".into(),
-            })
-            .await
-            .unwrap()
-            && status.phase == TransferPhase::Ready
-        {
-            break;
-        }
-    }
-    let mut offset = 0;
-    let mut count = 0;
-    loop {
-        let TransferResponse::Inventory {
-            entries,
-            next_offset,
-        } = fs
-            .transfer(TransferRequest::Inventory {
-                operation_id: "pages".into(),
-                offset,
-            })
-            .await
-            .unwrap()
-        else {
-            panic!()
-        };
-        assert!(entries.len() <= MAX_INVENTORY_PAGE);
-        count += entries.len();
-        if let Some(next) = next_offset {
-            offset = next;
-        } else {
-            break;
-        }
-    }
-    assert_eq!(count, 301);
-    let file = std::fs::File::create(temp.path().join("twenty-gib")).unwrap();
-    file.set_len(20 * 1024 * 1024 * 1024).unwrap();
-    let TransferResponse::Status(start) = fs
-        .transfer(TransferRequest::Begin {
-            operation_id: "large".into(),
-            selection: TransferSelection::Capture {
-                source: path("twenty-gib"),
-            },
-            limits: Default::default(),
-        })
-        .await
-        .unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(start.phase, TransferPhase::Scanning);
-    let TransferResponse::Status(step) = fs
-        .transfer(TransferRequest::Advance {
-            operation_id: "large".into(),
-        })
-        .await
-        .unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(step.phase, TransferPhase::Scanning);
-    fs.transfer(TransferRequest::Abort {
-        operation_id: "large".into(),
-    })
-    .await
-    .unwrap();
-    assert_eq!(file.metadata().unwrap().len(), 20 * 1024 * 1024 * 1024);
+    },
+    error::{
+        AbortReason, BusyReason, ErrorData, PreconditionReason, ProtocolError, ProtocolErrorKind,
+    },
+    ids::TransferOperationId,
+    paths::{ContentDigest, EnvironmentPath, TreePath},
+};
+use sha2::{Digest, Sha256};
+
+use crate::filesystem::{
+    LocalFileSystem,
+    tests::{context, filesystem},
+};
+
+fn id(value: &str) -> TransferOperationId {
+    TransferOperationId::new(value).unwrap()
 }
+
+fn path(root: &Path, relative: &str) -> EnvironmentPath {
+    EnvironmentPath::new(format!("{}/{relative}", root.display())).unwrap()
+}
+
+fn limits() -> TransferLimits {
+    TransferLimits {
+        max_entries: 1000,
+        max_depth: 16,
+        max_file_bytes: 64 * 1024 * 1024,
+        max_total_bytes: 256 * 1024 * 1024,
+        max_manifest_bytes: 1024 * 1024,
+        max_duration_ms: 600_000,
+    }
+}
+
+fn digest(bytes: &[u8]) -> ContentDigest {
+    ContentDigest::from_sha256(Sha256::digest(bytes).into())
+}
+
+fn operation(value: &str) -> TransferOperationParams {
+    TransferOperationParams {
+        operation_id: id(value),
+    }
+}
+
+fn capture(source: EnvironmentPath, filter: TreeFilter) -> TransferSelection {
+    TransferSelection::Capture {
+        source,
+        filter,
+        symlinks: SymlinkPolicy::ExpandInside,
+        special_files: SpecialFilePolicy::Reject,
+    }
+}
+
+async fn begin(
+    fs: &LocalFileSystem,
+    operation_id: &str,
+    selection: TransferSelection,
+) -> Result<TransferStatus, ProtocolError> {
+    fs.transfer_begin(
+        &context(),
+        BeginTransferParams {
+            operation_id: id(operation_id),
+            selection,
+            limits: limits(),
+        },
+    )
+    .await
+}
+
+async fn advance_until(
+    fs: &LocalFileSystem,
+    operation_id: &str,
+    phase: TransferPhase,
+) -> Result<TransferStatus, ProtocolError> {
+    for _ in 0..10_000 {
+        let status = fs
+            .transfer_advance(&context(), operation(operation_id))
+            .await?;
+        if status.phase == phase {
+            return Ok(status);
+        }
+    }
+    panic!("{operation_id} never reached {phase:?}");
+}
+
+async fn inventory(fs: &LocalFileSystem, operation_id: &str) -> Vec<InventoryEntry> {
+    let mut entries = Vec::new();
+    let mut index = 0;
+    loop {
+        let page = fs
+            .transfer_read_inventory(
+                &context(),
+                ReadTransferInventoryParams {
+                    operation_id: id(operation_id),
+                    index,
+                    limit: 2,
+                },
+            )
+            .await
+            .unwrap();
+        entries.extend(page.entries);
+        match page.next_index {
+            Some(next) => index = next,
+            None => return entries,
+        }
+    }
+}
+
+fn reason(error: &ProtocolError) -> Option<PreconditionReason> {
+    match error.data {
+        ErrorData::FailedPrecondition { reason } => Some(reason),
+        _ => None,
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
-async fn scan_fingerprints_content_and_filters_large_unrelated_files() {
+async fn captures_expand_inside_links_skip_ignored_trees_and_serve_ranged_content() {
     let temp = tempfile::tempdir().unwrap();
-    std::fs::create_dir(temp.path().join("skills")).unwrap();
-    std::fs::write(temp.path().join("skills/SKILL.md"), b"first").unwrap();
-    std::fs::File::create(temp.path().join("skills/large"))
-        .unwrap()
-        .set_len(20 * 1024 * 1024 * 1024)
-        .unwrap();
-    let runtime = runtime(temp.path(), true);
-    let fs = runtime.filesystem();
-    let mut query = ScanParams {
-        follow_symlinks: false,
-        roots: vec![path("skills")],
-        include_patterns: vec!["**/SKILL.md".into(), "SKILL.md".into()],
-        read_content: true,
-        digest_algorithm: None,
-        limits: Default::default(),
-        if_none_match: None,
+    let root = temp.path().canonicalize().unwrap();
+    let fs = filesystem(&root, false);
+    std::fs::create_dir_all(root.join("project/src")).unwrap();
+    std::fs::create_dir_all(root.join("project/node_modules/.bin")).unwrap();
+    std::fs::create_dir_all(root.join("project/.git")).unwrap();
+    std::fs::write(root.join("project/.gitignore"), "node_modules/\n").unwrap();
+    std::fs::write(root.join("project/src/lib.rs"), b"0123456789").unwrap();
+    std::fs::write(root.join("project/.git/HEAD"), b"ref").unwrap();
+    symlink("src/lib.rs", root.join("project/alias.rs")).unwrap();
+    symlink(
+        "../src/missing",
+        root.join("project/node_modules/.bin/tool"),
+    )
+    .unwrap();
+
+    let filter = TreeFilter {
+        include_hidden: true,
+        ..TreeFilter::default()
     };
-    let first = fs.scan(query.clone()).await.unwrap();
-    assert!(first.complete);
-    assert_eq!(first.entries.len(), 1);
-    query.if_none_match = first.fingerprint;
-    assert!(fs.scan(query.clone()).await.unwrap().unchanged);
-    std::fs::write(temp.path().join("skills/SKILL.md"), b"other").unwrap();
-    assert!(!fs.scan(query.clone()).await.unwrap().unchanged);
-    query.roots.push(path("missing"));
-    let absent = fs.scan(query).await.unwrap();
-    assert!(absent.complete);
-    assert!(!absent.unchanged);
-    assert!(absent.diagnostics.is_empty());
-    let metadata = fs
-        .scan(ScanParams {
-            follow_symlinks: false,
-            roots: vec![path("skills/large")],
-            include_patterns: vec![],
-            read_content: false,
-            digest_algorithm: None,
-            limits: Default::default(),
-            if_none_match: None,
-        })
+    begin(&fs, "capture", capture(path(&root, "project"), filter))
         .await
         .unwrap();
-    assert!(metadata.complete);
+    let status = advance_until(&fs, "capture", TransferPhase::Inventory)
+        .await
+        .unwrap();
+    let entries = inventory(&fs, "capture").await;
+    let paths: Vec<_> = entries.iter().map(|entry| entry.path.as_str()).collect();
+    // The .git directory is always pruned and node_modules is ignored.
+    assert_eq!(paths, [".", ".gitignore", "alias.rs", "src", "src/lib.rs"]);
+    assert_eq!(status.entry_count, 5);
+    let content = digest(b"0123456789");
+    assert!(entries.iter().any(|entry| matches!(
+        entry.content,
+        TreeContent::File { digest: Some(found), .. } if found == content
+    )));
+    let first = fs
+        .transfer_read(
+            &context(),
+            ReadTransferContentParams {
+                operation_id: id("capture"),
+                digest: content,
+                offset: 0,
+                max_bytes: 4,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.data.as_slice(), b"0123");
+    assert!(first.truncated);
+    let rest = fs
+        .transfer_read(
+            &context(),
+            ReadTransferContentParams {
+                operation_id: id("capture"),
+                digest: content,
+                offset: 4,
+                max_bytes: 100,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(rest.data.as_slice(), b"456789");
+    assert!(!rest.truncated);
+    let committed = fs
+        .transfer_commit(&context(), operation("capture"))
+        .await
+        .unwrap();
+    assert_eq!(committed.phase, TransferPhase::Complete);
+    assert!(committed.receipt_expires_at_ms.is_some());
+    assert!(committed.deadline_at_ms.is_none());
+    // The receipt answers a retried commit and begin from the journal.
+    assert_eq!(
+        fs.transfer_commit(&context(), operation("capture"))
+            .await
+            .unwrap()
+            .phase,
+        TransferPhase::Complete
+    );
+    let error = begin(
+        &fs,
+        "capture",
+        capture(path(&root, "other"), TreeFilter::default()),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(reason(&error), Some(PreconditionReason::OperationIdInUse));
+
+    // The completed capture's inventory stays pageable with its receipt,
+    // after the source changed and across a restart; its content does not.
+    std::fs::remove_file(root.join("project/src/lib.rs")).unwrap();
+    assert_eq!(inventory(&fs, "capture").await, entries);
+    drop(fs);
+    let fs = filesystem(&root, false);
+    assert_eq!(inventory(&fs, "capture").await, entries);
+    let error = fs
+        .transfer_read(
+            &context(),
+            ReadTransferContentParams {
+                operation_id: id("capture"),
+                digest: content,
+                offset: 0,
+                max_bytes: 4,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&error), Some(PreconditionReason::TransferPhase));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_capture_answers_its_first_error_and_never_commits() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let root = base.join("root");
+    std::fs::create_dir_all(root.join("tree/a")).unwrap();
+    std::fs::create_dir_all(base.join("outside")).unwrap();
+    std::fs::write(root.join("tree/a/file"), b"a").unwrap();
+    symlink(base.join("outside"), root.join("tree/escape")).unwrap();
+    std::fs::write(root.join("tree/z"), b"z").unwrap();
+    let fs = filesystem(&root, false);
+
+    begin(
+        &fs,
+        "escape",
+        capture(path(&root, "tree"), TreeFilter::default()),
+    )
+    .await
+    .unwrap();
+    let first = advance_until(&fs, "escape", TransferPhase::Inventory)
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&first), Some(PreconditionReason::SymlinkRejected));
+    // Retries never continue the walk past the failure.
+    for _ in 0..3 {
+        let again = fs
+            .transfer_advance(&context(), operation("escape"))
+            .await
+            .unwrap_err();
+        assert_eq!(again, first);
+    }
+    let error = fs
+        .transfer_commit(&context(), operation("escape"))
+        .await
+        .unwrap_err();
+    assert_eq!(error, first);
+    let status = fs
+        .transfer_get_status(&context(), operation("escape"))
+        .await
+        .unwrap();
+    assert_eq!(status.phase, TransferPhase::Failed);
+    assert_eq!(status.error.as_ref(), Some(&first));
+    let aborted = fs
+        .transfer_abort(&context(), operation("escape"))
+        .await
+        .unwrap();
+    assert_eq!(aborted.phase, TransferPhase::Failed);
+
+    // A source that changes after hashing fails the operation at read time.
+    std::fs::remove_file(root.join("tree/escape")).unwrap();
+    begin(
+        &fs,
+        "changed",
+        capture(path(&root, "tree"), TreeFilter::default()),
+    )
+    .await
+    .unwrap();
+    advance_until(&fs, "changed", TransferPhase::Inventory)
+        .await
+        .unwrap();
+    std::fs::write(root.join("tree/z"), b"zz").unwrap();
+    let error = fs
+        .transfer_read(
+            &context(),
+            ReadTransferContentParams {
+                operation_id: id("changed"),
+                digest: digest(b"z"),
+                offset: 0,
+                max_bytes: 10,
+            },
+        )
+        .await
+        .unwrap_err();
     assert!(matches!(
-        metadata.entries[0].content,
-        ScanContent::File {
-            digest: None,
-            size_bytes: 21_474_836_480,
+        error.data,
+        ErrorData::Aborted {
+            reason: Some(AbortReason::SourceChanged)
+        }
+    ));
+    let error = fs
+        .transfer_commit(&context(), operation("changed"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ProtocolErrorKind::Aborted);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn entries_outside_the_selection_never_fail_a_capture() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let root = base.join("root");
+    std::fs::create_dir_all(root.join("tree/src")).unwrap();
+    std::fs::create_dir_all(root.join("tree/tmp")).unwrap();
+    std::fs::create_dir_all(base.join("outside")).unwrap();
+    std::fs::write(root.join("tree/src/lib.rs"), b"lib").unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(root.join("tree/tmp/sock")).unwrap();
+    symlink(base.join("outside"), root.join("tree/tmp/escape")).unwrap();
+    symlink("missing", root.join("tree/tmp/dangling")).unwrap();
+    let fs = filesystem(&root, false);
+
+    let filter = TreeFilter {
+        include: vec!["src/**".to_owned()],
+        ..TreeFilter::default()
+    };
+    begin(&fs, "selected", capture(path(&root, "tree"), filter))
+        .await
+        .unwrap();
+    let status = advance_until(&fs, "selected", TransferPhase::Inventory)
+        .await
+        .unwrap();
+    assert_eq!(status.skipped_entry_count, 0, "{:?}", status.skipped);
+    let entries = inventory(&fs, "selected").await;
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry.path.as_str() == "src/lib.rs")
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.path.as_str().starts_with("tmp/"))
+    );
+
+    // The same entries fail a capture that selects them.
+    begin(
+        &fs,
+        "everything",
+        capture(path(&root, "tree"), TreeFilter::default()),
+    )
+    .await
+    .unwrap();
+    let error = advance_until(&fs, "everything", TransferPhase::Inventory)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        reason(&error),
+        Some(PreconditionReason::SymlinkRejected | PreconditionReason::NotRegularFile)
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn skip_policies_report_what_a_capture_left_out() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join("tree")).unwrap();
+    std::fs::write(root.join("tree/file"), b"f").unwrap();
+    symlink("file", root.join("tree/link")).unwrap();
+    let fs = filesystem(&root, false);
+    begin(
+        &fs,
+        "skips",
+        TransferSelection::Capture {
+            source: path(&root, "tree"),
+            filter: TreeFilter::default(),
+            symlinks: SymlinkPolicy::Skip,
+            special_files: SpecialFilePolicy::Skip,
+        },
+    )
+    .await
+    .unwrap();
+    let status = advance_until(&fs, "skips", TransferPhase::Inventory)
+        .await
+        .unwrap();
+    assert_eq!(status.skipped_entry_count, 1);
+    assert_eq!(status.skipped[0].reason, TransferSkipReason::Symlink);
+    assert_eq!(
+        status.skipped[0].path.as_ref().map(TreePath::as_str),
+        Some("link")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn finished_operations_free_capacity_and_receipts_expire_from_completion() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::write(root.join("file"), b"x").unwrap();
+    let fs = filesystem(&root, false);
+    // Twice the active ceiling of eight, each finished before the next.
+    for index in 0..16 {
+        let name = format!("done-{index}");
+        begin(
+            &fs,
+            &name,
+            capture(path(&root, "file"), TreeFilter::default()),
+        )
+        .await
+        .unwrap();
+        advance_until(&fs, &name, TransferPhase::Inventory)
+            .await
+            .unwrap();
+        fs.transfer_commit(&context(), operation(&name))
+            .await
+            .unwrap();
+    }
+    for index in 0..8 {
+        begin(
+            &fs,
+            &format!("active-{index}"),
+            capture(path(&root, "file"), TreeFilter::default()),
+        )
+        .await
+        .unwrap();
+    }
+    let error = begin(
+        &fs,
+        "one-more",
+        capture(path(&root, "file"), TreeFilter::default()),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error.data,
+        ErrorData::Busy {
+            reason: Some(BusyReason::TransferCapacity),
             ..
         }
     ));
-    let hashed = fs
-        .scan(ScanParams {
-            follow_symlinks: false,
-            roots: vec![path("skills/SKILL.md")],
-            include_patterns: vec![],
-            read_content: false,
-            digest_algorithm: Some(ScanDigestAlgorithm::Sha256),
-            limits: Default::default(),
-            if_none_match: None,
-        })
+    fs.transfer_abort(&context(), operation("active-0"))
         .await
         .unwrap();
-    assert!(hashed.complete);
-    assert!(
-        matches!(&hashed.entries[0].content,ScanContent::File {digest:Some(digest),..} if digest==BlobRef::from_bytes(b"other").as_str())
-    );
-}
-#[tokio::test(flavor = "current_thread")]
-async fn rpc_materialize_creates_missing_parents_for_files_and_trees() {
-    let environment = tempfile::tempdir().unwrap();
-    std::fs::write(environment.path().join("sibling"), b"preserved").unwrap();
-    let (remote, _, _) = remote(runtime(environment.path(), false));
-    let store = harness::storage::InMemoryBlobStore::new();
-    let entry = vfs::VfsEntry::File(vfs::VfsFile {
-        blob_ref: store.put_bytes(b"content".to_vec()).await.unwrap(),
-        size_bytes: 7,
-        executable: true,
-        media_type: None,
-    });
-    let mut directory = vfs::VfsDirectory::default();
-    directory.entries.insert("file".into(), entry.clone());
-    for (id, entry, on_existing) in [
-        ("file", entry, TransferOnExisting::Error),
-        (
-            "tree",
-            vfs::VfsEntry::Directory(directory),
-            TransferOnExisting::Replace,
-        ),
-    ] {
-        let destination = path(&format!("created/{id}/nested/selected"));
-        let status = transfer::materialize(
-            &remote,
-            &store,
-            id,
-            &entry,
-            destination.clone(),
-            on_existing,
-        )
-        .await
-        .unwrap();
-        assert_eq!(status.phase, TransferPhase::Complete);
-        let captured =
-            transfer::capture(&remote, &store, None, &format!("capture-{id}"), destination)
-                .await
-                .unwrap();
-        assert_eq!(captured.entry, entry);
-    }
-    assert_eq!(
-        std::fs::read(environment.path().join("sibling")).unwrap(),
-        b"preserved"
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn secure_replacement_rejects_links_and_uses_private_staging_without_reading_write_only_targets()
- {
-    let temp = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(outside.path().join("secret"), b"untouched").unwrap();
-    symlink(outside.path(), temp.path().join("escape")).unwrap();
-    symlink("absent", temp.path().join("dangling")).unwrap();
-    std::fs::write(temp.path().join("blocked"), b"not a directory").unwrap();
-    let read_only = runtime(temp.path(), true);
-    let runtime = runtime(temp.path(), false);
-    let fs = runtime.filesystem();
-    for (index, destination) in [
-        "escape/secret",
-        "escape/missing/secret",
-        "dangling/missing/secret",
-        "blocked/missing/secret",
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        assert_eq!(
-            fs.transfer(TransferRequest::Begin {
-                operation_id: format!("invalid-parent-{index}"),
-                selection: TransferSelection::Materialize {
-                    destination: path(destination),
-                    on_existing: TransferOnExisting::Replace
-                },
-                limits: Default::default()
-            })
-            .await
-            .unwrap_err()
-            .code,
-            EnvironmentProtocolErrorCode::Forbidden
-        );
-    }
-    assert!(!outside.path().join("missing").exists());
-    assert!(!temp.path().join("absent").exists());
-    assert_eq!(
-        std::fs::read(outside.path().join("secret")).unwrap(),
-        b"untouched"
-    );
-    assert_eq!(
-        std::fs::read(temp.path().join("blocked")).unwrap(),
-        b"not a directory"
-    );
-    assert_eq!(
-        read_only
-            .filesystem()
-            .transfer(TransferRequest::Begin {
-                operation_id: "read-only-parents".into(),
-                selection: TransferSelection::Materialize {
-                    destination: path("read-only/missing/target"),
-                    on_existing: TransferOnExisting::Replace
-                },
-                limits: Default::default()
-            })
-            .await
-            .unwrap_err()
-            .code,
-        EnvironmentProtocolErrorCode::CapabilityUnavailable
-    );
-    assert!(!temp.path().join("read-only").exists());
-    std::fs::write(temp.path().join("target"), b"old").unwrap();
-    std::fs::set_permissions(
-        temp.path().join("target"),
-        std::fs::Permissions::from_mode(0o200),
+    begin(
+        &fs,
+        "one-more",
+        capture(path(&root, "file"), TreeFilter::default()),
     )
-    .unwrap();
-    fs.transfer(TransferRequest::Begin {
-        operation_id: "private".into(),
-        selection: TransferSelection::Materialize {
-            destination: path("target"),
-            on_existing: TransferOnExisting::Replace,
-        },
-        limits: Default::default(),
-    })
     .await
     .unwrap();
-    for entry in std::fs::read_dir(temp.path()).unwrap() {
-        let entry = entry.unwrap();
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".env-transfer-")
-        {
-            assert_eq!(
-                entry.metadata().unwrap().permissions().mode() & 0o777,
-                0o700
-            );
-        }
-    }
-    assert_eq!(
-        fs.transfer(TransferRequest::Begin {
-            operation_id: "overlap".into(),
-            selection: TransferSelection::Materialize {
-                destination: path("target/nested"),
-                on_existing: TransferOnExisting::Replace
+}
+
+async fn append_all(fs: &LocalFileSystem, operation_id: &str, entries: Vec<InventoryEntry>) {
+    let status = fs
+        .transfer_append(
+            &context(),
+            AppendTransferInventoryParams {
+                operation_id: id(operation_id),
+                index: 0,
+                entries,
+                last: true,
             },
-            limits: Default::default()
-        })
-        .await
-        .unwrap_err()
-        .code,
-        EnvironmentProtocolErrorCode::Conflict
-    );
-    fs.transfer(TransferRequest::Abort {
-        operation_id: "private".into(),
-    })
-    .await
-    .unwrap();
-    let (remote, _, _) = remote(runtime.clone());
-    let store = harness::storage::InMemoryBlobStore::new();
-    let blob = store.put_bytes(b"new".to_vec()).await.unwrap();
-    let entry = vfs::VfsEntry::File(vfs::VfsFile {
-        blob_ref: blob,
-        size_bytes: 3,
-        executable: false,
-        media_type: None,
-    });
-    transfer::materialize(
-        &remote,
-        &store,
-        "write-only",
-        &entry,
-        path("target"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-    assert_eq!(std::fs::read(temp.path().join("target")).unwrap(), b"new");
-    assert_eq!(
-        std::fs::read(outside.path().join("secret")).unwrap(),
-        b"untouched"
-    );
-    transfer::materialize(
-        &remote,
-        &store,
-        "to-directory",
-        &vfs::VfsEntry::Directory(vfs::VfsDirectory::default()),
-        path("target"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-    assert!(temp.path().join("target").is_dir());
-    transfer::materialize(
-        &remote,
-        &store,
-        "back-to-file",
-        &entry,
-        path("target"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-
-    let capture = fs
-        .transfer(TransferRequest::Begin {
-            operation_id: "observe".into(),
-            selection: TransferSelection::Capture {
-                source: path("target"),
-            },
-            limits: Default::default(),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(capture, TransferResponse::Status(_)));
-    loop {
-        if let TransferResponse::Status(status) = fs
-            .transfer(TransferRequest::Advance {
-                operation_id: "observe".into(),
-            })
-            .await
-            .unwrap()
-            && status.phase == TransferPhase::Ready
-        {
-            break;
-        }
-    }
-    std::fs::write(temp.path().join("target"), b"changed").unwrap();
-    assert_eq!(
-        fs.transfer(TransferRequest::Commit {
-            operation_id: "observe".into()
-        })
-        .await
-        .unwrap_err()
-        .code,
-        EnvironmentProtocolErrorCode::Conflict
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn persisted_receipts_survive_restart_and_interrupted_operations_fail_closed() {
-    let temp = tempfile::tempdir().unwrap();
-    let cas = tempfile::tempdir().unwrap();
-    let store = store_fs::FsBlobStore::open(cas.path()).await.unwrap();
-    let blob = store.put_bytes(b"content".to_vec()).await.unwrap();
-    let entry = vfs::VfsEntry::File(vfs::VfsFile {
-        blob_ref: blob,
-        size_bytes: 7,
-        executable: false,
-        media_type: None,
-    });
-    {
-        let (remote, _, _) = remote(runtime(temp.path(), false));
-        transfer::materialize(
-            &remote,
-            &store,
-            "completed",
-            &entry,
-            path("target"),
-            TransferOnExisting::Replace,
         )
         .await
         .unwrap();
-        transfer::capture(&remote, &store, None, "captured", path("target"))
-            .await
-            .unwrap();
-        use tools::transfer::EnvironmentTransfer;
-        remote
-            .request(TransferRequest::Begin {
-                operation_id: "interrupted".into(),
-                selection: TransferSelection::Materialize {
-                    destination: path("target"),
-                    on_existing: TransferOnExisting::Replace,
-                },
-                limits: Default::default(),
-            })
-            .await
-            .unwrap();
-    }
-    std::fs::write(temp.path().join("target"), b"later edit").unwrap();
-    let (remote, _, _) = remote(runtime(temp.path(), false));
-    let receipt = transfer::materialize(
-        &remote,
-        &store,
-        "completed",
-        &entry,
-        path("target"),
-        TransferOnExisting::Replace,
-    )
-    .await
-    .unwrap();
-    assert_eq!(receipt.phase, TransferPhase::Complete);
-    assert_eq!(
-        std::fs::read(temp.path().join("target")).unwrap(),
-        b"later edit"
-    );
-    let capture = transfer::capture(&remote, &store, None, "captured", path("target"))
-        .await
-        .unwrap();
-    assert_eq!(capture.entry, entry);
-    assert!(
-        transfer::materialize(
-            &remote,
-            &store,
-            "interrupted",
-            &entry,
-            path("target"),
-            TransferOnExisting::Replace
-        )
-        .await
-        .is_err()
-    );
-    assert_eq!(
-        std::fs::read(temp.path().join("target")).unwrap(),
-        b"later edit"
-    );
+    assert_eq!(status.phase, TransferPhase::Scanning);
 }
-#[tokio::test(flavor = "current_thread")]
-async fn bad_chunks_invalid_manifests_and_read_only_requests_never_publish() {
-    let temp = tempfile::tempdir().unwrap();
-    std::fs::write(temp.path().join("old"), b"keep").unwrap();
-    let runtime = runtime(temp.path(), false);
-    let fs = runtime.filesystem();
-    fs.transfer(TransferRequest::Begin {
-        operation_id: "invalid".into(),
-        selection: TransferSelection::Materialize {
-            destination: path("old"),
-            on_existing: TransferOnExisting::Replace,
+
+fn file_entry(path: &str, bytes: &[u8], executable: bool) -> InventoryEntry {
+    InventoryEntry {
+        path: TreePath::new(path).unwrap(),
+        content: TreeContent::File {
+            size_bytes: bytes.len() as u64,
+            executable,
+            digest: Some(digest(bytes)),
         },
-        limits: Default::default(),
-    })
-    .await
-    .unwrap();
-    loop {
-        if let TransferResponse::Status(status) = fs
-            .transfer(TransferRequest::Advance {
-                operation_id: "invalid".into(),
-            })
-            .await
-            .unwrap()
-            && status.phase == TransferPhase::Inventory
-        {
-            break;
-        }
     }
-    let digest = BlobRef::from_bytes(b"new").to_string();
-    let file = |path: &str| InventoryEntry {
-        path: path.into(),
-        content: InventoryContent::File {
-            size_bytes: 3,
-            executable: false,
-            digest: digest.clone(),
-        },
-    };
-    for bad in ["../escape", "/absolute", "a//b", "a/../b", "a\\b"] {
-        assert_eq!(
-            fs.transfer(TransferRequest::Append {
-                operation_id: "invalid".into(),
-                offset: 0,
-                entries: vec![file(bad)],
-                last: true
-            })
-            .await
-            .unwrap_err()
-            .code,
-            EnvironmentProtocolErrorCode::InvalidRequest
-        );
+}
+
+fn directory_entry(path: &str) -> InventoryEntry {
+    InventoryEntry {
+        path: TreePath::new(path).unwrap(),
+        content: TreeContent::Directory {},
     }
-    let page = TransferRequest::Append {
-        operation_id: "invalid".into(),
-        offset: 0,
-        entries: vec![file("")],
-        last: true,
-    };
-    fs.transfer(page.clone()).await.unwrap();
-    fs.transfer(page).await.unwrap();
-    assert_eq!(
-        fs.transfer(TransferRequest::Write {
-            operation_id: "invalid".into(),
-            digest: digest.clone(),
-            offset: 0,
-            data: vec![0; MAX_CONTENT_CHUNK + 1].into()
-        })
-        .await
-        .unwrap_err()
-        .code,
-        EnvironmentProtocolErrorCode::InvalidRequest
-    );
-    assert_eq!(
-        fs.transfer(TransferRequest::Write {
-            operation_id: "invalid".into(),
-            digest: digest.clone(),
-            offset: 0,
-            data: b"bad".as_slice().into()
-        })
-        .await
-        .unwrap_err()
-        .code,
-        EnvironmentProtocolErrorCode::Conflict
-    );
-    assert_eq!(std::fs::read(temp.path().join("old")).unwrap(), b"keep");
-    let chunk = TransferRequest::Write {
-        operation_id: "invalid".into(),
-        digest,
-        offset: 0,
-        data: b"new".as_slice().into(),
-    };
-    fs.transfer(chunk.clone()).await.unwrap();
-    fs.transfer(chunk).await.unwrap();
-    fs.transfer(TransferRequest::Abort {
-        operation_id: "invalid".into(),
-    })
-    .await
-    .unwrap();
-    assert_eq!(
-        fs.transfer(TransferRequest::Commit {
-            operation_id: "invalid".into()
-        })
-        .await
-        .unwrap_err()
-        .code,
-        EnvironmentProtocolErrorCode::Conflict
-    );
-    let read_only = crate::server::streaming_transfer_tests::runtime(temp.path(), true);
-    assert_eq!(
-        read_only
-            .filesystem()
-            .transfer(TransferRequest::Begin {
-                operation_id: "denied".into(),
-                selection: TransferSelection::Materialize {
-                    destination: path("old"),
-                    on_existing: TransferOnExisting::Replace
-                },
-                limits: Default::default()
-            })
-            .await
-            .unwrap_err()
-            .code,
-        EnvironmentProtocolErrorCode::CapabilityUnavailable
-    );
-    assert_eq!(std::fs::read(temp.path().join("old")).unwrap(), b"keep");
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn configured_cwd_aliases_work_under_the_host_root() {
-    let temp = tempfile::tempdir().unwrap();
-    let alias = temp.path().join("cwd-alias");
-    let actual = temp.path().join("actual");
-    std::fs::create_dir(&actual).unwrap();
-    symlink(&actual, &alias).unwrap();
-    std::fs::write(actual.join("file"), b"bytes").unwrap();
-    let fs = crate::filesystem::LocalFileSystem::new(Path::new("/").into(), alias, true);
-    let result = fs
-        .scan(ScanParams {
-            follow_symlinks: false,
-            roots: vec![path("file")],
-            include_patterns: vec![],
-            read_content: true,
-            digest_algorithm: None,
-            limits: Default::default(),
-            if_none_match: None,
-        })
-        .await
-        .unwrap();
-    assert!(result.complete, "{:?}", result.diagnostics);
-    assert_eq!(
-        result.entries[0].data.as_ref().unwrap().as_slice(),
-        b"bytes"
-    );
-    symlink(&actual, actual.join("user-link")).unwrap();
-    let result = fs
-        .scan(ScanParams {
-            follow_symlinks: false,
-            roots: vec![path("user-link/file")],
-            include_patterns: vec![],
-            read_content: true,
-            digest_algorithm: None,
-            limits: Default::default(),
-            if_none_match: None,
-        })
-        .await
-        .unwrap();
-    assert!(!result.complete, "user-selected symlinks remain rejected");
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn scan_installer_layouts_aliases_collisions_and_semantic_publication() {
-    use tools::skills::environment::*;
+async fn materialize_reuses_matching_destination_files_and_publishes_atomically() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
-    let home = root.join("home");
-    let cwd = root.join("project/subdir");
-    let canonical = root.join("installed/review");
-    for directory in [
-        &home,
-        &cwd,
-        &canonical,
-        &root.join("project/.agents/skills"),
-        &home.join(".codex/skills/copy"),
-    ] {
-        std::fs::create_dir_all(directory).unwrap();
-    }
-    let doc = "---\nname: review\ndescription: >-\n  Review code\n  carefully.\nmetadata:\n  hooks: [ignored]\n---\nbody one";
-    std::fs::write(canonical.join("SKILL.md"), doc).unwrap();
-    std::fs::write(home.join(".codex/skills/copy/SKILL.md"), doc).unwrap();
-    symlink(&canonical, root.join("project/.agents/skills/review")).unwrap();
-    symlink(&canonical, root.join("project/.agents/skills/alias")).unwrap();
-    let config = harness::EnvironmentSkillsConfig {
-        roots: Some(vec![
-            root.join("project/.agents/skills")
-                .to_string_lossy()
-                .into_owned(),
-            home.join(".codex/skills").to_string_lossy().into_owned(),
-        ]),
-    };
-    let runtime = runtime(&root, true);
-    let mut query = environment_skill_scan_query(&config, cwd.to_str(), home.to_str()).unwrap();
-    let first = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(first.complete, "{:?}", first.diagnostics);
-    let catalog = environment_skill_catalog("machine-a", &first).unwrap();
-    assert_eq!(
-        catalog.skills.len(),
-        2,
-        "aliases collapse but independent copies remain"
-    );
-    assert!(
-        catalog
-            .skills
-            .iter()
-            .all(|skill| skill.description == "Review code carefully.")
-    );
-    assert_ne!(catalog.skills[0].skill_id, catalog.skills[1].skill_id);
-    let other = environment_skill_catalog("machine-b", &first).unwrap();
-    assert_ne!(catalog.skills[0].skill_id, other.skills[0].skill_id);
-    query.if_none_match = first.fingerprint;
-    assert!(
-        runtime
-            .filesystem()
-            .scan(query.clone())
-            .await
-            .unwrap()
-            .unchanged
-    );
-    std::fs::write(canonical.join("SKILL.md"), doc.replace("one", "two")).unwrap();
-    let body_edit = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(!body_edit.unchanged);
-    assert_eq!(
-        catalog,
-        environment_skill_catalog("machine-a", &body_edit).unwrap()
-    );
-    assert!(
-        String::from_utf8(std::fs::read(canonical.join("SKILL.md")).unwrap())
-            .unwrap()
-            .ends_with("body two")
-    );
-    let blobs = harness::storage::InMemoryBlobStore::new();
-    let Some(harness::CoreAgentCommand::UpsertContext { entry, .. }) =
-        publish_environment_skill_catalog(&blobs, None, &catalog)
-            .await
-            .unwrap()
-    else {
-        panic!("publication");
-    };
-    assert!(
-        publish_environment_skill_catalog(
-            &blobs,
-            Some(&entry),
-            &environment_skill_catalog("machine-a", &body_edit).unwrap()
+    std::fs::create_dir_all(root.join("target/old")).unwrap();
+    std::fs::write(root.join("target/old/kept"), b"reused bytes").unwrap();
+    std::fs::write(root.join("target/unrelated"), vec![7u8; 100_000]).unwrap();
+    let fs = filesystem(&root, true);
+
+    let error = begin(
+        &fs,
+        "refused",
+        TransferSelection::Materialize {
+            destination: path(&root, "target"),
+            on_existing: TransferOnExisting::Error,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), ProtocolErrorKind::AlreadyExists);
+
+    begin(
+        &fs,
+        "tree",
+        TransferSelection::Materialize {
+            destination: path(&root, "target"),
+            on_existing: TransferOnExisting::Replace,
+        },
+    )
+    .await
+    .unwrap();
+    // A file entry without its digest is refused and changes nothing.
+    let error = fs
+        .transfer_append(
+            &context(),
+            AppendTransferInventoryParams {
+                operation_id: id("tree"),
+                index: 0,
+                entries: vec![
+                    directory_entry("."),
+                    InventoryEntry {
+                        path: TreePath::new("bad").unwrap(),
+                        content: TreeContent::File {
+                            size_bytes: 1,
+                            executable: false,
+                            digest: None,
+                        },
+                    },
+                ],
+                last: true,
+            },
         )
         .await
-        .unwrap()
-        .is_none()
-    );
-    let prefix = blobs.read_bytes(&entry.content.content_ref).await.unwrap();
-    std::fs::write(
-        canonical.join("SKILL.md"),
-        doc.replace("carefully", "thoroughly"),
+        .unwrap_err();
+    assert!(matches!(
+        &error.data,
+        ErrorData::InvalidParams { field: Some(field), .. } if field == "entries[1].content.digest"
+    ));
+    let uploaded = b"uploaded content".to_vec();
+    append_all(
+        &fs,
+        "tree",
+        vec![
+            directory_entry("."),
+            directory_entry("bin"),
+            file_entry("bin/run", &uploaded, true),
+            file_entry("copy", b"reused bytes", false),
+            file_entry("empty", b"", false),
+        ],
     )
-    .unwrap();
-    let edited = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(
-        publish_environment_skill_catalog(
-            &blobs,
-            Some(&entry),
-            &environment_skill_catalog("machine-a", &edited).unwrap()
+    .await;
+    advance_until(&fs, "tree", TransferPhase::Content)
+        .await
+        .unwrap();
+    let missing = fs
+        .transfer_list_missing(
+            &context(),
+            ListTransferMissingParams {
+                operation_id: id("tree"),
+                limit: 10,
+            },
         )
         .await
+        .unwrap();
+    assert_eq!(missing.digests, [digest(&uploaded)]);
+    assert_eq!(missing.remaining_count, 0);
+    let write = |offset: u64, data: &[u8]| WriteTransferContentParams {
+        operation_id: id("tree"),
+        digest: digest(&uploaded),
+        offset,
+        data: data.into(),
+    };
+    let next = fs
+        .transfer_write(&context(), write(0, &uploaded[..8]))
+        .await
         .unwrap()
-        .is_some()
-    );
+        .next_offset;
+    assert_eq!(next, 8);
+    // An identical repeat is accepted; a gap is refused without failing.
     assert_eq!(
-        blobs.read_bytes(&entry.content.content_ref).await.unwrap(),
-        prefix
-    );
-    std::fs::remove_file(canonical.join("SKILL.md")).unwrap();
-    let removed = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert_eq!(
-        environment_skill_catalog("machine-a", &removed)
+        fs.transfer_write(&context(), write(0, &uploaded[..8]))
+            .await
             .unwrap()
-            .skills
-            .len(),
-        1
+            .next_offset,
+        8
     );
-    std::fs::write(
-        canonical.join("SKILL.md"),
-        "---\nname: broken\ndescription: [invalid]\n---",
-    )
-    .unwrap();
-    let invalid = environment_skill_catalog(
-        "machine-a",
-        &runtime.filesystem().scan(query).await.unwrap(),
-    )
-    .unwrap();
-    assert_eq!(invalid.skills.len(), 1);
-    assert_eq!(invalid.warnings.len(), 1);
+    let error = fs
+        .transfer_write(&context(), write(10, &uploaded[10..]))
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&error), Some(PreconditionReason::TransferOffset));
+    fs.transfer_write(&context(), write(8, &uploaded[8..]))
+        .await
+        .unwrap();
+    let ready = advance_until(&fs, "tree", TransferPhase::Ready)
+        .await
+        .unwrap();
+    assert_eq!(ready.reused_bytes, b"reused bytes".len() as u64);
+    fs.transfer_commit(&context(), operation("tree"))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(root.join("target/bin/run")).unwrap(),
+        uploaded
+    );
+    assert_eq!(
+        std::fs::read(root.join("target/copy")).unwrap(),
+        b"reused bytes"
+    );
+    assert!(root.join("target/empty").exists());
+    assert!(!root.join("target/unrelated").exists());
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(root.join("target/bin/run"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111);
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn scan_retarget_scope_loops_and_aggregate_limits_are_explicit() {
+async fn a_digest_mismatch_fails_the_operation() {
     let temp = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    for name in ["one", "two"] {
-        std::fs::create_dir(temp.path().join(name)).unwrap();
-        std::fs::write(temp.path().join(name).join("SKILL.md"), "same").unwrap();
-    }
-    symlink(temp.path().join("one"), temp.path().join("alias")).unwrap();
-    let runtime = runtime(temp.path(), true);
-    let mut query = ScanParams {
-        roots: vec![path("alias")],
-        include_patterns: vec!["**/SKILL.md".into(), "SKILL.md".into()],
-        read_content: true,
-        follow_symlinks: true,
-        digest_algorithm: Some(ScanDigestAlgorithm::Sha256),
-        limits: InventoryLimits::default(),
-        if_none_match: None,
-    };
-    let first = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(first.complete);
-    query.if_none_match = first.fingerprint;
-    let parent_scope = environment_daemon_scope_for_test(temp.path());
-    assert!(
-        !parent_scope.scan(query.clone()).await.unwrap().unchanged,
-        "changed access scope cannot authorize reuse"
-    );
-    let mut shallow = query.clone();
-    shallow.limits.max_depth = 0;
-    let truncated = runtime.filesystem().scan(shallow).await.unwrap();
-    assert!(!truncated.complete && !truncated.unchanged);
-    let mut directories = query.clone();
-    directories.include_patterns.clear();
-    directories.read_content = false;
-    directories.digest_algorithm = None;
-    assert!(
-        runtime
-            .filesystem()
-            .scan(directories)
-            .await
-            .unwrap()
-            .entries
-            .iter()
-            .any(|entry| matches!(entry.content, ScanContent::Directory))
-    );
-    std::fs::remove_file(temp.path().join("alias")).unwrap();
-    symlink(temp.path().join("two"), temp.path().join("alias")).unwrap();
-    let retargeted = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(retargeted.complete && !retargeted.unchanged);
-    assert_ne!(
-        first.entries[0].canonical_path,
-        retargeted.entries[0].canonical_path
-    );
-    assert!(
-        matches!(&retargeted.entries[0].content, ScanContent::File { digest: Some(digest), .. } if digest == BlobRef::from_bytes(b"same").as_str())
-    );
-    query.if_none_match = retargeted.fingerprint;
-    query.read_content = false;
-    assert!(
-        !runtime
-            .filesystem()
-            .scan(query.clone())
-            .await
-            .unwrap()
-            .unchanged
-    );
-    query.roots = vec![path("one"), path("two")];
-    query.limits.max_total_bytes = 7;
-    let limited = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(!limited.complete && !limited.unchanged && limited.fingerprint.is_none());
-    assert!(!limited.diagnostics.is_empty());
-    query.limits = InventoryLimits::default();
-    query.roots = vec![path("alias")];
-    symlink(temp.path().join("two"), temp.path().join("two/loop")).unwrap();
-    assert!(
-        !runtime
-            .filesystem()
-            .scan(query.clone())
-            .await
-            .unwrap()
-            .complete
-    );
-    std::fs::remove_file(temp.path().join("two/loop")).unwrap();
-    std::fs::remove_file(temp.path().join("alias")).unwrap();
-    symlink(outside.path(), temp.path().join("alias")).unwrap();
-    let escaped = runtime.filesystem().scan(query.clone()).await.unwrap();
-    assert!(!escaped.complete);
-    assert_eq!(
-        escaped.diagnostics[0].error.code,
-        EnvironmentProtocolErrorCode::Forbidden
-    );
-    std::fs::remove_file(temp.path().join("alias")).unwrap();
-    symlink(temp.path().join("missing"), temp.path().join("alias")).unwrap();
-    let dangling = runtime.filesystem().scan(query).await.unwrap();
-    assert!(!dangling.complete && !dangling.unchanged);
+    let root = temp.path().canonicalize().unwrap();
+    let fs = filesystem(&root, true);
+    begin(
+        &fs,
+        "mismatch",
+        TransferSelection::Materialize {
+            destination: path(&root, "out"),
+            on_existing: TransferOnExisting::Replace,
+        },
+    )
+    .await
+    .unwrap();
+    append_all(&fs, "mismatch", vec![file_entry(".", b"expected", false)]).await;
+    advance_until(&fs, "mismatch", TransferPhase::Content)
+        .await
+        .unwrap();
+    let error = fs
+        .transfer_write(
+            &context(),
+            WriteTransferContentParams {
+                operation_id: id("mismatch"),
+                digest: digest(b"expected"),
+                offset: 0,
+                data: b"tampered".as_slice().into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&error), Some(PreconditionReason::DigestMismatch));
+    let status = fs
+        .transfer_get_status(&context(), operation("mismatch"))
+        .await
+        .unwrap();
+    assert_eq!(status.phase, TransferPhase::Failed);
+    assert!(!root.join("out").exists());
 }
 
-fn environment_daemon_scope_for_test(cwd: &std::path::Path) -> crate::filesystem::LocalFileSystem {
-    crate::filesystem::LocalFileSystem::new(
-        cwd.parent().unwrap().to_path_buf(),
-        cwd.to_path_buf(),
-        false,
+#[tokio::test(flavor = "current_thread")]
+async fn transfer_write_file_follows_fs_write_file_semantics() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::write(root.join("target"), b"old").unwrap();
+    symlink("target", root.join("link")).unwrap();
+    let fs = filesystem(&root, true);
+    let selection = |create: WriteCondition| TransferSelection::WriteFile {
+        destination: path(&root, "link"),
+        create,
+        if_match: None,
+        executable: false,
+    };
+    let error = begin(&fs, "absent", selection(WriteCondition::IfAbsent))
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&error), Some(PreconditionReason::CreateCondition));
+    begin(&fs, "write", selection(WriteCondition::IfPresent))
+        .await
+        .unwrap();
+    append_all(&fs, "write", vec![file_entry(".", b"new content", false)]).await;
+    advance_until(&fs, "write", TransferPhase::Content)
+        .await
+        .unwrap();
+    fs.transfer_write(
+        &context(),
+        WriteTransferContentParams {
+            operation_id: id("write"),
+            digest: digest(b"new content"),
+            offset: 0,
+            data: b"new content".as_slice().into(),
+        },
     )
+    .await
+    .unwrap();
+    advance_until(&fs, "write", TransferPhase::Ready)
+        .await
+        .unwrap();
+    fs.transfer_commit(&context(), operation("write"))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(root.join("target")).unwrap(), b"new content");
+    assert!(
+        std::fs::symlink_metadata(root.join("link"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn read_only_daemons_refuse_publishes() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let fs = filesystem(&root, false);
+    let error = begin(
+        &fs,
+        "denied",
+        TransferSelection::Materialize {
+            destination: path(&root, "out"),
+            on_existing: TransferOnExisting::Replace,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.kind(), ProtocolErrorKind::CapabilityUnavailable);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_fails_active_operations_and_discards_their_staging() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let selection = TransferSelection::Materialize {
+        destination: path(&root, "out"),
+        on_existing: TransferOnExisting::Replace,
+    };
+    {
+        let fs = filesystem(&root, true);
+        begin(&fs, "interrupted", selection.clone()).await.unwrap();
+        let staged = std::fs::read_dir(&root).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lightspeed-transfer-")
+        });
+        assert!(staged);
+    }
+    let fs = filesystem(&root, true);
+    let status = fs
+        .transfer_get_status(&context(), operation("interrupted"))
+        .await
+        .unwrap();
+    assert_eq!(status.phase, TransferPhase::Failed);
+    assert_eq!(
+        status.error.as_ref().map(ProtocolError::kind),
+        Some(ProtocolErrorKind::Aborted)
+    );
+    let error = begin(&fs, "interrupted", selection).await.unwrap_err();
+    assert_eq!(error.kind(), ProtocolErrorKind::Aborted);
+    // Staging cleanup of the dropped instance and recovery both remove it.
+    for _ in 0..100 {
+        let staged = std::fs::read_dir(&root).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lightspeed-transfer-")
+        });
+        if !staged {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("staging survived the restart");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn operations_fail_when_their_duration_runs_out() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::write(root.join("file"), b"x").unwrap();
+    let fs = filesystem(&root, false);
+    fs.transfer_begin(
+        &context(),
+        BeginTransferParams {
+            operation_id: id("short"),
+            selection: capture(path(&root, "file"), TreeFilter::default()),
+            limits: TransferLimits {
+                max_duration_ms: 1,
+                ..limits()
+            },
+        },
+    )
+    .await
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let error = fs
+        .transfer_advance(&context(), operation("short"))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ProtocolErrorKind::DeadlineExceeded);
+    let status = fs
+        .transfer_get_status(&context(), operation("short"))
+        .await
+        .unwrap();
+    assert_eq!(status.phase, TransferPhase::Failed);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_retried_sealing_append_answers_the_status() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let fs = filesystem(&root, true);
+    begin(
+        &fs,
+        "sealed",
+        TransferSelection::Materialize {
+            destination: path(&root, "out"),
+            on_existing: TransferOnExisting::Replace,
+        },
+    )
+    .await
+    .unwrap();
+    let entries = vec![directory_entry("."), file_entry("file", b"bytes", false)];
+    append_all(&fs, "sealed", entries.clone()).await;
+    // The response to the sealing page was lost; the client sends it again.
+    let retried = fs
+        .transfer_append(
+            &context(),
+            AppendTransferInventoryParams {
+                operation_id: id("sealed"),
+                index: 0,
+                entries,
+                last: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(retried.phase, TransferPhase::Inventory);
+    assert_eq!(retried.entry_count, 2);
+    let error = fs
+        .transfer_append(
+            &context(),
+            AppendTransferInventoryParams {
+                operation_id: id("sealed"),
+                index: 0,
+                entries: vec![directory_entry(".")],
+                last: true,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&error), Some(PreconditionReason::TransferPhase));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_refused_begin_and_an_abort_leave_no_created_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let fs = filesystem(&root, true);
+    let materialize = |destination: &str| TransferSelection::Materialize {
+        destination: path(&root, destination),
+        on_existing: TransferOnExisting::Replace,
+    };
+    begin(&fs, "outer", materialize("a/b")).await.unwrap();
+    assert!(root.join("a").is_dir(), "begin creates missing parents");
+    let error = begin(&fs, "inner", materialize("a/b/c/d"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.data,
+        ErrorData::Busy {
+            reason: Some(BusyReason::TransferCapacity),
+            ..
+        }
+    ));
+    assert!(
+        !root.join("a/b").exists(),
+        "a refused begin changes nothing"
+    );
+
+    fs.transfer_abort(&context(), operation("outer"))
+        .await
+        .unwrap();
+    for _ in 0..100 {
+        if !root.join("a").exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the aborted begin's parent directory survived");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_receipt_names_its_staging_until_removal_is_confirmed() {
+    use super::journal::{self, Record, StageRecord};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let selection = TransferSelection::Materialize {
+        destination: path(&root, "out"),
+        on_existing: TransferOnExisting::Replace,
+    };
+    let status = {
+        let fs = filesystem(&root, true);
+        begin(&fs, "done", selection.clone()).await.unwrap();
+        fs.transfer_abort(&context(), operation("done"))
+            .await
+            .unwrap()
+    };
+    assert_eq!(status.phase, TransferPhase::Aborted);
+    // An exit before the background removal finished: the stage is still
+    // there and the receipt names it.
+    let stage = ".lightspeed-transfer-0123456789abcdef0123456789abcdef";
+    std::fs::create_dir_all(root.join(stage).join("tree/replaced")).unwrap();
+    let journal = root.join(".state/transfers");
+    journal::write(
+        &journal,
+        &id("done"),
+        &Record {
+            params: BeginTransferParams {
+                operation_id: id("done"),
+                selection,
+                limits: limits(),
+            },
+            status: status.clone(),
+            stage: Some(StageRecord::new(&[], stage)),
+            spool: None,
+            committing: false,
+        },
+    )
+    .unwrap();
+
+    let fs = filesystem(&root, true);
+    assert!(!root.join(stage).exists(), "recovery removes the stage");
+    let record = journal::read(&journal, &id("done")).unwrap().unwrap();
+    assert!(record.stage.is_none());
+    let answered = fs
+        .transfer_get_status(&context(), operation("done"))
+        .await
+        .unwrap();
+    assert_eq!(answered.phase, TransferPhase::Aborted);
 }

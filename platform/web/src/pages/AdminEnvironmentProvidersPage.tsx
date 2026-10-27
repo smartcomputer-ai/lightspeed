@@ -64,7 +64,6 @@ type UniverseBindings = {
   error: string | null;
 };
 
-type TransportKind = "webSocket" | "http" | "provider";
 
 /// Deployment-scoped environment provider administration: physical
 /// providers are registered once by a platform admin and shared with
@@ -164,10 +163,12 @@ export function AdminEnvironmentProvidersPage() {
                     <span className="font-mono text-xs text-muted-foreground">
                       {provider.providerId}
                     </span>
-                    <Badge variant="outline">{transportLabel(provider)}</Badge>
+                    {providerFeatureLabels(provider).map((label) => (
+                      <Badge key={label} variant="outline">{label}</Badge>
+                    ))}
                   </div>
                   <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                    {provider.controllerConnection.endpoint}
+                    {provider.controllerEndpoint}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -271,9 +272,15 @@ export function AdminEnvironmentProvidersPage() {
   );
 }
 
-function transportLabel(provider: Provider): string {
-  const transport = provider.controllerConnection.transport;
-  return transport.type === "provider" ? `provider:${transport.providerType}` : transport.type;
+/// What the controller advertised at its last successful handshake, or
+/// that Lightspeed has not reached it at this endpoint yet.
+function providerFeatureLabels(provider: Provider): string[] {
+  const features = provider.controllerFeatures;
+  if (!features) return ["not reached yet"];
+  return [
+    ...(features.adoptTarget ? ["adoption"] : []),
+    ...(features.ingress ? ["ingress"] : []),
+  ];
 }
 
 function BindingRow({
@@ -374,16 +381,14 @@ function RegisterProviderDialog({
   const [providerId, setProviderId] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [endpoint, setEndpoint] = useState("");
-  const [transport, setTransport] = useState<TransportKind>("webSocket");
-  const [providerType, setProviderType] = useState("");
+  const [credential, setCredential] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setProviderId("");
     setDisplayName("");
     setEndpoint("");
-    setTransport("webSocket");
-    setProviderType("");
+    setCredential("");
     setError(null);
   };
 
@@ -391,12 +396,8 @@ function RegisterProviderDialog({
     mutationFn: () =>
       api<Provider>("PUT", `/api/v1/admin/environment-providers/${encodeURIComponent(providerId.trim())}`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
-        controllerConnection: {
-          endpoint: endpoint.trim(),
-          transport: transport === "provider"
-            ? { type: "provider", providerType: providerType.trim() }
-            : { type: transport },
-        },
+        controllerEndpoint: endpoint.trim(),
+        credential,
       }),
     onSuccess: () => {
       onOpenChange(false);
@@ -410,9 +411,10 @@ function RegisterProviderDialog({
     event.preventDefault();
     if (!providerId.trim()) return setError("a provider id is required");
     if (!endpoint.trim()) return setError("a controller endpoint is required");
-    if (transport === "provider" && !providerType.trim()) {
-      return setError("a provider type is required for in-process providers");
+    if (!/^(wss?:\/\/|unix:\/\/\/)\S+$/.test(endpoint.trim())) {
+      return setError("the controller endpoint must be a ws://, wss:// or unix:// URL");
     }
+    if (!credential) return setError("the provider credential is required");
     save.mutate();
   };
 
@@ -422,9 +424,9 @@ function RegisterProviderDialog({
         <DialogHeader>
           <DialogTitle>Register environment provider</DialogTitle>
           <DialogDescription>
-            Records how Lightspeed reaches the provider's controller endpoint. The
-            provider never self-registers; the deployment network is the trust
-            boundary. Universes get access through bindings.
+            Records how Lightspeed reaches the provider's controller endpoint and
+            the credential it presents there. The provider never self-registers.
+            Universes get access through bindings.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-4">
@@ -451,37 +453,27 @@ function RegisterProviderDialog({
             />
           </Field>
           <Field>
-            <FieldLabel>Transport</FieldLabel>
-            <Select value={transport} onValueChange={(next) => setTransport(next as TransportKind)}>
-              <SelectTrigger className="w-full">
-                <SelectValue>{(value: string) => transportName(value as TransportKind)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="webSocket">{transportName("webSocket")}</SelectItem>
-                <SelectItem value="http">{transportName("http")}</SelectItem>
-                <SelectItem value="provider">{transportName("provider")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          {transport === "provider" && (
-            <Field>
-              <FieldLabel htmlFor="provider-type">Provider type</FieldLabel>
-              <Input
-                id="provider-type"
-                value={providerType}
-                onChange={(e) => setProviderType(e.target.value)}
-                placeholder="fake"
-              />
-            </Field>
-          )}
-          <Field>
             <FieldLabel htmlFor="provider-endpoint">Controller endpoint</FieldLabel>
             <Input
               id="provider-endpoint"
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
-              placeholder={transport === "provider" ? "in-process" : "ws://provider.internal:19090"}
+              placeholder="wss://provider.internal:19090/control"
             />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="provider-credential">Credential</FieldLabel>
+            <Input
+              id="provider-credential"
+              type="password"
+              autoComplete="off"
+              value={credential}
+              onChange={(e) => setCredential(e.target.value)}
+            />
+            <FieldDescription className="text-xs">
+              The bearer secret the provider is configured with. Write-only: it is
+              never shown again.
+            </FieldDescription>
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
@@ -496,17 +488,6 @@ function RegisterProviderDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function transportName(kind: TransportKind): string {
-  switch (kind) {
-    case "webSocket":
-      return "WebSocket";
-    case "http":
-      return "HTTP";
-    case "provider":
-      return "In-process provider";
-  }
 }
 
 function BindUniverseDialog({

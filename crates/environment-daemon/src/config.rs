@@ -9,7 +9,11 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use environment_protocol::{registration::validate_registration_metadata, shared::SecretString};
+use environment_protocol::{
+    bytes::SecretString,
+    metadata::{DisplayName, Metadata},
+    routes::{CanonicalOrigin, canonical_origin, gateway_stream_url},
+};
 
 /// Listener address when the daemon is not registering outbound.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:19091";
@@ -20,6 +24,13 @@ pub const ENV_PREFIX: &str = "LIGHTSPEED_ENVD_";
 /// Internal one-exec handoff for a registration key that configuration has
 /// already read and scrubbed. Never documented as operator configuration.
 pub(crate) const REEXEC_REGISTRATION_KEY_ENV: &str = "LIGHTSPEED_ENVD_REEXEC_REGISTRATION_KEY";
+/// Set on the re-executed replacement after an automatic upgrade: the
+/// gateway protocol version the upgrade targeted. A later challenge naming
+/// that same version is refused instead of upgrading again.
+pub(crate) const AUTO_UPGRADE_ATTEMPTED_ENV: &str = "LIGHTSPEED_ENVD_AUTO_UPGRADE_ATTEMPTED";
+/// Name of the state directory below `$XDG_STATE_HOME` (or
+/// `$HOME/.local/state`).
+pub const STATE_DIR_NAME: &str = "lightspeed-envd";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -39,23 +50,25 @@ pub struct DaemonArgs {
     #[arg(long, env = "LIGHTSPEED_ENVD_LISTEN")]
     pub listen: Option<ListenAddr>,
 
-    /// Public environment-gateway connect URL to dial outbound
-    /// (`wss://host/environment-gateway/connect`).
+    /// Environment-gateway connect URL to dial outbound
+    /// (`wss://host[/prefix]/environment-gateway/connect`). Stream sockets
+    /// are dialed on the same origin and prefix.
     #[arg(long, env = "LIGHTSPEED_ENVD_GATEWAY_URL", global = true)]
     pub gateway_url: Option<String>,
 
     /// Discovery document used for manual or automatic upgrades. Defaults to
-    /// `/.well-known/lightspeed-envd` on the configured gateway host.
+    /// `/.well-known/lightspeed-envd` on the configured gateway origin.
     #[arg(long, env = "LIGHTSPEED_ENVD_DISCOVERY_URL", global = true)]
     pub discovery_url: Option<String>,
 
-    /// Upgrade automatically when an outbound gateway advertises a different
-    /// environment protocol version.
+    /// Upgrade automatically when an outbound gateway challenges with a
+    /// different environment protocol version.
     #[arg(long, env = "LIGHTSPEED_ENVD_AUTO_UPGRADE", default_value_t = false)]
     pub auto_upgrade: bool,
 
     /// Registration key admitting this daemon as a new environment. Read
-    /// once and removed from the process environment.
+    /// once, removed from the process environment, and sent only until the
+    /// first admission.
     #[arg(long, env = "LIGHTSPEED_ENVD_REGISTRATION_KEY", hide_env_values = true)]
     pub registration_key: Option<String>,
 
@@ -63,15 +76,16 @@ pub struct DaemonArgs {
     #[arg(long, env = "LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE")]
     pub registration_key_file: Option<PathBuf>,
 
-    /// Display-name hint recorded on the environment at first registration.
+    /// Display name recorded on the environment at first registration.
     #[arg(long, env = "LIGHTSPEED_ENVD_REGISTRATION_NAME")]
     pub registration_name: Option<String>,
 
-    /// Bounded JSON object of string correlation metadata.
+    /// Bounded JSON object of string correlation metadata, recorded at
+    /// first registration.
     #[arg(long, env = "LIGHTSPEED_ENVD_REGISTRATION_METADATA")]
     pub registration_metadata: Option<String>,
 
-    /// Where to write the registration receipt JSON once accepted.
+    /// Where to write the registration receipt JSON once admitted.
     #[arg(long, env = "LIGHTSPEED_ENVD_REGISTRATION_RECEIPT")]
     pub registration_receipt: Option<PathBuf>,
 
@@ -85,6 +99,10 @@ pub struct DaemonArgs {
     #[arg(long, env = "LIGHTSPEED_ENVD_FS_ROOT")]
     pub fs_root: Option<PathBuf>,
 
+    /// Daemon key, job records and transfer journal. Defaults to
+    /// `$XDG_STATE_HOME/lightspeed-envd`, else
+    /// `$HOME/.local/state/lightspeed-envd`. The data plane never addresses
+    /// it, wherever it lives.
     #[arg(long, env = "LIGHTSPEED_ENVD_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
 
@@ -155,6 +173,8 @@ pub struct DaemonConfig {
     pub listen: Option<ListenAddr>,
     pub cwd: PathBuf,
     pub fs_root: PathBuf,
+    /// Created `0700` when missing. Never addressable through the data
+    /// plane.
     pub state_dir: PathBuf,
     pub read_only_fs: bool,
     /// Outbound registration, when a gateway URL is configured.
@@ -167,11 +187,15 @@ pub struct DaemonConfig {
 /// it is registration-key policy, and the daemon behaves the same either way.
 #[derive(Clone)]
 pub struct RegistrationConfig {
+    /// The gateway connect URL; it must end with `CONNECT_PATH`.
     pub gateway_url: String,
-    /// Present only until the first successful registration consumes it.
+    /// Sent with `registration/register` until the first admission, then
+    /// dropped (never handed to an upgraded replacement after that).
     pub registration_key: Option<SecretString>,
-    pub display_name: Option<String>,
-    pub metadata: BTreeMap<String, String>,
+    /// Read by the gateway only at first admission.
+    pub display_name: Option<DisplayName>,
+    /// Read by the gateway only at first admission.
+    pub metadata: Metadata,
     pub receipt_path: Option<PathBuf>,
     pub ca_file: Option<PathBuf>,
     /// Absolute discovery URL reported on mismatch and used by automatic
@@ -180,6 +204,9 @@ pub struct RegistrationConfig {
     /// Present only when mismatch-triggered replacement and re-exec is opted
     /// in. The argument vector is captured before the daemon starts serving.
     pub(crate) auto_upgrade: Option<RestartInvocation>,
+    /// The gateway protocol an automatic upgrade already targeted in this
+    /// process lineage.
+    pub(crate) upgrade_attempted_for: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -203,8 +230,20 @@ impl std::fmt::Debug for RegistrationConfig {
             .field("ca_file", &self.ca_file)
             .field("discovery_url", &self.discovery_url)
             .field("auto_upgrade", &self.auto_upgrade.is_some())
+            .field("upgrade_attempted_for", &self.upgrade_attempted_for)
             .finish()
     }
+}
+
+/// The URLs one gateway connect URL determines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GatewayUrls {
+    /// The connect URL as configured.
+    pub connect: String,
+    /// What the registration signature binds.
+    pub origin: CanonicalOrigin,
+    /// Where every reverse-dialed stream goes.
+    pub stream: String,
 }
 
 impl RegistrationConfig {
@@ -217,57 +256,66 @@ impl RegistrationConfig {
             gateway_url,
             registration_key: None,
             display_name: None,
-            metadata: BTreeMap::new(),
+            metadata: Metadata::default(),
             receipt_path: None,
             ca_file: None,
             discovery_url,
             auto_upgrade: None,
+            upgrade_attempted_for: None,
         }
     }
 
-    pub fn validate(&self) -> Result<()> {
-        validate_gateway_url(&self.gateway_url)?;
-        validate_registration_metadata(self.display_name.as_deref(), &self.metadata)
-            .map_err(|message| anyhow::anyhow!("registration metadata: {message}"))?;
+    pub fn validate(&self) -> Result<GatewayUrls> {
+        let urls = gateway_urls(&self.gateway_url)?;
         if let Some(key) = &self.registration_key
             && (key.is_empty() || key.expose().chars().any(char::is_whitespace))
         {
             bail!("registration key must be a single non-empty token");
         }
         crate::upgrade::validate_discovery_url(&self.discovery_url)?;
-        Ok(())
+        Ok(urls)
     }
 }
 
-/// Plain `ws://` is accepted only toward loopback; everything else must be
-/// `wss://` so the registration key never crosses a network in the clear.
-pub fn validate_gateway_url(url: &str) -> Result<()> {
-    let rest = if let Some(rest) = url.strip_prefix("wss://") {
-        rest
-    } else if let Some(rest) = url.strip_prefix("ws://") {
-        let host = rest
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or_default()
-            .rsplit_once(':')
-            .map(|(host, _)| host)
-            .unwrap_or(rest.split(['/', '?', '#']).next().unwrap_or_default());
-        let host = host.trim_start_matches('[').trim_end_matches(']');
-        let loopback = host == "localhost"
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback());
-        if !loopback {
-            bail!("gateway URL must use wss:// except toward loopback: {url}");
+/// Validate a gateway connect URL and derive what it determines. Plain
+/// `ws://` is accepted only toward loopback; everything else must be
+/// `wss://`, so neither the registration key nor any stream crosses a
+/// network in the clear. The path must end with `CONNECT_PATH` (a prefix
+/// before it is kept), with no query or fragment.
+pub fn gateway_urls(url: &str) -> Result<GatewayUrls> {
+    let scheme = url.split_once("://").map(|(scheme, _)| scheme);
+    match scheme {
+        Some("wss") => {}
+        Some("ws") => {
+            let origin = canonical_origin(url)?;
+            let host = origin
+                .as_str()
+                .trim_start_matches("ws://")
+                .rsplit_once(':')
+                .filter(|(_, port)| port.bytes().all(|byte| byte.is_ascii_digit()))
+                .map_or(origin.as_str().trim_start_matches("ws://"), |(host, _)| {
+                    host
+                })
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_owned();
+            let loopback = host == "localhost"
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback());
+            if !loopback {
+                bail!("gateway URL must use wss:// except toward loopback: {url}");
+            }
         }
-        rest
-    } else {
-        bail!("gateway URL must start with wss:// (or ws:// toward loopback): {url}");
-    };
-    if rest.is_empty() || rest.starts_with('/') {
-        bail!("gateway URL has no host: {url}");
+        _ => bail!("gateway URL must start with wss:// (or ws:// toward loopback): {url}"),
     }
-    Ok(())
+    let origin = canonical_origin(url).with_context(|| format!("gateway URL {url}"))?;
+    let stream = gateway_stream_url(url).with_context(|| format!("gateway URL {url}"))?;
+    Ok(GatewayUrls {
+        connect: url.to_owned(),
+        origin,
+        stream,
+    })
 }
 
 /// Names of every daemon configuration variable present in the process
@@ -293,9 +341,13 @@ impl DaemonArgs {
             install_path: started_executable().context("find the started envd executable")?,
             target: release_info::TARGET.to_owned(),
             expected_protocol: None,
+            other_than: None,
         })
     }
 
+    /// Resolve the configuration. Must run before the async runtime starts
+    /// any thread: it removes secret-bearing variables from the process
+    /// environment.
     pub fn into_config(self) -> Result<DaemonConfig> {
         let cwd = canonical_dir(
             self.cwd
@@ -313,71 +365,20 @@ impl DaemonArgs {
                 fs_root.display()
             );
         }
-        let state_dir = match self.state_dir {
-            Some(path) if path.is_absolute() => path,
-            Some(path) => cwd.join(path),
-            None => cwd.join(".lightspeed-envd"),
-        };
+        let state_dir = resolve_state_dir(self.state_dir, &cwd, |name| std::env::var_os(name))?;
         let scrubbed_env = scrubbed_env_names();
         let registration = match self.gateway_url {
-            Some(gateway_url) => {
-                let discovery_url = crate::upgrade::resolve_discovery_url(
-                    Some(&gateway_url),
-                    self.discovery_url.as_deref(),
-                )?;
-                let auto_upgrade = self
-                    .auto_upgrade
-                    .then(|| -> Result<RestartInvocation> {
-                        Ok(RestartInvocation {
-                            executable: started_executable()
-                                .context("find the started envd executable")?,
-                            arg0: std::env::args_os()
-                                .next()
-                                .ok_or_else(|| anyhow::anyhow!("process has no argv[0]"))?,
-                            args: std::env::args_os().skip(1).collect(),
-                        })
-                    })
-                    .transpose()?;
-                let reexec_registration_key = std::env::var(REEXEC_REGISTRATION_KEY_ENV).ok();
-                let registration_key = if let Some(key) = reexec_registration_key {
-                    Some(SecretString::new(key))
-                } else {
-                    match (self.registration_key, self.registration_key_file) {
-                        (Some(_), Some(_)) => {
-                            bail!("set either the registration key or the key file, not both")
-                        }
-                        (Some(key), None) => Some(SecretString::new(key.trim().to_owned())),
-                        (None, Some(path)) => Some(SecretString::new(
-                            std::fs::read_to_string(&path)
-                                .with_context(|| {
-                                    format!("read registration key file {}", path.display())
-                                })?
-                                .trim()
-                                .to_owned(),
-                        )),
-                        (None, None) => None,
-                    }
-                };
-                let metadata = match self.registration_metadata.as_deref() {
-                    Some(json) if !json.trim().is_empty() => {
-                        serde_json::from_str::<BTreeMap<String, String>>(json)
-                            .context("registration metadata must be a JSON object of strings")?
-                    }
-                    _ => BTreeMap::new(),
-                };
-                let registration = RegistrationConfig {
-                    gateway_url,
-                    registration_key,
-                    display_name: self.registration_name.filter(|name| !name.is_empty()),
-                    metadata,
-                    receipt_path: self.registration_receipt,
-                    ca_file: self.ca_file,
-                    discovery_url,
-                    auto_upgrade,
-                };
-                registration.validate()?;
-                Some(registration)
-            }
+            Some(gateway_url) => Some(registration_config(
+                gateway_url,
+                self.discovery_url,
+                self.auto_upgrade,
+                self.registration_key,
+                self.registration_key_file,
+                self.registration_name,
+                self.registration_metadata,
+                self.registration_receipt,
+                self.ca_file,
+            )?),
             None => {
                 if self.registration_key.is_some() || self.registration_key_file.is_some() {
                     bail!("a registration key needs LIGHTSPEED_ENVD_GATEWAY_URL to dial");
@@ -404,6 +405,140 @@ impl DaemonArgs {
             scrubbed_env,
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn registration_config(
+    gateway_url: String,
+    discovery_url: Option<String>,
+    auto_upgrade: bool,
+    registration_key: Option<String>,
+    registration_key_file: Option<PathBuf>,
+    registration_name: Option<String>,
+    registration_metadata: Option<String>,
+    registration_receipt: Option<PathBuf>,
+    ca_file: Option<PathBuf>,
+) -> Result<RegistrationConfig> {
+    let discovery_url =
+        crate::upgrade::resolve_discovery_url(Some(&gateway_url), discovery_url.as_deref())?;
+    let auto_upgrade = auto_upgrade
+        .then(|| -> Result<RestartInvocation> {
+            Ok(RestartInvocation {
+                executable: started_executable().context("find the started envd executable")?,
+                arg0: std::env::args_os()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("process has no argv[0]"))?,
+                args: std::env::args_os().skip(1).collect(),
+            })
+        })
+        .transpose()?;
+    let upgrade_attempted_for = match std::env::var(AUTO_UPGRADE_ATTEMPTED_ENV) {
+        Ok(value) => Some(value.trim().parse::<u32>().with_context(|| {
+            format!("{AUTO_UPGRADE_ATTEMPTED_ENV} must be a protocol version: {value}")
+        })?),
+        Err(_) => None,
+    };
+    let reexec_registration_key = std::env::var(REEXEC_REGISTRATION_KEY_ENV).ok();
+    let registration_key = if let Some(key) = reexec_registration_key {
+        Some(SecretString::new(key))
+    } else {
+        match (registration_key, registration_key_file) {
+            (Some(_), Some(_)) => {
+                bail!("set either the registration key or the key file, not both")
+            }
+            (Some(key), None) => Some(SecretString::new(key.trim().to_owned())),
+            (None, Some(path)) => Some(SecretString::new(
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("read registration key file {}", path.display()))?
+                    .trim()
+                    .to_owned(),
+            )),
+            (None, None) => None,
+        }
+    };
+    let metadata = match registration_metadata.as_deref() {
+        Some(json) if !json.trim().is_empty() => Metadata::new(
+            serde_json::from_str::<BTreeMap<String, String>>(json)
+                .context("registration metadata must be a JSON object of strings")?,
+        )
+        .context("registration metadata")?,
+        _ => Metadata::default(),
+    };
+    let display_name = registration_name
+        .filter(|name| !name.is_empty())
+        .map(DisplayName::new)
+        .transpose()
+        .context("registration name")?;
+    let registration = RegistrationConfig {
+        gateway_url,
+        registration_key,
+        display_name,
+        metadata,
+        receipt_path: registration_receipt,
+        ca_file,
+        discovery_url,
+        auto_upgrade,
+        upgrade_attempted_for,
+    };
+    registration.validate()?;
+    Ok(registration)
+}
+
+/// The state directory, created `0700` and canonical. A defaulted
+/// directory must not lie inside `cwd`, the agent's working tree; an
+/// explicitly configured one may (confinement refuses data-plane access to
+/// it wherever it lives). A relative explicit path is taken against `cwd`.
+fn resolve_state_dir(
+    configured: Option<PathBuf>,
+    cwd: &Path,
+    env: impl Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf> {
+    let (path, defaulted) = match configured {
+        Some(path) if path.is_absolute() => (path, false),
+        Some(path) => (cwd.join(path), false),
+        None => (default_state_dir(env)?, true),
+    };
+    let state_dir = prepare_state_dir(&path)?;
+    if defaulted && state_dir.starts_with(cwd) {
+        bail!(
+            "the default state directory {} lies inside cwd {}: set LIGHTSPEED_ENVD_STATE_DIR",
+            state_dir.display(),
+            cwd.display()
+        );
+    }
+    Ok(state_dir)
+}
+
+/// `$XDG_STATE_HOME/lightspeed-envd` when that variable is an absolute
+/// path, else `$HOME/.local/state/lightspeed-envd`.
+fn default_state_dir(env: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+    if let Some(state_home) = env("XDG_STATE_HOME").map(PathBuf::from)
+        && state_home.is_absolute()
+    {
+        return Ok(state_home.join(STATE_DIR_NAME));
+    }
+    match env("HOME").map(PathBuf::from) {
+        Some(home) if home.is_absolute() => {
+            Ok(home.join(".local").join("state").join(STATE_DIR_NAME))
+        }
+        _ => bail!(
+            "neither XDG_STATE_HOME nor HOME names an absolute directory: set LIGHTSPEED_ENVD_STATE_DIR"
+        ),
+    }
+}
+
+/// Create the state directory when missing (`0700`; parents with default
+/// permissions), restrict it, and return its canonical path.
+pub fn prepare_state_dir(path: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("create state dir {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("restrict state dir {}", path.display()))?;
+    }
+    canonical_dir(path.to_path_buf(), "state dir")
 }
 
 /// Resolve argv[0] once, before serving anything, so replacement and re-exec
@@ -434,17 +569,19 @@ fn started_executable() -> Result<PathBuf> {
     std::env::current_exe().context("fall back to the running executable path")
 }
 
-/// Drop the secret-bearing variables from this process's environment as soon
-/// as they have been read. Children additionally get every daemon variable
-/// removed at spawn; this narrows what an in-process bug could leak.
+/// Drop the secret-bearing and one-exec variables from this process's
+/// environment as soon as they have been read. Children additionally get
+/// every daemon variable removed at spawn; this narrows what an in-process
+/// bug could leak and what a later re-exec could inherit.
 fn forget_secret_env() {
     for name in [
         "LIGHTSPEED_ENVD_REGISTRATION_KEY",
         "LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE",
         REEXEC_REGISTRATION_KEY_ENV,
+        AUTO_UPGRADE_ATTEMPTED_ENV,
     ] {
-        // SAFETY: called from configuration parsing on the main thread before
-        // the daemon spawns any thread that reads the environment.
+        // SAFETY: called from configuration parsing on the main thread
+        // before the async runtime or any other thread exists.
         unsafe { std::env::remove_var(name) };
     }
 }
@@ -483,7 +620,7 @@ mod tests {
             registration_metadata: None,
             registration_receipt: None,
             ca_file: None,
-            cwd: Some(temp.path().to_path_buf()),
+            cwd: Some(temp.path().join("work")),
             fs_root: Some(temp.path().to_path_buf()),
             state_dir: Some(temp.path().join("state")),
             read_only_fs: false,
@@ -491,9 +628,15 @@ mod tests {
         }
     }
 
+    fn temp() -> tempfile::TempDir {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("work")).expect("work");
+        temp
+    }
+
     #[test]
     fn listener_config_needs_no_identity_or_secret() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = temp();
         let config = DaemonArgs {
             listen: Some("127.0.0.1:0".parse().unwrap()),
             ..args(&temp)
@@ -531,7 +674,7 @@ mod tests {
 
     #[test]
     fn outbound_config_reads_the_key_once_and_disables_the_listener() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = temp();
         let key_file = temp.path().join("key");
         std::fs::write(&key_file, "lsrk_secret\n").expect("write key");
         let config = DaemonArgs {
@@ -552,14 +695,11 @@ mod tests {
                 .map(|key| key.expose()),
             Some("lsrk_secret")
         );
-        assert_eq!(registration.display_name.as_deref(), Some("worker-1"));
         assert_eq!(
-            registration
-                .metadata
-                .get("harbor.trialId")
-                .map(String::as_str),
-            Some("t-1")
+            registration.display_name.as_ref().map(DisplayName::as_str),
+            Some("worker-1")
         );
+        assert_eq!(registration.metadata.get("harbor.trialId"), Some("t-1"));
         assert!(!format!("{registration:?}").contains("lsrk_secret"));
 
         let both = DaemonArgs {
@@ -588,14 +728,79 @@ mod tests {
     }
 
     #[test]
-    fn plain_websocket_gateway_urls_are_loopback_only() {
-        assert!(validate_gateway_url("wss://gateway.example/environment-gateway/connect").is_ok());
-        assert!(validate_gateway_url("ws://127.0.0.1:18080/environment-gateway/connect").is_ok());
-        assert!(validate_gateway_url("ws://localhost:18080/x").is_ok());
-        assert!(validate_gateway_url("ws://[::1]:18080/x").is_ok());
-        assert!(validate_gateway_url("ws://gateway.example/x").is_err());
-        assert!(validate_gateway_url("http://gateway.example/x").is_err());
-        assert!(validate_gateway_url("wss:///x").is_err());
+    fn gateway_urls_are_loopback_only_in_the_clear_and_end_with_the_connect_path() {
+        let urls = gateway_urls("wss://Gateway.example/ls/environment-gateway/connect").unwrap();
+        assert_eq!(urls.origin.as_str(), "wss://gateway.example");
+        assert_eq!(
+            urls.stream,
+            "wss://gateway.example/ls/environment-gateway/data"
+        );
+        for good in [
+            "ws://127.0.0.1:18080/environment-gateway/connect",
+            "ws://localhost:18080/environment-gateway/connect",
+            "ws://[::1]:18080/environment-gateway/connect",
+        ] {
+            assert!(gateway_urls(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "ws://gateway.example/environment-gateway/connect",
+            "http://gateway.example/environment-gateway/connect",
+            "wss:///environment-gateway/connect",
+            "wss://gateway.example/x",
+            "wss://gateway.example/environment-gateway/connect?x=1",
+            "wss://user@gateway.example/environment-gateway/connect",
+        ] {
+            assert!(gateway_urls(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_default_state_dir_follows_xdg_and_stays_out_of_cwd() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        };
+        assert_eq!(
+            default_state_dir(env(&[("XDG_STATE_HOME", "/xdg"), ("HOME", "/home/a")])).unwrap(),
+            PathBuf::from("/xdg/lightspeed-envd")
+        );
+        assert_eq!(
+            default_state_dir(env(&[("XDG_STATE_HOME", "relative"), ("HOME", "/home/a")])).unwrap(),
+            PathBuf::from("/home/a/.local/state/lightspeed-envd")
+        );
+        assert!(default_state_dir(env(&[])).is_err());
+
+        let temp = temp();
+        let cwd = temp.path().join("work").canonicalize().unwrap();
+        let home = cwd.clone();
+        let inside = resolve_state_dir(None, &cwd, |name| {
+            (name == "HOME").then(|| home.clone().into_os_string())
+        });
+        assert!(
+            inside.is_err(),
+            "a defaulted state dir inside cwd is refused"
+        );
+
+        let explicit = resolve_state_dir(Some(PathBuf::from(".envd")), &cwd, |_| None)
+            .expect("an explicit state dir inside cwd is allowed");
+        assert_eq!(explicit, cwd.join(".envd"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&explicit).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+
+        let outside_home = temp.path().canonicalize().unwrap().join("home");
+        let outside = resolve_state_dir(None, &cwd, |name| {
+            (name == "HOME").then(|| outside_home.clone().into_os_string())
+        })
+        .expect("a default outside cwd");
+        assert!(outside.ends_with(".local/state/lightspeed-envd"));
     }
 
     #[test]
@@ -622,11 +827,9 @@ mod tests {
 
     #[test]
     fn outbound_upgrade_configuration_derives_discovery_and_captures_restart() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = temp();
         let config = DaemonArgs {
-            gateway_url: Some(
-                "wss://gateway.example/environment-gateway/connect?ignored=1".to_owned(),
-            ),
+            gateway_url: Some("wss://gateway.example/ls/environment-gateway/connect".to_owned()),
             auto_upgrade: true,
             ..args(&temp)
         }

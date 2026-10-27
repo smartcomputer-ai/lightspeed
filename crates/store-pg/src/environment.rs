@@ -1,12 +1,13 @@
 // Formatted SQL uses internal schema fragments; request values use bind parameters.
 use async_trait::async_trait;
-use auth::{AuthGrantId, AuthProviderId, SecretId};
-use environment_protocol::shared::ProviderTargetId;
+use auth::{AuthGrantId, AuthProviderId, SecretId, SecretValue};
+use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
 use environments::{
-    AdoptEnvironment, BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment,
-    CreateRegisteredEnvironment, EnvironmentCredentialRecord, EnvironmentCredentialSource,
-    EnvironmentCredentialStore, EnvironmentDaemonId, EnvironmentId, EnvironmentIncarnationId,
-    EnvironmentIncarnationRecord, EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
+    AdoptEnvironment, BeginCloseEnvironment, ControllerFeatures, CreateEnvironment,
+    CreateExternalEnvironment, CreateRegisteredEnvironment, EnvironmentCredentialRecord,
+    EnvironmentCredentialSource, EnvironmentCredentialStore, EnvironmentDaemonId,
+    EnvironmentEndpoint, EnvironmentId, EnvironmentIncarnationId, EnvironmentIncarnationRecord,
+    EnvironmentLifecycleError, EnvironmentProviderBindingId, EnvironmentProviderBindingRecord,
     EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
     EnvironmentProviderRecord, EnvironmentProviderStore, EnvironmentProvisionRequestId,
     EnvironmentRecord, EnvironmentRegistrationKeyId, EnvironmentRegistryError, EnvironmentSource,
@@ -14,16 +15,22 @@ use environments::{
     FinishCloseEnvironment, ListEnvironmentCredentials, ListEnvironmentProviders, ListEnvironments,
     ObserveProvisionedEnvironment, ObserveRegisteredEnvironment, PowerState,
     PutEnvironmentCredential, PutEnvironmentProvider, PutEnvironmentProviderBinding,
-    RegisteredConnectionObservation, RegisteredIdentityMode, SetEnvironmentIdlePolicy,
-    SetEnvironmentIngress, SetEnvironmentPower,
+    ReconcileScope, RecordEnvironmentIngress, RecordEnvironmentLifecycleError,
+    RecordProviderController, RegisteredConnectionObservation, RegisteredIdentityMode,
+    SetEnvironmentIdlePolicy, SetEnvironmentIngress, SetEnvironmentPower,
+    apply_registered_observation,
 };
 use sqlx::{Postgres, Row, Transaction};
 use uuid::Uuid;
 
-use crate::PgStore;
+use crate::{
+    PgStore,
+    auth::{LOCAL_KEY_ID, open_secret, seal_secret},
+};
 
 const PROVIDER_COLUMNS: &str = r#"
-    provider_id, display_name, controller_connection_json, metadata_json,
+    provider_id, display_name, controller_endpoint, metadata_json,
+    controller_adopt_target, controller_ingress, data_route_base,
     created_at_ms, updated_at_ms
 "#;
 
@@ -33,10 +40,11 @@ const BINDING_COLUMNS: &str = r#"
 "#;
 
 const ENVIRONMENT_COLUMNS: &str = r#"
-    e.environment_id, e.request_id, e.source_kind, e.provider_id, e.binding_id, e.daemon_connection_json,
+    e.environment_id, e.request_id, e.source_kind, e.provider_id, e.binding_id, e.daemon_endpoint,
     e.registration_key_id, e.daemon_id, e.daemon_public_key, e.identity_mode, e.last_seen_at_ms,
     e.display_name, e.status, e.desired_power, e.idle_policy_json,
     e.public_ingress_enabled, e.public_endpoint, e.metadata_json,
+    e.lifecycle_error, e.lifecycle_error_first_at_ms, e.lifecycle_error_last_at_ms,
     e.created_at_ms, e.updated_at_ms,
     i.incarnation_id, i.provision_request_id, i.provider_target_id,
     i.template_id, i.adoption_source_target, i.power_states_json,
@@ -46,13 +54,23 @@ const ENVIRONMENT_COLUMNS: &str = r#"
 
 /// SQL predicate: the observed steady power state differs from the desired
 /// one, so the lifecycle reconciler has power work to do.
-const POWER_DIVERGES_SQL: &str = r#"(
-    e.source_kind = 'provisioned' AND (
+/// `EnvironmentRecord::needs_reconcile` over `environments e` without the
+/// steady clause: convergence pending (status, power or ingress).
+pub(crate) const CONVERGING_SQL: &str = r#"(
+    e.status IN ('provisioning','booting','closing','unknown')
+    OR (e.source_kind = 'provisioned' AND (
         (e.status = 'ready' AND e.desired_power <> 'running')
         OR (e.status = 'paused' AND e.desired_power <> 'paused')
         OR (e.status = 'suspended' AND e.desired_power <> 'suspended')
         OR (e.status = 'offline' AND e.desired_power <> 'stopped')
-    )
+        OR (e.status = 'ready' AND e.public_ingress_enabled <> (e.public_endpoint IS NOT NULL))
+    ))
+)"#;
+
+/// Steady provisioned environments, over `environments e`; with the
+/// incarnation join the recorded target is required too.
+pub(crate) const STEADY_SQL: &str = r#"(
+    e.source_kind = 'provisioned' AND e.status IN ('ready','offline','paused','suspended')
 )"#;
 
 const ENVIRONMENT_JOIN: &str = r#"
@@ -74,34 +92,101 @@ impl EnvironmentProviderStore for PgStore {
         &self,
         request: PutEnvironmentProvider,
     ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let record = request.into_record()?;
-        let query = format!(
-            r#"
-            INSERT INTO environment_providers (
-                provider_id, display_name, controller_connection_json,
-                metadata_json, created_at_ms, updated_at_ms
-            ) VALUES ($1,$2,$3,$4,$5,$6)
-            ON CONFLICT (provider_id) DO UPDATE SET
-                display_name = EXCLUDED.display_name,
-                controller_connection_json = EXCLUDED.controller_connection_json,
-                metadata_json = EXCLUDED.metadata_json,
-                updated_at_ms = EXCLUDED.updated_at_ms
-            RETURNING {PROVIDER_COLUMNS}
-        "#
-        );
-        let row = sqlx::query(sqlx::AssertSqlSafe(query))
-            .bind(record.provider_id.as_str())
-            .bind(record.display_name.as_deref())
-            .bind(json_value(
-                "encode provider controller connection",
-                &record.controller_connection,
-            )?)
-            .bind(json_value("encode provider metadata", &record.metadata)?)
-            .bind(record.created_at_ms)
-            .bind(record.updated_at_ms)
-            .fetch_one(&self.pool)
+        let mut tx = self
+            .pool
+            .begin()
             .await
-            .map_err(|error| sql_error("put environment provider", error))?;
+            .map_err(|error| sql_error("begin environment provider put", error))?;
+        let query = format!(
+            "SELECT {PROVIDER_COLUMNS} FROM environment_providers WHERE provider_id = $1 FOR UPDATE"
+        );
+        // A row that no longer decodes is replaced as if it were absent, so
+        // an operator can repair it with a put that carries a credential.
+        let existing = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(request.provider_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| sql_error("lock environment provider", error))?
+            .and_then(|row| decoded_or_logged(provider_from_row(&row), "environment provider"));
+        let credential = request.credential.clone();
+        let record = request.into_record(existing.as_ref())?;
+        let features = record.controller_features;
+        let row = match credential {
+            Some(credential) => {
+                let (key_id, nonce, ciphertext) =
+                    self.seal_provider_credential(&record.provider_id, &credential)?;
+                let query = format!(
+                    r#"
+                    INSERT INTO environment_providers (
+                        provider_id, display_name, controller_endpoint, metadata_json,
+                        controller_adopt_target, controller_ingress, data_route_base,
+                        credential_key_id, credential_nonce, credential_ciphertext,
+                        created_at_ms, updated_at_ms
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                    ON CONFLICT (provider_id) DO UPDATE SET
+                        display_name = EXCLUDED.display_name,
+                        controller_endpoint = EXCLUDED.controller_endpoint,
+                        metadata_json = EXCLUDED.metadata_json,
+                        controller_adopt_target = EXCLUDED.controller_adopt_target,
+                        controller_ingress = EXCLUDED.controller_ingress,
+                        data_route_base = EXCLUDED.data_route_base,
+                        credential_key_id = EXCLUDED.credential_key_id,
+                        credential_nonce = EXCLUDED.credential_nonce,
+                        credential_ciphertext = EXCLUDED.credential_ciphertext,
+                        created_at_ms = EXCLUDED.created_at_ms,
+                        updated_at_ms = EXCLUDED.updated_at_ms
+                    RETURNING {PROVIDER_COLUMNS}
+                "#
+                );
+                sqlx::query(sqlx::AssertSqlSafe(query))
+                    .bind(record.provider_id.as_str())
+                    .bind(record.display_name.as_deref())
+                    .bind(record.controller_endpoint.as_str())
+                    .bind(json_value("encode provider metadata", &record.metadata)?)
+                    .bind(features.map(|features| features.adopt_target))
+                    .bind(features.map(|features| features.ingress))
+                    .bind(record.data_route_base.as_ref().map(DataRouteBase::as_str))
+                    .bind(key_id)
+                    .bind(nonce)
+                    .bind(ciphertext)
+                    .bind(record.created_at_ms)
+                    .bind(record.updated_at_ms)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|error| sql_error("put environment provider", error))?
+            }
+            None => {
+                let query = format!(
+                    r#"
+                    UPDATE environment_providers SET
+                        display_name = $2, controller_endpoint = $3, metadata_json = $4,
+                        controller_adopt_target = $5, controller_ingress = $6,
+                        data_route_base = $7, created_at_ms = $8, updated_at_ms = $9
+                    WHERE provider_id = $1
+                    RETURNING {PROVIDER_COLUMNS}
+                "#
+                );
+                sqlx::query(sqlx::AssertSqlSafe(query))
+                    .bind(record.provider_id.as_str())
+                    .bind(record.display_name.as_deref())
+                    .bind(record.controller_endpoint.as_str())
+                    .bind(json_value("encode provider metadata", &record.metadata)?)
+                    .bind(features.map(|features| features.adopt_target))
+                    .bind(features.map(|features| features.ingress))
+                    .bind(record.data_route_base.as_ref().map(DataRouteBase::as_str))
+                    .bind(record.created_at_ms)
+                    .bind(record.updated_at_ms)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|error| sql_error("update environment provider", error))?
+                    .ok_or_else(|| {
+                        invalid_error("a new environment provider requires a credential")
+                    })?
+            }
+        };
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit environment provider put", error))?;
         provider_from_row(&row)
     }
 
@@ -120,6 +205,66 @@ impl EnvironmentProviderStore for PgStore {
         provider_from_row(&row)
     }
 
+    async fn read_provider_credential(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<SecretValue, EnvironmentRegistryError> {
+        let row = sqlx::query(
+            "SELECT credential_key_id, credential_nonce, credential_ciphertext FROM environment_providers WHERE provider_id = $1",
+        )
+        .bind(provider_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| sql_error("read environment provider credential", error))?
+        .ok_or_else(|| not_found("environment_provider", provider_id))?;
+        let key_id: String = row
+            .try_get("credential_key_id")
+            .map_err(|error| sql_error("decode provider credential key id", error))?;
+        if key_id != LOCAL_KEY_ID {
+            return Err(store_message(format!(
+                "unsupported provider credential key id '{key_id}'"
+            )));
+        }
+        let nonce: Vec<u8> = row
+            .try_get("credential_nonce")
+            .map_err(|error| sql_error("decode provider credential nonce", error))?;
+        let ciphertext: Vec<u8> = row
+            .try_get("credential_ciphertext")
+            .map_err(|error| sql_error("decode provider credential", error))?;
+        let (cipher, _) = self
+            .secrets_cipher()
+            .map_err(|error| store_message(error.to_string()))?;
+        open_secret(
+            &cipher,
+            &provider_credential_aad(provider_id),
+            &nonce,
+            &ciphertext,
+        )
+        .map_err(|error| store_message(format!("open provider credential: {error}")))
+    }
+
+    async fn record_provider_controller(
+        &self,
+        request: RecordProviderController,
+    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
+        sqlx::query(
+            r#"
+            UPDATE environment_providers SET
+                controller_adopt_target = $3, controller_ingress = $4, data_route_base = $5
+            WHERE provider_id = $1 AND controller_endpoint = $2
+            "#,
+        )
+        .bind(request.provider_id.as_str())
+        .bind(request.controller_endpoint.as_str())
+        .bind(request.features.adopt_target)
+        .bind(request.features.ingress)
+        .bind(request.data_route_base.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| sql_error("record environment provider controller", error))?;
+        self.read_provider(&request.provider_id).await
+    }
+
     async fn list_providers(
         &self,
         _request: ListEnvironmentProviders,
@@ -130,7 +275,11 @@ impl EnvironmentProviderStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environment providers", error))?;
-        rows.iter().map(provider_from_row).collect()
+        Ok(decode_rows(
+            &rows,
+            provider_from_row,
+            "environment provider",
+        ))
     }
 
     async fn delete_provider(
@@ -158,6 +307,28 @@ impl EnvironmentProviderStore for PgStore {
             .ok_or_else(|| not_found("environment_provider", provider_id))?;
         provider_from_row(&row)
     }
+}
+
+impl PgStore {
+    fn seal_provider_credential(
+        &self,
+        provider_id: &EnvironmentProviderId,
+        credential: &SecretValue,
+    ) -> Result<(&'static str, Vec<u8>, Vec<u8>), EnvironmentRegistryError> {
+        let (cipher, key_id) = self
+            .secrets_cipher()
+            .map_err(|error| store_message(error.to_string()))?;
+        let (nonce, ciphertext) =
+            seal_secret(&cipher, &provider_credential_aad(provider_id), credential)
+                .map_err(|error| store_message(format!("seal provider credential: {error}")))?;
+        Ok((key_id, nonce, ciphertext))
+    }
+}
+
+/// Binds a sealed provider credential to its provider, so ciphertexts
+/// cannot be moved between provider rows.
+fn provider_credential_aad(provider_id: &EnvironmentProviderId) -> Vec<u8> {
+    format!("environment-provider/{}/credential", provider_id.as_str()).into_bytes()
 }
 
 #[async_trait]
@@ -264,7 +435,11 @@ impl EnvironmentProviderBindingStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list provider bindings", error))?;
-        rows.iter().map(binding_from_row).collect()
+        Ok(decode_rows(
+            &rows,
+            binding_from_row,
+            "environment provider binding",
+        ))
     }
 
     async fn delete_provider_binding(
@@ -340,6 +515,7 @@ impl EnvironmentStore for PgStore {
         if binding.status != EnvironmentProviderBindingStatus::Enabled {
             return invalid("environment provider binding is disabled");
         }
+        request.record(binding.provider_id.clone())?;
         sqlx::query(
             r#"
             INSERT INTO environments (
@@ -404,14 +580,6 @@ impl EnvironmentStore for PgStore {
         if request.created_at_ms < 0 {
             return invalid("environment timestamp must be nonnegative");
         }
-        if request.source_target.is_empty()
-            || request.source_target.len() > 255
-            || request.source_target.chars().any(char::is_control)
-        {
-            return invalid(
-                "adoption source must be non-empty, at most 255 bytes, and contain no control characters",
-            );
-        }
         let mut tx = self
             .pool
             .begin()
@@ -447,6 +615,7 @@ impl EnvironmentStore for PgStore {
         if binding.status != EnvironmentProviderBindingStatus::Enabled {
             return invalid("environment provider binding is disabled");
         }
+        request.record(binding.provider_id.clone())?;
         sqlx::query(
             r#"
             INSERT INTO environments (
@@ -504,34 +673,7 @@ impl EnvironmentStore for PgStore {
         if request.created_at_ms < 0 {
             return invalid("environment timestamp must be nonnegative");
         }
-        let candidate = EnvironmentRecord {
-            environment_id: request.environment_id.clone(),
-            request_id: request.request_id.clone(),
-            source: EnvironmentSource::External {
-                connection: request.connection.clone(),
-            },
-            display_name: request.display_name.clone(),
-            status: EnvironmentStatus::Ready,
-            desired_power: PowerState::Running,
-            idle_policy: None,
-            incarnation: EnvironmentIncarnationRecord {
-                incarnation_id: request.incarnation_id.clone(),
-                provision_request_id: None,
-                provider_target_id: None,
-                template_id: None,
-                adoption_source_target: None,
-                power_states: Vec::new(),
-                created_at_ms: request.created_at_ms,
-                updated_at_ms: request.created_at_ms,
-            },
-            public_ingress_enabled: false,
-            public_endpoint: None,
-            metadata: request.metadata.clone(),
-            last_seen_at_ms: None,
-            created_at_ms: request.created_at_ms,
-            updated_at_ms: request.created_at_ms,
-        };
-        candidate.validate()?;
+        request.record()?;
         let mut tx = self
             .pool
             .begin()
@@ -556,7 +698,7 @@ impl EnvironmentStore for PgStore {
         sqlx::query(
             r#"
             INSERT INTO environments (
-                universe_id, environment_id, request_id, source_kind, daemon_connection_json,
+                universe_id, environment_id, request_id, source_kind, daemon_endpoint,
                 display_name, status, current_incarnation_id, metadata_json,
                 created_at_ms, updated_at_ms
             ) VALUES ($1,$2,$3,'external',$4,$5,'ready',$6,$7,$8,$8)
@@ -565,7 +707,7 @@ impl EnvironmentStore for PgStore {
         .bind(self.config.universe_id)
         .bind(request.environment_id.as_str())
         .bind(request.request_id.as_str())
-        .bind(json_value("encode daemon connection", &request.connection)?)
+        .bind(request.endpoint.as_str())
         .bind(request.display_name.as_deref())
         .bind(request.incarnation_id.as_str())
         .bind(json_value(
@@ -654,6 +796,7 @@ impl EnvironmentStore for PgStore {
                 });
             }
         }
+        request.record(&key)?;
         sqlx::query(
             r#"
             INSERT INTO environments (
@@ -725,9 +868,17 @@ impl EnvironmentStore for PgStore {
             return invalid("observed_at_ms must be nonnegative");
         }
         let current = self.read_environment(&request.environment_id).await?;
-        if !current.is_registered() {
-            return invalid("connection observations apply only to registered environments");
-        }
+        // Validate the merged result before anything becomes durable: a
+        // build fact that breaks the record's bounds is refused here rather
+        // than poisoning the row for every later read.
+        let mut candidate = current.clone();
+        apply_registered_observation(
+            &mut candidate,
+            request.observation,
+            request.observed_at_ms,
+            request.metadata.clone(),
+        )?;
+        candidate.validate()?;
         // One conditional statement rather than read-modify-write: a close
         // that lands between a read and a write must never be overwritten
         // by a late connect or disconnect observation.
@@ -782,7 +933,7 @@ impl EnvironmentStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list open registered environments", error))?;
-        rows.iter().map(environment_from_row).collect()
+        Ok(decode_rows(&rows, environment_from_row, "environment"))
     }
 
     async fn read_environment(
@@ -861,21 +1012,27 @@ impl EnvironmentStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environments", error))?;
-        rows.iter().map(environment_from_row).collect()
+        Ok(decode_rows(&rows, environment_from_row, "environment"))
     }
 
     async fn list_environments_needing_reconcile(
         &self,
+        scope: ReconcileScope,
     ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        let query = format!(
-            "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND (e.status IN ('provisioning','booting','closing','unknown') OR {POWER_DIVERGES_SQL}) ORDER BY e.updated_at_ms, e.environment_id"
-        );
+        let query = match scope {
+            ReconcileScope::Converging => format!(
+                "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND {CONVERGING_SQL} ORDER BY e.updated_at_ms, e.environment_id"
+            ),
+            ReconcileScope::WithSteady => format!(
+                "SELECT {ENVIRONMENT_COLUMNS} {ENVIRONMENT_JOIN} WHERE e.universe_id = $1 AND ({CONVERGING_SQL} OR ({STEADY_SQL} AND i.provider_target_id IS NOT NULL)) ORDER BY e.updated_at_ms, e.environment_id"
+            ),
+        };
         let rows = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(self.config.universe_id)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environments needing reconcile", error))?;
-        rows.iter().map(environment_from_row).collect()
+        Ok(decode_rows(&rows, environment_from_row, "environment"))
     }
 
     async fn list_environments_with_idle_policy(
@@ -889,7 +1046,7 @@ impl EnvironmentStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environments with idle policy", error))?;
-        rows.iter().map(environment_from_row).collect()
+        Ok(decode_rows(&rows, environment_from_row, "environment"))
     }
 
     async fn observe_provisioned_environment(
@@ -897,26 +1054,81 @@ impl EnvironmentStore for PgStore {
         request: ObserveProvisionedEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         let current = self.read_environment(&request.environment_id).await?;
-        if request.observed_at_ms < current.incarnation.updated_at_ms {
+        let mut candidate = current.clone();
+        request.apply(&mut candidate)?;
+        candidate.validate()?;
+        if candidate == current {
             return Ok(current);
         }
-        if current
-            .incarnation
-            .provider_target_id
-            .as_ref()
-            .is_some_and(|id| id != &request.provider_target_id)
-        {
-            return invalid("provider target conflicts with current incarnation");
-        }
-        sqlx::query("UPDATE environment_incarnations SET provider_target_id=$4, power_states_json=$5, updated_at_ms=$6 WHERE universe_id=$1 AND environment_id=$2 AND incarnation_id=$3")
-            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(current.incarnation.incarnation_id.as_str())
-            .bind(request.provider_target_id.as_str())
-            .bind(json_value("encode power states", &request.power_states)?)
-            .bind(request.observed_at_ms)
-            .execute(&self.pool).await.map_err(|error| sql_error("observe environment incarnation", error))?;
-        sqlx::query("UPDATE environments SET status=$3, updated_at_ms=$4 WHERE universe_id=$1 AND environment_id=$2")
-            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(environment_status_to_str(request.status)).bind(request.observed_at_ms)
-            .execute(&self.pool).await.map_err(|error| sql_error("observe environment", error))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin environment observation", error))?;
+        // The target id and power states are recorded whatever the status,
+        // so a close that raced the first create can still address the
+        // target; the predicates refuse stale and conflicting observations
+        // that raced this one.
+        sqlx::query(
+            r#"
+            UPDATE environment_incarnations SET
+                provider_target_id = COALESCE($4, provider_target_id),
+                power_states_json = $5,
+                updated_at_ms = $6
+            WHERE universe_id = $1 AND environment_id = $2 AND incarnation_id = $3
+              AND updated_at_ms <= $6
+              AND ($4::text IS NULL OR provider_target_id IS NULL OR provider_target_id = $4)
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(current.incarnation.incarnation_id.as_str())
+        .bind(
+            request
+                .provider_target_id
+                .as_ref()
+                .map(ProviderTargetId::as_str),
+        )
+        .bind(json_value("encode power states", &request.power_states)?)
+        .bind(request.observed_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("observe environment incarnation", error))?;
+        // A close accepted while this observation was in flight wins.
+        sqlx::query(
+            r#"
+            UPDATE environments SET
+                status = $3,
+                metadata_json = metadata_json || $4,
+                lifecycle_error = CASE WHEN $5 THEN NULL ELSE lifecycle_error END,
+                lifecycle_error_first_at_ms =
+                    CASE WHEN $5 THEN NULL ELSE lifecycle_error_first_at_ms END,
+                lifecycle_error_last_at_ms =
+                    CASE WHEN $5 THEN NULL ELSE lifecycle_error_last_at_ms END,
+                updated_at_ms = GREATEST(updated_at_ms, $6)
+            WHERE universe_id = $1 AND environment_id = $2
+              AND status NOT IN ('closing', 'closed')
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(environment_status_to_str(request.status))
+        .bind(json_value(
+            "encode daemon build metadata",
+            &request
+                .daemon_build
+                .as_ref()
+                .map(|build| build.metadata())
+                .unwrap_or_default(),
+        )?)
+        .bind(request.status.power_state().is_some())
+        .bind(request.observed_at_ms)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("observe environment", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit environment observation", error))?;
         self.read_environment(&request.environment_id).await
     }
 
@@ -924,14 +1136,101 @@ impl EnvironmentStore for PgStore {
         &self,
         request: FailEnvironmentLifecycle,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let mut metadata = self
-            .read_environment(&request.environment_id)
-            .await?
-            .metadata;
-        metadata.insert("lifecycleError".to_owned(), request.message);
-        sqlx::query("UPDATE environments SET status='failed', metadata_json=$3, updated_at_ms=$4 WHERE universe_id=$1 AND environment_id=$2")
-            .bind(self.config.universe_id).bind(request.environment_id.as_str()).bind(json_value("encode environment metadata", &metadata)?).bind(request.observed_at_ms)
-            .execute(&self.pool).await.map_err(|error| sql_error("fail environment", error))?;
+        let current = self.read_environment(&request.environment_id).await?;
+        let mut candidate = current.clone();
+        request.apply(&mut candidate)?;
+        candidate.validate()?;
+        let Some(error) = candidate
+            .lifecycle_error
+            .as_ref()
+            .filter(|_| candidate != current)
+        else {
+            return Ok(current);
+        };
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| sql_error("begin environment failure", error))?;
+        let failed = sqlx::query(
+            r#"
+            UPDATE environments SET
+                status = 'failed',
+                lifecycle_error = $3,
+                lifecycle_error_first_at_ms = LEAST(COALESCE(lifecycle_error_first_at_ms, $4), $4),
+                lifecycle_error_last_at_ms = $4,
+                metadata_json = metadata_json || $5,
+                updated_at_ms = GREATEST(updated_at_ms, $4)
+            WHERE universe_id = $1 AND environment_id = $2
+              AND status NOT IN ('closing', 'closed')
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(&error.message)
+        .bind(request.observed_at_ms)
+        .bind(json_value(
+            "encode daemon build metadata",
+            &request
+                .daemon_build
+                .as_ref()
+                .map(|build| build.metadata())
+                .unwrap_or_default(),
+        )?)
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| sql_error("fail environment", error))?;
+        if failed.rows_affected() == 1 {
+            // Observations older than the failure are stale from now on.
+            sqlx::query(
+                "UPDATE environment_incarnations SET updated_at_ms = GREATEST(updated_at_ms, $4) WHERE universe_id = $1 AND environment_id = $2 AND incarnation_id = $3",
+            )
+            .bind(self.config.universe_id)
+            .bind(request.environment_id.as_str())
+            .bind(current.incarnation.incarnation_id.as_str())
+            .bind(request.observed_at_ms)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| sql_error("fail environment incarnation", error))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|error| sql_error("commit environment failure", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
+    async fn record_environment_lifecycle_error(
+        &self,
+        request: RecordEnvironmentLifecycleError,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let current = self.read_environment(&request.environment_id).await?;
+        let mut candidate = current.clone();
+        request.apply(&mut candidate)?;
+        candidate.validate()?;
+        let Some(error) = candidate
+            .lifecycle_error
+            .as_ref()
+            .filter(|_| candidate != current)
+        else {
+            return Ok(current);
+        };
+        sqlx::query(
+            r#"
+            UPDATE environments SET
+                lifecycle_error = $3,
+                lifecycle_error_first_at_ms = LEAST(COALESCE(lifecycle_error_first_at_ms, $4), $4),
+                lifecycle_error_last_at_ms = $4,
+                updated_at_ms = GREATEST(updated_at_ms, $4)
+            WHERE universe_id = $1 AND environment_id = $2 AND status <> 'closed'
+            "#,
+        )
+        .bind(self.config.universe_id)
+        .bind(request.environment_id.as_str())
+        .bind(&error.message)
+        .bind(request.observed_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| sql_error("record environment lifecycle error", error))?;
         self.read_environment(&request.environment_id).await
     }
 
@@ -976,26 +1275,42 @@ impl EnvironmentStore for PgStore {
         if !matches!(environment.source, EnvironmentSource::Provisioned { .. }) {
             return invalid_store("provider-managed ingress requires a provisioned environment");
         }
-        if request.enabled
-            && matches!(
-                environment.status,
-                EnvironmentStatus::Closing | EnvironmentStatus::Closed
-            )
-        {
+        if request.enabled && environment.status.is_closing_or_closed() {
             return invalid_store("cannot enable ingress for a closing environment");
         }
-        if request.enabled != request.public_endpoint.is_some() {
-            return invalid_store(
-                "enabled ingress requires a public endpoint and disabled ingress forbids one",
-            );
+        EnvironmentRecord {
+            public_ingress_enabled: request.enabled,
+            ..environment
         }
-        sqlx::query("UPDATE environments SET public_ingress_enabled=$3, public_endpoint=$4, updated_at_ms=GREATEST(updated_at_ms,$5) WHERE universe_id=$1 AND environment_id=$2")
+        .validate()?;
+        // Enabling never revives a close accepted in the meantime.
+        sqlx::query("UPDATE environments SET public_ingress_enabled=$3, updated_at_ms=GREATEST(updated_at_ms,$4) WHERE universe_id=$1 AND environment_id=$2 AND (NOT $3 OR status NOT IN ('closing','closed'))")
             .bind(self.config.universe_id)
             .bind(request.environment_id.as_str())
             .bind(request.enabled)
-            .bind(request.public_endpoint)
             .bind(request.updated_at_ms)
             .execute(&self.pool).await.map_err(|error| sql_error("set environment ingress", error))?;
+        self.read_environment(&request.environment_id).await
+    }
+
+    async fn record_environment_ingress(
+        &self,
+        request: RecordEnvironmentIngress,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        let current = self.read_environment(&request.environment_id).await?;
+        let mut candidate = current.clone();
+        request.apply(&mut candidate)?;
+        candidate.validate()?;
+        if candidate == current {
+            return Ok(current);
+        }
+        // A close accepted while this observation was in flight wins.
+        sqlx::query("UPDATE environments SET public_endpoint=$3, updated_at_ms=GREATEST(updated_at_ms,$4) WHERE universe_id=$1 AND environment_id=$2 AND status NOT IN ('closing','closed')")
+            .bind(self.config.universe_id)
+            .bind(request.environment_id.as_str())
+            .bind(request.public_endpoint)
+            .bind(request.observed_at_ms)
+            .execute(&self.pool).await.map_err(|error| sql_error("record environment ingress", error))?;
         self.read_environment(&request.environment_id).await
     }
 
@@ -1006,6 +1321,11 @@ impl EnvironmentStore for PgStore {
         validate_ingress_request_time(request.updated_at_ms)?;
         let environment = self.read_environment(&request.environment_id).await?;
         check_power_mutable(&environment)?;
+        EnvironmentRecord {
+            desired_power: request.desired_power,
+            ..environment
+        }
+        .validate()?;
         sqlx::query("UPDATE environments SET desired_power=$3, updated_at_ms=GREATEST(updated_at_ms,$4) WHERE universe_id=$1 AND environment_id=$2")
             .bind(self.config.universe_id)
             .bind(request.environment_id.as_str())
@@ -1025,6 +1345,11 @@ impl EnvironmentStore for PgStore {
         }
         let environment = self.read_environment(&request.environment_id).await?;
         check_power_mutable(&environment)?;
+        EnvironmentRecord {
+            idle_policy: request.idle_policy.clone(),
+            ..environment
+        }
+        .validate()?;
         sqlx::query("UPDATE environments SET idle_policy_json=$3, updated_at_ms=GREATEST(updated_at_ms,$4) WHERE universe_id=$1 AND environment_id=$2")
             .bind(self.config.universe_id)
             .bind(request.environment_id.as_str())
@@ -1045,10 +1370,7 @@ fn check_power_mutable(record: &EnvironmentRecord) -> Result<(), EnvironmentRegi
     if !matches!(record.source, EnvironmentSource::Provisioned { .. }) {
         return invalid_store("only provisioned environments have power control");
     }
-    if matches!(
-        record.status,
-        EnvironmentStatus::Closing | EnvironmentStatus::Closed | EnvironmentStatus::Failed
-    ) {
+    if record.status.is_closing_or_closed() || record.status == EnvironmentStatus::Failed {
         return invalid_store("cannot change power of a closing, closed, or failed environment");
     }
     Ok(())
@@ -1101,7 +1423,11 @@ impl EnvironmentCredentialStore for PgStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| sql_error("list environment credentials", error))?;
-        rows.iter().map(credential_from_row).collect()
+        Ok(decode_rows(
+            &rows,
+            credential_from_row,
+            "environment credential",
+        ))
     }
 
     async fn unbind_credential(
@@ -1153,15 +1479,31 @@ fn provider_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
     let provider_id = parse_id(row, "provider_id", EnvironmentProviderId::try_new)?;
-    let connection: environments::EnvironmentConnectionSpec =
-        json_column(row, "controller_connection_json")?;
+    let adopt_target: Option<bool> = row
+        .try_get("controller_adopt_target")
+        .map_err(|e| sql_error("decode provider controller adoptTarget", e))?;
+    let ingress: Option<bool> = row
+        .try_get("controller_ingress")
+        .map_err(|e| sql_error("decode provider controller ingress", e))?;
+    let controller_features = match (adopt_target, ingress) {
+        (Some(adopt_target), Some(ingress)) => Some(ControllerFeatures {
+            adopt_target,
+            ingress,
+        }),
+        (None, None) => None,
+        _ => return Err(store_message("provider controller features are incomplete")),
+    };
     let record = EnvironmentProviderRecord {
         provider_id,
         display_name: row
             .try_get("display_name")
             .map_err(|e| sql_error("decode provider display_name", e))?,
-        controller_connection: connection,
+        controller_endpoint: parse_id(row, "controller_endpoint", |value| {
+            EnvironmentEndpoint::parse(&value)
+        })?,
         metadata: json_column(row, "metadata_json")?,
+        controller_features,
+        data_route_base: optional_id(row, "data_route_base", DataRouteBase::new)?,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
     };
@@ -1210,7 +1552,9 @@ fn environment_from_row(
             .map_err(|e| store_message(format!("decode binding id: {e}")))?,
         },
         "external" => EnvironmentSource::External {
-            connection: json_column(row, "daemon_connection_json")?,
+            endpoint: parse_id(row, "daemon_endpoint", |value| {
+                EnvironmentEndpoint::parse(&value)
+            })?,
         },
         "registered" => EnvironmentSource::Registered {
             registration_key_id: parse_id(
@@ -1228,9 +1572,22 @@ fn environment_from_row(
             )));
         }
     };
-    let target: Option<String> = row
-        .try_get("provider_target_id")
-        .map_err(|e| sql_error("decode provider target", e))?;
+    let lifecycle_error = match (
+        row.try_get::<Option<String>, _>("lifecycle_error")
+            .map_err(|e| sql_error("decode lifecycle error", e))?,
+        row.try_get::<Option<i64>, _>("lifecycle_error_first_at_ms")
+            .map_err(|e| sql_error("decode lifecycle error start", e))?,
+        row.try_get::<Option<i64>, _>("lifecycle_error_last_at_ms")
+            .map_err(|e| sql_error("decode lifecycle error time", e))?,
+    ) {
+        (Some(message), Some(first_at_ms), Some(last_at_ms)) => Some(EnvironmentLifecycleError {
+            message,
+            first_at_ms,
+            last_at_ms,
+        }),
+        (None, None, None) => None,
+        _ => return Err(store_message("environment lifecycle error is incomplete")),
+    };
     let record = EnvironmentRecord {
         environment_id: parse_id(row, "environment_id", EnvironmentId::try_new)?,
         request_id: parse_id(row, "request_id", EnvironmentProvisionRequestId::try_new)?,
@@ -1248,7 +1605,7 @@ fn environment_from_row(
                 "provision_request_id",
                 EnvironmentProvisionRequestId::try_new,
             )?,
-            provider_target_id: target.map(ProviderTargetId::new),
+            provider_target_id: optional_id(row, "provider_target_id", ProviderTargetId::new)?,
             template_id: optional_id(row, "template_id", EnvironmentTemplateId::try_new)?,
             adoption_source_target: row
                 .try_get("adoption_source_target")
@@ -1267,6 +1624,7 @@ fn environment_from_row(
         last_seen_at_ms: row
             .try_get("last_seen_at_ms")
             .map_err(|e| sql_error("decode last seen", e))?,
+        lifecycle_error,
         created_at_ms: scalar(row, "created_at_ms")?,
         updated_at_ms: scalar(row, "updated_at_ms")?,
     };
@@ -1549,6 +1907,28 @@ fn map_provider_delete_error(error: sqlx::Error) -> EnvironmentRegistryError {
 
 #[allow(dead_code)]
 async fn _transaction_marker(_: &mut Transaction<'_, Postgres>) {}
+
+/// Decode every row that still decodes. A row that does not is left out
+/// and logged, so one bad row never hides the rest of a listing or stalls
+/// a reconciler pass over them.
+pub(crate) fn decode_rows<T>(
+    rows: &[sqlx::postgres::PgRow],
+    decode: impl Fn(&sqlx::postgres::PgRow) -> Result<T, EnvironmentRegistryError>,
+    kind: &'static str,
+) -> Vec<T> {
+    rows.iter()
+        .filter_map(|row| decoded_or_logged(decode(row), kind))
+        .collect()
+}
+
+fn decoded_or_logged<T>(
+    result: Result<T, EnvironmentRegistryError>,
+    kind: &'static str,
+) -> Option<T> {
+    result
+        .inspect_err(|error| tracing::error!(%error, kind, "skipping undecodable registry row"))
+        .ok()
+}
 
 /// A string map as the jsonb object the `@>` containment filter compares
 /// against; building the value directly cannot fail.
