@@ -344,8 +344,7 @@ fn birth_ms(directory: &OwnedFd, name: &OsStr, _: &rfs::Stat) -> Option<i64> {
         rfs::StatxFlags::BTIME,
     )
     .ok()?;
-    statx
-        .stx_mask
+    rfs::StatxFlags::from_bits_retain(statx.stx_mask)
         .contains(rfs::StatxFlags::BTIME)
         .then(|| to_ms((statx.stx_btime.tv_sec, statx.stx_btime.tv_nsec as i64)))
 }
