@@ -690,10 +690,9 @@ async fn run_queue_live_client(
 
     // Exactly one generation per executed run (first, third, fourth), since
     // the fake model answers directly; the cancelled first run never got a
-    // second turn. Whether the worker
-    // abandoned the first generation or it completed (and was discarded)
-    // depends on heartbeat timing with this short delay and is covered by
-    // the mid-generation cancel scenario.
+    // second turn. Whether the worker abandoned the first generation or it
+    // completed (and was discarded) depends on heartbeat timing with this
+    // short delay and is covered by the mid-generation cancel scenario.
     assert_eq!(counters.generations_started(), 3);
     assert_eq!(
         counters.generations_completed() + counters.generations_abandoned(),
@@ -1107,32 +1106,11 @@ async fn run_unbounded_hosted_run_live_client(
         })
         .await?;
     // Thirty-one generations and thirty tool batches run back to back, which
-    // can approach the default 30 s terminal-run budget on a loaded local
-    // stack; wait with headroom, since the test is about transition count,
-    // not latency.
-    let diag_started = std::time::Instant::now();
+    // takes about 30 s on the local dev stack, right at the default
+    // terminal-run budget. Wait with headroom: the test is about transition
+    // count, not latency.
     let run =
         wait_for_terminal_run_with_timeout(&api, &session_id, &started.result.run.id, 120).await?;
-    eprintln!("DIAG128 run took {:?}", diag_started.elapsed());
-    {
-        let events = api
-            .read_session_events(SessionEventsReadParams {
-                direction: Default::default(),
-                before: None,
-                session_id: session_id.as_str().to_owned(),
-                after: None,
-                limit: Some(80),
-                wait_ms: None,
-            })
-            .await?
-            .result
-            .events;
-        let base = events.first().map(|e| e.observed_at_ms).unwrap_or(0);
-        for event in &events {
-            let k = format!("{:?}", event.kind);
-            eprintln!("DIAG128 +{} {}", event.observed_at_ms - base, &k[..k.len().min(60)]);
-        }
-    }
     assert!(
         final_assistant_text(&run).is_some_and(|text| text.contains("Fake agent completed run"))
     );
