@@ -90,7 +90,9 @@ export function closeReasonLabel(reason: EnvironmentCloseReasonView | null | und
 
 /// The lifecycle message worth showing: why it failed, or what provisioning
 /// or closing waits on, or why it closed.
-export function lifecycleMessage(environment: Environment): string | null {
+export function lifecycleMessage(
+  environment: Pick<Environment, "state" | "stateMessage" | "closeReason">,
+): string | null {
   if (environment.state === "closed") return closeReasonLabel(environment.closeReason);
   if (["failed", "provisioning", "closing"].includes(environment.state)) {
     return environment.stateMessage ?? null;

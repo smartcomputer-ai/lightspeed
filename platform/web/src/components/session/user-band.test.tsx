@@ -87,7 +87,7 @@ it("uses the standard muted palette at full opacity for a local message", async 
   expect(bubble.className).not.toContain("transition-opacity");
 });
 
-it("shows a delivered bot event with its sender, kind and number as a header above the body", async () => {
+it("shows a delivered bot event with a teal source icon and groups its number and time on the right", async () => {
   const text = "── event #418 · bug.confirmed · bot:support-triage · 14:02\nCursor pagination returns duplicates.\nSecond line.";
   await act(async () => root.render(
     <TranscriptLinksContext.Provider value={{ botName: (id) => ({ "support-triage": "Support Triage" })[id] }}>
@@ -101,7 +101,13 @@ it("shows a delivered bot event with its sender, kind and number as a header abo
   expect(content).toContain("14:02");
   expect(content).toContain("Cursor pagination returns duplicates.\nSecond line.");
   expect(content).not.toContain("── event");
-  expect(container.querySelector('[data-slot="bubble"]')?.className).toContain("border-l-2");
+  const bubble = container.querySelector('[data-slot="bubble"]')!;
+  expect(bubble.getAttribute("data-variant")).toBe("muted");
+  expect(bubble.className).not.toMatch(/border-l-|rounded-l-|teal/);
+  expect(bubble.querySelector("svg")?.getAttribute("class")).toContain("text-teal-700 dark:text-teal-300");
+  const metadata = bubble.querySelector(".tabular-nums")!;
+  expect(metadata.textContent).toBe("#418·14:02");
+  expect(metadata.className).toContain("ml-auto");
 });
 
 it("names non-bot event sources by their family and leaves unknown headers alone", async () => {
@@ -109,6 +115,7 @@ it("names non-bot event sources by their family and leaves unknown headers alone
   await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "event", role: "user", text, origin: "event" }} />));
   expect(container.textContent).toContain("github webhook");
   expect(container.textContent).toContain("PR #12 opened.");
+  expect(container.querySelector(".lucide-inbox")?.getAttribute("class")).toContain("text-teal-700 dark:text-teal-300");
   await act(async () => root.render(<TranscriptEntryView entry={{ kind: "message", key: "plain", role: "user", text: "just text", origin: "event" }} />));
   expect(container.textContent).toBe("just text");
 });

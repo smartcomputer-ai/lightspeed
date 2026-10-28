@@ -1,4 +1,5 @@
 import type { ActiveRun, TranscriptEntry, TranscriptMedia, TranscriptRunSummary } from "./transcript";
+import { isEmphasizedToolFailure } from "./tool-failures";
 
 /// One level of structure over the flat transcript: the entries a run
 /// produced, between the input that started it and the summary that ended
@@ -176,6 +177,7 @@ function appendWork(work: TranscriptEntry[], entry: TranscriptEntry) {
 /// folded strip.
 export function sectionActivity(section: RunSection): {
   toolCalls: number;
+  /// Failures that warrant a badge; environment attempts stay in the details.
   failedCalls: number;
   groups: string[];
   thinking: boolean;
@@ -190,7 +192,7 @@ export function sectionActivity(section: RunSection): {
     } else if (entry.kind === "tool-group") {
       for (const call of entry.calls) {
         toolCalls += 1;
-        if (call.isError || call.status === "failed" || call.status === "unavailable") failedCalls += 1;
+        if (isEmphasizedToolFailure(call)) failedCalls += 1;
         groups.add(call.display?.group ?? "other");
       }
     }

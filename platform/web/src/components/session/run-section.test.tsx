@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 const read = (callId: string, over: Partial<TranscriptToolCall> = {}): TranscriptToolCall => ({
-  callId, toolName: "read_file", status: "succeeded", isError: false,
+  callId, toolId: "env.read_file", toolName: "read_file", status: "succeeded", isError: false,
   argumentsJson: '{"path":"/w/a.ts"}', output: "contents",
   display: { group: "explore", verb: "Read", target: "/w/a.ts" },
   startedAtMs: 1_700_000_000_000, completedAtMs: 1_700_000_000_340, durationMs: 340, outputBytes: 412,
@@ -38,7 +38,7 @@ function finished(status: "completed" | "failed" = "failed"): RunSection {
     { kind: "reasoning", key: "think", text: "**Look at the reaper**", runId: "r1" },
     { kind: "tool-group", key: "batch", runId: "r1", status: "completedWithErrors", calls: [
       read("c1"),
-      read("c2", { toolName: "exec_command", status: "failed", isError: true, error: "exit 101",
+      read("c2", { toolId: "env.run_process", toolName: "exec_command", status: "failed", isError: true, error: "exit 101",
         display: { group: "execute", verb: "Run", target: "cargo clippy" } }),
     ] },
     { kind: "message", key: "note", role: "assistant", text: "Interim progress note.", runId: "r1" },
@@ -101,7 +101,8 @@ it("folds a finished run behind one strip that names the outcome, keeps the repl
   expect(container.textContent).toContain("All fixed.");
   expect(strip().textContent).toContain("Failed after 38s");
   expect(strip().textContent).toContain("2 tool calls");
-  expect(strip().textContent).toContain("1 failed");
+  expect(strip().textContent).not.toContain("1 failed");
+  expect(strip().querySelector(".text-destructive")?.textContent).toBe("Failed after 38s");
   expect(container.textContent).toContain("Run failed: retries exhausted");
   expect(container.textContent).not.toContain("Interim progress note.");
   expect(container.textContent).not.toContain("cargo clippy");
@@ -124,7 +125,7 @@ it("opens on click, then reveals a row's details with the meta line, and follows
   expect(opened.firstElementChild?.className).toContain("md:hidden");
   expect(container.querySelectorAll('[aria-label="Run statistics"]')).toHaveLength(2);
   expect(container.textContent).toContain("cargo clippy");
-  expect(container.textContent).toContain("exit 101");
+  expect(container.textContent).not.toContain("exit 101");
   expect(container.textContent).not.toContain("contents");
 
   const row = container.querySelector<HTMLButtonElement>('button[aria-label="Read /w/a.ts"]')!;
@@ -137,12 +138,54 @@ it("opens on click, then reveals a row's details with the meta line, and follows
   expect(meta).toContain("412 B");
   expect(meta).toMatch(/started \d\d:\d\d:\d\d\.\d\d\d/);
 
+  const command = container.querySelector<HTMLButtonElement>('button[aria-label="Run cargo clippy"]')!;
+  expect(command.parentElement!.parentElement!.className).not.toContain("bg-destructive");
+  const failedLabel = command.parentElement!.querySelector("span.text-amber-700")!;
+  expect(failedLabel.textContent).toBe("failed");
+  expect(failedLabel.className).toContain("dark:text-amber-300");
+  expect(failedLabel.parentElement!.className).toContain("text-muted-foreground");
+  const failedIcon = command.parentElement!.querySelector('svg[aria-label="Failed"]')!;
+  expect(failedIcon.getAttribute("class")).toContain("text-amber-700 dark:text-amber-300");
+  await act(async () => command.click());
+  expect(container.textContent).toContain("exit 101");
+  expect(container.querySelector('pre[class*="border-destructive"]')).toBeNull();
+
   await act(async () => strip().click());
   expect(container.textContent).not.toContain("cargo clippy");
   await render(finished("completed"), { collapse: false });
   expect(container.textContent).toContain("cargo clippy");
   await render(finished("completed"), { collapse: true });
   expect(container.textContent).not.toContain("cargo clippy");
+});
+
+it.each(["env.read_file", "env.run_process", "env.job_run"])(
+  "omits the failure badge when the run's only call is %s", async (toolId) => {
+    const section = finished("completed");
+    section.work = [{ kind: "tool-group", key: "batch", status: "completedWithErrors", calls: [
+      read("only", { toolId, toolName: "custom_name", status: "failed", isError: true }),
+    ] }];
+    await render(section);
+    expect(strip().textContent).toContain("Worked for 38s");
+    expect(strip().textContent).toContain("1 tool call");
+    expect(strip().textContent).not.toContain("failed");
+    expect(strip().querySelector(".text-destructive")).toBeNull();
+  },
+);
+
+it("counts only other tool failures in a mixed run's badge", async () => {
+  const section = finished("completed");
+  const batch = section.work.find((entry) => entry.kind === "tool-group")!;
+  batch.calls.push(read("send", {
+    toolId: "channel.send", toolName: "send_message", status: "failed", isError: true,
+    error: "Delivery failed", display: { group: "message", verb: "Send", target: "Alice" },
+  }));
+  await render(section);
+  expect(strip().textContent).toContain("3 tool calls");
+  expect(strip().querySelector(".text-destructive")?.textContent).toBe("1 failed");
+  await act(async () => strip().click());
+  expect(container.textContent).toContain("Delivery failed");
+  const send = container.querySelector<HTMLButtonElement>('button[aria-label="Send Alice"]')!;
+  expect(send.parentElement!.parentElement!.className).toContain("bg-destructive");
 });
 
 it("drops the statistics from the strip and the opened run when the preference is off", async () => {

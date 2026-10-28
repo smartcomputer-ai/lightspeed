@@ -1,11 +1,15 @@
 import { useActionPermissions } from "@/lib/permissions";
+import { ConfirmDangerButton } from "@/components/confirm-danger-button";
+import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceTable, ResourceValue } from "@/components/resource-table";
+import { ResourceActions, ResourceDetail, ResourceDetailsDialog, ResourceDetailsGrid } from "@/components/resource-details-dialog";
+import { mcpServerStatus, resourceTimestamp } from "@/lib/resource-status";
 import { ReadError } from "@/components/read-error";
 import { McpToolPicker } from "@/components/mcp/tool-picker";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { slugify } from "@lightspeed-ai/platform-shared";
-import { CheckCircle2, ExternalLink, Loader2, LogIn, Pencil, Plus, RotateCcw, Server, Trash2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, LogIn, Plus, RotateCcw, Server } from "lucide-react";
 import {
   api,
   type AuthGrantOption,
@@ -14,18 +18,6 @@ import {
   type McpServer,
   type McpServerAuthDiscovery,
 } from "@/api";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -48,17 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  IdText,
-  Table,
-  TableActionsCell,
-  TableBody,
-  TableCard,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableCell } from "@/components/ui/table";
 import { EmptyState, LoadingNote, PageHeader, UniverseNotFound } from "@/components/page";
 import { ProgressSteps } from "@/components/ui/progress-steps";
 import { useActiveUniverse } from "@/lib/universes";
@@ -82,14 +64,12 @@ export function McpServersPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <ServerList universeId={universe.id} />;
+  return <ServerList key={universe.id} universeId={universe.id} />;
 }
 
 const APPROVALS = ["always", "never"] as const;
 
 function ServerList({ universeId }: { universeId: string }) {
-  // Adding servers and changing credentials are universe configuration;
-  // everything else on a row is decided for that server.
   const writable = useActionPermissions(universeId).can("configure_resource");
   const queryClient = useQueryClient();
   const servers = useQuery({
@@ -98,221 +78,140 @@ function ServerList({ universeId }: { universeId: string }) {
   });
   const authGrants = useQuery({
     queryKey: ["auth-grants", universeId],
-    queryFn: () =>
-      api<AuthGrantOption[]>("GET", `/api/v1/universes/${universeId}/auth-grants`),
+    queryFn: () => api<AuthGrantOption[]>("GET", `/api/v1/universes/${universeId}/auth-grants`),
   });
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["mcp-servers", universeId] });
-
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["mcp-servers", universeId] });
   const [createOpen, setCreateOpen] = useState(false);
-  const [editing, setEditing] = useState<McpServer | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const detailsTriggerRef = useRef<HTMLElement | null>(null);
   const [oauthServer, setOAuthServer] = useState<McpServer | null>(null);
-
-  const remove = useMutation({
-    mutationFn: (serverId: string) =>
-      api("DELETE", `/api/v1/universes/${universeId}/mcp-servers/${serverId}`),
-    onSuccess: invalidate,
-  });
-
-  const rows = (servers.data ?? [])
-    .slice()
-    .sort((a, b) => a.serverId.localeCompare(b.serverId));
-  const configurable = useActionPermissions(universeId).can("configure_resource");
-  // Open dialogs follow current permissions, like the controls that open them.
-  const editable = editing && configurable ? editing : null;
-  const connectable = oauthServer && writable && configurable ? oauthServer : null;
-  const grantLabels = new Map(
-    (authGrants.data ?? []).map((grant) => [grant.grantId, authGrantLabel(grant)]),
+  const selected = servers.data?.find((server) => server.serverId === selectedId);
+  const rows = (servers.data ?? []).slice().sort((a, b) =>
+    serverName(a).localeCompare(serverName(b)) || a.serverId.localeCompare(b.serverId),
   );
+  const changed = () => {
+    void invalidate();
+    void queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
+  };
 
   return (
     <>
-      <PageHeader
-        title="MCP servers"
-        description="Connect remote tools once, then make them available to profiles and sessions."
-        actions={writable && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus data-icon="inline-start" />
-            Add server
-          </Button>
-        )}
-      />
+      <PageHeader title="MCP servers" description="Remote tools available to profiles and sessions in this universe."
+        actions={writable && <Button onClick={() => setCreateOpen(true)}><Plus data-icon="inline-start" />Add server</Button>} />
       {servers.isLoading && <LoadingNote />}
-      {servers.error && (
-        <ReadError error={servers.error} loading={!servers.data} />
-      )}
-      {authGrants.error && (
-        <ReadError error={authGrants.error} loading={!authGrants.data} prefix="Access credentials unavailable" />
-      )}
+      {servers.error && <ReadError error={servers.error} loading={!servers.data} prefix="MCP servers unavailable" />}
+      {authGrants.error && <ReadError error={authGrants.error} loading={!authGrants.data} prefix="Access credentials unavailable" />}
       {servers.data && rows.length === 0 && (
         <EmptyState icon={Server} title="No MCP servers yet">
-          Remote tool servers that profiles and sessions link, each with its own credential and
-          tool allowance.
+          Connect a remote tool server, then make its tools available to profiles and sessions.
         </EmptyState>
       )}
       {rows.length > 0 && (
-        <TableCard>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Server</TableHead>
-                <TableHead>URL</TableHead>
-                <TableHead>Authentication</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-0" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((server) => (
-                <TableRow key={server.serverId}>
-                  <TableCell className="max-w-72">
-                    <div className="grid min-w-0 gap-0.5">
-                      <span className="truncate font-medium">{server.displayName ?? server.serverId}</span>
-                      <IdText className="text-muted-foreground">{server.serverId}</IdText>
-                    </div>
-                  </TableCell>
-                  <TableCell className="max-w-64">
-                    <IdText className="text-muted-foreground">{server.serverUrl}</IdText>
-                  </TableCell>
-                  <TableCell className="max-w-56">
-                    <div className="grid gap-0.5">
-                      <span className="text-xs">{authPolicyLabel(server.authPolicy.type)}</span>
-                      {server.credential && (
-                        <span
-                          className="truncate text-xs text-muted-foreground"
-                          title={server.credential.grantId}
-                        >
-                          Connected · {grantLabels.get(server.credential.grantId) ?? server.credential.grantId}
-                        </span>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={server.status} />
-                      {/* The one thing to do on a row that needs auth is right here, not behind an icon. */}
-                      {writable && configurable && isOAuthPolicy(server.authPolicy.type) && !server.credential && (
-                        <Button variant="outline" size="xs" onClick={() => setOAuthServer(server)}>
-                          <LogIn data-icon="inline-start" /> Connect
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableActionsCell>
-                    {configurable && (
-                      <>
-                        {writable && isOAuthPolicy(server.authPolicy.type) && server.credential && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Reconnect ${server.serverId} with OAuth`}
-                            title="Sign in again"
-                            onClick={() => setOAuthServer(server)}
-                          >
-                            <LogIn />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Edit ${server.serverId}`}
-                          onClick={() => setEditing(server)}
-                        >
-                          <Pencil />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                className="text-destructive"
-                                aria-label={`Delete ${server.serverId}`}
-                              />
-                            }
-                          >
-                            <Trash2 />
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Delete {server.displayName ?? server.serverId}?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Profiles referencing{" "}
-                                <span className="font-mono text-xs">{server.serverId}</span>{" "}
-                                will fail to link it into new sessions.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                className="bg-destructive text-white hover:bg-destructive/90"
-                                onClick={() => remove.mutate(server.serverId)}
-                              >
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </>
-                    )}
-                  </TableActionsCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableCard>
+        <ResourceTable label="MCP servers" columns={["Server", "URL", "Authentication", "Status"]}>
+          {rows.map((server) => (
+            <ResourceRow key={server.serverId} name={serverName(server)} onOpen={(trigger) => {
+              detailsTriggerRef.current = trigger;
+              setSelectedId(server.serverId);
+            }}>
+              <ResourceIdentityCell name={serverName(server)} subtitle={server.serverId} mono compactDescription={server.serverUrl} />
+              <TableCell className="hidden max-w-64 sm:table-cell"><ResourceValue mono>{server.serverUrl}</ResourceValue></TableCell>
+              <TableCell className="hidden max-w-56 sm:table-cell"><ResourceValue
+                description={server.authPolicy.type.startsWith("optional") ? "Optional" : server.authPolicy.type.startsWith("required") ? "Required" : undefined}>
+                {mcpAuthKind(server.authPolicy.type) === "oauth" ? "OAuth" : mcpAuthKind(server.authPolicy.type) === "bearer" ? "Bearer token" : "No authentication"}
+              </ResourceValue></TableCell>
+              <TableCell><ResourceStatus status={mcpServerStatus(server)} /></TableCell>
+            </ResourceRow>
+          ))}
+        </ResourceTable>
       )}
-      <p className="mt-4 text-sm text-muted-foreground">
-        Authentication is configured once on the universe server. Sessions and profiles only
-        select its id. OAuth servers discover their authorization metadata and store a brokered
-        universe credential after you approve access.
-      </p>
-      {writable && (
-        <ServerDialog
-          key={createOpen ? "create-open" : "create-closed"}
-          universeId={universeId}
-          open={createOpen}
-          server={null}
-          authGrants={authGrants.data ?? []}
-          authGrantsLoading={authGrants.isLoading}
-          onOpenChange={setCreateOpen}
-          onDone={(server, connectOAuth) => {
-            invalidate();
-            if (connectOAuth) setOAuthServer(server);
-          }}
-        />
-      )}
-      <ServerDialog
-        key={`edit-${editable?.serverId ?? "closed"}`}
-        universeId={universeId}
-        open={editable !== null}
-        server={editable}
-        authGrants={authGrants.data ?? []}
-        authGrantsLoading={authGrants.isLoading}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditing(null);
-          }
-        }}
-        onDone={(server, connectOAuth) => {
-          invalidate();
+      <ResourceDetailsDialog open={selected !== undefined}
+        onOpenChange={(open) => { if (!open) setSelectedId(null); }}
+        title={selected ? serverName(selected) : "MCP server"}
+        description={selected?.description || "Connection settings and tool access."} finalFocus={detailsTriggerRef}>
+        {selected && <ServerDetails key={selected.serverId} universeId={universeId} server={selected}
+          authGrants={authGrants.data ?? []} authGrantsLoading={authGrants.isLoading}
+          onChanged={changed} onDeleted={() => setSelectedId(null)} />}
+      </ResourceDetailsDialog>
+      {writable && <ServerDialog key={createOpen ? "create-open" : "create-closed"}
+        universeId={universeId} open={createOpen} server={null}
+        authGrants={authGrants.data ?? []} authGrantsLoading={authGrants.isLoading}
+        onOpenChange={setCreateOpen} onDone={(server, connectOAuth) => {
+          changed();
           if (connectOAuth) setOAuthServer(server);
-        }}
-      />
-      <OAuthDialog
-        key={connectable?.serverId ?? "closed"}
-        universeId={universeId}
-        server={connectable}
-        onOpenChange={(open) => {
-          if (!open) setOAuthServer(null);
-        }}
-        onDone={() => {
-          invalidate();
-          queryClient.invalidateQueries({ queryKey: ["auth-grants", universeId] });
-        }}
-      />
+        }} />}
+      <OAuthDialog key={oauthServer?.serverId ?? "closed"} universeId={universeId}
+        server={writable ? oauthServer : null} onOpenChange={(open) => { if (!open) setOAuthServer(null); }} onDone={changed} />
+    </>
+  );
+}
+
+function serverName(server: McpServer) {
+  return server.displayName?.trim() || server.serverId;
+}
+
+function ServerDetails({ universeId, server, authGrants, authGrantsLoading, onChanged, onDeleted }: {
+  universeId: string;
+  server: McpServer;
+  authGrants: AuthGrantOption[];
+  authGrantsLoading: boolean;
+  onChanged: () => void;
+  onDeleted: () => void;
+}) {
+  const writable = useActionPermissions(universeId).can("configure_resource");
+  const [editing, setEditing] = useState<McpServer | null>(null);
+  const [oauthOpen, setOAuthOpen] = useState(false);
+  const remove = useMutation({
+    mutationFn: () => api("DELETE", `/api/v1/universes/${universeId}/mcp-servers/${encodeURIComponent(server.serverId)}`),
+    onSuccess: () => { onChanged(); onDeleted(); },
+  });
+  const grant = authGrants.find((candidate) => candidate.grantId === server.credential?.grantId);
+  return (
+    <>
+      <ResourceDetailsGrid>
+        <ResourceDetail label="Server ID" mono>{server.serverId}</ResourceDetail>
+        <ResourceDetail label="Status"><ResourceStatus status={mcpServerStatus(server)} /></ResourceDetail>
+        <ResourceDetail label="URL" mono>{server.serverUrl}</ResourceDetail>
+        <ResourceDetail label="Authentication">{authPolicyLabel(server.authPolicy.type)}</ResourceDetail>
+        {server.authPolicy.type !== "none" && <ResourceDetail label="Credential">
+          {grant ? authGrantLabel(grant) : server.credential?.grantId ?? "No credential connected"}
+        </ResourceDetail>}
+        <ResourceDetail label="Connection handled by">{server.execution === "native" ? "Lightspeed" : "Model provider"}</ResourceDetail>
+        <ResourceDetail label="Tool access">{server.allowedTools?.length ? `${server.allowedTools.length} selected tools` : "All advertised tools"}</ResourceDetail>
+        <ResourceDetail label="Approval">{server.approval === "always" ? "Ask before each call" : "No approval required"}</ResourceDetail>
+        {server.execution === "native" && <ResourceDetail label="Tool discovery">{server.exposure === "search" ? "Search when needed" : "Available directly"}</ResourceDetail>}
+        <ResourceDetail label="Private network">{server.allowPrivateNetwork ? "Allowed" : "Blocked"}</ResourceDetail>
+        <ResourceDetail label="Created">{resourceTimestamp(server.createdAtMs)}</ResourceDetail>
+        <ResourceDetail label="Updated">{resourceTimestamp(server.updatedAtMs)}</ResourceDetail>
+      </ResourceDetailsGrid>
+      {Boolean(server.allowedTools?.length) && (
+        <details className="rounded-lg border p-4">
+          <summary className="cursor-pointer text-sm font-medium">View selected tools</summary>
+          <ul className="mt-3 grid max-h-64 gap-2 overflow-y-auto">
+            {server.allowedTools!.slice().sort((a, b) => a.localeCompare(b)).map((tool) => <li key={tool} className="break-words font-mono text-xs [overflow-wrap:anywhere]">{tool}</li>)}
+          </ul>
+        </details>
+      )}
+      {remove.error && <p role="alert" className="text-sm text-destructive">{remove.error.message}</p>}
+      {writable && <ResourceActions>
+        <ConfirmDangerButton label="Delete server" title={`Delete ${serverName(server)}?`}
+          description={<>Profiles referencing <code>{server.serverId}</code> will lose access to this server in new sessions.</>}
+          pending={remove.isPending} onConfirm={() => remove.mutate()} />
+        <div className="ml-auto flex flex-wrap gap-2">
+          {isOAuthPolicy(server.authPolicy.type) && <Button variant="outline" size="sm" onClick={() => setOAuthOpen(true)}>
+            <LogIn data-icon="inline-start" />{server.credential ? "Reconnect" : "Connect"}
+          </Button>}
+          <Button size="sm" onClick={() => setEditing(server)}>Edit server</Button>
+        </div>
+      </ResourceActions>}
+      <ServerDialog key={`edit-${editing?.serverId ?? "closed"}`} universeId={universeId}
+        open={writable && editing !== null} server={writable ? editing : null}
+        authGrants={authGrants} authGrantsLoading={authGrantsLoading}
+        onOpenChange={(open) => { if (!open) setEditing(null); }} onDone={(_saved, connectOAuth) => {
+          onChanged();
+          if (connectOAuth) setOAuthOpen(true);
+        }} />
+      <OAuthDialog key={oauthOpen ? "open" : "closed"} universeId={universeId}
+        server={writable && oauthOpen ? server : null} onOpenChange={setOAuthOpen} onDone={onChanged} />
     </>
   );
 }
@@ -332,24 +231,6 @@ function authPolicyLabel(type: string): string {
     default:
       return type;
   }
-}
-
-function StatusBadge({ status }: { status: McpServer["status"] }) {
-  if (status === "active") {
-    return <Badge variant="secondary">active</Badge>;
-  }
-  if (status === "needsAuthConfig") {
-    return (
-      <Badge
-        variant="outline"
-        className="border-destructive/50 text-destructive"
-        title="Needs auth configuration before sessions can link it — bind a credential here or run lightspeed mcp login."
-      >
-        needs auth
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">{status}</Badge>;
 }
 
 /// One dialog for both modes: `server === null` creates; otherwise edits by

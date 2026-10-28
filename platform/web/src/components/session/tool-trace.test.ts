@@ -54,11 +54,48 @@ describe("step rows", () => {
 
   it("marks a failed call with its first error line while the details stay closed", () => {
     const html = render(group([call({
-      status: "failed", isError: true, error: "exit 101\nerror: unused variable",
-      display: { group: "execute", verb: "Run", target: "cargo clippy" }, durationMs: 12_000,
+      toolId: "channel.send", status: "failed", isError: true, error: "Delivery failed\nconnection reset",
+      display: { group: "message", verb: "Send", target: "Alice" }, durationMs: 12_000,
     })], "completedWithErrors"));
-    expect(text(html)).toBe("Run cargo clippy failed · 12s exit 101");
-    expect(html).not.toContain("unused variable");
+    expect(text(html)).toBe("Send Alice failed · 12s Delivery failed");
+    expect(html).toContain("text-destructive");
+    expect(html).toContain("bg-destructive/5");
+    expect(html).not.toContain("connection reset");
+  });
+
+  it.each(["env.read_file", "env.run_process", "env.job_run"])(
+    "gives a failed %s call an amber status with details closed", (toolId) => {
+      const html = render(group([call({
+        toolId, status: "failed", isError: true, error: "exit 101\nerror: unused variable",
+        display: { group: "execute", verb: "Run", target: "cargo clippy" }, durationMs: 12_000,
+      })], "completedWithErrors"));
+      expect(text(html)).toBe("Run cargo clippy failed · 12s");
+      expect(html).toContain('class="text-amber-700 dark:text-amber-300">failed</span>');
+      expect(html).not.toContain("destructive");
+      expect(html).toContain("lucide-circle-alert");
+      expect(html).not.toContain("exit 101");
+    },
+  );
+
+  it("shows environment batch failures in amber", () => {
+    const calls = ["env.run_process", "env.job_read"].map((toolId, index) => call({
+      callId: `c${index}`, toolId, status: "failed", isError: true,
+    }));
+    const html = render(group(calls, "completedWithErrors"));
+    expect(text(html)).toContain("2 failed");
+    expect(html).toContain("text-amber-700 dark:text-amber-300");
+    expect(html).not.toContain("destructive");
+    expect(html).toContain("lucide-circle-alert");
+  });
+
+  it("emphasizes a mixed batch when an external tool fails", () => {
+    const html = render(group([
+      call({ toolId: "env.run_process", status: "failed", isError: true }),
+      call({ callId: "external", toolId: "channel.send", status: "failed", isError: true }),
+    ], "completedWithErrors"));
+    expect(text(html)).toContain("2 failed");
+    expect(html).toContain("text-destructive");
+    expect(html).toContain("lucide-circle-alert");
   });
 
   it("shows cancelled and waiting states without inventing a duration", () => {

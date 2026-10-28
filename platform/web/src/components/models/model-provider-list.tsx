@@ -1,99 +1,34 @@
 import { EmptyState } from "@/components/page";
-import { BrainCircuit, ChevronRight } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCard,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { BrainCircuit } from "lucide-react";
+import { TableCell } from "@/components/ui/table";
+import { ResourceIdentityCell, ResourceRow, ResourceStatus, ResourceTable, ResourceValue } from "@/components/resource-table";
 import { modelProviderDefinition } from "./catalog";
-import type { ConnectedModelProvider, ModelProviderStatus } from "./use-model-providers";
+import type { ConnectedModelProvider } from "./use-model-providers";
 
-/// Connected model providers; a row opens the details dialog.
-export function ModelProviderList({
-  providers,
-  onSelect,
-}: {
+export function ModelProviderList({ providers, onSelect, showEmpty = true }: {
   providers: ConnectedModelProvider[];
-  onSelect: (provider: ConnectedModelProvider) => void;
+  onSelect: (provider: ConnectedModelProvider, trigger: HTMLButtonElement | null) => void;
+  showEmpty?: boolean;
 }) {
   if (providers.length === 0) {
-    return (
+    return showEmpty ? (
       <EmptyState icon={BrainCircuit} title="No model providers yet">
-        Provider API keys, compatible endpoints and coding-agent subscriptions that sessions call
-        models through.
+        Provider API keys, compatible endpoints and coding-agent subscriptions that sessions call models through.
       </EmptyState>
-    );
+    ) : null;
   }
   return (
-    <TableCard>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Provider</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Updated</TableHead>
-            <TableHead className="w-0" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {providers.map((provider) => {
-            const { Logo } = modelProviderDefinition(provider.kind);
-            return (
-              <TableRow
-                key={provider.id}
-                className="cursor-pointer"
-                onClick={() => onSelect(provider)}
-              >
-                <TableCell>
-                  <div className="flex items-center gap-3">
-                    <span className="shrink-0 text-foreground">
-                      <Logo size={20} />
-                    </span>
-                    <div className="grid gap-0.5">
-                      <span className="font-medium">{provider.title}</span>
-                      <span className="text-xs text-muted-foreground">{provider.subtitle}</span>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="text-muted-foreground">{provider.type}</TableCell>
-                <TableCell>
-                  <StatusBadge status={provider.status} />
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {formatTimestamp(provider.updatedAtMs)}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  <ChevronRight className="size-4" />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </TableCard>
+    <ResourceTable label="Model providers" columns={["Provider", "Connection", "Status"]}>
+      {providers.map((provider) => {
+        const { Logo } = modelProviderDefinition(provider.kind);
+        return (
+          <ResourceRow key={provider.id} name={provider.title} onOpen={(trigger) => onSelect(provider, trigger)}>
+            <ResourceIdentityCell name={provider.title} subtitle={provider.subtitle} mono={provider.subtitleMono} icon={<Logo size={20} />} compactDescription={[provider.connection, provider.connectionDescription, provider.subtitle.trim().toLocaleLowerCase() !== provider.title.trim().toLocaleLowerCase() ? provider.subtitle : null].filter(Boolean).join(" · ")} />
+            <TableCell className="hidden max-w-56 sm:table-cell"><ResourceValue description={provider.connectionDescription}>{provider.connection}</ResourceValue></TableCell>
+            <TableCell><ResourceStatus status={provider.status} /></TableCell>
+          </ResourceRow>
+        );
+      })}
+    </ResourceTable>
   );
-}
-
-function StatusBadge({ status }: { status: ModelProviderStatus }) {
-  if (status === "active") return <Badge variant="secondary">active</Badge>;
-  if (status === "disabled") return <Badge variant="outline">disabled</Badge>;
-  return (
-    <Badge variant="outline" className="border-destructive/50 text-destructive">
-      needs attention
-    </Badge>
-  );
-}
-
-function formatTimestamp(timestampMs: number): string {
-  if (!timestampMs) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(timestampMs));
 }
