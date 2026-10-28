@@ -150,4 +150,13 @@
   html {
     @apply font-sans font-normal antialiased;
     }
+  /* IBM Plex's thin regular strokes render soft at standard pixel density
+     (notably Windows ClearType at 100–150% scaling); a slightly heavier
+     default weight snaps to the pixel grid more cleanly. High-density
+     screens keep the regular weight. */
+  @media (max-resolution: 1.5dppx) {
+    html {
+      font-weight: 450;
+      }
+  }
 }
