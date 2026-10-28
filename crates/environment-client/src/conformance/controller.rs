@@ -7,19 +7,34 @@
 //!   `protocolVersion` with `versionMismatch` (leaving the connection open
 //!   and uninitialized), refuses requests before it with `notInitialized`,
 //!   and refuses a repeat with `invalidRequest`;
-//! - a missing or wrong bearer credential is refused with HTTP 401 before
-//!   the upgrade;
-//! - `routes.data` passes the downgrade rule for the controller URL;
+//! - when the suite is given a bearer credential, a missing or wrong one is
+//!   refused with HTTP 401 before the upgrade (a provider registered
+//!   without a credential is not checked for one);
 //! - `target/get` never creates and answers `notFound` for an unknown
 //!   owner or id; a foreign owner on a known `targetId` is
 //!   `failedPrecondition` (`ownerMismatch`);
 //! - `target/create` answers promptly and is idempotent per owner;
-//! - `target/close` by owner without a `targetId` closes, is idempotent,
-//!   and answers `closed` without `targetId` for an owner with nothing;
-//! - optional methods answer `capabilityUnavailable` when not advertised.
+//! - `target/close` by owner without a `targetId` closes, is idempotent
+//!   (a repeat answers `closed`), and answers `closed` without `targetId`
+//!   for an owner with nothing;
+//! - optional methods (`target/setPower` without `capabilities.power`,
+//!   `ingress/*` without `capabilities.ingress`) answer
+//!   `capabilityUnavailable`;
+//! - when the suite is given the provider's data route base, the created
+//!   target's data route ([`provider_data_route`]) upgrades, refusing at
+//!   most `waking` or `booting` with `Retry-After` on the way; with
+//!   `capabilities.power` and a template that lists a powered-down state,
+//!   a target moved there by `target/setPower` wakes on the next dial
+//!   (obligation 2); and once the target is closed the route refuses
+//!   410 `gone`.
+//!
+//! Every answer is decoded strictly, so an observation that carries a
+//! member this protocol version does not define fails the check that read
+//! it. Owners are `{universeId, environmentId}`.
 //!
 //! The suite creates one target from the configured template and closes it
-//! again; every other check uses fresh owners that hold nothing.
+//! again; every other check uses fresh owners that hold nothing. The data
+//! route checks are built on [`data_route`](super::data_route).
 //!
 //! ```no_run
 //! # async fn example(options: environment_client::ConnectOptions,
@@ -45,19 +60,24 @@ use environment_protocol::{
         handshake::{ControllerInitializeParams, ControllerInitializeResponse},
         ingress::{EnsureIngressParams, RemoveIngressParams},
         target::{
-            AdoptTargetParams, CloseTargetParams, CreateTargetParams, GetTargetParams,
-            TargetObservation, TargetOwner, TargetPhase, TargetRef,
+            CloseTargetParams, CreateTargetParams, GetTargetParams, PowerState,
+            SetTargetPowerParams, TargetObservation, TargetOwner, TargetPhase, TargetRef,
         },
+        template::ListTemplatesParams,
     },
     error::{Capability, ErrorData, PreconditionReason, ProtocolErrorKind},
     handshake::Plane,
-    ids::{ProviderNativeRef, ProviderTargetId, TemplateId},
+    ids::{ProviderTargetId, TemplateId},
     manifest::{ControllerInitialize, TargetGet},
+    routes::{DataRouteBase, DataRouteRefusal, provider_data_route},
 };
 use thiserror::Error;
 
 use crate::{
-    ClientError, ConnectOptions, ControllerClient, connection::Connection, controller::initialize,
+    ClientError, ConnectOptions, ControllerClient,
+    conformance::data_route::{await_upgrade, expect_refusal},
+    connection::Connection,
+    controller::initialize,
 };
 
 /// What to run the suite against.
@@ -65,13 +85,19 @@ use crate::{
 pub struct ControllerConformance {
     /// The controller URL, as registered for the provider.
     pub endpoint: String,
-    /// Connect options carrying the provider credential as `bearer_token`.
+    /// Connect options carrying the provider credential, when the provider
+    /// is registered with one, as `bearer_token`.
     pub options: ConnectOptions,
     /// A template the suite may create one target from.
     pub template_id: TemplateId,
-    /// Returns a fresh owner on every call, valid for the provider's
-    /// binding and never used before.
+    /// Returns a fresh owner on every call, in a universe the provider
+    /// serves and never used before.
     pub owner: Arc<dyn Fn() -> TargetOwner + Send + Sync>,
+    /// The provider's data route base, as Lightspeed dials it: configured,
+    /// or [`DataRouteBase::derived_from_controller`]. When set, the suite
+    /// also dials the created target's data route with `options`. Default
+    /// none.
+    pub data_route_base: Option<DataRouteBase>,
     /// Bound on every answer: target methods answer promptly and continue
     /// slow work in the background. Default 15 s.
     pub prompt_bound: Duration,
@@ -94,6 +120,7 @@ impl ControllerConformance {
             options,
             template_id,
             owner,
+            data_route_base: None,
             prompt_bound: Duration::from_secs(15),
             settle_timeout: Duration::from_secs(600),
             poll_interval: Duration::from_secs(2),
@@ -107,6 +134,7 @@ impl fmt::Debug for ControllerConformance {
             .debug_struct("ControllerConformance")
             .field("endpoint", &self.endpoint)
             .field("template_id", &self.template_id)
+            .field("data_route_base", &self.data_route_base)
             .field("prompt_bound", &self.prompt_bound)
             .field("settle_timeout", &self.settle_timeout)
             .finish_non_exhaustive()
@@ -203,15 +231,9 @@ pub async fn run(suite: &ControllerConformance) -> ConformanceReport {
         check_repeat_initialize(suite, &client).await,
     );
     report.record("initialize.order", check_initialize_order(suite).await);
-    report.record("credential", check_credential(suite).await);
-    report.record(
-        "routes.data",
-        initialize
-            .routes
-            .data
-            .check_for_controller(&suite.endpoint)
-            .map_err(|error| error.to_string()),
-    );
+    if suite.options.bearer_token.is_some() {
+        report.record("credential", check_credential(suite).await);
+    }
     report.record(
         "target.get.unknown",
         check_get_unknown(suite, &client).await,
@@ -229,16 +251,42 @@ pub async fn run(suite: &ControllerConformance) -> ConformanceReport {
     let created = check_create(suite, &client, &owner).await;
     let created_target = created.as_ref().ok().cloned().flatten();
     report.record("target.create", created.map(|_| ()));
-    if let Some(target_id) = created_target {
+    let route = created_target.as_ref().and_then(|target_id| {
+        suite
+            .data_route_base
+            .as_ref()
+            .map(|base| provider_data_route(base, &owner, target_id))
+    });
+    if let Some(target_id) = &created_target {
         report.record(
             "target.get.foreignOwner",
-            check_foreign_owner(suite, &client, &target_id).await,
+            check_foreign_owner(suite, &client, target_id).await,
         );
     }
-    report.record(
+    if let (Some(target_id), Some(route)) = (&created_target, &route) {
+        let upgraded = report.record("dataRoute.upgrade", check_upgrade(suite, route).await);
+        if upgraded && initialize.capabilities.power {
+            match power_down_state(suite, &client, &owner).await {
+                Ok(Some(power)) => {
+                    report.record(
+                        "dataRoute.wake",
+                        check_wake(suite, &client, &owner, target_id, route, power).await,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    report.record("dataRoute.wake", Err(error));
+                }
+            }
+        }
+    }
+    let closed = report.record(
         "target.close.byOwner",
         check_close_by_owner(suite, &client, &owner).await,
     );
+    if closed && let Some(route) = &route {
+        report.record("dataRoute.gone", check_gone(suite, route).await);
+    }
     let _ = client.close().await;
     report
 }
@@ -336,7 +384,7 @@ async fn check_credential(suite: &ControllerConformance) -> Check {
     wrong.bearer_token = Some(SecretString::new("lightspeed-conformance-wrong-credential"));
     for (label, options) in [("missing", missing), ("wrong", wrong)] {
         match ControllerClient::connect_initialized(&suite.endpoint, options).await {
-            Err(ClientError::UpgradeRejected { status: 401 }) => {}
+            Err(ClientError::UpgradeRejected { status: 401, .. }) => {}
             Err(error) => {
                 return Err(format!(
                     "{label} credential: expected HTTP 401, got {error}"
@@ -371,11 +419,11 @@ async fn check_close_nothing(suite: &ControllerConformance, client: &ControllerC
     let observation = close(client, &owner)
         .await
         .map_err(|error| format!("target/close of an owner with nothing: {error}"))?;
-    if observation.state.phase != TargetPhase::Closed || observation.target_id.is_some() {
+    if observation.phase != TargetPhase::Closed || observation.target_id.is_some() {
         return Err(format!(
             "target/close of an owner with nothing answered phase {:?} with targetId {:?}; \
              expected closed without targetId",
-            observation.state.phase, observation.target_id
+            observation.phase, observation.target_id
         ));
     }
     check_owner_echo(&observation, &owner)
@@ -386,17 +434,18 @@ async fn check_optional_methods(
     client: &ControllerClient,
     initialize: &ControllerInitializeResponse,
 ) -> Check {
-    if !initialize.capabilities.adopt_target {
-        let source = ProviderNativeRef::new("lightspeed-conformance-source")
-            .map_err(|error| error.to_string())?;
-        let adopted = client
-            .adopt_target(&AdoptTargetParams {
-                owner: (suite.owner)(),
-                source_target: source,
+    if !initialize.capabilities.power {
+        let powered = client
+            .set_target_power(&SetTargetPowerParams {
+                target: TargetRef {
+                    owner: (suite.owner)(),
+                    target_id: None,
+                },
+                power: PowerState::Running,
             })
             .await;
-        expect_capability(adopted.map(|_| ()), Capability::AdoptTarget)
-            .map_err(|error| format!("target/adopt without adoptTarget: {error}"))?;
+        expect_capability(powered.map(|_| ()), Capability::Power)
+            .map_err(|error| format!("target/setPower without power: {error}"))?;
     }
     if !initialize.capabilities.ingress {
         let target = TargetRef {
@@ -427,6 +476,8 @@ async fn check_create(
     let params = CreateTargetParams {
         owner: owner.clone(),
         template_id: suite.template_id.clone(),
+        display_name: None,
+        idle: None,
     };
     let first = timed(suite, "target/create", client.create_target(&params)).await?;
     let second = timed(
@@ -496,7 +547,7 @@ async fn check_foreign_owner(
         )),
         Ok(observation) => Err(format!(
             "a foreign owner observed the target (phase {:?})",
-            observation.state.phase
+            observation.phase
         )),
     }
 }
@@ -522,7 +573,7 @@ async fn check_close_by_owner(
         .await?
         .target;
         check_owner_echo(&observation, owner)?;
-        match observation.state.phase {
+        match observation.phase {
             TargetPhase::Closed => break,
             TargetPhase::Closing => {}
             phase => return Err(format!("target/close answered phase {phase:?}")),
@@ -538,13 +589,121 @@ async fn check_close_by_owner(
     let again = close(client, owner)
         .await
         .map_err(|error| format!("repeated target/close: {error}"))?;
-    if again.state.phase != TargetPhase::Closed {
+    if again.phase != TargetPhase::Closed {
         return Err(format!(
             "repeated target/close answered phase {:?}",
-            again.state.phase
+            again.phase
         ));
     }
     Ok(())
+}
+
+/// The created target's data route upgrades within the settle timeout,
+/// refusing at most `waking` or `booting` on the way.
+async fn check_upgrade(suite: &ControllerConformance, route: &str) -> Check {
+    let refusals = await_upgrade(route, suite.options.clone(), suite.settle_timeout).await?;
+    check_wait_refusals(&refusals)
+}
+
+/// The first powered-down state the configured template lists for
+/// `target/setPower`, if any.
+async fn power_down_state(
+    suite: &ControllerConformance,
+    client: &ControllerClient,
+    owner: &TargetOwner,
+) -> Result<Option<PowerState>, String> {
+    let templates = timed(
+        suite,
+        "template/list",
+        client.list_templates(&ListTemplatesParams {
+            universe_id: owner.universe_id.clone(),
+        }),
+    )
+    .await?;
+    let template = templates
+        .templates
+        .iter()
+        .find(|template| template.template_id == suite.template_id)
+        .ok_or_else(|| format!("template/list does not list {}", suite.template_id))?;
+    Ok([
+        PowerState::Paused,
+        PowerState::Suspended,
+        PowerState::Stopped,
+    ]
+    .into_iter()
+    .find(|power| template.power_states.contains(power)))
+}
+
+/// Move the target to `power`, wait until it is observed there, then dial
+/// its data route: the dial wakes it and upgrades within the settle
+/// timeout, refusing at most `waking` or `booting` on the way.
+async fn check_wake(
+    suite: &ControllerConformance,
+    client: &ControllerClient,
+    owner: &TargetOwner,
+    target_id: &ProviderTargetId,
+    route: &str,
+    power: PowerState,
+) -> Check {
+    let target = TargetRef {
+        owner: owner.clone(),
+        target_id: Some(target_id.clone()),
+    };
+    timed(
+        suite,
+        "target/setPower",
+        client.set_target_power(&SetTargetPowerParams {
+            target: target.clone(),
+            power,
+        }),
+    )
+    .await?;
+    let deadline = Instant::now() + suite.settle_timeout;
+    loop {
+        let observation = get(client, owner, Some(target_id.clone()))
+            .await
+            .map_err(|error| format!("target/get after target/setPower {power}: {error}"))?;
+        if observation.power == Some(power) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "the target was not observed {power} within {:?} (last {:?})",
+                suite.settle_timeout, observation.power
+            ));
+        }
+        tokio::time::sleep(suite.poll_interval).await;
+    }
+    let refusals = await_upgrade(route, suite.options.clone(), suite.settle_timeout)
+        .await
+        .map_err(|error| format!("dialing the {power} target: {error}"))?;
+    check_wait_refusals(&refusals)
+}
+
+/// Once the target is closed its data route refuses 410 `gone`.
+async fn check_gone(suite: &ControllerConformance, route: &str) -> Check {
+    match expect_refusal(route, suite.options.clone()).await? {
+        DataRouteRefusal::Gone {} => Ok(()),
+        refusal => Err(format!(
+            "the closed target's data route refused {refusal}, expected gone"
+        )),
+    }
+}
+
+/// A provider data route waits only with `waking` or `booting`; the other
+/// 503 refusals are the gateway's.
+fn check_wait_refusals(refusals: &[DataRouteRefusal]) -> Check {
+    match refusals.iter().find(|refusal| {
+        !matches!(
+            refusal,
+            DataRouteRefusal::Waking {} | DataRouteRefusal::Booting {}
+        )
+    }) {
+        Some(refusal) => Err(format!(
+            "the provider data route refused {refusal}; a provider waits only with waking or booting"
+        )),
+        None => Ok(()),
+    }
 }
 
 async fn get(

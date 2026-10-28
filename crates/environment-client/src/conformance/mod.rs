@@ -3,6 +3,8 @@
 //! feature.
 //!
 //! - [`controller`]: any provider controller, through
-//!   [`ControllerClient`](crate::ControllerClient).
+//!   [`ControllerClient`](crate::ControllerClient);
+//! - [`data_route`]: a provider data route's refusals before the upgrade.
 
 pub mod controller;
+pub mod data_route;

@@ -60,6 +60,7 @@ export default defineConfig({
         { label: 'Environments', collapsed: true, items: [
           { slug: 'environments/overview' },
           { slug: 'environments/bring-your-own-compute' },
+          { slug: 'environments/registered-daemons' },
           { slug: 'environments/incus-vms' },
           { slug: 'environments/using-environments' },
           { slug: 'environments/processes-and-jobs' },

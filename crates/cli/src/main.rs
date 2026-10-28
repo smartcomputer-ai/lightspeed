@@ -221,7 +221,7 @@ mod tests {
             vec![
                 "environment",
                 "create",
-                "--binding",
+                "--provider",
                 "local",
                 "--template",
                 "linux-v1",
@@ -235,9 +235,16 @@ mod tests {
                 "--request-id",
                 "retry-2",
             ],
-            vec!["environment", "provider", "put", "--file", "provider.json"],
-            vec!["environment", "binding", "put", "--file", "binding.json"],
-            vec!["environment", "template", "list", "--binding", "local"],
+            vec![
+                "environment",
+                "provider",
+                "put",
+                "local",
+                "--controller-endpoint",
+                "wss://provider.example/control",
+            ],
+            vec!["environment", "binding", "put", "local", "--enabled"],
+            vec!["environment", "template", "list", "--provider", "local"],
             vec!["profile", "--json", "read", "reviewer"],
         ] {
             let mut command = vec![
@@ -646,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn env_power_and_idle_policy_parse() {
+    fn env_power_update_and_paging_parse() {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "env",
@@ -661,16 +668,30 @@ mod tests {
         let cli = Cli::try_parse_from([
             "lightspeed",
             "env",
-            "idle-policy",
+            "update",
             "--api-url",
             "http://127.0.0.1:18080/rpc",
             "local-host",
-            "--pause-after-min",
-            "15",
-            "--close-after-min",
-            "240",
+            "--name",
+            "Build box",
+            "--metadata",
+            "team=platform",
         ])
-        .expect("parse env idle-policy");
+        .expect("parse env update");
+        assert!(matches!(cli.command, Command::Env(_)));
+        let cli = Cli::try_parse_from([
+            "lightspeed",
+            "env",
+            "list",
+            "--api-url",
+            "http://127.0.0.1:18080/rpc",
+            "--include-closed",
+            "--limit",
+            "50",
+            "--after",
+            "env-1",
+        ])
+        .expect("parse env list paging");
         assert!(matches!(cli.command, Command::Env(_)));
         assert!(
             Cli::try_parse_from([
@@ -680,9 +701,67 @@ mod tests {
                 "--api-url",
                 "http://127.0.0.1:18080/rpc",
                 "local-host",
-                "--clear",
-                "--pause-after-min",
-                "15",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn env_registration_key_and_binding_parse() {
+        for command in [
+            vec![
+                "registration-key",
+                "create",
+                "--name",
+                "Pods",
+                "--offline-close-after-min",
+                "60",
+            ],
+            vec![
+                "registration-key",
+                "update",
+                "registration_key_1",
+                "--name",
+                "Pods",
+                "--max-active",
+                "3",
+            ],
+            vec!["registration-key", "rotate", "registration_key_1"],
+            vec!["binding", "put", "incus", "--disabled"],
+            vec!["binding", "delete", "incus"],
+            vec![
+                "provider",
+                "put",
+                "incus",
+                "--controller-endpoint",
+                "unix:///run/provider.sock",
+                "--data-route-base",
+                "ws://127.0.0.1:19090/routes",
+                "--clear-credential",
+            ],
+        ] {
+            let mut args = vec!["lightspeed", "env"];
+            args.extend(command);
+            let cli =
+                Cli::try_parse_from(&args).unwrap_or_else(|error| panic!("{args:?}: {error}"));
+            assert!(matches!(cli.command, Command::Env(_)));
+        }
+        assert!(
+            Cli::try_parse_from(["lightspeed", "env", "binding", "put", "incus"]).is_err(),
+            "a binding put states enabled or disabled"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "lightspeed",
+                "env",
+                "provider",
+                "put",
+                "incus",
+                "--controller-endpoint",
+                "wss://provider.example/control",
+                "--credential-file",
+                "token",
+                "--clear-credential",
             ])
             .is_err()
         );

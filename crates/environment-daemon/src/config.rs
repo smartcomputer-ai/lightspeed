@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use environment_protocol::{
     bytes::SecretString,
     metadata::{DisplayName, Metadata},
@@ -60,6 +60,30 @@ pub struct DaemonArgs {
     /// `/.well-known/lightspeed-envd` on the configured gateway origin.
     #[arg(long, env = "LIGHTSPEED_ENVD_DISCOVERY_URL", global = true)]
     pub discovery_url: Option<String>,
+
+    /// Accept a plain `ws://` gateway URL toward a non-loopback host, such
+    /// as a cluster-internal service inside one trusted network. The
+    /// registration key and every stream then cross that network in the
+    /// clear.
+    #[arg(
+        long,
+        env = "LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY",
+        default_value_t = false
+    )]
+    pub allow_insecure_gateway: bool,
+
+    /// What the daemon does once the gateway reports its environment
+    /// closed: `exit` with status 4, or `park` (stop registering and
+    /// listening, then wait for `SIGTERM` or `SIGINT` and exit 0) so a
+    /// supervisor that restarts on every exit does not restart a spent
+    /// identity.
+    #[arg(
+        long,
+        env = "LIGHTSPEED_ENVD_ON_CLOSED",
+        value_enum,
+        default_value_t = OnClosed::Exit
+    )]
+    pub on_closed: OnClosed,
 
     /// Upgrade automatically when an outbound gateway challenges with a
     /// different environment protocol version.
@@ -115,6 +139,17 @@ pub struct DaemonArgs {
     /// deployment's discovery document.
     #[arg(long, default_value_t = false)]
     pub print_build: bool,
+}
+
+/// What a registered daemon does once its environment is closed. Either
+/// way it never reconnects: a closed identity is spent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum OnClosed {
+    /// End the process with status 4.
+    #[default]
+    Exit,
+    /// Stop registering and listening, and wait for `SIGTERM` or `SIGINT`.
+    Park,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Subcommand)]
@@ -201,6 +236,10 @@ pub struct RegistrationConfig {
     /// Absolute discovery URL reported on mismatch and used by automatic
     /// upgrade.
     pub discovery_url: String,
+    /// Accept a plain `ws://` gateway URL toward a non-loopback host.
+    pub allow_insecure_gateway: bool,
+    /// What the daemon does once its environment is closed.
+    pub on_closed: OnClosed,
     /// Present only when mismatch-triggered replacement and re-exec is opted
     /// in. The argument vector is captured before the daemon starts serving.
     pub(crate) auto_upgrade: Option<RestartInvocation>,
@@ -229,6 +268,8 @@ impl std::fmt::Debug for RegistrationConfig {
             .field("receipt_path", &self.receipt_path)
             .field("ca_file", &self.ca_file)
             .field("discovery_url", &self.discovery_url)
+            .field("allow_insecure_gateway", &self.allow_insecure_gateway)
+            .field("on_closed", &self.on_closed)
             .field("auto_upgrade", &self.auto_upgrade.is_some())
             .field("upgrade_attempted_for", &self.upgrade_attempted_for)
             .finish()
@@ -248,7 +289,8 @@ pub struct GatewayUrls {
 
 impl RegistrationConfig {
     /// Registration that never replaces the running binary: no key, name,
-    /// metadata, receipt, or CA file until the caller sets them. The CLI
+    /// metadata, receipt, or CA file until the caller sets them; `wss://`
+    /// (or loopback `ws://`) only; exits once closed. The CLI
     /// attaches the restart invocation for automatic upgrade itself, so it
     /// stays crate-private.
     pub fn new(gateway_url: String, discovery_url: String) -> Self {
@@ -260,32 +302,48 @@ impl RegistrationConfig {
             receipt_path: None,
             ca_file: None,
             discovery_url,
+            allow_insecure_gateway: false,
+            on_closed: OnClosed::Exit,
             auto_upgrade: None,
             upgrade_attempted_for: None,
         }
     }
 
+    /// The discovery URL must be HTTPS (or HTTP toward loopback) whenever
+    /// it can download a build. With an insecure gateway and no automatic
+    /// upgrade it is only named in mismatch reports, so the plain `http://`
+    /// URL derived from a `ws://` gateway is accepted there.
     pub fn validate(&self) -> Result<GatewayUrls> {
-        let urls = gateway_urls(&self.gateway_url)?;
+        let urls = gateway_urls(&self.gateway_url, self.allow_insecure_gateway)?;
         if let Some(key) = &self.registration_key
             && (key.is_empty() || key.expose().chars().any(char::is_whitespace))
         {
             bail!("registration key must be a single non-empty token");
         }
-        crate::upgrade::validate_discovery_url(&self.discovery_url)?;
+        if !self.allow_insecure_gateway || self.auto_upgrade.is_some() {
+            crate::upgrade::validate_discovery_url(&self.discovery_url).with_context(|| {
+                if self.allow_insecure_gateway {
+                    "automatic upgrade downloads over https: set LIGHTSPEED_ENVD_DISCOVERY_URL"
+                } else {
+                    "discovery URL"
+                }
+            })?;
+        }
         Ok(urls)
     }
 }
 
 /// Validate a gateway connect URL and derive what it determines. Plain
-/// `ws://` is accepted only toward loopback; everything else must be
-/// `wss://`, so neither the registration key nor any stream crosses a
-/// network in the clear. The path must end with `CONNECT_PATH` (a prefix
-/// before it is kept), with no query or fragment.
-pub fn gateway_urls(url: &str) -> Result<GatewayUrls> {
+/// `ws://` is accepted toward loopback, and toward any other host only when
+/// `allow_insecure` opts in; otherwise the URL must be `wss://`, so neither
+/// the registration key nor any stream crosses a network in the clear. The
+/// path must end with `CONNECT_PATH` (a prefix before it is kept), with no
+/// query or fragment.
+pub fn gateway_urls(url: &str, allow_insecure: bool) -> Result<GatewayUrls> {
     let scheme = url.split_once("://").map(|(scheme, _)| scheme);
     match scheme {
         Some("wss") => {}
+        Some("ws") if allow_insecure => {}
         Some("ws") => {
             let origin = canonical_origin(url)?;
             let host = origin
@@ -304,7 +362,10 @@ pub fn gateway_urls(url: &str) -> Result<GatewayUrls> {
                     .parse::<std::net::IpAddr>()
                     .is_ok_and(|ip| ip.is_loopback());
             if !loopback {
-                bail!("gateway URL must use wss:// except toward loopback: {url}");
+                bail!(
+                    "gateway URL must use wss:// except toward loopback \
+                     (or set LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY): {url}"
+                );
             }
         }
         _ => bail!("gateway URL must start with wss:// (or ws:// toward loopback): {url}"),
@@ -371,6 +432,8 @@ impl DaemonArgs {
             Some(gateway_url) => Some(registration_config(
                 gateway_url,
                 self.discovery_url,
+                self.allow_insecure_gateway,
+                self.on_closed,
                 self.auto_upgrade,
                 self.registration_key,
                 self.registration_key_file,
@@ -385,6 +448,12 @@ impl DaemonArgs {
                 }
                 if self.auto_upgrade {
                     bail!("automatic upgrade needs LIGHTSPEED_ENVD_GATEWAY_URL to dial");
+                }
+                if self.allow_insecure_gateway {
+                    bail!("an insecure gateway needs LIGHTSPEED_ENVD_GATEWAY_URL to dial");
+                }
+                if self.on_closed == OnClosed::Park {
+                    bail!("parking on close needs LIGHTSPEED_ENVD_GATEWAY_URL to register");
                 }
                 None
             }
@@ -411,6 +480,8 @@ impl DaemonArgs {
 fn registration_config(
     gateway_url: String,
     discovery_url: Option<String>,
+    allow_insecure_gateway: bool,
+    on_closed: OnClosed,
     auto_upgrade: bool,
     registration_key: Option<String>,
     registration_key_file: Option<PathBuf>,
@@ -419,8 +490,15 @@ fn registration_config(
     registration_receipt: Option<PathBuf>,
     ca_file: Option<PathBuf>,
 ) -> Result<RegistrationConfig> {
-    let discovery_url =
-        crate::upgrade::resolve_discovery_url(Some(&gateway_url), discovery_url.as_deref())?;
+    // An explicit discovery URL is checked here; a derived one by
+    // `validate`, which knows whether this configuration can download.
+    let discovery_url = match discovery_url {
+        Some(url) => {
+            crate::upgrade::validate_discovery_url(&url)?;
+            url
+        }
+        None => crate::upgrade::derive_discovery_url(&gateway_url)?,
+    };
     let auto_upgrade = auto_upgrade
         .then(|| -> Result<RestartInvocation> {
             Ok(RestartInvocation {
@@ -477,6 +555,8 @@ fn registration_config(
         receipt_path: registration_receipt,
         ca_file,
         discovery_url,
+        allow_insecure_gateway,
+        on_closed,
         auto_upgrade,
         upgrade_attempted_for,
     };
@@ -613,6 +693,8 @@ mod tests {
             listen: None,
             gateway_url: None,
             discovery_url: None,
+            allow_insecure_gateway: false,
+            on_closed: OnClosed::Exit,
             auto_upgrade: false,
             registration_key: None,
             registration_key_file: None,
@@ -729,7 +811,11 @@ mod tests {
 
     #[test]
     fn gateway_urls_are_loopback_only_in_the_clear_and_end_with_the_connect_path() {
-        let urls = gateway_urls("wss://Gateway.example/ls/environment-gateway/connect").unwrap();
+        let urls = gateway_urls(
+            "wss://Gateway.example/ls/environment-gateway/connect",
+            false,
+        )
+        .unwrap();
         assert_eq!(urls.origin.as_str(), "wss://gateway.example");
         assert_eq!(
             urls.stream,
@@ -740,7 +826,7 @@ mod tests {
             "ws://localhost:18080/environment-gateway/connect",
             "ws://[::1]:18080/environment-gateway/connect",
         ] {
-            assert!(gateway_urls(good).is_ok(), "{good}");
+            assert!(gateway_urls(good, false).is_ok(), "{good}");
         }
         for bad in [
             "ws://gateway.example/environment-gateway/connect",
@@ -750,8 +836,124 @@ mod tests {
             "wss://gateway.example/environment-gateway/connect?x=1",
             "wss://user@gateway.example/environment-gateway/connect",
         ] {
-            assert!(gateway_urls(bad).is_err(), "{bad}");
+            assert!(gateway_urls(bad, false).is_err(), "{bad}");
+            if !bad.starts_with("ws://") {
+                assert!(gateway_urls(bad, true).is_err(), "{bad} stays refused");
+            }
         }
+    }
+
+    #[test]
+    fn an_opt_in_accepts_a_cluster_internal_gateway_in_the_clear() {
+        let url = "ws://lightspeed-gateway.lightspeed.svc:8080/environment-gateway/connect";
+        let urls = gateway_urls(url, true).expect("opted in");
+        assert_eq!(
+            urls.origin.as_str(),
+            "ws://lightspeed-gateway.lightspeed.svc:8080"
+        );
+        assert_eq!(
+            urls.stream,
+            "ws://lightspeed-gateway.lightspeed.svc:8080/environment-gateway/data"
+        );
+
+        let temp = temp();
+        let refused = DaemonArgs {
+            gateway_url: Some(url.to_owned()),
+            ..args(&temp)
+        }
+        .into_config();
+        assert!(refused.is_err(), "refused without the opt-in");
+
+        let config = DaemonArgs {
+            gateway_url: Some(url.to_owned()),
+            allow_insecure_gateway: true,
+            ..args(&temp)
+        }
+        .into_config()
+        .expect("config");
+        let registration = config.registration.expect("registration");
+        assert!(registration.allow_insecure_gateway);
+        assert_eq!(
+            registration.discovery_url,
+            "http://lightspeed-gateway.lightspeed.svc:8080/.well-known/lightspeed-envd",
+            "a report-only discovery URL may be plain HTTP"
+        );
+
+        // Downloading a build still needs HTTPS discovery.
+        let downloading = DaemonArgs {
+            gateway_url: Some(url.to_owned()),
+            allow_insecure_gateway: true,
+            auto_upgrade: true,
+            ..args(&temp)
+        }
+        .into_config();
+        assert!(downloading.is_err());
+        let explicit = DaemonArgs {
+            gateway_url: Some(url.to_owned()),
+            allow_insecure_gateway: true,
+            auto_upgrade: true,
+            discovery_url: Some("https://downloads.example/envd.json".to_owned()),
+            ..args(&temp)
+        }
+        .into_config()
+        .expect("https discovery");
+        assert!(
+            explicit
+                .registration
+                .expect("registration")
+                .auto_upgrade
+                .is_some()
+        );
+
+        let without_gateway = DaemonArgs {
+            allow_insecure_gateway: true,
+            ..args(&temp)
+        }
+        .into_config();
+        assert!(without_gateway.is_err());
+    }
+
+    #[test]
+    fn on_closed_defaults_to_exit_and_parking_needs_a_gateway() {
+        let parsed = DaemonArgs::try_parse_from([
+            "lightspeed-envd",
+            "--gateway-url",
+            "wss://gateway.example/environment-gateway/connect",
+        ])
+        .expect("args");
+        assert_eq!(parsed.on_closed, OnClosed::Exit);
+        assert!(!parsed.allow_insecure_gateway);
+        let parked = DaemonArgs::try_parse_from([
+            "lightspeed-envd",
+            "--gateway-url",
+            "wss://gateway.example/environment-gateway/connect",
+            "--on-closed",
+            "park",
+            "--allow-insecure-gateway",
+        ])
+        .expect("args");
+        assert_eq!(parked.on_closed, OnClosed::Park);
+        assert!(parked.allow_insecure_gateway);
+        assert!(DaemonArgs::try_parse_from(["lightspeed-envd", "--on-closed", "linger"]).is_err());
+
+        let temp = temp();
+        let config = DaemonArgs {
+            gateway_url: Some("wss://gateway.example/environment-gateway/connect".to_owned()),
+            on_closed: OnClosed::Park,
+            ..args(&temp)
+        }
+        .into_config()
+        .expect("config");
+        assert_eq!(
+            config.registration.expect("registration").on_closed,
+            OnClosed::Park
+        );
+        let without_gateway = DaemonArgs {
+            on_closed: OnClosed::Park,
+            ..args(&temp)
+        }
+        .into_config();
+        assert!(without_gateway.is_err());
     }
 
     #[test]

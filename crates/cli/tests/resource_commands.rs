@@ -546,22 +546,41 @@ fn oauth_no_wait_and_empty_lists_have_useful_output_and_clean_json() {
 fn provisioning_and_template_commands_send_current_typed_requests() {
     let runtime = Runtime::start(|method, params| match method {
         "environments/templates/list" => {
-            assert_eq!(params["bindingId"], "local");
-            json!({"templates":[{"templateId":"linux-v1","providerId":"incus","bindingId":"local","displayName":"Linux","publicIngress":false,"deprecated":false}]})
+            assert_eq!(params["providerId"], "incus");
+            json!({"templates":[{"templateId":"linux-v1","providerId":"incus","displayName":"Linux","powerStates":["running","paused"],"publicIngress":false,"deprecated":false}]})
         }
         "environments/create" | "environments/external/create" => {
-            let source = if method == "environments/create" {
+            let (source, state, status) = if method == "environments/create" {
                 assert_eq!(params["templateId"], "linux-v1");
-                assert_eq!(params["bindingId"], "local");
+                assert_eq!(params["providerId"], "incus");
                 assert_eq!(params["metadata"], json!({"project":"audit"}));
-                json!({"type":"provisioned","providerId":"incus","bindingId":"local"})
+                (
+                    json!({"type":"provisioned","providerId":"incus","templateId":"linux-v1"}),
+                    "provisioning",
+                    "provisioning",
+                )
             } else {
                 assert_eq!(params["endpoint"], "wss://env.example/ws");
                 assert!(params.get("connection").is_none(), "{params}");
-                json!({"type":"external","endpoint":params["endpoint"]})
+                (
+                    json!({"type":"external","endpoint":params["endpoint"]}),
+                    "open",
+                    "ready",
+                )
             };
             assert_eq!(params["requestId"], "retry-1");
-            json!({"environment":{"environmentId":"env1","requestId":params["requestId"],"source":source,"status":"provisioning","desiredPower":"running","incarnation":{"incarnationId":"i1","createdAtMs":0,"updatedAtMs":0},"publicIngressEnabled":false,"createdAtMs":0,"updatedAtMs":0}})
+            json!({"environment":{"environmentId":"env1","requestId":params["requestId"],"source":source,"state":state,"status":status,"stateChangedAtMs":0,"createdAtMs":0,"updatedAtMs":0}})
+        }
+        "environments/list" => {
+            assert_eq!(params["includeClosed"], true);
+            assert_eq!(params["after"], "env0");
+            json!({"environments":[{"environmentId":"env1","source":{"type":"external","endpoint":"wss://env.example/ws"},"state":"closed","status":"closed","closeReason":"requested","stateChangedAtMs":0,"closedAtMs":0,"createdAtMs":0,"updatedAtMs":0}],"nextAfter":"env1"})
+        }
+        "environments/update" => {
+            assert_eq!(params["environmentId"], "env1");
+            assert_eq!(params["displayName"], "Build box");
+            assert_eq!(params["metadata"], json!({"team":"platform"}));
+            json!({"environment":{"environmentId":"env1","displayName":"Build box","metadata":{"team":"platform"},"source":{"type":"external","endpoint":"wss://env.example/ws"},"state":"open","status":"ready","stateChangedAtMs":0,"createdAtMs":0,"updatedAtMs":1}})
         }
         "deployment/environment-providers/list" => json!({"providers":[]}),
         "environments/provider-bindings/list" => json!({"bindings":[]}),
@@ -571,16 +590,16 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
         "environments",
         "templates",
         "list",
-        "--binding",
-        "local",
+        "--provider",
+        "incus",
         "--json",
     ]);
     assert_eq!(templates["templates"][0]["templateId"], "linux-v1");
     let created = runtime.json(&[
         "environment",
         "create",
-        "--binding",
-        "local",
+        "--provider",
+        "incus",
         "--template",
         "linux-v1",
         "--request-id",
@@ -611,6 +630,20 @@ fn provisioning_and_template_commands_send_current_typed_requests() {
             .success(&["environment", "binding", "list"])
             .contains("No environment provider bindings")
     );
+    let page = runtime.success(&["environment", "list", "--include-closed", "--after", "env0"]);
+    assert!(page.contains("STATE"), "{page}");
+    assert!(page.contains("--after env1"), "{page}");
+    let updated = runtime.json(&[
+        "environment",
+        "update",
+        "env1",
+        "--name",
+        "Build box",
+        "--metadata",
+        "team=platform",
+        "--json",
+    ]);
+    assert_eq!(updated["displayName"], "Build box");
 }
 
 #[test]

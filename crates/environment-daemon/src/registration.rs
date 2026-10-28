@@ -10,7 +10,9 @@
 //! ([`DaemonExit`]): a deliberate shutdown says goodbye first, a terminal
 //! refusal or an unsupported gateway protocol is `Refused`, and a
 //! `registration/closed` notification ends it as `EnvironmentClosed` or
-//! `Superseded`.
+//! `Superseded`. `EnvironmentClosed`, from that notification or an
+//! `environmentClosed` admission refusal, ends only this loop: the server
+//! exits or parks, as `--on-closed` says.
 
 use std::{
     path::{Path, PathBuf},
@@ -935,7 +937,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::test_support::runtime_with;
+    use crate::{config::OnClosed, test_support::runtime_with};
 
     type GatewaySocket = WebSocketStream<TcpStream>;
 
@@ -1035,7 +1037,6 @@ mod tests {
     fn receipt(admission: &str) -> Value {
         json!({
             "environmentId": "environment_a",
-            "incarnationId": "incarnation_a",
             "daemonId": "daemon_a",
             "controlConnectionId": "connection_a",
             "identityMode": "ephemeral",
@@ -1237,6 +1238,101 @@ mod tests {
                 .unwrap();
             assert_eq!(exit.status(), status, "{reason}: {exit}");
         }
+    }
+
+    /// Close the session of a freshly dialed control connection: admit and
+    /// send `registration/closed`, or refuse admission, both as
+    /// `environmentClosed`.
+    async fn close_environment(gateway: &FakeGateway, by_notification: bool) -> Accepted {
+        let mut control = gateway.accept().await;
+        challenge(&mut control.socket, [9u8; 32]).await;
+        let register = recv(&mut control.socket).await;
+        if by_notification {
+            admit(&mut control.socket, &register, 30_000).await;
+            send(
+                &mut control.socket,
+                json!({"jsonrpc": "2.0", "method": "registration/closed", "params": {
+                    "reason": "environmentClosed",
+                }}),
+            )
+            .await;
+        } else {
+            refuse(
+                &mut control.socket,
+                &register,
+                ProtocolError::failed_precondition(PreconditionReason::EnvironmentClosed, "closed"),
+            )
+            .await;
+        }
+        control
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_closed_environment_exits_or_parks_as_configured() {
+        for by_notification in [true, false] {
+            let gateway = FakeGateway::start("").await;
+            let (_temp, runtime, _) = daemon(&gateway, |_| {});
+            let server = tokio::spawn(crate::server::run(runtime.clone()));
+            let _control = close_environment(&gateway, by_notification).await;
+            let exit = tokio::time::timeout(Duration::from_secs(10), server)
+                .await
+                .expect("the daemon ends")
+                .unwrap();
+            assert_eq!(exit.status(), 4, "exit by default: {exit}");
+
+            let gateway = FakeGateway::start("").await;
+            let (_temp, runtime, _) = daemon(&gateway, |registration| {
+                registration.on_closed = OnClosed::Park;
+            });
+            let server = tokio::spawn(crate::server::run(runtime.clone()));
+            let _control = close_environment(&gateway, by_notification).await;
+            let redial =
+                tokio::time::timeout(Duration::from_millis(1_500), gateway.listener.accept()).await;
+            assert!(redial.is_err(), "a parked daemon never dials again");
+            assert!(!server.is_finished(), "a parked daemon keeps running");
+            runtime.shutdown().cancel();
+            let exit = tokio::time::timeout(Duration::from_secs(10), server)
+                .await
+                .expect("the parked daemon stops on a signal")
+                .unwrap();
+            assert_eq!(exit.status(), 0, "{exit}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn parking_also_stops_the_passive_listener() {
+        let gateway = FakeGateway::start("").await;
+        let socket_dir = tempfile::tempdir().unwrap();
+        let socket = socket_dir.path().join("envd.sock");
+        let mut registration = RegistrationConfig::new(
+            gateway.connect_url.clone(),
+            crate::upgrade::resolve_discovery_url(Some(&gateway.connect_url), None).unwrap(),
+        );
+        registration.on_closed = OnClosed::Park;
+        let listen = socket.clone();
+        let (_temp, runtime) = runtime_with(move |config| {
+            config.registration = Some(registration);
+            config.listen = Some(crate::config::ListenAddr::Unix(listen));
+        });
+        let server = tokio::spawn(crate::server::run(runtime.clone()));
+        let _control = close_environment(&gateway, true).await;
+        let mut stopped = false;
+        for _ in 0..500 {
+            if socket.exists() && tokio::net::UnixStream::connect(&socket).await.is_err() {
+                stopped = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(stopped, "the listener stopped accepting");
+        assert!(!server.is_finished(), "a parked daemon keeps running");
+        runtime.shutdown().cancel();
+        let exit = tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .expect("the parked daemon stops on a signal")
+            .unwrap();
+        assert_eq!(exit.status(), 0, "{exit}");
     }
 
     #[tokio::test(flavor = "current_thread")]

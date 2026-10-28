@@ -357,12 +357,10 @@ impl GatewayAgentApi {
         result.map(|()| entries)
     }
 
-    /// Resolve the environment through the shared status-aware resolver so
-    /// job calls participate in wake-on-use: a powered-down
-    /// provisioned environment gets its desired power set to `running` and
-    /// the call fails typed `environment_not_ready` for the caller to retry
-    /// — the shape polling automations lean on. Plain record reads would
-    /// dial a sleeping data plane and fail generically, waking nothing.
+    /// Resolve the environment through the shared use gate, so a
+    /// provisioning environment or a reconnecting daemon fails typed
+    /// `environment_not_ready` for the caller to retry — the shape polling
+    /// automations lean on — and a closed or failed one is refused.
     async fn read_job_instance(
         &self,
         environment_id: &EnvironmentId,
@@ -390,7 +388,14 @@ impl GatewayAgentApi {
                 .with_request_timeout(JOB_API_REQUEST_TIMEOUT),
         )
         .await
-        .map_err(map_environment_client_api_error)?;
+        .map_err(|error| {
+            // A powered-down environment wakes on this dial; its typed
+            // refusal is `environment_not_ready`, like the gate's waits.
+            match crate::environments::resolver::route_refusal_error(instance, &error) {
+                Some(refusal) => super::environments::map_environment_resolve_error(refusal),
+                None => map_environment_client_api_error(error),
+            }
+        })?;
         if initialized.capabilities.job.is_none() {
             let _ = client.close().await;
             return Err(AgentApiError::rejected(format!(

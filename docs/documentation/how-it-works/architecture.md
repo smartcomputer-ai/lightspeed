@@ -39,10 +39,13 @@ configuration and grants. Changes take effect at safe turn boundaries.
 
 Environments have independent lifecycles. A session's configuration lists
 which machines it may use and what it may do on each. Selecting a machine
-makes it active for subsequent tool calls. Use checks readiness and requests
-wake-up where the provider supports it; an offline registered machine must
-reconnect. Closing or deleting the session leaves the environment available
-for other work.
+makes it active for subsequent tool calls. Use checks readiness; the
+connection to a sleeping provisioned machine wakes it, and a disconnected
+registered machine must reconnect. Closing or deleting the session leaves
+the environment available for other work, unless a profile created that
+environment for the session alone. Lightspeed decides only when a
+provisioned machine is created and closed; its provider runs power and idle
+policy in between.
 
 The `harness` crate is the deterministic agent core. It represents a session
 as events reduced into state. Admission checks
@@ -201,7 +204,7 @@ separating them lets the deployment give different work different capacity.
 | `sessions` | Session, sub-agent, and environment-job workflows and their activities, plus session and blob maintenance. |
 | `bots` | Bot controllers, trigger workflows, and related activities. |
 | `channels` | Conversation workflows and core channel activities. |
-| `environment-gateway` | Live outbound daemon connections, worker routes, environment reconciliation, and power management. |
+| `environment-gateway` | Live outbound daemon connections, worker routes, and the reconciliation that creates and closes provisioned environments. |
 
 The session, bot, and channel roles poll their own task queues. Cross-subsystem
 work uses workflow starts and signals rather than relying on one role executing

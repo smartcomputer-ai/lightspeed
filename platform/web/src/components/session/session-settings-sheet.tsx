@@ -40,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
+import { environmentName, openEnvironmentsQuery } from "@/lib/environments";
 import {
   hasSessionFeature,
   isActivatableEnvironmentStatus,
@@ -118,11 +119,7 @@ function LiveSessionSetup({
     ),
     enabled,
   });
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-    enabled,
-  });
+  const environments = useQuery({ ...openEnvironmentsQuery(universeId), enabled });
   const [configDraft, setConfigDraft] = useState<SessionConfig | undefined>();
   const [originalConfig, setOriginalConfig] = useState<SessionConfig | undefined>();
   const [instructionsDraft, setInstructionsDraft] = useState<string | undefined>();
@@ -583,10 +580,7 @@ function activeEnvironmentSelectionError(
 }
 
 function environmentLabel(environment: Environment): string {
-  return `${environment.displayName
-    ?? environment.incarnation.templateId
-    ?? environment.incarnation.providerTargetId
-    ?? environment.environmentId} (${environment.environmentId})`;
+  return `${environmentName(environment)} (${environment.environmentId})`;
 }
 
 function sameConfig(left: SessionConfig | undefined, right: SessionConfig | undefined): boolean {

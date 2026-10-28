@@ -320,9 +320,10 @@ headers, pass WebSocket ping frames through, accept messages of up to 16 MiB,
 and do not close a quiet connection sooner than 60 seconds. Match those two
 routes exactly; forwarding the entire `/environment-gateway/` prefix would
 also expose internal worker routes. Daemons must dial these routes on the
-host of `LIGHTSPEED_PUBLIC_BASE_URL`: they sign that origin when they
+host of `LIGHTSPEED_PUBLIC_BASE_URL`, or on a URL listed in
+`LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`: they sign that origin when they
 register, and the runtime refuses to serve registration on a non-loopback
-bind without it.
+bind with neither.
 
 The Platform checks login, membership, role, and session visibility before
 calling the runtime with its deployment key, universe selector, and actor ID.

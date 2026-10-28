@@ -5,10 +5,10 @@ The session selects one environment at a time, while the environment remains
 a resource in the universe. Several sessions can select the same machine;
 selection does not reserve it or create a private copy.
 
-You can select a starting, sleeping, or offline machine. The selection records
-where work should run; a tool call then waits for readiness and requests a
-wake-up where supported. Failed, closing, or closed environments cannot be
-selected.
+You can select a provisioning, sleeping, or disconnected machine. The
+selection records where work should run; a tool call then waits for
+readiness, and its connection wakes a sleeping provisioned machine. Failed,
+closing, or closed environments cannot be selected.
 
 This guide starts with a machine that already appears under **Environments**.
 Use [Bring your own compute](bring-your-own-compute.md) to connect one you
@@ -26,10 +26,11 @@ Open **Environments**, find the machine, and expand **Details**. Check its
 source, status, and **Environment ID**. A display name helps you find it;
 the ID is the stable value profiles and API calls reference.
 
-![CI runner environment with Details expanded, showing its ready status, environment ID, provisioned source, running power state, idle policy, and controls.](../images/environment-details.png)
+![CI runner environment with Details expanded, showing its ready status, environment ID, provisioned source, the provider's reported power state, the template's idle policy, and controls.](../images/environment-details.png)
 
 *The demo's CI runner is a provisioned machine. Its **Environment ID** is the
-value to select; its status and power state describe the machine's current state.*
+value to select; its status and the provider's report describe the machine's
+current state.*
 
 Open the session you want to use. With no active or queued runs, choose
 **Session settings**, enable **Environments**, add the machine under
@@ -159,26 +160,32 @@ the sessions. Use separate directories for independent tasks and separate
 environments when they need separate machine state or credential access.
 
 Prefer a persistent registered environment for a profile that names a
-borrowed machine. An ephemeral registration closes after its disconnect
-grace period; once closed, that identity cannot return and the profile's
-saved selection becomes unavailable.
+borrowed machine. An ephemeral registration closes when its daemon stops or
+stays away past its disconnect grace period; once closed, that identity
+cannot return and the profile's saved selection becomes unavailable.
 
 ## Create an independent machine
 
 Use **Environments → New environment**. Select a **Template**, enter a
-**Display name**, configure an idle policy if needed, and choose **Provision**.
-The button appears when the universe has a non-deprecated template from an
-enabled binding. Configure [credentials](credentials.md) on the environment,
-then select it in a session or profile.
+**Display name**, and choose **Provision**. The dialog shows the template's
+power states and the idle policy its provider applies. Turn on **Custom idle
+policy** to set this environment's own pause, stop or close thresholds instead;
+only the stages the template supports are offered, and the policy cannot be
+changed after the environment is created. The button appears
+when the universe has a non-deprecated template from an enabled binding.
+Configure [credentials](credentials.md) on the environment, then select it
+in a session or profile.
 
-The environment can be selected while it is provisioning or booting. Tools
-wait for readiness before dispatching. If provisioning fails, inspect the
-provider and explicitly create or select a replacement. Session creation and
-profile application never allocate machines.
+The environment can be selected while it is provisioning. Tools wait for
+readiness before dispatching. If provisioning fails, the environment's
+details show why; inspect the provider and explicitly create or select a
+replacement.
 
-Environments remain available when sessions close or are deleted. Manage
-cleanup through explicit environment operations and idle policies; see
-[Power and cleanup](power-and-cleanup.md).
+Environments created this way remain available when sessions close or are
+deleted. Close them explicitly, or let the template's idle policy close them;
+see [Power and cleanup](power-and-cleanup.md). Use **Rename…** in the
+details to change the display name or metadata of an environment of any
+source.
 
 ## Use environments with bots and sub-agents
 
@@ -212,8 +219,8 @@ Enable **Environment selection tools** (`"selection": true`) when the model
 should list, activate, and deactivate attached environments itself. Without
 that switch, you can still select a machine through the client or profile,
 and the model can still read its active environment with `environment_read`.
-The switch does not grant environment provisioning and does not widen the
-allowed set: `environment_list` lists the attachments, and `environment_read`
+The switch does not let the model provision environments and does not
+widen the allowed set: `environment_list` lists the attachments, and `environment_read`
 and `environment_activate` accept only attached ids. Their results carry the
 attachment's access line.
 
@@ -257,8 +264,8 @@ accepts only an environment attached in the session's configuration.
 | Symptom | What to check |
 | --- | --- |
 | **New environment** is missing | Check that you are an Operator or Admin, then check the universe binding and available, non-deprecated templates. Borrowed machines use registration or attachment instead. |
-| Selection succeeds but the first tool waits | A provisioned machine may still be booting or waking. Inspect its status and provider health. |
-| A registered machine is offline | Restart or reconnect its daemon using the retained identity. Lightspeed cannot power on that borrowed machine. |
+| Selection succeeds but the first tool waits | A provisioned machine may still be provisioning or waking. Inspect its status, state message, and provider health. |
+| A registered machine is disconnected | Restart or reconnect its daemon using the retained identity. Tools wait up to two minutes for a persistent daemon. Lightspeed cannot power on that borrowed machine. |
 | A visible environment is rejected by the session | Check that it is attached in the session's configuration, plus the machine's capabilities and lifecycle status. |
 | A file, process, or job call is refused on the active machine | The active attachment's access does not cover it. The toolset is the union of all attachments; raise that attachment's access or switch to one that covers the call. |
 | A saved profile points to a closed machine | Select a replacement explicitly. The runtime does not silently switch to another environment. |

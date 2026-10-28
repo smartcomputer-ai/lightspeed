@@ -6,11 +6,16 @@ use uuid::Uuid;
 use super::*;
 
 type CredentialKey = (EnvironmentId, String);
-type BindingKey = (Uuid, EnvironmentProviderBindingId);
+type BindingKey = (Uuid, EnvironmentProviderId);
+
+struct StoredSecret {
+    secret_hash: String,
+    retired_at_ms: Option<i64>,
+}
 
 struct StoredRegistrationKey {
-    secret_hash: String,
     record: EnvironmentRegistrationKeyRecord,
+    secrets: Vec<StoredSecret>,
 }
 
 #[derive(Default)]
@@ -19,11 +24,56 @@ struct RegistryState {
     provider_credentials: BTreeMap<EnvironmentProviderId, SecretValue>,
     bindings: BTreeMap<BindingKey, EnvironmentProviderBindingRecord>,
     environments: BTreeMap<EnvironmentId, EnvironmentRecord>,
-    requests: BTreeMap<EnvironmentProvisionRequestId, EnvironmentId>,
     credentials: BTreeMap<CredentialKey, EnvironmentCredentialRecord>,
     registration_keys: BTreeMap<EnvironmentRegistrationKeyId, StoredRegistrationKey>,
 }
 
+impl RegistryState {
+    fn by_request_id(
+        &self,
+        request_id: &EnvironmentProvisionRequestId,
+    ) -> Option<&EnvironmentRecord> {
+        self.environments
+            .values()
+            .find(|record| record.request_id.as_ref() == Some(request_id))
+    }
+
+    fn by_daemon_public_key(&self, daemon_public_key: &str) -> Option<&EnvironmentRecord> {
+        self.environments.values().find(|record| {
+            record
+                .registered()
+                .is_some_and(|source| source.daemon_public_key == daemon_public_key)
+        })
+    }
+
+    fn insert_new(
+        &mut self,
+        record: EnvironmentRecord,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        if self.environments.contains_key(&record.environment_id) {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "environment",
+                id: record.environment_id.to_string(),
+            });
+        }
+        self.environments
+            .insert(record.environment_id.clone(), record.clone());
+        Ok(record)
+    }
+
+    fn registration_key(
+        &self,
+        registration_key_id: &EnvironmentRegistrationKeyId,
+    ) -> Result<&EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
+        self.registration_keys
+            .get(registration_key_id)
+            .map(|stored| &stored.record)
+            .ok_or_else(|| not_found("environment_registration_key", registration_key_id))
+    }
+}
+
+/// An in-memory registry for one universe, following the same rules as the
+/// PostgreSQL store through the shared `apply` functions.
 pub struct InMemoryEnvironmentRegistryStore {
     universe_id: Uuid,
     state: RwLock<RegistryState>,
@@ -70,6 +120,36 @@ impl InMemoryEnvironmentRegistryStore {
                 message: "environment registry write lock poisoned".to_owned(),
             })
     }
+
+    /// Apply one write to one environment: on a copy, validated, stored
+    /// only when valid. A refused change leaves the stored record untouched.
+    fn change(
+        &self,
+        environment_id: &EnvironmentId,
+        change: impl FnOnce(&mut EnvironmentRecord) -> Result<bool, EnvironmentRegistryError>,
+    ) -> Result<(EnvironmentRecord, bool), EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        change_environment(&mut state, environment_id, change)
+    }
+}
+
+fn change_environment(
+    state: &mut RegistryState,
+    environment_id: &EnvironmentId,
+    change: impl FnOnce(&mut EnvironmentRecord) -> Result<bool, EnvironmentRegistryError>,
+) -> Result<(EnvironmentRecord, bool), EnvironmentRegistryError> {
+    let stored = state
+        .environments
+        .get_mut(environment_id)
+        .ok_or_else(|| not_found("environment", environment_id))?;
+    let mut candidate = stored.clone();
+    let changed = change(&mut candidate)?;
+    if !changed {
+        return Ok((stored.clone(), false));
+    }
+    candidate.validate()?;
+    *stored = candidate.clone();
+    Ok((candidate, true))
 }
 
 #[async_trait]
@@ -82,42 +162,21 @@ impl EnvironmentProviderStore for InMemoryEnvironmentRegistryStore {
         let credential = request.credential.clone();
         let existing = state.providers.get(&request.provider_id).cloned();
         let record = request.into_record(existing.as_ref())?;
-        if let Some(credential) = credential {
-            state
-                .provider_credentials
-                .insert(record.provider_id.clone(), credential);
+        match credential {
+            ProviderCredentialChange::Keep => {}
+            ProviderCredentialChange::Set(credential) => {
+                state
+                    .provider_credentials
+                    .insert(record.provider_id.clone(), credential);
+            }
+            ProviderCredentialChange::Clear => {
+                state.provider_credentials.remove(&record.provider_id);
+            }
         }
         state
             .providers
             .insert(record.provider_id.clone(), record.clone());
         Ok(record)
-    }
-
-    async fn read_provider_credential(
-        &self,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<SecretValue, EnvironmentRegistryError> {
-        self.read_state()?
-            .provider_credentials
-            .get(provider_id)
-            .cloned()
-            .ok_or_else(|| not_found("environment_provider", provider_id))
-    }
-
-    async fn record_provider_controller(
-        &self,
-        request: RecordProviderController,
-    ) -> Result<EnvironmentProviderRecord, EnvironmentRegistryError> {
-        let mut state = self.write_state()?;
-        let record = state
-            .providers
-            .get_mut(&request.provider_id)
-            .ok_or_else(|| not_found("environment_provider", &request.provider_id))?;
-        if record.controller_endpoint == request.controller_endpoint {
-            record.controller_features = Some(request.features);
-            record.data_route_base = Some(request.data_route_base);
-        }
-        Ok(record.clone())
     }
 
     async fn read_provider(
@@ -131,9 +190,19 @@ impl EnvironmentProviderStore for InMemoryEnvironmentRegistryStore {
             .ok_or_else(|| not_found("environment_provider", provider_id))
     }
 
+    async fn read_provider_credential(
+        &self,
+        provider_id: &EnvironmentProviderId,
+    ) -> Result<Option<SecretValue>, EnvironmentRegistryError> {
+        let state = self.read_state()?;
+        if !state.providers.contains_key(provider_id) {
+            return Err(not_found("environment_provider", provider_id));
+        }
+        Ok(state.provider_credentials.get(provider_id).cloned())
+    }
+
     async fn list_providers(
         &self,
-        _request: ListEnvironmentProviders,
     ) -> Result<Vec<EnvironmentProviderRecord>, EnvironmentRegistryError> {
         Ok(self.read_state()?.providers.values().cloned().collect())
     }
@@ -150,6 +219,11 @@ impl EnvironmentProviderStore for InMemoryEnvironmentRegistryStore {
         {
             return invalid("environment provider is referenced by a universe binding");
         }
+        if state.environments.values().any(|record| {
+            record.state != EnvironmentState::Closed && record.provider_id() == Some(provider_id)
+        }) {
+            return invalid("environment provider is referenced by a non-closed environment");
+        }
         let record = state
             .providers
             .remove(provider_id)
@@ -165,48 +239,12 @@ impl EnvironmentProviderBindingStore for InMemoryEnvironmentRegistryStore {
         &self,
         request: PutEnvironmentProviderBinding,
     ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
         let mut state = self.write_state()?;
         if !state.providers.contains_key(&request.provider_id) {
             return Err(not_found("environment_provider", &request.provider_id));
         }
-        if state.bindings.values().any(|binding| {
-            binding.universe_id == request.universe_id
-                && binding.provider_id == request.provider_id
-                && binding.binding_id != request.binding_id
-        }) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "environment_provider_binding",
-                id: format!("{}/{}", request.universe_id, request.provider_id),
-            });
-        }
-        let key = (request.universe_id, request.binding_id.clone());
-        let existing = state.bindings.get(&key);
-        if existing.is_some_and(|record| record.provider_id != request.provider_id) {
-            return invalid("provider_id is immutable for an existing binding");
-        }
-        let actual = existing.map(|record| record.revision);
-        if request.expected_revision != actual {
-            return Err(EnvironmentRegistryError::RevisionConflict {
-                kind: "environment_provider_binding",
-                id: request.binding_id.to_string(),
-                expected: request.expected_revision,
-                actual,
-            });
-        }
-        let record = EnvironmentProviderBindingRecord {
-            universe_id: request.universe_id,
-            binding_id: request.binding_id,
-            provider_id: request.provider_id,
-            status: request.status,
-            revision: actual.unwrap_or(0) + 1,
-            metadata: request.metadata,
-            created_at_ms: existing
-                .map(|record| record.created_at_ms)
-                .unwrap_or(request.updated_at_ms),
-            updated_at_ms: request.updated_at_ms,
-        };
-        record.validate()?;
+        let key = (request.universe_id, request.provider_id.clone());
+        let record = request.into_record(state.bindings.get(&key))?;
         state.bindings.insert(key, record.clone());
         Ok(record)
     }
@@ -214,13 +252,13 @@ impl EnvironmentProviderBindingStore for InMemoryEnvironmentRegistryStore {
     async fn read_provider_binding(
         &self,
         universe_id: Uuid,
-        binding_id: &EnvironmentProviderBindingId,
+        provider_id: &EnvironmentProviderId,
     ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
         self.read_state()?
             .bindings
-            .get(&(universe_id, binding_id.clone()))
+            .get(&(universe_id, provider_id.clone()))
             .cloned()
-            .ok_or_else(|| not_found("environment_provider_binding", binding_id))
+            .ok_or_else(|| not_found("environment_provider_binding", provider_id))
     }
 
     async fn list_provider_bindings(
@@ -239,19 +277,21 @@ impl EnvironmentProviderBindingStore for InMemoryEnvironmentRegistryStore {
     async fn delete_provider_binding(
         &self,
         universe_id: Uuid,
-        binding_id: &EnvironmentProviderBindingId,
+        provider_id: &EnvironmentProviderId,
     ) -> Result<EnvironmentProviderBindingRecord, EnvironmentRegistryError> {
         let mut state = self.write_state()?;
-        if state.environments.values().any(|environment| {
-            environment.status != EnvironmentStatus::Closed
-                && environment.binding_id() == Some(binding_id)
-        }) {
+        if universe_id == self.universe_id
+            && state.environments.values().any(|record| {
+                record.state != EnvironmentState::Closed
+                    && record.provider_id() == Some(provider_id)
+            })
+        {
             return invalid("provider binding is referenced by a non-closed environment");
         }
         state
             .bindings
-            .remove(&(universe_id, binding_id.clone()))
-            .ok_or_else(|| not_found("environment_provider_binding", binding_id))
+            .remove(&(universe_id, provider_id.clone()))
+            .ok_or_else(|| not_found("environment_provider_binding", provider_id))
     }
 }
 
@@ -263,72 +303,25 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         validate_nonnegative_i64(request.created_at_ms, "created_at_ms")?;
         let mut state = self.write_state()?;
-        if let Some(environment_id) = state.requests.get(&request.request_id) {
-            return state
-                .environments
-                .get(environment_id)
-                .cloned()
-                .ok_or_else(|| not_found("environment", environment_id));
+        if let Some(existing) = state.by_request_id(&request.request_id) {
+            return if request.matches(existing) {
+                Ok(existing.clone())
+            } else {
+                Err(EnvironmentRegistryError::AlreadyExists {
+                    kind: "environment_request",
+                    id: request.request_id.to_string(),
+                })
+            };
         }
         let binding = state
             .bindings
-            .get(&(self.universe_id, request.binding_id.clone()))
-            .cloned()
-            .ok_or_else(|| not_found("environment_provider_binding", &request.binding_id))?;
-        if binding.status != EnvironmentProviderBindingStatus::Enabled {
+            .get(&(self.universe_id, request.provider_id.clone()))
+            .ok_or_else(|| not_found("environment_provider_binding", &request.provider_id))?;
+        if !binding.enabled {
             return invalid("environment provider binding is disabled");
         }
-        if state.environments.contains_key(&request.environment_id) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "environment",
-                id: request.environment_id.to_string(),
-            });
-        }
-        let record = request.record(binding.provider_id)?;
-        state
-            .requests
-            .insert(request.request_id, request.environment_id.clone());
-        state
-            .environments
-            .insert(request.environment_id, record.clone());
-        Ok(record)
-    }
-
-    async fn adopt_environment(
-        &self,
-        request: AdoptEnvironment,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.created_at_ms, "created_at_ms")?;
-        let mut state = self.write_state()?;
-        if let Some(environment_id) = state.requests.get(&request.request_id) {
-            return state
-                .environments
-                .get(environment_id)
-                .cloned()
-                .ok_or_else(|| not_found("environment", environment_id));
-        }
-        let binding = state
-            .bindings
-            .get(&(self.universe_id, request.binding_id.clone()))
-            .cloned()
-            .ok_or_else(|| not_found("environment_provider_binding", &request.binding_id))?;
-        if binding.status != EnvironmentProviderBindingStatus::Enabled {
-            return invalid("environment provider binding is disabled");
-        }
-        if state.environments.contains_key(&request.environment_id) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "environment",
-                id: request.environment_id.to_string(),
-            });
-        }
-        let record = request.record(binding.provider_id)?;
-        state
-            .requests
-            .insert(request.request_id, request.environment_id.clone());
-        state
-            .environments
-            .insert(request.environment_id, record.clone());
-        Ok(record)
+        let record = request.record()?;
+        state.insert_new(record)
     }
 
     async fn create_external_environment(
@@ -337,27 +330,18 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         validate_nonnegative_i64(request.created_at_ms, "created_at_ms")?;
         let mut state = self.write_state()?;
-        if let Some(environment_id) = state.requests.get(&request.request_id) {
-            return state
-                .environments
-                .get(environment_id)
-                .cloned()
-                .ok_or_else(|| not_found("environment", environment_id));
-        }
-        if state.environments.contains_key(&request.environment_id) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "environment",
-                id: request.environment_id.to_string(),
-            });
+        if let Some(existing) = state.by_request_id(&request.request_id) {
+            return if request.matches(existing) {
+                Ok(existing.clone())
+            } else {
+                Err(EnvironmentRegistryError::AlreadyExists {
+                    kind: "environment_request",
+                    id: request.request_id.to_string(),
+                })
+            };
         }
         let record = request.record()?;
-        state
-            .requests
-            .insert(request.request_id, request.environment_id.clone());
-        state
-            .environments
-            .insert(request.environment_id, record.clone());
-        Ok(record)
+        state.insert_new(record)
     }
 
     async fn create_registered_environment(
@@ -365,40 +349,34 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
         request: CreateRegisteredEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         validate_nonnegative_i64(request.created_at_ms, "created_at_ms")?;
-        let daemon_id = request.daemon_id()?;
-        let request_id = EnvironmentProvisionRequestId::for_daemon(&daemon_id);
+        validate_daemon_public_key(&request.daemon_public_key)?;
+        validate_secret_hash(&request.secret_hash)?;
         let mut state = self.write_state()?;
-        if let Some(environment_id) = state.requests.get(&request_id) {
-            return state
-                .environments
-                .get(environment_id)
-                .cloned()
-                .ok_or_else(|| not_found("environment", environment_id));
-        }
-        if state.environments.values().any(|record| {
-            matches!(&record.source, EnvironmentSource::Registered { daemon_public_key, .. }
-                if daemon_public_key == &request.daemon_public_key)
-        }) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "daemon_identity",
-                id: daemon_id.to_string(),
-            });
+        if let Some(existing) = state.by_daemon_public_key(&request.daemon_public_key) {
+            return Ok(existing.clone());
         }
         let key = state
+            .registration_key(&request.registration_key_id)?
+            .clone();
+        key.check_admits(request.created_at_ms)?;
+        let live = state
             .registration_keys
             .get(&request.registration_key_id)
-            .map(|stored| stored.record.clone())
-            .ok_or_else(|| {
-                not_found("environment_registration_key", &request.registration_key_id)
-            })?;
-        key.check_admits(request.created_at_ms)?;
+            .is_some_and(|stored| {
+                stored.secrets.iter().any(|secret| {
+                    secret.retired_at_ms.is_none() && secret.secret_hash == request.secret_hash
+                })
+            });
+        if !live {
+            return Err(request.secret_retired());
+        }
         if let Some(limit) = key.max_active_environments {
             let active = state
                 .environments
                 .values()
                 .filter(|record| {
                     record.registration_key_id() == Some(&key.registration_key_id)
-                        && record.status != EnvironmentStatus::Closed
+                        && record.state != EnvironmentState::Closed
                 })
                 .count();
             if active >= limit as usize {
@@ -408,69 +386,8 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
                 });
             }
         }
-        if state.environments.contains_key(&request.environment_id) {
-            return Err(EnvironmentRegistryError::AlreadyExists {
-                kind: "environment",
-                id: request.environment_id.to_string(),
-            });
-        }
         let record = request.record(&key)?;
-        state
-            .requests
-            .insert(request_id, request.environment_id.clone());
-        state
-            .environments
-            .insert(request.environment_id, record.clone());
-        Ok(record)
-    }
-
-    async fn read_environment_by_daemon_public_key(
-        &self,
-        daemon_public_key: &str,
-    ) -> Result<Option<EnvironmentRecord>, EnvironmentRegistryError> {
-        Ok(self
-            .read_state()?
-            .environments
-            .values()
-            .find(|record| {
-                matches!(&record.source, EnvironmentSource::Registered { daemon_public_key: key, .. }
-                    if key == daemon_public_key)
-            })
-            .cloned())
-    }
-
-    async fn observe_registered_environment(
-        &self,
-        request: ObserveRegisteredEnvironment,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.observed_at_ms, "observed_at_ms")?;
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            apply_registered_observation(
-                record,
-                request.observation,
-                request.observed_at_ms,
-                request.metadata,
-            )
-        })
-    }
-
-    async fn list_open_registered_environments(
-        &self,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        Ok(self
-            .read_state()?
-            .environments
-            .values()
-            .filter(|record| {
-                record.is_registered()
-                    && !matches!(
-                        record.status,
-                        EnvironmentStatus::Closing | EnvironmentStatus::Closed
-                    )
-            })
-            .cloned()
-            .collect())
+        state.insert_new(record)
     }
 
     async fn read_environment(
@@ -484,253 +401,252 @@ impl EnvironmentStore for InMemoryEnvironmentRegistryStore {
             .ok_or_else(|| not_found("environment", environment_id))
     }
 
-    async fn read_environment_by_request_id(
+    async fn read_environment_by_daemon_public_key(
         &self,
-        request_id: &EnvironmentProvisionRequestId,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let state = self.read_state()?;
-        let environment_id = state
-            .requests
-            .get(request_id)
-            .ok_or_else(|| not_found("environment_request", request_id))?;
-        state
-            .environments
-            .get(environment_id)
-            .cloned()
-            .ok_or_else(|| not_found("environment", environment_id))
+        daemon_public_key: &str,
+    ) -> Result<Option<EnvironmentRecord>, EnvironmentRegistryError> {
+        Ok(self
+            .read_state()?
+            .by_daemon_public_key(daemon_public_key)
+            .cloned())
     }
 
     async fn list_environments(
         &self,
         request: ListEnvironments,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        Ok(self
-            .read_state()?
+    ) -> Result<EnvironmentPage, EnvironmentRegistryError> {
+        request.validate()?;
+        let state = self.read_state()?;
+        let mut matching = state
             .environments
             .values()
             .filter(|record| {
                 request
-                    .provider_id
+                    .after
                     .as_ref()
-                    .is_none_or(|id| record.provider_id() == Some(id))
+                    .is_none_or(|after| &record.environment_id > after)
             })
-            .filter(|record| {
-                request
-                    .binding_id
-                    .as_ref()
-                    .is_none_or(|id| record.binding_id() == Some(id))
-            })
-            .filter(|record| request.status.is_none_or(|status| status == record.status))
-            .filter(|record| {
-                request
-                    .registration_key_id
-                    .as_ref()
-                    .is_none_or(|id| record.registration_key_id() == Some(id))
-            })
-            .filter(|record| {
-                harness::storage::metadata_matches(&record.metadata, &request.metadata)
-            })
+            .filter(|record| request.matches(record));
+        let environments: Vec<EnvironmentRecord> = matching
+            .by_ref()
+            .take(request.limit as usize)
             .cloned()
-            .collect())
-    }
-
-    async fn list_environments_needing_reconcile(
-        &self,
-        scope: ReconcileScope,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        Ok(self
-            .read_state()?
-            .environments
-            .values()
-            .filter(|record| record.needs_reconcile(scope))
-            .cloned()
-            .collect())
-    }
-
-    async fn list_environments_with_idle_policy(
-        &self,
-    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
-        Ok(self
-            .read_state()?
-            .environments
-            .values()
-            .filter(|record| {
-                record.status == EnvironmentStatus::Ready && record.idle_policy.is_some()
-            })
-            .cloned()
-            .collect())
-    }
-
-    async fn observe_provisioned_environment(
-        &self,
-        request: ObserveProvisionedEnvironment,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            request.apply(record)
+            .collect();
+        let next_after = if matching.next().is_some() {
+            environments
+                .last()
+                .map(|record| record.environment_id.clone())
+        } else {
+            None
+        };
+        Ok(EnvironmentPage {
+            environments,
+            next_after,
         })
     }
 
-    async fn fail_environment_lifecycle(
+    async fn update_environment(
         &self,
-        request: FailEnvironmentLifecycle,
+        request: UpdateEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            request.apply(record)
-        })
-    }
-
-    async fn record_environment_lifecycle_error(
-        &self,
-        request: RecordEnvironmentLifecycleError,
-    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            request.apply(record)
-        })
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
 
     async fn begin_close_environment(
         &self,
         request: BeginCloseEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            if record.status != EnvironmentStatus::Closed {
-                record.status = EnvironmentStatus::Closing;
-                record.updated_at_ms = record.updated_at_ms.max(request.updated_at_ms);
-            }
-            Ok(())
-        })
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
 
     async fn finish_close_environment(
         &self,
         request: FinishCloseEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            record.status = EnvironmentStatus::Closed;
-            record.public_ingress_enabled = false;
-            record.public_endpoint = None;
-            record.incarnation.updated_at_ms =
-                record.incarnation.updated_at_ms.max(request.observed_at_ms);
-            record.updated_at_ms = record.updated_at_ms.max(request.observed_at_ms);
-            Ok(())
-        })
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
 
-    async fn set_environment_ingress(
+    async fn mark_registered_connected(
         &self,
-        request: SetEnvironmentIngress,
+        request: MarkRegisteredConnected,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            if !matches!(record.source, EnvironmentSource::Provisioned { .. }) {
-                return invalid("provider-managed ingress requires a provisioned environment");
-            }
-            if record.status.is_closing_or_closed() && request.enabled {
-                return invalid("cannot enable ingress for a closing environment");
-            }
-            record.public_ingress_enabled = request.enabled;
-            record.updated_at_ms = record.updated_at_ms.max(request.updated_at_ms);
-            Ok(())
-        })
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
 
-    async fn record_environment_ingress(
+    async fn mark_registered_disconnected(
         &self,
-        request: RecordEnvironmentIngress,
+        request: MarkRegisteredDisconnected,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
+    }
+
+    async fn stamp_registered_seen(
+        &self,
+        request: StampRegisteredSeen,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(_, written)| written)
+    }
+
+    async fn sweep_registered_environments(
+        &self,
+        now_ms: i64,
+    ) -> Result<RegisteredSweep, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        let candidates: Vec<(EnvironmentId, EnvironmentRegistrationKeyRecord)> = state
+            .environments
+            .values()
+            .filter(|record| record.state == EnvironmentState::Open)
+            .filter_map(|record| {
+                let key = state.registration_keys.get(record.registration_key_id()?)?;
+                Some((record.environment_id.clone(), key.record.clone()))
+            })
+            .collect();
+        let mut sweep = RegisteredSweep::default();
+        for (environment_id, key) in candidates {
+            let mut outcome = (false, None);
+            change_environment(&mut state, &environment_id, |record| {
+                outcome = sweep_registered_environment(record, &key, now_ms);
+                Ok(outcome.0 || outcome.1.is_some())
+            })?;
+            if outcome.0 {
+                sweep.disconnected.push(environment_id.clone());
+            }
+            if let Some(reason) = outcome.1 {
+                sweep.closed.push((environment_id, reason));
+            }
+        }
+        Ok(sweep)
+    }
+
+    async fn repair_registered_connections(
+        &self,
+        now_ms: i64,
+    ) -> Result<u64, EnvironmentRegistryError> {
+        validate_nonnegative_i64(now_ms, "now_ms")?;
+        let mut state = self.write_state()?;
+        let mut repaired = 0;
+        for record in state.environments.values_mut() {
+            let Some(source) = record.registered_mut() else {
+                continue;
+            };
+            if source.connected {
+                source.connected = false;
+                source.connection_changed_at_ms = now_ms;
+                record.touch(now_ms);
+                repaired += 1;
+            }
+        }
+        Ok(repaired)
+    }
+
+    async fn list_environment_work(
+        &self,
+        now_ms: i64,
+        limit: u32,
+    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
+        let state = self.read_state()?;
+        let mut due: Vec<(i64, &EnvironmentRecord)> = state
+            .environments
+            .values()
+            .filter_map(|record| {
+                let next = record.provisioned()?.next_attempt_at_ms?;
+                (next <= now_ms).then_some((next, record))
+            })
+            .collect();
+        due.sort_by(|(left_at, left), (right_at, right)| {
+            left_at
+                .cmp(right_at)
+                .then_with(|| left.environment_id.cmp(&right.environment_id))
+        });
+        Ok(due
+            .into_iter()
+            .take(limit as usize)
+            .map(|(_, record)| record.clone())
+            .collect())
+    }
+
+    async fn list_open_provisioned_environments(
+        &self,
+    ) -> Result<Vec<EnvironmentRecord>, EnvironmentRegistryError> {
+        Ok(self
+            .read_state()?
+            .environments
+            .values()
+            .filter(|record| {
+                record.state == EnvironmentState::Open && record.provisioned().is_some()
+            })
+            .cloned()
+            .collect())
+    }
+
+    async fn record_target_observation(
+        &self,
+        request: RecordTargetObservation,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
         let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
+        if let Some(target_id) = &request.provider_target_id
+            && let Some(provider_id) = state
+                .environments
+                .get(&request.environment_id)
+                .and_then(EnvironmentRecord::provider_id)
+            && state.environments.values().any(|other| {
+                other.environment_id != request.environment_id
+                    && other.state != EnvironmentState::Closed
+                    && other.provider_id() == Some(provider_id)
+                    && other
+                        .provisioned()
+                        .and_then(|source| source.provider_target_id.as_ref())
+                        == Some(target_id)
+            })
+        {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "provider_target",
+                id: target_id.to_string(),
+            });
+        }
+        change_environment(&mut state, &request.environment_id, |record| {
             request.apply(record)
         })
+        .map(|(record, _)| record)
     }
 
-    async fn set_environment_power(
+    async fn schedule_environment_attempt(
         &self,
-        request: SetEnvironmentPower,
+        request: ScheduleEnvironmentAttempt,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            check_power_mutable(record)?;
-            record.desired_power = request.desired_power;
-            record.updated_at_ms = record.updated_at_ms.max(request.updated_at_ms);
-            Ok(())
-        })
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
 
-    async fn set_environment_idle_policy(
+    async fn open_environment(
         &self,
-        request: SetEnvironmentIdlePolicy,
+        request: OpenEnvironment,
     ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-        validate_nonnegative_i64(request.updated_at_ms, "updated_at_ms")?;
-        if let Some(policy) = &request.idle_policy {
-            policy.validate()?;
-        }
-        let mut state = self.write_state()?;
-        update_environment(&mut state, &request.environment_id, |record| {
-            check_power_mutable(record)?;
-            record.idle_policy = request.idle_policy;
-            record.updated_at_ms = record.updated_at_ms.max(request.updated_at_ms);
-            Ok(())
-        })
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
-}
 
-/// Change one environment through `change` on a copy, validate the result,
-/// and store it only when it is valid: a refused change leaves the stored
-/// record untouched.
-fn update_environment(
-    state: &mut RegistryState,
-    environment_id: &EnvironmentId,
-    change: impl FnOnce(&mut EnvironmentRecord) -> Result<(), EnvironmentRegistryError>,
-) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
-    let stored = state
-        .environments
-        .get_mut(environment_id)
-        .ok_or_else(|| not_found("environment", environment_id))?;
-    let mut candidate = stored.clone();
-    change(&mut candidate)?;
-    candidate.validate()?;
-    *stored = candidate.clone();
-    Ok(candidate)
-}
+    async fn fail_environment(
+        &self,
+        request: FailEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
+    }
 
-/// Apply a gateway connection observation to a registered environment.
-/// Closing and closed environments keep their state: a late heartbeat must
-/// not resurrect them.
-pub fn apply_registered_observation(
-    record: &mut EnvironmentRecord,
-    observation: RegisteredConnectionObservation,
-    observed_at_ms: i64,
-    metadata: std::collections::BTreeMap<String, String>,
-) -> Result<(), EnvironmentRegistryError> {
-    if !record.is_registered() {
-        return invalid("connection observations apply only to registered environments");
+    async fn end_provisioned_environment(
+        &self,
+        request: EndProvisionedEnvironment,
+    ) -> Result<EnvironmentRecord, EnvironmentRegistryError> {
+        self.change(&request.environment_id, |record| request.apply(record))
+            .map(|(record, _)| record)
     }
-    if record.status.is_closing_or_closed() {
-        return Ok(());
-    }
-    record.metadata.extend(metadata);
-    match observation {
-        RegisteredConnectionObservation::Connected => {
-            record.status = EnvironmentStatus::Ready;
-            record.last_seen_at_ms = Some(observed_at_ms);
-        }
-        RegisteredConnectionObservation::Heartbeat => {
-            record.last_seen_at_ms = Some(observed_at_ms);
-        }
-        RegisteredConnectionObservation::Disconnected => {
-            record.status = EnvironmentStatus::Offline;
-        }
-    }
-    record.updated_at_ms = record.updated_at_ms.max(observed_at_ms);
-    Ok(())
 }
 
 #[async_trait]
@@ -740,14 +656,12 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
         request: CreateEnvironmentRegistrationKey,
     ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
         request.record.validate()?;
+        validate_secret_hash(&request.secret_hash)?;
         let mut state = self.write_state()?;
         if state
             .registration_keys
             .contains_key(&request.record.registration_key_id)
-            || state
-                .registration_keys
-                .values()
-                .any(|stored| stored.secret_hash == request.secret_hash)
+            || secret_known(&state, &request.secret_hash)
         {
             return Err(EnvironmentRegistryError::AlreadyExists {
                 kind: "environment_registration_key",
@@ -757,8 +671,11 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
         state.registration_keys.insert(
             request.record.registration_key_id.clone(),
             StoredRegistrationKey {
-                secret_hash: request.secret_hash,
                 record: request.record.clone(),
+                secrets: vec![StoredSecret {
+                    secret_hash: request.secret_hash,
+                    retired_at_ms: None,
+                }],
             },
         );
         Ok(request.record)
@@ -769,10 +686,8 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
         registration_key_id: &EnvironmentRegistrationKeyId,
     ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
         self.read_state()?
-            .registration_keys
-            .get(registration_key_id)
-            .map(|stored| stored.record.clone())
-            .ok_or_else(|| not_found("environment_registration_key", registration_key_id))
+            .registration_key(registration_key_id)
+            .cloned()
     }
 
     async fn list_registration_keys(
@@ -784,6 +699,51 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
             .values()
             .map(|stored| stored.record.clone())
             .collect())
+    }
+
+    async fn update_registration_key(
+        &self,
+        request: UpdateEnvironmentRegistrationKey,
+    ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        let stored = state
+            .registration_keys
+            .get_mut(&request.registration_key_id)
+            .ok_or_else(|| {
+                not_found("environment_registration_key", &request.registration_key_id)
+            })?;
+        request.apply(&mut stored.record)?;
+        Ok(stored.record.clone())
+    }
+
+    async fn rotate_registration_key(
+        &self,
+        request: RotateEnvironmentRegistrationKey,
+    ) -> Result<EnvironmentRegistrationKeyRecord, EnvironmentRegistryError> {
+        let mut state = self.write_state()?;
+        if secret_known(&state, &request.secret_hash) {
+            return Err(EnvironmentRegistryError::AlreadyExists {
+                kind: "environment_registration_key_secret",
+                id: request.key_prefix.clone(),
+            });
+        }
+        let stored = state
+            .registration_keys
+            .get_mut(&request.registration_key_id)
+            .ok_or_else(|| {
+                not_found("environment_registration_key", &request.registration_key_id)
+            })?;
+        request.apply(&mut stored.record)?;
+        for secret in &mut stored.secrets {
+            if secret.retired_at_ms.is_none() {
+                secret.retired_at_ms = Some(request.rotated_at_ms);
+            }
+        }
+        stored.secrets.push(StoredSecret {
+            secret_hash: request.secret_hash,
+            retired_at_ms: None,
+        });
+        Ok(stored.record.clone())
     }
 
     async fn revoke_registration_key(
@@ -799,8 +759,9 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
                 not_found("environment_registration_key", &request.registration_key_id)
             })?;
         if stored.record.revoked_at_ms.is_none() {
-            stored.record.revoked_at_ms =
-                Some(request.revoked_at_ms.max(stored.record.created_at_ms));
+            let revoked_at_ms = request.revoked_at_ms.max(stored.record.created_at_ms);
+            stored.record.revoked_at_ms = Some(revoked_at_ms);
+            stored.record.updated_at_ms = stored.record.updated_at_ms.max(revoked_at_ms);
         }
         Ok(stored.record.clone())
     }
@@ -813,7 +774,11 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
             .read_state()?
             .registration_keys
             .values()
-            .find(|stored| stored.secret_hash == secret_hash)
+            .find(|stored| {
+                stored.secrets.iter().any(|secret| {
+                    secret.retired_at_ms.is_none() && secret.secret_hash == secret_hash
+                })
+            })
             .map(|stored| stored.record.clone()))
     }
 
@@ -822,12 +787,7 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
         registration_key_id: &EnvironmentRegistrationKeyId,
     ) -> Result<RegistrationKeyUsage, EnvironmentRegistryError> {
         let state = self.read_state()?;
-        if !state.registration_keys.contains_key(registration_key_id) {
-            return Err(not_found(
-                "environment_registration_key",
-                registration_key_id,
-            ));
-        }
+        state.registration_key(registration_key_id)?;
         let mut usage = RegistrationKeyUsage::default();
         for record in state
             .environments
@@ -835,7 +795,7 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
             .filter(|record| record.registration_key_id() == Some(registration_key_id))
         {
             usage.registered += 1;
-            if record.status != EnvironmentStatus::Closed {
+            if record.state != EnvironmentState::Closed {
                 usage.active += 1;
             }
             usage.last_registered_at_ms = Some(
@@ -848,21 +808,14 @@ impl EnvironmentRegistrationKeyStore for InMemoryEnvironmentRegistryStore {
     }
 }
 
-/// Power intent and idle policy exist only for provisioned environments that
-/// are not on their way out.
-pub(crate) fn check_power_mutable(
-    record: &EnvironmentRecord,
-) -> Result<(), EnvironmentRegistryError> {
-    if !matches!(record.source, EnvironmentSource::Provisioned { .. }) {
-        return invalid("only provisioned environments have power control");
-    }
-    if matches!(
-        record.status,
-        EnvironmentStatus::Closing | EnvironmentStatus::Closed | EnvironmentStatus::Failed
-    ) {
-        return invalid("cannot change power of a closing, closed, or failed environment");
-    }
-    Ok(())
+/// Secret hashes are unique across every key, retired ones included.
+fn secret_known(state: &RegistryState, secret_hash: &str) -> bool {
+    state.registration_keys.values().any(|stored| {
+        stored
+            .secrets
+            .iter()
+            .any(|secret| secret.secret_hash == secret_hash)
+    })
 }
 
 #[async_trait]

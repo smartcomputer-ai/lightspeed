@@ -222,6 +222,11 @@ pub trait AgentApiService: Send + Sync {
         params: EnvironmentReadParams,
     ) -> Result<AgentApiOutcome<EnvironmentReadResponse>, AgentApiError>;
 
+    async fn update_environment(
+        &self,
+        params: EnvironmentUpdateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentUpdateResponse>, AgentApiError>;
+
     async fn list_environments(
         &self,
         params: EnvironmentListParams,
@@ -246,11 +251,6 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentPowerPutParams,
     ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError>;
-
-    async fn put_environment_idle_policy(
-        &self,
-        params: EnvironmentIdlePolicyPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentIdlePolicyPutResponse>, AgentApiError>;
 
     async fn list_environment_provider_bindings(
         &self,
@@ -332,6 +332,16 @@ pub trait AgentApiService: Send + Sync {
         &self,
         params: EnvironmentRegistrationKeyListParams,
     ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyListResponse>, AgentApiError>;
+
+    async fn update_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyUpdateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>, AgentApiError>;
+
+    async fn rotate_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyRotateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>, AgentApiError>;
 
     async fn revoke_environment_registration_key(
         &self,

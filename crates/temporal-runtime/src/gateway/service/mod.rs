@@ -10,7 +10,6 @@ pub(crate) mod channels_api;
 mod common;
 mod controller;
 pub(crate) use crate::environments::lifecycle as environment_lifecycle;
-pub(crate) use crate::environments::power as environment_power;
 pub(crate) use crate::environments::providers as environment_providers;
 mod environments;
 mod errors;
@@ -46,7 +45,6 @@ use catalogs::parse_client_context_key;
 use common::now_ms;
 pub use environment_lifecycle::ReconcileFailureLog;
 use environment_lifecycle::parse_registry_environment_id;
-pub use environment_power::PowerReaperStats;
 use environment_providers::map_environments_error;
 use environments::{activate_environment_command, deactivate_environment_command};
 use errors::*;
@@ -566,6 +564,7 @@ pub struct GatewayAgentApiBuilder {
     model_discovery_anthropic: Option<Arc<anthropic::Client>>,
     provider_controller_connector: Arc<dyn ProviderControllerConnector>,
     environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
+    environment_signals: Arc<crate::environments::signals::EnvironmentSignals>,
 }
 
 impl GatewayAgentApiBuilder {
@@ -646,6 +645,15 @@ impl GatewayAgentApiBuilder {
         gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
     ) -> Self {
         self.environment_gateway = gateway;
+        self
+    }
+
+    /// The process's environment signals; a fresh instance by default.
+    pub fn with_environment_signals(
+        mut self,
+        signals: Arc<crate::environments::signals::EnvironmentSignals>,
+    ) -> Self {
+        self.environment_signals = signals;
         self
     }
 
@@ -772,6 +780,7 @@ impl GatewayAgentApiBuilder {
             model_discovery,
             provider_controller_connector: self.provider_controller_connector,
             environment_gateway: self.environment_gateway,
+            environment_signals: self.environment_signals,
         }
     }
 }
@@ -799,6 +808,7 @@ pub struct GatewayAgentApi {
     model_discovery: ModelDiscoveryService,
     provider_controller_connector: Arc<dyn ProviderControllerConnector>,
     pub(crate) environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
+    environment_signals: Arc<crate::environments::signals::EnvironmentSignals>,
 }
 
 impl GatewayAgentApi {
@@ -832,6 +842,7 @@ impl GatewayAgentApi {
             model_discovery_anthropic: None,
             provider_controller_connector: Arc::new(WebSocketProviderControllerConnector),
             environment_gateway,
+            environment_signals: Arc::default(),
         }
     }
 
@@ -3629,6 +3640,21 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn update_environment(
+        &self,
+        params: EnvironmentUpdateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentUpdateResponse>, AgentApiError> {
+        self.authorize_method(
+            METHOD_ENVIRONMENTS_UPDATE,
+            Some(ResourceRef::Environment(params.environment_id.clone())),
+        )
+        .await?;
+        self.environment_service()
+            .update_environment_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn list_environments(
         &self,
         params: EnvironmentListParams,
@@ -3698,6 +3724,30 @@ impl AgentApiService for GatewayAgentApi {
             .map(AgentApiOutcome::new)
     }
 
+    async fn update_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyUpdateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE, None)
+            .await?;
+        self.environment_service()
+            .update_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
+    async fn rotate_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyRotateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>, AgentApiError> {
+        self.authorize_method(METHOD_ENVIRONMENTS_REGISTRATION_KEYS_ROTATE, None)
+            .await?;
+        self.environment_service()
+            .rotate_environment_registration_key_record(params)
+            .await
+            .map(AgentApiOutcome::new)
+    }
+
     async fn revoke_environment_registration_key(
         &self,
         params: EnvironmentRegistrationKeyRevokeParams,
@@ -3733,20 +3783,6 @@ impl AgentApiService for GatewayAgentApi {
         )
         .await?;
         self.put_environment_power_record(params)
-            .await
-            .map(AgentApiOutcome::new)
-    }
-
-    async fn put_environment_idle_policy(
-        &self,
-        params: EnvironmentIdlePolicyPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentIdlePolicyPutResponse>, AgentApiError> {
-        self.authorize_method(
-            METHOD_ENVIRONMENTS_IDLE_POLICY_PUT,
-            Some(ResourceRef::Environment(params.environment_id.clone())),
-        )
-        .await?;
-        self.put_environment_idle_policy_record(params)
             .await
             .map(AgentApiOutcome::new)
     }
@@ -4853,10 +4889,6 @@ pub(crate) fn allocate_environment_id_public() -> ::environments::EnvironmentId 
     environment_lifecycle::allocate_environment_id()
 }
 
-pub(crate) fn allocate_incarnation_id_public() -> ::environments::EnvironmentIncarnationId {
-    environment_lifecycle::allocate_incarnation_id()
-}
-
 #[cfg(test)]
 mod tests;
 
@@ -4870,9 +4902,14 @@ impl GatewayAgentApi {
     pub(crate) fn environment_service(&self) -> crate::environments::EnvironmentService {
         crate::environments::EnvironmentService {
             store: self.store.clone(),
-            environment_gateway: self.environment_gateway.clone(),
             provider_controller_connector: self.provider_controller_connector.clone(),
+            signals: self.environment_signals.clone(),
         }
+    }
+
+    /// The process's environment signals.
+    pub fn environment_signals(&self) -> &Arc<crate::environments::signals::EnvironmentSignals> {
+        &self.environment_signals
     }
     pub(super) async fn put_environment_ingress_record(
         &self,
@@ -4910,15 +4947,6 @@ impl GatewayAgentApi {
             .await
     }
 
-    pub(super) async fn put_environment_idle_policy_record(
-        &self,
-        params: EnvironmentIdlePolicyPutParams,
-    ) -> Result<EnvironmentIdlePolicyPutResponse, AgentApiError> {
-        self.environment_service()
-            .put_environment_idle_policy_record(params)
-            .await
-    }
-
     pub(super) async fn list_environment_records(
         &self,
         params: EnvironmentListParams,
@@ -4940,12 +4968,6 @@ impl GatewayAgentApi {
     pub async fn reconcile_environments_once(&self) -> Result<usize, AgentApiError> {
         self.environment_service()
             .reconcile_environments_once()
-            .await
-    }
-
-    pub async fn reap_idle_environments_once(&self) -> Result<PowerReaperStats, AgentApiError> {
-        self.environment_service()
-            .reap_idle_environments_once()
             .await
     }
 

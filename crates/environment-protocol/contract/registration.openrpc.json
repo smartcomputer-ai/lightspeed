@@ -123,8 +123,8 @@
             "type": "string"
           },
           {
-            "const": "adoptTarget",
-            "description": "The controller's `adoptTarget` capability.",
+            "const": "power",
+            "description": "The controller's `power` capability.",
             "type": "string"
           },
           {
@@ -160,7 +160,7 @@
       },
       "ClosedParams": {
         "additionalProperties": false,
-        "description": "`registration/closed` params: the gateway ends the session for good and\ncloses the socket after this frame. The daemon exits and does not\nreconnect.",
+        "description": "`registration/closed` params: the gateway ends the session for good and\ncloses the socket after this frame. The daemon exits or parks, as\nconfigured, and does not reconnect.",
         "properties": {
           "message": {
             "anyOf": [
@@ -700,13 +700,6 @@
         ],
         "type": "object"
       },
-      "IncarnationId": {
-        "description": "`incarnationId` of one incarnation of an environment.",
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
-        "type": "string"
-      },
       "Metadata": {
         "additionalProperties": {
           "maxLength": 256,
@@ -908,7 +901,7 @@
           },
           {
             "const": "ownerMismatch",
-            "description": "The target belongs to another owner, or (`target/adopt`) the owner\nalready holds a different target.",
+            "description": "The target belongs to another owner.",
             "type": "string"
           },
           {
@@ -924,11 +917,6 @@
           {
             "const": "targetNotActive",
             "description": "A power change on a target whose `phase` is not `active`\n(provisioning, closing, closed or failed).",
-            "type": "string"
-          },
-          {
-            "const": "notAdoptable",
-            "description": "`target/adopt`: the source target exists but the provider cannot take\nit over, for example an instance of a kind it does not manage.",
             "type": "string"
           }
         ]
@@ -1065,14 +1053,10 @@
           },
           "identityMode": {
             "$ref": "#/components/schemas/RegistrationIdentityMode"
-          },
-          "incarnationId": {
-            "$ref": "#/components/schemas/IncarnationId"
           }
         },
         "required": [
           "environmentId",
-          "incarnationId",
           "daemonId",
           "controlConnectionId",
           "identityMode",
@@ -1106,9 +1090,9 @@
     }
   },
   "info": {
-    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 3. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
+    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 4. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
     "title": "Lightspeed environment registration channel",
-    "version": "3"
+    "version": "4"
   },
   "methods": [
     {

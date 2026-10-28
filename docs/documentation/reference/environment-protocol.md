@@ -22,7 +22,7 @@ The protocol has three planes. Each runs over its own WebSocket connection.
 | Controller | The Lightspeed runtime | A provider controller | `CONTROLLER_PROTOCOL_VERSION` | Create, observe, power, and close the provider's targets. |
 | Registration | `lightspeed-envd` | The Lightspeed environment gateway | `ENVD_PROTOCOL_VERSION` | Admit an outbound daemon and ask it for reverse-dialed data streams. |
 
-Both numbers are currently `3`. They are matched exactly. A peer that states
+Both numbers are currently `4`. They are matched exactly. A peer that states
 any other number is refused with `versionMismatch`. There are no version
 ranges and no negotiation. A change to a plane's wire shape, or to the meaning
 of an existing field or method, needs a new number for that plane. The data
@@ -54,6 +54,11 @@ Generated from the manifest and committed under
 | --- | --- |
 | `data.openrpc.json`, `controller.openrpc.json`, `registration.openrpc.json` | One OpenRPC document per plane: every method, its params, result, and summary. |
 | `data.schema.json`, `controller.schema.json`, `registration.schema.json` | JSON Schema bundles of every type the plane uses. |
+
+The controller documents also name two types that no method carries as a
+whole: `x-lightspeed-data-route`, the data route refusal body with its hold
+and `Retry-After` bounds, and `x-lightspeed-idle-policy`, the idle policy
+providers run.
 
 Each method also has a fixture under
 [`fixtures/<plane>/`](../../../crates/environment-protocol/fixtures/), named
@@ -129,7 +134,7 @@ of any version can read them.
 | Optionality | No `null` except JSON-RPC's own `id`. Absent options and empty collections are omitted. Flags are booleans that default to false and are omitted when false. |
 | Numbers | Byte counts, offsets, and durations are unsigned 64-bit; counts, indices, and depths unsigned 32-bit; instants are signed 64-bit milliseconds since the Unix epoch. Every value stays below 2^53. |
 | Unions | Data unions carry a `kind` tag. |
-| Ids | Lightspeed-assigned ids follow the general grammar `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`. Provider-assigned ids (`targetId`, `templateId`, `sourceTarget`) are opaque: 1 to 255 bytes without control characters. |
+| Ids | Lightspeed-assigned ids follow the general grammar `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`. Provider-assigned ids (`targetId`, `templateId`) are opaque: 1 to 255 bytes without control characters. |
 | Bytes | Payloads are padded standard base64. Fixed-size cryptographic values are lowercase hex. Content digests are `sha256:<64 hex>`. Opaque fingerprints carry their own prefix, such as `scan:v1:`. |
 | Paths | `EnvironmentPath`: absolute, normalized, at most 4096 bytes; `.` and `..` segments are refused, not rewritten. Tree entries use relative `TreePath` values; the selected root itself is `.`. |
 | Text | Descriptive text such as a target `message` is 1 to 1024 bytes, without control characters other than line feed and tab. URLs are at most 2048 bytes. |
@@ -177,8 +182,8 @@ Reasons by kind:
 | --- | --- |
 | `permissionDenied` | `outsideRoot`, `daemonState`, `filePermission`, `invalidSignature`, `invalidRegistrationKey`, `registrationKeyRevoked` |
 | `notFound` | `expired` (the handle was evicted), `daemonRestarted` (the handle belongs to an earlier daemon instance), `unknownDaemon` |
-| `capabilityUnavailable` | `filesystem`, `filesystemWrite`, `process`, `processPty`, `job`, `adoptTarget`, `ingress` |
-| `failedPrecondition` | `inputClosed`, `ifMatchFailed`, `createCondition`, `notEmpty`, `isDirectory`, `notDirectory`, `notRegularFile`, `symlinkLoop`, `symlinkRejected`, `filesystemRoot`, `crossDevice`, `noSpace`, `jobIdInUse`, `operationIdInUse`, `transferPhase`, `transferOffset`, `digestMismatch`, `environmentClosed`, `identityInUse`, `ownerMismatch`, `templateDeprecated`, `ingressUnsupported`, `targetNotActive`, `notAdoptable` |
+| `capabilityUnavailable` | `filesystem`, `filesystemWrite`, `process`, `processPty`, `job`, `power`, `ingress` |
+| `failedPrecondition` | `inputClosed`, `ifMatchFailed`, `createCondition`, `notEmpty`, `isDirectory`, `notDirectory`, `notRegularFile`, `symlinkLoop`, `symlinkRejected`, `filesystemRoot`, `crossDevice`, `noSpace`, `jobIdInUse`, `operationIdInUse`, `transferPhase`, `transferOffset`, `digestMismatch`, `environmentClosed`, `identityInUse`, `ownerMismatch`, `templateDeprecated`, `ingressUnsupported`, `targetNotActive` |
 | `busy` | `requestLimit`, `transferCapacity`, `rateLimited`, `capacityExhausted` |
 | `aborted` | `cancelled`, `sourceChanged` |
 
@@ -246,16 +251,30 @@ requests as if each had been cancelled, and drops their replies.
 ## Controller plane
 
 A provider controller manages targets: machines, containers, or other units
-of compute. The runtime is the client.
+of compute. The runtime is the client. Calls go one way only: the runtime
+calls the provider, and the provider never calls Lightspeed.
+
+The provider owns everything that happens to a running target: its power,
+its idle policy, its ingress, its placement, and any pools or snapshots
+behind it. Lightspeed decides only two things, that an environment is
+created and that it is closed, and it retries both until the provider
+accepts them. Lightspeed records what the provider reports for display;
+it stores no power or ingress intent and never reverts a change the
+provider made.
 
 ### Transport and credential
 
 The controller is a WebSocket endpoint at the URL the operator registers in
 Lightspeed: `ws://`, `wss://`, or `unix:///absolute/path`. Any path is
-allowed. Every connection carries the provider credential as
-`Authorization: Bearer <credential>`. The provider compares it in constant
-time and answers HTTP 401 before the upgrade when it is missing or wrong. The
-same credential authenticates the provider's data routes.
+allowed.
+
+The credential is optional. When the provider is registered with one, every
+connection to the controller and to its data routes carries it as
+`Authorization: Bearer <credential>`; the provider compares it in constant
+time and answers HTTP 401 before the upgrade when it is missing or wrong.
+When the provider is registered without one, the runtime sends no
+`Authorization` header. Run a provider without a credential only where
+nothing but Lightspeed can reach its listener.
 
 ### `initialize`
 
@@ -266,42 +285,31 @@ The params carry `protocolVersion` and `clientInfo`. The response carries:
 | `protocolVersion` | The controller's number. |
 | `plane` | Always `controller`. |
 | `serverInfo` | The controller's build. |
-| `capabilities` | Optional features: `adoptTarget` serves `target/adopt`, and `ingress` serves `ingress/ensure` and `ingress/remove`. Every other controller method is mandatory. |
-| `routes.data` | The base URL of the provider's data routes. |
+| `capabilities` | Optional methods: `power` serves `target/setPower`, and `ingress` serves `ingress/ensure` and `ingress/remove`. `template/list`, `target/create`, `target/get`, and `target/close` are mandatory. |
 
 ```json
 {
-  "protocolVersion": 3,
+  "protocolVersion": 4,
   "plane": "controller",
   "serverInfo": {"name": "lightspeed-provider-incus", "version": "0.5.0"},
-  "capabilities": {"adoptTarget": true, "ingress": true},
-  "routes": {"data": "wss://provider.example.com:19090/routes"}
+  "capabilities": {"power": true, "ingress": true}
 }
 ```
 
-`routes.data` is a `ws://` or `wss://` URL with a lowercase scheme, a host
-and optional port, an optional path that does not end with `/`, and no user
-information, query, or fragment. It is never rewritten. A controller reached
-over `wss` (or `https`) must advertise a `wss` base, so the credential never
-travels in cleartext. The runtime checks this at every `initialize` and
-treats a downgrade like a failed handshake.
-
-A target's data route is the base followed by
-`/{universeId}/{bindingId}/{environmentId}/{incarnationId}/{targetId}`, each
-segment percent-encoded (everything except RFC 3986 unreserved characters).
-The runtime dials it with the same bearer credential. The provider serves the
-daemon's data plane unchanged on that route, under the liveness rule and the
-message limit above, and refuses a route whose owner does not own the target.
+The runtime reads `capabilities` from the live handshake of each
+connection and never stores it. It refuses an API request for a power or
+ingress change up front when the provider does not advertise the method.
+A controller that receives an optional method it does not serve answers
+`capabilityUnavailable`.
 
 ### Methods
 
 | Method | Params | Semantics | Errors |
 | --- | --- | --- | --- |
-| `template/list` | `binding {universeId, bindingId}` | The templates the binding may create targets from. | `unavailable` |
-| `target/create` | `owner`, `templateId` | Idempotent per owner. If the provider already holds a target for the owner, answer its observation and apply no creation policy (deprecation, binding, or image checks). Otherwise apply policy, start creation, and answer promptly with `phase: provisioning`. | `failedPrecondition` (`templateDeprecated`, `ownerMismatch`), `notFound` (template), `invalidParams`, `unavailable` |
-| `target/adopt` | `owner`, `sourceTarget` | Needs `adoptTarget`. Take ownership of an existing target named in a provider-defined format. Idempotent per owner. | `capabilityUnavailable`, `notFound`, `failedPrecondition` (`ownerMismatch`, `notAdoptable`) |
+| `template/list` | `universeId` | The templates the universe may create targets from. A provider may offer each universe a different set. | `unavailable` |
+| `target/create` | `owner`, `templateId`, `displayName?`, `idle?` | Idempotent per owner. If the provider already holds a target for the owner, answer its observation and apply no creation policy (deprecation or image checks). Otherwise apply policy, start creation, and answer promptly with `phase: provisioning`. Handing out a target from a warm pool counts as a create. `idle` replaces the template's default idle policy for this target. | `failedPrecondition` (`templateDeprecated`, `ownerMismatch`), `notFound` (template), `invalidParams` (including an `idle` that does not validate), `unavailable` |
 | `target/get` | `target` | A pure read: it never creates, starts, or changes anything. Resolves by `targetId` when given, otherwise by owner. | `notFound`, `failedPrecondition` (`ownerMismatch`), `unavailable` |
-| `target/setPower` | `target`, `power` | Converge toward one of `supportedPowerStates`. A target already there, or moving there, is observed without action. Answer promptly with the transitional observation. | `notFound`, `invalidParams` (unsupported state), `failedPrecondition` (`targetNotActive`), `unavailable` |
+| `target/setPower` | `target`, `power` | Needs `power`. Move the target to one of its template's `powerStates`. A target already there, or moving there, is observed without action. Answer promptly with the transitional observation. The provider stays the owner of power afterwards. | `capabilityUnavailable`, `notFound`, `invalidParams` (a state outside `powerStates`), `failedPrecondition` (`targetNotActive`), `unavailable` |
 | `target/close` | `target` | Destroy everything the owner's target holds, public ingress included: gracefully within the provider's own bound, then forced. Answer `closing` while it runs, `closed` once nothing remains, and `closed` without `targetId` when the provider holds nothing for the owner. Idempotent. | `unavailable` |
 | `ingress/ensure` | `target` | Needs `ingress`. Route the template's public ingress to the target. Idempotent. | `capabilityUnavailable`, `notFound`, `failedPrecondition` (`ingressUnsupported`) |
 | `ingress/remove` | `target` | Needs `ingress`. Stop routing public ingress to a target that stays. Idempotent. | `capabilityUnavailable`, `notFound` |
@@ -310,19 +318,20 @@ Every target and ingress method answers `{"target": <observation>}`.
 
 ### Ownership
 
-A target belongs to exactly one owner:
+A target belongs to exactly one owner, the Lightspeed environment it serves:
 
 ```json
-{"universeId": "u1", "bindingId": "primary", "environmentId": "env_1", "incarnationId": "inc_1"}
+{"universeId": "u1", "environmentId": "env_1"}
 ```
 
 A provider holds at most one target per owner. Every target method names the
 owner in a target reference, `{owner, targetId?}`. Without `targetId`, the
 provider resolves the owner's target itself; this is how the runtime finds
 and closes a target whose id it never learned. A target that belongs to
-another owner is refused with `failedPrecondition` (`ownerMismatch`). Knowing
-a provider's target id is never enough: an old incarnation must not reach or
-destroy its replacement.
+another owner is refused with `failedPrecondition` (`ownerMismatch`).
+Knowing a provider's target id is never enough to reach a target. An
+environment id is never reused, so a closed environment's owner cannot
+reach a later environment's target.
 
 Record ownership durably enough to survive the provider's own restarts and
 an ambiguous create, where the target was created but the response was lost.
@@ -343,10 +352,9 @@ that carries one.
 ```json
 {
   "targetId": "ls-3f2a",
-  "owner": {"universeId": "u1", "bindingId": "primary", "environmentId": "env_1", "incarnationId": "inc_1"},
-  "displayName": "Acorn build machine",
-  "state": {"phase": "active", "power": "running", "daemonReady": true},
-  "supportedPowerStates": ["running", "paused", "stopped"],
+  "owner": {"universeId": "u1", "environmentId": "env_1"},
+  "phase": "active",
+  "power": "paused",
   "ingress": {"endpoint": "https://acorn.env.example.com"}
 }
 ```
@@ -355,51 +363,159 @@ that carries one.
 | --- | --- |
 | `targetId` | The provider's id. Absent only while provisioning before an id exists, and in a `closed` observation of an owner with nothing. |
 | `owner` | Always echoed from the request. |
-| `state.phase` | `provisioning`, `active`, `closing`, `closed`, `failed` (broken beyond the provider's own recovery), or `unknown` (the provider cannot tell). |
-| `state.power` | Present exactly when `phase` is `active`: `running`, `paused` (execution halted, memory retained), `suspended` (execution state persisted, compute released), or `stopped` (powered off, disks retained). |
-| `state.daemonReady` | The provider's own probe reached the daemon on the target's data route. The probe is a WebSocket upgrade only, so the provider does not need to speak the daemon's protocol version. |
-| `state.message` | Why the target is `failed` or `unknown`, or what a transition waits for. |
-| `supportedPowerStates` | Power states `target/setPower` can reach. Empty when the provider offers no power control beyond create and close. |
+| `phase` | `provisioning`, `active`, `closing`, `closed`, `failed` (broken beyond the provider's own recovery), or `unknown` (the provider cannot tell). |
+| `power` | Present exactly when `phase` is `active`: `running`, `paused` (execution halted, memory retained), `suspended` (execution state persisted, compute released), or `stopped` (powered off, disks retained). |
+| `message` | Why the target is `failed` or `unknown`, or what a transition waits for. |
 | `ingress` | Realized public ingress, an `http` or `https` URL. Absent when disabled. |
-| `displayName`, `metadata` | Provider display facts. Metadata has at most 32 entries, and keys starting with `lightspeed.` are reserved. |
 
-Report what the infrastructure shows, not what a caller asked for. A machine
-whose daemon is not reachable yet stays `daemonReady: false`.
+Report what the infrastructure shows, not what a caller asked for. An
+observation says nothing about whether the daemon answers: the runtime
+proves that itself by dialing the data route.
 
-A template has a `templateId`, a non-empty `displayName`, an optional
-`description`, and optional `publicIngress` and `deprecated` flags.
-`resources` states `vcpus`, `memoryBytes`, and `diskBytes` in
-provider-neutral units, each omitted when the provider does not fix it. A
-deprecated template creates no new targets; existing targets keep working.
+### Templates
+
+A template has a `templateId`, a non-empty `displayName`, and these
+optional fields:
+
+| Field | Meaning |
+| --- | --- |
+| `description` | A short description for people choosing a template. |
+| `powerStates` | The power states `target/setPower` can move this template's targets to. Absent or empty when the provider offers no power control beyond create and close. |
+| `publicIngress` | Targets of this template can serve public ingress. |
+| `idle` | The idle policy a target gets when `target/create` names none. Absent when the provider applies none by default. |
+| `deprecated` | The template creates no new targets; existing targets keep working. |
+| `resources` | `vcpus`, `memoryBytes`, and `diskBytes` in provider-neutral units, each omitted when the provider does not fix it. |
+| `metadata` | Provider display facts, such as an image fingerprint. |
+
+### Idle policy
+
+An idle policy names when a provider powers down or closes an idle target:
+
+```json
+{"pauseAfterMs": 600000, "stopAfterMs": 3600000, "closeAfterMs": 86400000}
+```
+
+`pauseAfterMs`, `suspendAfterMs`, `stopAfterMs`, and `closeAfterMs` are each
+optional, but a policy sets at least one. Every set threshold is positive,
+and the set thresholds are non-decreasing in the order pause, suspend, stop,
+close. A policy that breaks these rules is `invalidParams`.
+
+The policy belongs to the provider. A template names a default, and
+`target/create` may replace it for one target; the runtime validates a
+policy and passes it through without interpreting it. The provider runs the
+clock. For a running target it reads the daemon's `env/getIdle` over its own
+channel to the guest and applies the most escalated stage whose threshold
+`idleForMs` has reached and whose power state the template supports; `close`
+always qualifies. The protocol crate's
+[`IdlePolicy::due_action`](../../../crates/environment-protocol/src/idle.rs)
+implements that rule. Running processes, running jobs, and leftover process
+groups hold `idleForMs` at zero, so they keep the target awake.
+
+### Data routes
+
+A provider serves the daemon's data plane for each target on a data route:
+the provider's data route base followed by
+`/{universeId}/{environmentId}/{targetId}`, each segment percent-encoded
+(everything except RFC 3986 unreserved characters). The runtime dials it
+with the bearer credential when one is configured. The provider serves the
+data plane unchanged on that route, under the liveness rule and the message
+limit above, and refuses a route whose owner does not own the target.
+
+The data route base is a `ws://` or `wss://` URL with a lowercase scheme, a
+host and optional port, an optional path that does not end with `/`, and no
+user information, query, or fragment. The operator may set it when
+registering the provider. Without one, the runtime derives it from the
+controller URL: the controller's scheme, host, and port followed by
+`/routes`, so `wss://provider.example.com/control` gives
+`wss://provider.example.com/routes`. A `unix://` controller has no derivable
+base, so its registration must name one. A configured base for a controller
+reached over `wss` (or `https`) must itself use `wss`, so the credential
+never travels in cleartext; registration refuses a downgrade.
+
+A dial of a powered-down target's data route wakes the target. This is the
+only wake signal: Lightspeed has no separate wake call. The provider may
+hold the dial for at most 5 seconds (`MAX_DATA_ROUTE_HOLD_MS`) while it
+resumes the target. If the daemon answers in time, the route upgrades and
+relays as usual. Otherwise the provider refuses the upgrade with a JSON
+body, `Content-Type: application/json`, tagged by `state`:
+
+| Status | Body | Meaning |
+| --- | --- | --- |
+| 503 | `{"state": "waking"}` | The target is resuming from a powered-down state. |
+| 503 | `{"state": "booting"}` | The target runs, but the daemon does not answer yet. |
+| 410 | `{"state": "gone"}` | The target no longer exists. |
+| 409 | `{"state": "failed", "message": "..."}` | The target is broken beyond the provider's recovery. |
+
+Every 503 carries `Retry-After` in whole seconds, from 1 to 60
+(`RETRY_AFTER_MAX_SECS`); receivers clamp a larger value. A 503 may succeed
+on a later dial; 410 and 409 do not. The body is an HTTP refusal, not a
+JSON-RPC message. The controller schema bundle names it as
+`x-lightspeed-data-route`, together with both bounds.
+
+The environment gateway's worker route uses the same body. It adds three
+states of its own and forwards a provider's refusal unchanged, status and
+`Retry-After` included:
+
+| Status | Body | Meaning |
+| --- | --- | --- |
+| 503 | `{"state": "provisioning"}` | The environment is still provisioning. |
+| 503 | `{"state": "disconnected"}` | The registered daemon is not connected. |
+| 410 | `{"state": "away"}` | The registered daemon has been away longer than it is waited for. |
+
+### Provider obligations
+
+The provider owns its targets' power, idle policy, and ingress. Every
+provider:
+
+1. makes `target/create` and `target/close` idempotent per owner;
+2. wakes a powered-down target when its data route is dialed, holding the
+   upgrade at most 5 seconds before it answers a typed refusal;
+3. decides idleness from the daemon's `env/getIdle`, so running processes,
+   jobs, and leftover process groups keep the target awake;
+4. never powers a target down while it relays a data connection to it;
+5. reports `closed`, or `notFound` from `target/get`, for a target it
+   removed on its own, such as by a lifetime limit or an idle
+   `closeAfterMs`;
+6. never snapshots or clones a daemon state directory that holds a daemon
+   identity.
 
 ### How the runtime drives a controller
 
 Providers can rely on this behaviour:
 
-- Until it has recorded a target id, the runtime sends `target/create` (or
-  `target/adopt`) on each reconciler pass. Afterwards it observes only with
-  `target/get` and never sends create again.
-- `phase: active`, `power: running`, and `daemonReady: true` lead the runtime
-  to run the data-plane handshake on the target's route. Success marks the
-  environment ready. A daemon that speaks another protocol version fails the
-  environment, naming both versions.
-- `notFound` from `target/get`, `target/setPower`, or an ingress method means
-  the target is gone: the environment fails, or its close finishes.
-  `phase: failed` fails the environment with `state.message`.
-- Retryable kinds, transport failures, timeouts, undecodable answers,
-  `internal`, and every failed controller handshake (a version mismatch
-  included) keep the environment's status and record the error. The
-  environment fails after 30 minutes of such errors. Other refusals fail a
-  provisioning environment at once.
+- Until it has recorded a target id, the runtime sends `target/create`, with
+  the same `displayName` and `idle` on every attempt. Afterwards it observes
+  with `target/get` and never sends create again.
+- `phase: provisioning` is checked again after 2 seconds.
+- `phase: active` leads the runtime to run the data-plane handshake on the
+  target's route. This handshake is the only readiness proof: success opens
+  the environment and records the daemon's build. A daemon that speaks
+  another protocol version fails the environment, naming both versions. A
+  503 refusal is retried after its `Retry-After`; `gone` and `failed`
+  refusals fail the environment.
+- `phase: failed` fails the environment with its `message`. `closing` or
+  `closed` before the environment opened fails it too. `phase: unknown`
+  is retried with backoff.
+- Retryable kinds, `internal`, transport failures, timeouts, and failed
+  handshakes are retried with backoff: 2 seconds, doubling per attempt, at
+  most 5 minutes. Other refusals, `notFound` included, fail a provisioning
+  environment at once, so reserve them for requests that can never
+  succeed. An environment that has not opened within 30 minutes of entering
+  provisioning fails with the last recorded problem.
+- Every 5 minutes, the runtime reads each open environment's target with
+  `target/get` and records the observation for display. `phase: failed`
+  fails the environment. `closed`, or `notFound`, closes it with the reason
+  `providerEnded`. This sweep never changes power.
 - Close sends `target/close` by owner, with the target id when one is
-  recorded, until the provider answers `closed` or `notFound`. The runtime
-  never removes ingress before close.
-- Ingress and adoption calls are sent only when the controller advertises
-  the feature. API requests for them are refused otherwise.
-- Connect and `initialize` each have a 10-second deadline, and controller
-  calls a 120-second deadline. After a timeout or transport failure, the
-  runtime skips that provider's remaining environments for the rest of the
-  pass.
+  recorded, until the provider answers `closed` or `notFound`. `closing` is
+  checked again after 2 seconds, and errors are retried with backoff. Close
+  has no deadline, and the runtime never removes ingress before it.
+- `target/setPower` and the ingress methods are sent only when a user asks
+  for a change, synchronously, with a 30-second deadline, and only when the
+  controller advertises them. No loop calls them, and nothing retries them.
+- Connect and `initialize` each have a 10-second deadline, and the
+  runtime's other controller calls a 120-second deadline. The runtime keeps
+  at most eight calls in flight per provider, over one connection.
 
 ## Data plane
 
@@ -432,7 +548,7 @@ any side effect.
 | Method | Counts as use | Abortable | Needs | Purpose |
 | --- | --- | --- | --- | --- |
 | `initialize` | No | | | Handshake. |
-| `env/getIdle` | No | | | `idleForMs` since the last use, 0 while any process root or job runs, and diagnostic counts including leftover process groups. |
+| `env/getIdle` | No | | | `idleForMs` since the last use, 0 while any process root or job runs or any leftover process group has live members, and diagnostic counts. |
 | `$/cancelRequest` | No | | | Notification: abort a pending abortable request. |
 | `fs/readFile` | Yes | | `filesystem` | Read at most `maxBytes` of a regular file from `offset`. |
 | `fs/writeFile` | Yes | | `filesystem.write` | Write a file atomically, with `create`, `ifMatch`, and `executable`; answers the new `version`. |
@@ -454,8 +570,11 @@ any side effect.
 | `job/cancel` | Yes | | `job` | Cancel jobs and optionally their dependents. |
 
 Methods that count as use reset the environment's idle clock. Handshakes,
-idle reports, cancellations, and scans do not, so discovery and power
-policy can look at an environment without keeping it awake.
+idle reports, cancellations, and scans do not, so discovery and a
+provider's idle policy can look at an environment without keeping it awake.
+The idle clock also restarts when the last running process, job, or
+leftover process group ends: a service that a command started and left
+running keeps `idleForMs` at zero like running work.
 
 ### Paths and confinement
 
@@ -590,17 +709,22 @@ Rules:
   never to a decode loop.
 - The daemon signs `"lightspeed-envd-registration/v2" ‖ nonce ‖ sha256(origin)`
   with its Ed25519 key, where `origin` is the canonical WebSocket origin of
-  the gateway URL it dialed. The gateway verifies against the canonical
-  origin of its own public base URL, so a gateway cannot relay another
-  gateway's challenge.
+  the gateway URL it dialed. The gateway accepts a signature over any of
+  its configured registration origins: the canonical origin of its public
+  base URL, plus any further registration URLs the operator lists, such as
+  a cluster-internal service address. Every other origin is refused, so a
+  gateway cannot relay another gateway's challenge.
 - The registration key is sent only until the daemon's first admission.
   `displayName` and `metadata` are read only then.
 - Before admission the gateway accepts only `registration/register`. Out of
   bounds build facts, display names, or metadata refuse admission with
   `invalidRequest`; other undecodable params are `invalidParams`.
-- The receipt names `environmentId`, `incarnationId`, `daemonId`,
-  `controlConnectionId`, `identityMode` (`persistent` or `ephemeral`), and
-  `admission` (`created` or `reconnected`).
+- The receipt names `environmentId`, `daemonId`, `controlConnectionId`,
+  `identityMode` (`persistent` or `ephemeral`), and `admission` (`created`
+  or `reconnected`).
+- `registration/goodbye` from a persistent identity marks its environment
+  disconnected; the environment stays open and waits for the daemon to
+  return. From an ephemeral identity, it closes the environment.
 - For each `registration/openStream`, the daemon dials the stream URL derived
   from its configured connect URL, replacing the
   `/environment-gateway/connect` suffix with `/environment-gateway/data`, with
@@ -611,13 +735,20 @@ Rules:
 - The newest connection for a daemon identity wins. The gateway sends
   `registration/closed` with reason `superseded` to the older one before
   closing it.
+- When the environment closes while its daemon is connected, the gateway
+  sends `registration/closed` with reason `environmentClosed`. A closed
+  identity that registers again is refused with `failedPrecondition`
+  (`environmentClosed`). Either way the identity is spent: the daemon exits
+  or parks, as configured, and never reconnects.
 
 The daemon's exit status says why it stopped: 0 after a deliberate shutdown,
 1 for an unexpected failure, 2 for a local configuration or receipt-file
 error, 3 for a terminal
 registration refusal or an unsupported gateway protocol, 4 when its
 environment was closed, and 5 when another process with the same identity
-superseded it. Retryable refusals, disconnects, and heartbeat timeouts never
+superseded it. A daemon configured to park on close instead stops
+registering and listening, waits for `SIGTERM` or `SIGINT`, and then exits
+with 0. Retryable refusals, disconnects, and heartbeat timeouts never
 end the process.
 
 ## Conformance
@@ -628,11 +759,16 @@ provisioning anything else:
 - The controller suite,
   [`environment_client::conformance::controller`](../../../crates/environment-client/src/conformance/controller.rs)
   behind the client crate's `conformance` feature, drives any controller URL
-  with a credential and one template. It checks the handshake rules, the
-  credential refusal, the data-route downgrade rule, per-owner create
-  idempotency, pure `target/get`, owner fencing, close by owner, and
-  `capabilityUnavailable` for features the controller does not advertise.
+  with one template, and with the credential when the provider uses one. It
+  checks the handshake rules, the credential refusal, per-owner create
+  idempotency, pure `target/get`, owner fencing, close by owner and its
+  repetition, strict decoding of every observation, and
+  `capabilityUnavailable` for methods the controller does not advertise.
   It creates and closes one target.
+- The data-route helpers,
+  [`environment_client::conformance::data_route`](../../../crates/environment-client/src/conformance/data_route.rs),
+  check that a refused data route answers a typed body with the status it
+  names, a 503 with `Retry-After`, within the hold bound.
 - The data suite,
   [`tools::environment_protocol::conformance`](../../../crates/tools/src/environment_protocol/conformance.rs),
   drives a data endpoint and checks file writes and reads, confinement,

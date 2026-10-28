@@ -9,12 +9,12 @@ use auth::{
 };
 use environment_protocol::{ids::ProviderTargetId, routes::DataRouteBase};
 use environments::{
-    BeginCloseEnvironment, ControllerFeatures, CreateEnvironment, EnvironmentEndpoint,
-    EnvironmentId, EnvironmentIncarnationId, EnvironmentProviderBindingId,
-    EnvironmentProviderBindingStatus, EnvironmentProviderBindingStore, EnvironmentProviderId,
-    EnvironmentProviderStore, EnvironmentProvisionRequestId, EnvironmentStatus, EnvironmentStore,
-    EnvironmentTemplateId, ListEnvironmentProviders, ListEnvironments,
-    ObserveProvisionedEnvironment, PutEnvironmentProvider, PutEnvironmentProviderBinding,
+    BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment, DaemonBuild,
+    EnvironmentCloseReason, EnvironmentEndpoint, EnvironmentId, EnvironmentProviderBindingStore,
+    EnvironmentProviderId, EnvironmentProviderStore, EnvironmentProvisionRequestId,
+    EnvironmentRegistryError, EnvironmentState, EnvironmentStore, EnvironmentTemplateId,
+    FinishCloseEnvironment, ListEnvironments, ProviderCredentialChange, PutEnvironmentProvider,
+    PutEnvironmentProviderBinding,
 };
 use harness::{
     BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
@@ -1995,253 +1995,6 @@ async fn pg_live_mcp_crud_and_universe_isolation() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_universe_environments_are_independent_of_sessions() {
-    let store = live_store("environments", 1024).await;
-    for table in ["environment_jobs", "environment_job_groups"] {
-        let relation: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
-            .bind(format!("public.{table}"))
-            .fetch_one(store.pool())
-            .await
-            .expect("inspect removed environment job table");
-        assert!(
-            relation.is_none(),
-            "legacy job table must be removed: {table}"
-        );
-    }
-    let provider_id = EnvironmentProviderId::new("bridge-local");
-    let target_id = ProviderTargetId::new("local-host").expect("target id");
-    let environment_id = EnvironmentId::new("instance-local");
-    let session_id = SessionId::new("session-env");
-
-    let provider = store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: provider_id.clone(),
-            display_name: Some("Local bridge".to_owned()),
-            controller_endpoint: EnvironmentEndpoint::parse("ws://127.0.0.1:9000/controller")
-                .expect("endpoint"),
-            metadata: Default::default(),
-            credential: Some(SecretValue::new("bridge-credential")),
-            updated_at_ms: 10,
-        })
-        .await
-        .expect("register provider");
-    // Providers are global rows shared by every test universe on this
-    // database, so assert membership rather than equality.
-    assert!(
-        store
-            .list_providers(ListEnvironmentProviders::default())
-            .await
-            .expect("list providers")
-            .contains(&provider),
-        "registered provider must be listed"
-    );
-
-    store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id: store.config().universe_id,
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            provider_id: provider_id.clone(),
-            status: EnvironmentProviderBindingStatus::Enabled,
-            metadata: Default::default(),
-            expected_revision: None,
-            updated_at_ms: 25,
-        })
-        .await
-        .expect("provider binding");
-    store
-        .create_environment(CreateEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("request-local"),
-            environment_id: environment_id.clone(),
-            incarnation_id: EnvironmentIncarnationId::new("incarnation-local"),
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            template_id: EnvironmentTemplateId::new("rust-v1"),
-            display_name: Some("Local host".to_owned()),
-            metadata: Default::default(),
-
-            idle_policy: Some(environments::EnvironmentIdlePolicy {
-                pause_after_ms: Some(60_000),
-                suspend_after_ms: None,
-                stop_after_ms: Some(3_600_000),
-                close_after_ms: None,
-            }),
-            created_at_ms: 29,
-        })
-        .await
-        .expect("create environment");
-    let instance = store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment_id.clone(),
-            provider_target_id: Some(target_id.clone()),
-            daemon_build: None,
-            status: EnvironmentStatus::Offline,
-            power_states: vec![
-                environments::PowerState::Running,
-                environments::PowerState::Paused,
-                environments::PowerState::Stopped,
-            ],
-            observed_at_ms: 30,
-        })
-        .await
-        .expect("upsert target");
-    // Power intent, observed power states, and idle policy round-trip
-    // and feed the reconcile/reaper queries.
-    assert_eq!(instance.desired_power, environments::PowerState::Running);
-    assert_eq!(
-        instance.incarnation.power_states,
-        vec![
-            environments::PowerState::Running,
-            environments::PowerState::Paused,
-            environments::PowerState::Stopped,
-        ]
-    );
-    assert_eq!(
-        instance
-            .idle_policy
-            .as_ref()
-            .and_then(|policy| policy.pause_after_ms),
-        Some(60_000)
-    );
-    // Offline while desired running: the reconciler must pick it up.
-    assert!(
-        store
-            .list_environments_needing_reconcile(environments::ReconcileScope::Converging)
-            .await
-            .expect("needing reconcile")
-            .iter()
-            .any(|record| record.environment_id == environment_id)
-    );
-    // Not ready: the reaper must not.
-    assert!(
-        store
-            .list_environments_with_idle_policy()
-            .await
-            .expect("idle policy candidates")
-            .is_empty()
-    );
-    let stopped_intent = store
-        .set_environment_power(environments::SetEnvironmentPower {
-            environment_id: environment_id.clone(),
-            desired_power: environments::PowerState::Stopped,
-            updated_at_ms: 31,
-        })
-        .await
-        .expect("set power");
-    assert_eq!(
-        stopped_intent.desired_power,
-        environments::PowerState::Stopped
-    );
-    assert!(
-        !store
-            .list_environments_needing_reconcile(environments::ReconcileScope::Converging)
-            .await
-            .expect("needing reconcile")
-            .iter()
-            .any(|record| record.environment_id == environment_id)
-    );
-    // A steady pass observes it anyway.
-    assert!(
-        store
-            .list_environments_needing_reconcile(environments::ReconcileScope::WithSteady)
-            .await
-            .expect("needing reconcile")
-            .iter()
-            .any(|record| record.environment_id == environment_id)
-    );
-    let ready = store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment_id.clone(),
-            provider_target_id: Some(target_id.clone()),
-            daemon_build: None,
-            status: EnvironmentStatus::Ready,
-            power_states: vec![environments::PowerState::Running],
-            observed_at_ms: 32,
-        })
-        .await
-        .expect("observe ready");
-    assert_eq!(
-        store
-            .list_environments_with_idle_policy()
-            .await
-            .expect("idle policy candidates"),
-        vec![ready.clone()]
-    );
-    let cleared = store
-        .set_environment_idle_policy(environments::SetEnvironmentIdlePolicy {
-            environment_id: environment_id.clone(),
-            idle_policy: None,
-            updated_at_ms: 33,
-        })
-        .await
-        .expect("clear policy");
-    assert!(cleared.idle_policy.is_none());
-    store
-        .set_environment_power(environments::SetEnvironmentPower {
-            environment_id: environment_id.clone(),
-            desired_power: environments::PowerState::Running,
-            updated_at_ms: 34,
-        })
-        .await
-        .expect("restore power");
-    let instance = store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: environment_id.clone(),
-            provider_target_id: Some(target_id.clone()),
-            daemon_build: None,
-            status: EnvironmentStatus::Offline,
-            power_states: vec![environments::PowerState::Running],
-            observed_at_ms: 35,
-        })
-        .await
-        .expect("observe offline again");
-    assert_eq!(
-        store
-            .list_environments(ListEnvironments {
-                metadata: Default::default(),
-                provider_id: Some(provider_id.clone()),
-                binding_id: Some(EnvironmentProviderBindingId::new("primary")),
-                status: Some(EnvironmentStatus::Offline),
-                ..ListEnvironments::default()
-            })
-            .await
-            .expect("list instances"),
-        vec![instance.clone()]
-    );
-
-    store
-        .create_session(CreateSession {
-            metadata: Default::default(),
-            session_id: session_id.clone(),
-            display_name: None,
-            origin: None,
-            delete_after_close_ms: None,
-            created_at_ms: 35,
-        })
-        .await
-        .expect("create session");
-
-    let closing = store
-        .begin_close_environment(BeginCloseEnvironment {
-            environment_id: environment_id.clone(),
-            updated_at_ms: 50,
-        })
-        .await
-        .expect("close environment while a session exists");
-    assert_eq!(closing.status, EnvironmentStatus::Closing);
-
-    // Leave nothing behind for a running dev reconciler to chase: the
-    // provider endpoint is fictional and its closing environments would be
-    // retried forever.
-    store_pg::delete_universe(store.pool(), store.config().universe_id)
-        .await
-        .expect("delete test universe");
-    store
-        .delete_provider(&provider_id)
-        .await
-        .expect("delete test provider");
-}
-
-#[tokio::test(flavor = "current_thread")]
-#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_auth_secrets_are_encrypted_and_universe_scoped() {
     let left = live_store("auth-left", 1024).await;
     let right = live_store("auth-right", 1024).await;
@@ -2797,211 +2550,6 @@ fn create_oauth_client_record(client_id: &OAuthClientId) -> CreateOAuthClientRec
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
-async fn pg_live_environment_lifecycle_guards_and_provider_facts() {
-    use environments::{
-        FailEnvironmentLifecycle, RecordEnvironmentLifecycleError, RecordProviderController,
-    };
-
-    let store = live_store("environment-guards", 1024).await;
-    let suffix = Uuid::new_v4().simple().to_string();
-    let provider_id = EnvironmentProviderId::new(format!("guard-provider-{suffix}"));
-    let endpoint = EnvironmentEndpoint::parse("ws://127.0.0.1:9100/control").expect("endpoint");
-
-    // The credential is required for a new provider, sealed at rest, and
-    // kept by a later put that omits it.
-    let refused = store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: provider_id.clone(),
-            display_name: None,
-            controller_endpoint: endpoint.clone(),
-            metadata: Default::default(),
-            credential: None,
-            updated_at_ms: 1,
-        })
-        .await;
-    assert!(matches!(
-        refused,
-        Err(environments::EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: provider_id.clone(),
-            display_name: None,
-            controller_endpoint: endpoint.clone(),
-            metadata: Default::default(),
-            credential: Some(SecretValue::new("guard-bearer-secret")),
-            updated_at_ms: 1,
-        })
-        .await
-        .expect("register provider");
-    let ciphertext: Vec<u8> = sqlx::query_scalar(
-        "SELECT credential_ciphertext FROM environment_providers WHERE provider_id = $1",
-    )
-    .bind(provider_id.as_str())
-    .fetch_one(store.pool())
-    .await
-    .expect("read sealed credential");
-    assert!(
-        !ciphertext
-            .windows(b"guard-bearer-secret".len())
-            .any(|window| window == b"guard-bearer-secret")
-    );
-    let base = DataRouteBase::new("ws://127.0.0.1:9100/data").expect("base");
-    let recorded = store
-        .record_provider_controller(RecordProviderController {
-            provider_id: provider_id.clone(),
-            controller_endpoint: endpoint.clone(),
-            features: ControllerFeatures {
-                adopt_target: false,
-                ingress: true,
-            },
-            data_route_base: base.clone(),
-        })
-        .await
-        .expect("record controller");
-    assert_eq!(recorded.data_route_base, Some(base));
-    let renamed = store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: provider_id.clone(),
-            display_name: Some("Guard".to_owned()),
-            controller_endpoint: endpoint.clone(),
-            metadata: Default::default(),
-            credential: None,
-            updated_at_ms: 2,
-        })
-        .await
-        .expect("rename provider");
-    assert_eq!(renamed.controller_features, recorded.controller_features);
-    assert_eq!(
-        store
-            .read_provider_credential(&provider_id)
-            .await
-            .expect("credential")
-            .expose(),
-        "guard-bearer-secret"
-    );
-
-    store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id: store.config().universe_id,
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            provider_id: provider_id.clone(),
-            status: EnvironmentProviderBindingStatus::Enabled,
-            metadata: Default::default(),
-            expected_revision: None,
-            updated_at_ms: 3,
-        })
-        .await
-        .expect("provider binding");
-    let create = |request: &str, environment: &str| CreateEnvironment {
-        request_id: EnvironmentProvisionRequestId::new(request),
-        environment_id: EnvironmentId::new(environment),
-        incarnation_id: EnvironmentIncarnationId::new(format!("{environment}-inc")),
-        binding_id: EnvironmentProviderBindingId::new("primary"),
-        template_id: EnvironmentTemplateId::new("rust-v1"),
-        display_name: None,
-        metadata: Default::default(),
-        idle_policy: None,
-        created_at_ms: 10,
-    };
-
-    // A close accepted while a create was in flight wins over its answer,
-    // and the target id is still recorded so the close can address it.
-    let closing = store
-        .create_environment(create("guard-request", "guard-env"))
-        .await
-        .expect("create");
-    store
-        .begin_close_environment(BeginCloseEnvironment {
-            environment_id: closing.environment_id.clone(),
-            updated_at_ms: 11,
-        })
-        .await
-        .expect("begin close");
-    let natural = ProviderTargetId::new("default/pod-abc").expect("opaque target id");
-    let observed = store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            environment_id: closing.environment_id.clone(),
-            provider_target_id: Some(natural.clone()),
-            status: EnvironmentStatus::Ready,
-            power_states: vec![environments::PowerState::Running],
-            daemon_build: None,
-            observed_at_ms: 12,
-        })
-        .await
-        .expect("observe");
-    assert_eq!(observed.status, EnvironmentStatus::Closing);
-    assert_eq!(observed.incarnation.provider_target_id, Some(natural));
-    let failed = store
-        .fail_environment_lifecycle(FailEnvironmentLifecycle {
-            environment_id: closing.environment_id.clone(),
-            message: "late failure".to_owned(),
-            daemon_build: None,
-            observed_at_ms: 13,
-        })
-        .await
-        .expect("fail");
-    assert_eq!(failed.status, EnvironmentStatus::Closing);
-
-    // Lifecycle errors keep the start of their run and leave the status.
-    let erroring = store
-        .create_environment(create("guard-request-2", "guard-env-2"))
-        .await
-        .expect("create second");
-    for at in [20, 30] {
-        store
-            .record_environment_lifecycle_error(RecordEnvironmentLifecycleError {
-                environment_id: erroring.environment_id.clone(),
-                message: format!("controller unavailable at {at}"),
-                observed_at_ms: at,
-            })
-            .await
-            .expect("record error");
-    }
-    let still = store
-        .read_environment(&erroring.environment_id)
-        .await
-        .expect("read");
-    assert_eq!(still.status, EnvironmentStatus::Provisioning);
-    let error = still.lifecycle_error.expect("lifecycle error");
-    assert_eq!((error.first_at_ms, error.last_at_ms), (20, 30));
-
-    // A row that no longer decodes is skipped by listings instead of
-    // failing them.
-    let poisoned = store
-        .create_environment(create("guard-request-3", "guard-env-3"))
-        .await
-        .expect("create third");
-    let oversized: serde_json::Map<String, serde_json::Value> = (0..40)
-        .map(|index| (format!("key{index}"), serde_json::json!("v")))
-        .collect();
-    sqlx::query(
-        "UPDATE environments SET metadata_json = $3 WHERE universe_id = $1 AND environment_id = $2",
-    )
-    .bind(store.config().universe_id)
-    .bind(poisoned.environment_id.as_str())
-    .bind(serde_json::Value::Object(oversized))
-    .execute(store.pool())
-    .await
-    .expect("poison row");
-    let listed = store
-        .list_environments(ListEnvironments::default())
-        .await
-        .expect("list despite a bad row");
-    assert!(
-        listed
-            .iter()
-            .all(|record| record.environment_id != poisoned.environment_id)
-    );
-    assert!(
-        listed
-            .iter()
-            .any(|record| record.environment_id == erroring.environment_id)
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres env"]
 async fn pg_live_environment_credentials_round_trip() {
     use environments::{
@@ -3010,45 +2558,15 @@ async fn pg_live_environment_credentials_round_trip() {
     };
 
     let store = live_store("environment-credentials", 1024).await;
-    let provider_id = EnvironmentProviderId::new("cred-provider");
+    let provider_id = bound_test_provider(&store, "cred-provider").await;
     let environment_id = EnvironmentId::new("cred-env");
     store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: provider_id.clone(),
-            display_name: None,
-            controller_endpoint: EnvironmentEndpoint::parse("ws://127.0.0.1:9000/controller")
-                .expect("endpoint"),
-            metadata: Default::default(),
-            credential: Some(SecretValue::new("cred-provider-credential")),
-            updated_at_ms: 1,
-        })
-        .await
-        .expect("register provider");
-    store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id: store.config().universe_id,
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            provider_id,
-            status: EnvironmentProviderBindingStatus::Enabled,
-            metadata: Default::default(),
-            expected_revision: None,
-            updated_at_ms: 2,
-        })
-        .await
-        .expect("provider binding");
-    store
-        .create_environment(CreateEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("cred-request"),
-            environment_id: environment_id.clone(),
-            incarnation_id: EnvironmentIncarnationId::new("cred-incarnation"),
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            template_id: EnvironmentTemplateId::new("rust-v1"),
-            display_name: None,
-            metadata: Default::default(),
-
-            idle_policy: None,
-            created_at_ms: 3,
-        })
+        .create_environment(create_environment(
+            &provider_id,
+            "cred-request",
+            "cred-env",
+            3,
+        ))
         .await
         .expect("create environment");
 
@@ -3159,6 +2677,115 @@ async fn pg_live_environment_credentials_round_trip() {
             .len(),
         1
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres env"]
+async fn pg_live_universe_delete_removes_registered_environments_and_credential_bindings() {
+    use environments::{
+        CreateEnvironmentRegistrationKey, CreateRegisteredEnvironment, EnvironmentCredentialSource,
+        EnvironmentCredentialStore, EnvironmentRegistrationKeyId, EnvironmentRegistrationKeyStore,
+        PutEnvironmentCredential, RegisteredIdentityMode, RegistrationKeyPolicy,
+        mint_registration_key,
+    };
+
+    let store = live_store("environment-universe-delete", 1024).await;
+    let universe_id = store.config().universe_id;
+    let minted = mint_registration_key(
+        EnvironmentRegistrationKeyId::new("fleet"),
+        RegistrationKeyPolicy {
+            display_name: "Fleet".to_owned(),
+            identity_mode: RegisteredIdentityMode::Persistent,
+            max_active_environments: None,
+            ephemeral_disconnect_grace_ms: None,
+            offline_close_after_ms: None,
+            expires_at_ms: None,
+        },
+        1,
+    )
+    .expect("mint key");
+    store
+        .create_registration_key(CreateEnvironmentRegistrationKey {
+            secret_hash: minted.secret.secret_hash.clone(),
+            record: minted.record.clone(),
+        })
+        .await
+        .expect("create key");
+    let environment_id = EnvironmentId::new("pod-0");
+    store
+        .create_registered_environment(CreateRegisteredEnvironment {
+            registration_key_id: minted.record.registration_key_id.clone(),
+            secret_hash: minted.secret.secret_hash.clone(),
+            environment_id: environment_id.clone(),
+            daemon_public_key: test_daemon_public_key(),
+            display_name: None,
+            metadata: Default::default(),
+            daemon_build: test_build("1.0.0"),
+            created_at_ms: 2,
+        })
+        .await
+        .expect("admit registered environment");
+    let secret_id = SecretId::new("authsec_pod_token");
+    store
+        .put_secret(PutSecretRecord {
+            secret_id: secret_id.clone(),
+            secret_kind: SECRET_KIND_STATIC_BEARER.to_owned(),
+            value: SecretValue::new("token"),
+            created_at_ms: 3,
+        })
+        .await
+        .expect("put secret");
+    store
+        .bind_credential(PutEnvironmentCredential {
+            environment_id: environment_id.clone(),
+            env_name: "POD_TOKEN".to_owned(),
+            source: EnvironmentCredentialSource::DirectSecret {
+                secret_id: secret_id.clone(),
+            },
+            created_at_ms: 4,
+        })
+        .await
+        .expect("bind credential");
+
+    // Outside a universe delete the references still hold.
+    assert!(matches!(
+        store.delete_secret(&secret_id).await,
+        Err(AuthRegistryError::Store { .. })
+    ));
+    assert_eq!(
+        violated_constraint(
+            sqlx::query(
+                "DELETE FROM environment_registration_keys WHERE universe_id = $1 AND registration_key_id = 'fleet'",
+            )
+            .bind(universe_id)
+            .execute(store.pool())
+            .await
+        )
+        .as_deref(),
+        Some("environments_registration_key_fk")
+    );
+
+    assert!(
+        store_pg::delete_universe(store.pool(), universe_id)
+            .await
+            .expect("delete universe with registered environment and credential binding")
+    );
+    for table in [
+        "environments",
+        "environment_registration_keys",
+        "environment_registration_key_secrets",
+        "environment_credentials",
+        "auth_secrets",
+    ] {
+        let remaining: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE universe_id = $1"
+        )))
+        .bind(universe_id)
+        .fetch_one(store.pool())
+        .await
+        .expect("count remaining rows");
+        assert_eq!(remaining, 0, "{table} cascades with the universe");
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3814,4 +3441,1681 @@ async fn pg_live_concurrent_puts_leave_one_readable_object() {
         store.config().clone(),
     );
     assert_eq!(cold.read_bytes(&expected).await.expect("cold read"), bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Environments
+// ---------------------------------------------------------------------------
+
+/// Register a provider with a unique id (providers are deployment-wide) and
+/// bind it, enabled, to the store's universe.
+async fn bound_test_provider(store: &PgStore, name: &str) -> EnvironmentProviderId {
+    let provider_id = EnvironmentProviderId::new(format!("{name}-{}", Uuid::new_v4().simple()));
+    store
+        .put_provider(PutEnvironmentProvider {
+            provider_id: provider_id.clone(),
+            display_name: None,
+            controller_endpoint: EnvironmentEndpoint::parse("ws://127.0.0.1:9100/control")
+                .expect("endpoint"),
+            data_route_base: None,
+            credential: ProviderCredentialChange::Keep,
+            updated_at_ms: 1,
+        })
+        .await
+        .expect("register provider");
+    store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id: store.config().universe_id,
+            provider_id: provider_id.clone(),
+            enabled: true,
+            updated_at_ms: 2,
+        })
+        .await
+        .expect("bind provider");
+    provider_id
+}
+
+fn create_environment(
+    provider_id: &EnvironmentProviderId,
+    request_id: &str,
+    environment_id: &str,
+    created_at_ms: i64,
+) -> CreateEnvironment {
+    CreateEnvironment {
+        request_id: EnvironmentProvisionRequestId::new(request_id),
+        environment_id: EnvironmentId::new(environment_id),
+        provider_id: provider_id.clone(),
+        template_id: EnvironmentTemplateId::new("rust-v1"),
+        idle: None,
+        display_name: None,
+        metadata: Default::default(),
+        created_at_ms,
+    }
+}
+
+fn test_build(version: &str) -> DaemonBuild {
+    DaemonBuild {
+        version: Some(version.to_owned()),
+        git_sha: None,
+        protocol_version: environment_protocol::ENVD_PROTOCOL_VERSION,
+    }
+}
+
+/// A fresh lowercase-hex daemon public key; unique deployment-wide.
+fn test_daemon_public_key() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+/// The constraint a refused statement violated.
+fn violated_constraint<T>(result: Result<T, sqlx::Error>) -> Option<String> {
+    result.err().and_then(|error| {
+        error
+            .as_database_error()
+            .and_then(|database| database.constraint().map(str::to_owned))
+    })
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_environment_provider_credentials_are_optional_and_sealed() {
+    let store = live_store("environment-providers", 1024).await;
+    let universe_id = store.config().universe_id;
+    let provider_id = EnvironmentProviderId::new(format!("provider-{}", Uuid::new_v4().simple()));
+    let endpoint = EnvironmentEndpoint::parse("ws://127.0.0.1:9100/control").expect("endpoint");
+    let put = |display_name: Option<&str>,
+               data_route_base: Option<DataRouteBase>,
+               credential: ProviderCredentialChange,
+               updated_at_ms: i64| PutEnvironmentProvider {
+        provider_id: provider_id.clone(),
+        display_name: display_name.map(str::to_owned),
+        controller_endpoint: endpoint.clone(),
+        data_route_base,
+        credential,
+        updated_at_ms,
+    };
+
+    // A new provider needs no credential, and its data route base derives
+    // from the controller endpoint.
+    let bare = store
+        .put_provider(put(None, None, ProviderCredentialChange::Keep, 1))
+        .await
+        .expect("register provider without a credential");
+    assert!(!bare.has_credential);
+    assert!(
+        store
+            .read_provider_credential(&provider_id)
+            .await
+            .expect("read absent credential")
+            .is_none()
+    );
+    assert_eq!(
+        bare.effective_data_route_base()
+            .expect("derived data route base")
+            .as_str(),
+        "ws://127.0.0.1:9100/routes"
+    );
+
+    // A set credential is sealed at rest.
+    let base = DataRouteBase::new("ws://127.0.0.1:9100/data").expect("base");
+    let sealed = store
+        .put_provider(put(
+            Some("Guard"),
+            Some(base.clone()),
+            ProviderCredentialChange::Set(SecretValue::new("guard-bearer-secret")),
+            2,
+        ))
+        .await
+        .expect("set credential");
+    assert!(sealed.has_credential);
+    assert_eq!(sealed.data_route_base, Some(base.clone()));
+    assert_eq!((sealed.created_at_ms, sealed.updated_at_ms), (1, 2));
+    let ciphertext: Vec<u8> = sqlx::query_scalar(
+        "SELECT credential_ciphertext FROM environment_providers WHERE provider_id = $1",
+    )
+    .bind(provider_id.as_str())
+    .fetch_one(store.pool())
+    .await
+    .expect("read sealed credential");
+    assert!(
+        !ciphertext
+            .windows(b"guard-bearer-secret".len())
+            .any(|window| window == b"guard-bearer-secret")
+    );
+
+    // Keep leaves the stored credential; Clear removes all three columns.
+    let renamed = store
+        .put_provider(put(
+            Some("Renamed"),
+            Some(base),
+            ProviderCredentialChange::Keep,
+            3,
+        ))
+        .await
+        .expect("rename provider");
+    assert!(renamed.has_credential);
+    assert_eq!(
+        store
+            .read_provider_credential(&provider_id)
+            .await
+            .expect("read credential")
+            .expect("credential kept")
+            .expose(),
+        "guard-bearer-secret"
+    );
+    let cleared = store
+        .put_provider(put(None, None, ProviderCredentialChange::Clear, 4))
+        .await
+        .expect("clear credential");
+    assert!(!cleared.has_credential);
+    assert!(cleared.data_route_base.is_none());
+    let columns: (Option<String>, Option<Vec<u8>>, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT credential_key_id, credential_nonce, credential_ciphertext FROM environment_providers WHERE provider_id = $1",
+    )
+    .bind(provider_id.as_str())
+    .fetch_one(store.pool())
+    .await
+    .expect("read credential columns");
+    assert_eq!(columns, (None, None, None));
+    assert!(
+        store
+            .list_providers()
+            .await
+            .expect("list providers")
+            .contains(&cleared)
+    );
+
+    // Bindings are keyed by provider; a missing provider is NotFound.
+    let binding = store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id,
+            provider_id: provider_id.clone(),
+            enabled: true,
+            updated_at_ms: 5,
+        })
+        .await
+        .expect("bind provider");
+    assert!(binding.enabled);
+    let disabled = store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id,
+            provider_id: provider_id.clone(),
+            enabled: false,
+            updated_at_ms: 6,
+        })
+        .await
+        .expect("disable binding");
+    assert!(!disabled.enabled);
+    assert_eq!((disabled.created_at_ms, disabled.updated_at_ms), (5, 6));
+    assert_eq!(
+        store
+            .read_provider_binding(universe_id, &provider_id)
+            .await
+            .expect("read binding"),
+        disabled
+    );
+    assert_eq!(
+        store
+            .list_provider_bindings(universe_id)
+            .await
+            .expect("list bindings"),
+        vec![disabled]
+    );
+    assert!(matches!(
+        store
+            .put_provider_binding(PutEnvironmentProviderBinding {
+                universe_id,
+                provider_id: EnvironmentProviderId::new(format!(
+                    "missing-{}",
+                    Uuid::new_v4().simple()
+                )),
+                enabled: true,
+                updated_at_ms: 6,
+            })
+            .await,
+        Err(EnvironmentRegistryError::NotFound {
+            kind: "environment_provider",
+            ..
+        })
+    ));
+
+    // Creates need an enabled binding; deletes are guarded.
+    assert!(matches!(
+        store
+            .create_environment(create_environment(
+                &provider_id,
+                "provider-request",
+                "provider-env",
+                10,
+            ))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id,
+            provider_id: provider_id.clone(),
+            enabled: true,
+            updated_at_ms: 7,
+        })
+        .await
+        .expect("enable binding");
+    let environment = store
+        .create_environment(create_environment(
+            &provider_id,
+            "provider-request",
+            "provider-env",
+            10,
+        ))
+        .await
+        .expect("create environment");
+    assert!(matches!(
+        store.delete_provider(&provider_id).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        store
+            .delete_provider_binding(universe_id, &provider_id)
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: environment.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 11,
+        })
+        .await
+        .expect("begin close");
+    let closed = store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: environment.environment_id.clone(),
+            at_ms: 12,
+        })
+        .await
+        .expect("finish close");
+    assert_eq!(closed.state, EnvironmentState::Closed);
+    store
+        .delete_provider_binding(universe_id, &provider_id)
+        .await
+        .expect("delete binding once its environments are closed");
+    store
+        .delete_provider(&provider_id)
+        .await
+        .expect("closed environments do not hold a provider");
+
+    // The all-or-none credential CHECK names its NULL case explicitly.
+    let orphan_id = format!("check-{}", Uuid::new_v4().simple());
+    let refused = sqlx::query(
+        "INSERT INTO environment_providers (provider_id, controller_endpoint, credential_nonce, credential_ciphertext, created_at_ms, updated_at_ms) VALUES ($1, 'ws://127.0.0.1:1/control', $2, $3, 1, 1)",
+    )
+    .bind(&orphan_id)
+    .bind(vec![0_u8; 12])
+    .bind(vec![1_u8; 16])
+    .execute(store.pool())
+    .await;
+    assert_eq!(
+        violated_constraint(refused).as_deref(),
+        Some("environment_providers_credential_all_or_none")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_provisioned_environment_lifecycle_follows_the_domain_rules() {
+    use environments::{
+        EndProvisionedEnvironment, EnvironmentDisplayStatus, FailEnvironment, IdlePolicy,
+        ObservedTarget, OpenEnvironment, PowerState, RecordTargetObservation,
+        ScheduleEnvironmentAttempt, TargetPhase, UpdateEnvironment,
+    };
+
+    let store = live_store("environment-lifecycle", 1024).await;
+    let provider_id = bound_test_provider(&store, "lifecycle").await;
+    let idle = IdlePolicy {
+        pause_after_ms: Some(60_000),
+        ..IdlePolicy::default()
+    };
+    let request = CreateEnvironment {
+        idle: Some(idle.clone()),
+        display_name: Some("Sandbox".to_owned()),
+        ..create_environment(&provider_id, "lifecycle-a", "lifecycle-a", 100)
+    };
+
+    // Creates are idempotent per request id with identical inputs.
+    let created = store
+        .create_environment(request.clone())
+        .await
+        .expect("create");
+    assert_eq!(created.state, EnvironmentState::Provisioning);
+    let source = created.provisioned().expect("provisioned").clone();
+    assert_eq!(source.idle, Some(idle));
+    assert_eq!((source.next_attempt_at_ms, source.attempts), (Some(100), 0));
+    assert_eq!(
+        store
+            .create_environment(CreateEnvironment {
+                created_at_ms: 200,
+                ..request.clone()
+            })
+            .await
+            .expect("retry create"),
+        created
+    );
+    assert!(matches!(
+        store
+            .create_environment(CreateEnvironment {
+                template_id: EnvironmentTemplateId::new("other-template"),
+                ..request.clone()
+            })
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists {
+            kind: "environment_request",
+            ..
+        })
+    ));
+    assert_eq!(
+        store
+            .read_environment(&created.environment_id)
+            .await
+            .expect("read back"),
+        created
+    );
+    assert!(matches!(
+        store
+            .create_environment(create_environment(
+                &EnvironmentProviderId::new(format!("unbound-{}", Uuid::new_v4().simple())),
+                "lifecycle-unbound",
+                "lifecycle-unbound",
+                100,
+            ))
+            .await,
+        Err(EnvironmentRegistryError::NotFound {
+            kind: "environment_provider_binding",
+            ..
+        })
+    ));
+
+    // The work queue holds due provisioning rows only.
+    let due = |rows: Vec<environments::EnvironmentRecord>| {
+        rows.iter()
+            .any(|record| record.environment_id == created.environment_id)
+    };
+    assert!(!due(store
+        .list_environment_work(99, 10)
+        .await
+        .expect("work")));
+    assert!(due(store
+        .list_environment_work(100, 10)
+        .await
+        .expect("work")));
+    let scheduled = store
+        .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+            environment_id: created.environment_id.clone(),
+            expected_state: EnvironmentState::Provisioning,
+            next_attempt_at_ms: 2_100,
+            attempts: 1,
+            state_message: Some("waiting for the provider: booting".to_owned()),
+            at_ms: 101,
+        })
+        .await
+        .expect("schedule");
+    let source = scheduled.provisioned().expect("provisioned");
+    assert_eq!(
+        (source.next_attempt_at_ms, source.attempts),
+        (Some(2_100), 1)
+    );
+    assert_eq!(
+        scheduled.state_message.as_deref(),
+        Some("waiting for the provider: booting")
+    );
+    assert!(!due(store
+        .list_environment_work(2_099, 10)
+        .await
+        .expect("work")));
+
+    // Observations record the target id and keep the freshest report.
+    let target = ProviderTargetId::new("pod-a").expect("target id");
+    let observe = |target_id: Option<ProviderTargetId>, phase, power, at| RecordTargetObservation {
+        environment_id: created.environment_id.clone(),
+        provider_target_id: target_id,
+        observed: ObservedTarget {
+            phase,
+            power,
+            message: None,
+            observed_at_ms: 0,
+        },
+        public_endpoint: Some("https://a.example.test".to_owned()),
+        observed_at_ms: at,
+    };
+    let observed = store
+        .record_target_observation(observe(
+            Some(target.clone()),
+            TargetPhase::Active,
+            Some(PowerState::Running),
+            102,
+        ))
+        .await
+        .expect("observe");
+    let source = observed.provisioned().expect("provisioned");
+    assert_eq!(source.provider_target_id, Some(target.clone()));
+    assert_eq!(
+        source
+            .observed
+            .as_ref()
+            .map(|observed| observed.observed_at_ms),
+        Some(102)
+    );
+    assert_eq!(
+        source.public_endpoint.as_deref(),
+        Some("https://a.example.test")
+    );
+    let stale = store
+        .record_target_observation(observe(None, TargetPhase::Provisioning, None, 90))
+        .await
+        .expect("stale observation");
+    assert_eq!(stale, observed);
+    assert!(matches!(
+        store
+            .record_target_observation(observe(
+                Some(ProviderTargetId::new("pod-other").expect("target id")),
+                TargetPhase::Active,
+                None,
+                103,
+            ))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    let second = store
+        .create_environment(create_environment(
+            &provider_id,
+            "lifecycle-b",
+            "lifecycle-b",
+            100,
+        ))
+        .await
+        .expect("create second");
+    assert!(matches!(
+        store
+            .record_target_observation(RecordTargetObservation {
+                environment_id: second.environment_id.clone(),
+                ..observe(Some(target.clone()), TargetPhase::Active, None, 103)
+            })
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists {
+            kind: "provider_target",
+            ..
+        })
+    ));
+
+    // Open clears the schedule and records the build; a second open skips.
+    let opened = store
+        .open_environment(OpenEnvironment {
+            environment_id: created.environment_id.clone(),
+            daemon_build: test_build("1.2.3"),
+            at_ms: 104,
+        })
+        .await
+        .expect("open");
+    assert_eq!(opened.state, EnvironmentState::Open);
+    assert_eq!(opened.state_message, None);
+    assert_eq!(opened.daemon_build, Some(test_build("1.2.3")));
+    let source = opened.provisioned().expect("provisioned");
+    assert_eq!((source.next_attempt_at_ms, source.attempts), (None, 0));
+    assert_eq!(opened.display_status(), EnvironmentDisplayStatus::Ready);
+    assert!(
+        store
+            .list_open_provisioned_environments()
+            .await
+            .expect("open provisioned")
+            .contains(&opened)
+    );
+    assert_eq!(
+        store
+            .open_environment(OpenEnvironment {
+                environment_id: created.environment_id.clone(),
+                daemon_build: test_build("9.9.9"),
+                at_ms: 105,
+            })
+            .await
+            .expect("open again"),
+        opened
+    );
+
+    // Fail keeps the build; the provider ending the target closes it.
+    let failed = store
+        .fail_environment(FailEnvironment {
+            environment_id: created.environment_id.clone(),
+            message: "broken".to_owned(),
+            daemon_build: None,
+            at_ms: 106,
+        })
+        .await
+        .expect("fail");
+    assert_eq!(failed.state, EnvironmentState::Failed);
+    assert_eq!(failed.state_message.as_deref(), Some("broken"));
+    assert_eq!(failed.daemon_build, Some(test_build("1.2.3")));
+    let ended = store
+        .end_provisioned_environment(EndProvisionedEnvironment {
+            environment_id: created.environment_id.clone(),
+            at_ms: 107,
+        })
+        .await
+        .expect("end");
+    assert_eq!(ended.state, EnvironmentState::Closed);
+    assert_eq!(
+        ended.close_reason,
+        Some(EnvironmentCloseReason::ProviderEnded)
+    );
+    assert_eq!(
+        (ended.closed_at_ms, ended.state_message.as_deref()),
+        (Some(107), None)
+    );
+    // A closed row keeps no public endpoint, even after a late observation.
+    assert_eq!(
+        ended.provisioned().expect("provisioned").public_endpoint,
+        None
+    );
+    let late = store
+        .record_target_observation(observe(None, TargetPhase::Closed, None, 108))
+        .await
+        .expect("late observation");
+    assert_eq!(
+        late.provisioned().expect("provisioned").public_endpoint,
+        None
+    );
+    assert!(matches!(
+        store
+            .update_environment(UpdateEnvironment {
+                environment_id: created.environment_id.clone(),
+                display_name: None,
+                metadata: Default::default(),
+                updated_at_ms: 108,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+
+    // A close accepted while a create was in flight wins over its answer.
+    let closing = store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: second.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 110,
+        })
+        .await
+        .expect("begin close");
+    assert_eq!(closing.state, EnvironmentState::Closing);
+    assert_eq!(
+        closing
+            .provisioned()
+            .and_then(|source| source.next_attempt_at_ms),
+        Some(110)
+    );
+    assert_eq!(
+        store
+            .open_environment(OpenEnvironment {
+                environment_id: second.environment_id.clone(),
+                daemon_build: test_build("1.2.3"),
+                at_ms: 111,
+            })
+            .await
+            .expect("late open"),
+        closing
+    );
+    assert_eq!(
+        store
+            .fail_environment(FailEnvironment {
+                environment_id: second.environment_id.clone(),
+                message: "late failure".to_owned(),
+                daemon_build: None,
+                at_ms: 111,
+            })
+            .await
+            .expect("late failure"),
+        closing
+    );
+    let finished = store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: second.environment_id.clone(),
+            at_ms: 112,
+        })
+        .await
+        .expect("finish close");
+    assert_eq!(
+        finished.close_reason,
+        Some(EnvironmentCloseReason::Requested)
+    );
+    assert_eq!(finished.closed_at_ms, Some(112));
+
+    // A lagging clock is clamped to the row's own times.
+    let late = store
+        .create_environment(create_environment(
+            &provider_id,
+            "lifecycle-c",
+            "lifecycle-c",
+            500,
+        ))
+        .await
+        .expect("create third");
+    let clamped = store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: late.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 10,
+        })
+        .await
+        .expect("close with a lagging clock");
+    assert_eq!(clamped.state_changed_at_ms, 500);
+    assert_eq!(
+        clamped
+            .provisioned()
+            .and_then(|source| source.next_attempt_at_ms),
+        Some(500)
+    );
+
+    // Updates replace the display name and caller metadata.
+    let renamed = store
+        .create_environment(create_environment(
+            &provider_id,
+            "lifecycle-d",
+            "lifecycle-d",
+            600,
+        ))
+        .await
+        .expect("create fourth");
+    let updated = store
+        .update_environment(UpdateEnvironment {
+            environment_id: renamed.environment_id.clone(),
+            display_name: Some("Renamed".to_owned()),
+            metadata: [("team".to_owned(), "infra".to_owned())].into(),
+            updated_at_ms: 601,
+        })
+        .await
+        .expect("update");
+    assert_eq!(updated.display_name.as_deref(), Some("Renamed"));
+    assert_eq!(
+        updated.metadata.get("team").map(String::as_str),
+        Some("infra")
+    );
+    assert!(matches!(
+        store
+            .update_environment(UpdateEnvironment {
+                environment_id: renamed.environment_id.clone(),
+                display_name: None,
+                metadata: [("lightspeed.reserved".to_owned(), "x".to_owned())].into(),
+                updated_at_ms: 602,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+
+    // External environments are open at once and close in one step.
+    let external = CreateExternalEnvironment {
+        request_id: EnvironmentProvisionRequestId::new("lifecycle-external"),
+        environment_id: EnvironmentId::new("lifecycle-external"),
+        endpoint: EnvironmentEndpoint::parse("ws://127.0.0.1:9200/envd").expect("endpoint"),
+        display_name: None,
+        metadata: Default::default(),
+        created_at_ms: 700,
+    };
+    let opened_external = store
+        .create_external_environment(external.clone())
+        .await
+        .expect("create external");
+    assert_eq!(opened_external.state, EnvironmentState::Open);
+    assert_eq!(
+        store
+            .create_external_environment(external.clone())
+            .await
+            .expect("retry external"),
+        opened_external
+    );
+    assert!(matches!(
+        store
+            .fail_environment(FailEnvironment {
+                environment_id: external.environment_id.clone(),
+                message: "external".to_owned(),
+                daemon_build: None,
+                at_ms: 701,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    let closed_external = store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: external.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 702,
+        })
+        .await
+        .expect("close external");
+    assert_eq!(closed_external.state, EnvironmentState::Closed);
+    assert_eq!(closed_external.closed_at_ms, Some(702));
+
+    // Leave nothing for a running dev reconciler to chase.
+    store_pg::delete_universe(store.pool(), store.config().universe_id)
+        .await
+        .expect("delete test universe");
+    store
+        .delete_provider(&provider_id)
+        .await
+        .expect("delete test provider");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_environment_listing_pages_filters_and_skips_bad_rows() {
+    let store = live_store("environment-listing", 1024).await;
+    let provider_id = bound_test_provider(&store, "listing").await;
+    for index in 1..=5 {
+        let team = if index % 2 == 1 { "a" } else { "b" };
+        store
+            .create_environment(CreateEnvironment {
+                metadata: [("team".to_owned(), team.to_owned())].into(),
+                ..create_environment(
+                    &provider_id,
+                    &format!("list-request-{index}"),
+                    &format!("list-{index}"),
+                    10,
+                )
+            })
+            .await
+            .expect("create listed environment");
+    }
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: EnvironmentId::new("list-2"),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 11,
+        })
+        .await
+        .expect("begin close");
+    store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: EnvironmentId::new("list-2"),
+            at_ms: 12,
+        })
+        .await
+        .expect("finish close");
+    let ids = |page: &environments::EnvironmentPage| {
+        page.environments
+            .iter()
+            .map(|record| record.environment_id.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    // Closed rows are hidden by default; pages continue after an id.
+    let first = store
+        .list_environments(ListEnvironments {
+            limit: 2,
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("first page");
+    assert_eq!(ids(&first), ["list-1", "list-3"]);
+    assert_eq!(first.next_after, Some(EnvironmentId::new("list-3")));
+    let second = store
+        .list_environments(ListEnvironments {
+            limit: 2,
+            after: first.next_after.clone(),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("second page");
+    assert_eq!(ids(&second), ["list-4", "list-5"]);
+    assert_eq!(second.next_after, None);
+    let all = store
+        .list_environments(ListEnvironments {
+            include_closed: true,
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("include closed");
+    assert_eq!(all.environments.len(), 5);
+    let closed = store
+        .list_environments(ListEnvironments {
+            state: Some(EnvironmentState::Closed),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("closed only");
+    assert_eq!(ids(&closed), ["list-2"]);
+    let team_a = store
+        .list_environments(ListEnvironments {
+            metadata: [("team".to_owned(), "a".to_owned())].into(),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("by metadata");
+    assert_eq!(ids(&team_a), ["list-1", "list-3", "list-5"]);
+    let by_provider = store
+        .list_environments(ListEnvironments {
+            provider_id: Some(provider_id.clone()),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("by provider");
+    assert_eq!(ids(&by_provider), ["list-1", "list-3", "list-4", "list-5"]);
+    let other_provider = store
+        .list_environments(ListEnvironments {
+            provider_id: Some(EnvironmentProviderId::new("listing-other")),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("by another provider");
+    assert!(other_provider.environments.is_empty());
+    for limit in [0, 501] {
+        assert!(matches!(
+            store
+                .list_environments(ListEnvironments {
+                    limit,
+                    ..ListEnvironments::default()
+                })
+                .await,
+            Err(EnvironmentRegistryError::InvalidInput { .. })
+        ));
+    }
+
+    // A row that no longer decodes is skipped by listings instead of
+    // failing them.
+    let oversized: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|index| (format!("key{index}"), serde_json::json!("v")))
+        .collect();
+    sqlx::query(
+        "UPDATE environments SET metadata_json = $3 WHERE universe_id = $1 AND environment_id = $2",
+    )
+    .bind(store.config().universe_id)
+    .bind("list-4")
+    .bind(serde_json::Value::Object(oversized))
+    .execute(store.pool())
+    .await
+    .expect("poison row");
+    let listed = store
+        .list_environments(ListEnvironments::default())
+        .await
+        .expect("list despite a bad row");
+    assert_eq!(ids(&listed), ["list-1", "list-3", "list-5"]);
+
+    store_pg::delete_universe(store.pool(), store.config().universe_id)
+        .await
+        .expect("delete test universe");
+    store
+        .delete_provider(&provider_id)
+        .await
+        .expect("delete test provider");
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_environment_checks_refuse_null_positive_disjuncts() {
+    use environments::{
+        CreateEnvironmentRegistrationKey, EnvironmentRegistrationKeyId,
+        EnvironmentRegistrationKeyStore, RegisteredIdentityMode, RegistrationKeyPolicy,
+        mint_registration_key,
+    };
+
+    let store = live_store("environment-checks", 1024).await;
+    let universe_id = store.config().universe_id;
+    let minted = mint_registration_key(
+        EnvironmentRegistrationKeyId::new("checks"),
+        RegistrationKeyPolicy {
+            display_name: "Checks".to_owned(),
+            identity_mode: RegisteredIdentityMode::Persistent,
+            max_active_environments: None,
+            ephemeral_disconnect_grace_ms: None,
+            offline_close_after_ms: None,
+            expires_at_ms: None,
+        },
+        1,
+    )
+    .expect("mint key");
+    store
+        .create_registration_key(CreateEnvironmentRegistrationKey {
+            secret_hash: minted.secret.secret_hash.clone(),
+            record: minted.record.clone(),
+        })
+        .await
+        .expect("create key");
+
+    let external = sqlx::query(
+        "INSERT INTO environments (universe_id, environment_id, source_kind, state, state_changed_at_ms, request_id, created_at_ms, updated_at_ms) VALUES ($1, 'check-external', 'external', 'open', 1, 'check-external', 1, 1)",
+    )
+    .bind(universe_id)
+    .execute(store.pool())
+    .await;
+    assert_eq!(
+        violated_constraint(external).as_deref(),
+        Some("environments_source_fields")
+    );
+
+    let public_key = test_daemon_public_key();
+    for (missing, daemon_public_key, connection_changed_at_ms, last_seen_at_ms) in [
+        ("daemon_public_key", None, Some(1_i64), Some(1_i64)),
+        (
+            "connection_changed_at_ms",
+            Some(public_key.as_str()),
+            None,
+            Some(1),
+        ),
+        ("last_seen_at_ms", Some(public_key.as_str()), Some(1), None),
+    ] {
+        let registered = sqlx::query(
+            "INSERT INTO environments (universe_id, environment_id, source_kind, state, state_changed_at_ms, registration_key_id, daemon_public_key, connected, connection_changed_at_ms, last_seen_at_ms, created_at_ms, updated_at_ms) VALUES ($1, $2, 'registered', 'open', 1, 'checks', $3, true, $4, $5, 1, 1)",
+        )
+        .bind(universe_id)
+        .bind(format!("check-registered-{missing}").replace('_', "-"))
+        .bind(daemon_public_key)
+        .bind(connection_changed_at_ms)
+        .bind(last_seen_at_ms)
+        .execute(store.pool())
+        .await;
+        assert_eq!(
+            violated_constraint(registered).as_deref(),
+            Some("environments_source_fields"),
+            "a registered row without {missing} must be refused"
+        );
+    }
+
+    let observed = sqlx::query(
+        "INSERT INTO environments (universe_id, environment_id, source_kind, state, state_changed_at_ms, request_id, provider_id, template_id, next_attempt_at_ms, observed_power, created_at_ms, updated_at_ms) VALUES ($1, 'check-observed', 'provisioned', 'provisioning', 1, 'check-observed', 'check-provider', 'rust-v1', 1, 'running', 1, 1)",
+    )
+    .bind(universe_id)
+    .execute(store.pool())
+    .await;
+    assert_eq!(
+        violated_constraint(observed).as_deref(),
+        Some("environments_observation")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_registered_environments_track_connections_and_sweep() {
+    use environments::{
+        CreateEnvironmentRegistrationKey, CreateRegisteredEnvironment,
+        EnvironmentRegistrationKeyId, EnvironmentRegistrationKeyStore, EnvironmentUse,
+        EnvironmentWaitReason, MarkRegisteredConnected, MarkRegisteredDisconnected,
+        REGISTERED_RECONNECT_WAIT_MS, RegisteredIdentityMode, RegistrationKeyPolicy,
+        StampRegisteredSeen, mint_registration_key,
+    };
+
+    let store = live_store("environment-registered", 1024).await;
+    let universe_id = store.config().universe_id;
+    let create_key = |id: &str, identity_mode, grace, offline_close| {
+        mint_registration_key(
+            EnvironmentRegistrationKeyId::new(id),
+            RegistrationKeyPolicy {
+                display_name: id.to_owned(),
+                identity_mode,
+                max_active_environments: Some(2),
+                ephemeral_disconnect_grace_ms: grace,
+                offline_close_after_ms: offline_close,
+                expires_at_ms: None,
+            },
+            1,
+        )
+        .expect("mint key")
+    };
+    let mut secrets = std::collections::BTreeMap::new();
+    for minted in [
+        create_key(
+            "fleet",
+            RegisteredIdentityMode::Persistent,
+            None,
+            Some(3_600_000),
+        ),
+        create_key(
+            "sandboxes",
+            RegisteredIdentityMode::Ephemeral,
+            Some(60_000),
+            None,
+        ),
+    ] {
+        store
+            .create_registration_key(CreateEnvironmentRegistrationKey {
+                secret_hash: minted.secret.secret_hash.clone(),
+                record: minted.record.clone(),
+            })
+            .await
+            .expect("create key");
+        secrets.insert(
+            minted.record.registration_key_id.to_string(),
+            minted.secret.secret_hash,
+        );
+    }
+    let admit =
+        |key: &str, environment_id: &str, public_key: &str, at: i64| CreateRegisteredEnvironment {
+            registration_key_id: EnvironmentRegistrationKeyId::new(key),
+            secret_hash: secrets[key].clone(),
+            environment_id: EnvironmentId::new(environment_id),
+            daemon_public_key: public_key.to_owned(),
+            display_name: Some(environment_id.to_owned()),
+            metadata: Default::default(),
+            daemon_build: test_build("1.0.0"),
+            created_at_ms: at,
+        };
+
+    // Admission inserts an open, connected row; a known identity converges.
+    let key_0 = test_daemon_public_key();
+    let pod_0 = store
+        .create_registered_environment(admit("fleet", "pod-0", &key_0, 100))
+        .await
+        .expect("admit pod-0");
+    assert_eq!(pod_0.state, EnvironmentState::Open);
+    assert_eq!(pod_0.request_id, None);
+    let source = pod_0.registered().expect("registered").clone();
+    assert!(source.connected);
+    assert_eq!(source.identity_mode, RegisteredIdentityMode::Persistent);
+    assert_eq!(
+        (source.connection_changed_at_ms, source.last_seen_at_ms),
+        (100, 100)
+    );
+    assert_eq!(
+        store
+            .create_registered_environment(admit("fleet", "pod-0-retry", &key_0, 200))
+            .await
+            .expect("retry admission"),
+        pod_0
+    );
+    assert_eq!(
+        store
+            .read_environment_by_daemon_public_key(&key_0)
+            .await
+            .expect("read by daemon key"),
+        Some(pod_0.clone())
+    );
+    assert_eq!(
+        store_pg::find_registered_environment_universe(store.pool(), &key_0)
+            .await
+            .expect("find universe by daemon key"),
+        Some(universe_id)
+    );
+    store
+        .create_registered_environment(admit("fleet", "pod-1", &test_daemon_public_key(), 150))
+        .await
+        .expect("admit pod-1");
+    assert!(matches!(
+        store
+            .create_registered_environment(admit("fleet", "pod-2", &test_daemon_public_key(), 160,))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationCapacityExhausted { limit: 2, .. })
+    ));
+    let listed_universes = store_pg::list_universes_with_registered_environments(store.pool())
+        .await
+        .expect("universes with registered environments");
+    assert!(listed_universes.contains(&universe_id));
+
+    // The liveness stamp is coarse and conditional.
+    let stamp = |at_ms| StampRegisteredSeen {
+        environment_id: EnvironmentId::new("pod-0"),
+        at_ms,
+    };
+    assert!(
+        !store
+            .stamp_registered_seen(stamp(300_099))
+            .await
+            .expect("early stamp")
+    );
+    assert!(
+        store
+            .stamp_registered_seen(stamp(300_100))
+            .await
+            .expect("due stamp")
+    );
+    assert_eq!(
+        store
+            .read_environment(&EnvironmentId::new("pod-0"))
+            .await
+            .expect("read stamped")
+            .registered()
+            .map(|source| source.last_seen_at_ms),
+        Some(300_100)
+    );
+    assert!(matches!(
+        store
+            .stamp_registered_seen(StampRegisteredSeen {
+                environment_id: EnvironmentId::new("missing"),
+                at_ms: 1,
+            })
+            .await,
+        Err(EnvironmentRegistryError::NotFound { .. })
+    ));
+
+    // Disconnects and reconnects are written on the transition only.
+    let disconnected = store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
+            environment_id: EnvironmentId::new("pod-0"),
+            at_ms: 400_000,
+        })
+        .await
+        .expect("disconnect");
+    let source = disconnected.registered().expect("registered");
+    assert!(!source.connected);
+    assert_eq!(source.connection_changed_at_ms, 400_000);
+    assert_eq!(
+        store
+            .mark_registered_disconnected(MarkRegisteredDisconnected {
+                environment_id: EnvironmentId::new("pod-0"),
+                at_ms: 400_500,
+            })
+            .await
+            .expect("disconnect again"),
+        disconnected
+    );
+    assert_eq!(
+        disconnected.use_gate(400_001),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Disconnected,
+            retry_after_ms: environments::WAIT_RETRY_AFTER_MS,
+            until_ms: Some(400_000 + REGISTERED_RECONNECT_WAIT_MS),
+        }
+    );
+    assert!(
+        !store
+            .stamp_registered_seen(stamp(900_000))
+            .await
+            .expect("stamp while away")
+    );
+    let reconnected = store
+        .mark_registered_connected(MarkRegisteredConnected {
+            environment_id: EnvironmentId::new("pod-0"),
+            daemon_build: test_build("1.1.0"),
+            at_ms: 410_000,
+        })
+        .await
+        .expect("reconnect");
+    let source = reconnected.registered().expect("registered");
+    assert!(source.connected);
+    assert_eq!(
+        (source.connection_changed_at_ms, source.last_seen_at_ms),
+        (410_000, 410_000)
+    );
+    assert_eq!(reconnected.daemon_build, Some(test_build("1.1.0")));
+
+    // A gateway restart disconnects every connected row as of now.
+    assert_eq!(
+        store
+            .repair_registered_connections(500_000)
+            .await
+            .expect("repair"),
+        2
+    );
+    let repaired = store
+        .read_environment(&EnvironmentId::new("pod-0"))
+        .await
+        .expect("read repaired");
+    let source = repaired.registered().expect("registered");
+    assert!(!source.connected);
+    assert_eq!(
+        (source.connection_changed_at_ms, source.last_seen_at_ms),
+        (500_000, 410_000)
+    );
+
+    // Sweep rule 2: an ephemeral daemon away past its grace closes.
+    store
+        .create_registered_environment(admit(
+            "sandboxes",
+            "sbx-0",
+            &test_daemon_public_key(),
+            1_000_000,
+        ))
+        .await
+        .expect("admit sbx-0");
+    store
+        .create_registered_environment(admit(
+            "sandboxes",
+            "sbx-1",
+            &test_daemon_public_key(),
+            1_000_000,
+        ))
+        .await
+        .expect("admit sbx-1");
+    store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
+            environment_id: EnvironmentId::new("sbx-0"),
+            at_ms: 1_000_000,
+        })
+        .await
+        .expect("disconnect sbx-0");
+    let sweep = store
+        .sweep_registered_environments(1_060_001)
+        .await
+        .expect("first sweep");
+    assert!(sweep.disconnected.is_empty());
+    assert_eq!(
+        sweep.closed,
+        vec![(
+            EnvironmentId::new("sbx-0"),
+            EnvironmentCloseReason::EphemeralGrace
+        )]
+    );
+
+    // Rule 1 flips a stale connected row, which rule 2 then closes; rule 3
+    // closes persistent rows away past the key's offline close-after.
+    let sweep = store
+        .sweep_registered_environments(4_200_000)
+        .await
+        .expect("second sweep");
+    assert_eq!(sweep.disconnected, vec![EnvironmentId::new("sbx-1")]);
+    assert_eq!(
+        sweep.closed,
+        vec![
+            (
+                EnvironmentId::new("pod-0"),
+                EnvironmentCloseReason::OfflineTimeout
+            ),
+            (
+                EnvironmentId::new("pod-1"),
+                EnvironmentCloseReason::OfflineTimeout
+            ),
+            (
+                EnvironmentId::new("sbx-1"),
+                EnvironmentCloseReason::EphemeralGrace
+            ),
+        ]
+    );
+    let closed = store
+        .read_environment(&EnvironmentId::new("pod-0"))
+        .await
+        .expect("read swept");
+    assert_eq!(closed.state, EnvironmentState::Closed);
+    assert_eq!(closed.closed_at_ms, Some(4_200_000));
+    assert!(
+        store
+            .sweep_registered_environments(4_200_000)
+            .await
+            .expect("idle sweep")
+            .closed
+            .is_empty()
+    );
+
+    // A closed identity is spent.
+    assert!(matches!(
+        store
+            .mark_registered_connected(MarkRegisteredConnected {
+                environment_id: EnvironmentId::new("pod-0"),
+                daemon_build: test_build("1.1.0"),
+                at_ms: 4_300_000,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store
+            .create_registered_environment(admit("fleet", "pod-0-again", &key_0, 4_300_000))
+            .await
+            .expect("spent identity converges"),
+        closed
+    );
+    let usage = store
+        .registration_key_usage(&EnvironmentRegistrationKeyId::new("fleet"))
+        .await
+        .expect("usage");
+    assert_eq!((usage.registered, usage.active), (2, 0));
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_registration_keys_rotate_update_and_resolve_live_secrets() {
+    use environments::{
+        CreateEnvironmentRegistrationKey, CreateRegisteredEnvironment,
+        EnvironmentRegistrationKeyId, EnvironmentRegistrationKeyStore, RegisteredIdentityMode,
+        RegistrationKeyPolicy, RegistrationKeySettings, RevokeEnvironmentRegistrationKey,
+        RotateEnvironmentRegistrationKey, UpdateEnvironmentRegistrationKey, mint_registration_key,
+        mint_registration_secret,
+    };
+
+    let store = live_store("environment-keys", 1024).await;
+    let universe_id = store.config().universe_id;
+    let key_id = EnvironmentRegistrationKeyId::new("rotating");
+    let policy = |identity_mode| RegistrationKeyPolicy {
+        display_name: "Rotating".to_owned(),
+        identity_mode,
+        max_active_environments: None,
+        ephemeral_disconnect_grace_ms: None,
+        offline_close_after_ms: None,
+        expires_at_ms: None,
+    };
+    let minted = mint_registration_key(
+        key_id.clone(),
+        policy(RegisteredIdentityMode::Persistent),
+        1,
+    )
+    .expect("mint key");
+    let created = store
+        .create_registration_key(CreateEnvironmentRegistrationKey {
+            secret_hash: minted.secret.secret_hash.clone(),
+            record: minted.record.clone(),
+        })
+        .await
+        .expect("create key");
+    assert_eq!(created, minted.record);
+    assert_eq!(
+        store
+            .resolve_registration_key(&minted.secret.secret_hash)
+            .await
+            .expect("resolve"),
+        Some(created.clone())
+    );
+    assert_eq!(
+        store_pg::find_registration_key_universe(store.pool(), &minted.secret.secret_hash)
+            .await
+            .expect("find universe"),
+        Some(universe_id)
+    );
+    assert!(matches!(
+        store
+            .create_registration_key(CreateEnvironmentRegistrationKey {
+                secret_hash: mint_registration_secret().secret_hash,
+                record: minted.record.clone(),
+            })
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists {
+            kind: "environment_registration_key",
+            ..
+        })
+    ));
+
+    // Rotation retires the live secret and keeps the key.
+    let rotated_secret = mint_registration_secret();
+    let rotated = store
+        .rotate_registration_key(RotateEnvironmentRegistrationKey {
+            registration_key_id: key_id.clone(),
+            secret_hash: rotated_secret.secret_hash.clone(),
+            key_prefix: rotated_secret.key_prefix.clone(),
+            rotated_at_ms: 10,
+        })
+        .await
+        .expect("rotate");
+    assert_eq!(rotated.key_prefix, rotated_secret.key_prefix);
+    assert_eq!((rotated.created_at_ms, rotated.updated_at_ms), (1, 10));
+    assert_eq!(
+        store
+            .read_registration_key(&key_id)
+            .await
+            .expect("read rotated"),
+        rotated
+    );
+    assert_eq!(
+        store
+            .resolve_registration_key(&minted.secret.secret_hash)
+            .await
+            .expect("resolve retired"),
+        None
+    );
+    assert_eq!(
+        store
+            .resolve_registration_key(&rotated_secret.secret_hash)
+            .await
+            .expect("resolve live"),
+        Some(rotated.clone())
+    );
+    assert_eq!(
+        store_pg::find_registration_key_universe(store.pool(), &minted.secret.secret_hash)
+            .await
+            .expect("find by retired secret"),
+        None
+    );
+    // An admission that resolved the key before the rotation committed
+    // presents the retired secret: refused inside the key-locked
+    // transaction. The live secret admits.
+    let admit = |secret_hash: &str| CreateRegisteredEnvironment {
+        registration_key_id: key_id.clone(),
+        secret_hash: secret_hash.to_owned(),
+        environment_id: EnvironmentId::new("rotating-pod"),
+        daemon_public_key: test_daemon_public_key(),
+        display_name: None,
+        metadata: Default::default(),
+        daemon_build: test_build("1.0.0"),
+        created_at_ms: 12,
+    };
+    assert!(matches!(
+        store
+            .create_registered_environment(admit(&minted.secret.secret_hash))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable {
+            reason: "rotated",
+            ..
+        })
+    ));
+    assert_eq!(
+        store
+            .create_registered_environment(admit(&rotated_secret.secret_hash))
+            .await
+            .expect("admit with the live secret")
+            .state,
+        EnvironmentState::Open
+    );
+    assert!(matches!(
+        store
+            .rotate_registration_key(RotateEnvironmentRegistrationKey {
+                registration_key_id: key_id.clone(),
+                secret_hash: minted.secret.secret_hash.clone(),
+                key_prefix: minted.secret.key_prefix.clone(),
+                rotated_at_ms: 11,
+            })
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists {
+            kind: "environment_registration_key_secret",
+            ..
+        })
+    ));
+
+    // Updates replace the editable policy; the identity mode bounds it.
+    let updated = store
+        .update_registration_key(UpdateEnvironmentRegistrationKey {
+            registration_key_id: key_id.clone(),
+            settings: RegistrationKeySettings {
+                display_name: "Renamed".to_owned(),
+                max_active_environments: Some(5),
+                ephemeral_disconnect_grace_ms: None,
+                offline_close_after_ms: Some(60_000),
+                expires_at_ms: Some(1_000_000),
+            },
+            updated_at_ms: 20,
+        })
+        .await
+        .expect("update");
+    assert_eq!(updated.display_name, "Renamed");
+    assert_eq!(updated.offline_close_after_ms, Some(60_000));
+    assert_eq!(updated.updated_at_ms, 20);
+    assert_eq!(
+        store
+            .read_registration_key(&key_id)
+            .await
+            .expect("read updated"),
+        updated
+    );
+    let ephemeral_id = EnvironmentRegistrationKeyId::new("ephemeral");
+    let ephemeral = mint_registration_key(
+        ephemeral_id.clone(),
+        policy(RegisteredIdentityMode::Ephemeral),
+        1,
+    )
+    .expect("mint ephemeral key");
+    store
+        .create_registration_key(CreateEnvironmentRegistrationKey {
+            secret_hash: ephemeral.secret.secret_hash.clone(),
+            record: ephemeral.record.clone(),
+        })
+        .await
+        .expect("create ephemeral key");
+    assert!(matches!(
+        store
+            .update_registration_key(UpdateEnvironmentRegistrationKey {
+                registration_key_id: ephemeral_id,
+                settings: RegistrationKeySettings {
+                    display_name: "Ephemeral".to_owned(),
+                    max_active_environments: None,
+                    ephemeral_disconnect_grace_ms: None,
+                    offline_close_after_ms: Some(60_000),
+                    expires_at_ms: None,
+                },
+                updated_at_ms: 21,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store
+            .list_registration_keys()
+            .await
+            .expect("list keys")
+            .len(),
+        2
+    );
+
+    // Revocation is idempotent and stops rotation; resolve still answers so
+    // the caller can refuse with the reason.
+    let revoked = store
+        .revoke_registration_key(RevokeEnvironmentRegistrationKey {
+            registration_key_id: key_id.clone(),
+            revoked_at_ms: 30,
+        })
+        .await
+        .expect("revoke");
+    assert_eq!(revoked.revoked_at_ms, Some(30));
+    assert_eq!(
+        store
+            .revoke_registration_key(RevokeEnvironmentRegistrationKey {
+                registration_key_id: key_id.clone(),
+                revoked_at_ms: 40,
+            })
+            .await
+            .expect("revoke again")
+            .revoked_at_ms,
+        Some(30)
+    );
+    assert!(matches!(
+        store
+            .rotate_registration_key(RotateEnvironmentRegistrationKey {
+                registration_key_id: key_id.clone(),
+                secret_hash: mint_registration_secret().secret_hash,
+                key_prefix: "lsrk_revoked".to_owned(),
+                rotated_at_ms: 50,
+            })
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable {
+            reason: "revoked",
+            ..
+        })
+    ));
+    assert!(
+        store
+            .resolve_registration_key(&rotated_secret.secret_hash)
+            .await
+            .expect("resolve revoked key")
+            .is_some_and(|key| key.revoked_at_ms == Some(30))
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_environment_deployment_queries_find_work_and_revoked_routes() {
+    use environments::{ObservedTarget, OpenEnvironment, RecordTargetObservation, TargetPhase};
+
+    let store = live_store("environment-deployment-queries", 1024).await;
+    let universe_id = store.config().universe_id;
+    let provider_id = bound_test_provider(&store, "deployment-queries").await;
+    let opened = store
+        .create_environment(create_environment(
+            &provider_id,
+            "deployment-opened",
+            "deployment-opened",
+            100,
+        ))
+        .await
+        .expect("create opened environment");
+    let closing = store
+        .create_environment(create_environment(
+            &provider_id,
+            "deployment-closing",
+            "deployment-closing",
+            100,
+        ))
+        .await
+        .expect("create closing environment");
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: closing.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 100,
+        })
+        .await
+        .expect("begin close");
+    assert!(
+        store_pg::list_universes_with_environment_work(store.pool(), 10_000_000)
+            .await
+            .expect("universes with work")
+            .contains(&universe_id)
+    );
+
+    // Revoked routes: gone or not open rows, and rows whose binding is
+    // disabled.
+    store
+        .record_target_observation(RecordTargetObservation {
+            environment_id: opened.environment_id.clone(),
+            provider_target_id: Some(
+                ProviderTargetId::new("deployment-target").expect("target id"),
+            ),
+            observed: ObservedTarget {
+                phase: TargetPhase::Active,
+                power: None,
+                message: None,
+                observed_at_ms: 0,
+            },
+            public_endpoint: None,
+            observed_at_ms: 101,
+        })
+        .await
+        .expect("observe opened");
+    store
+        .open_environment(OpenEnvironment {
+            environment_id: opened.environment_id.clone(),
+            daemon_build: test_build("1.0.0"),
+            at_ms: 102,
+        })
+        .await
+        .expect("open opened");
+    assert!(
+        store_pg::list_universes_with_open_provisioned_environments(store.pool())
+            .await
+            .expect("universes with open provisioned environments")
+            .contains(&universe_id)
+    );
+    let routes = vec![
+        (universe_id, opened.environment_id.as_str().to_owned()),
+        (universe_id, closing.environment_id.as_str().to_owned()),
+        (universe_id, "deployment-missing".to_owned()),
+    ];
+    assert_eq!(
+        store_pg::list_revoked_environment_routes(store.pool(), &routes)
+            .await
+            .expect("revoked routes"),
+        vec![
+            (universe_id, closing.environment_id.as_str().to_owned()),
+            (universe_id, "deployment-missing".to_owned()),
+        ]
+    );
+    store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id,
+            provider_id: provider_id.clone(),
+            enabled: false,
+            updated_at_ms: 103,
+        })
+        .await
+        .expect("disable binding");
+    assert!(
+        store_pg::list_revoked_environment_routes(store.pool(), &routes)
+            .await
+            .expect("revoked routes after disable")
+            .contains(&(universe_id, opened.environment_id.as_str().to_owned()))
+    );
+
+    store_pg::delete_universe(store.pool(), universe_id)
+        .await
+        .expect("delete test universe");
+    store
+        .delete_provider(&provider_id)
+        .await
+        .expect("delete test provider");
 }

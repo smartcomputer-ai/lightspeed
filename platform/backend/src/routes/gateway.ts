@@ -17,6 +17,7 @@ import {
   type EnvironmentExternalCreateParams,
   type EnvironmentListParams,
   type EnvironmentRegistrationKeyCreateParams,
+  type EnvironmentRegistrationKeyUpdateParams,
   type McpServerInput,
   type McpServerAuthDiscoverParams,
   type McpServerToolsDiscoverParams,
@@ -166,11 +167,26 @@ const environmentIdlePolicySchema = z.object({
 
 const environmentCreateSchema = z.object({
   requestId: z.string().trim().min(1).max(200),
-  bindingId: z.string().trim().min(1).max(200),
+  providerId: z.string().trim().min(1).max(200),
   templateId: z.string().trim().min(1).max(200),
   displayName: z.string().trim().min(1).max(200).optional(),
   metadata: z.record(z.string(), z.string()).optional(),
-  idlePolicy: environmentIdlePolicySchema.optional(),
+  idle: environmentIdlePolicySchema.optional(),
+});
+
+const environmentUpdateSchema = z.object({
+  displayName: z.string().trim().min(1).max(200).nullable().optional(),
+  metadata: z.record(z.string(), z.string()).optional(),
+});
+
+/// `GET /environments` query: one page of `environments/list`.
+const environmentListQuerySchema = z.object({
+  providerId: z.string().trim().min(1).optional(),
+  registrationKeyId: z.string().trim().min(1).optional(),
+  state: z.enum(["provisioning", "open", "closing", "closed", "failed"]).optional(),
+  includeClosed: z.enum(["true", "false"]).optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional(),
+  after: z.string().trim().min(1).optional(),
 });
 
 const environmentIngressPutSchema = z.object({
@@ -179,10 +195,6 @@ const environmentIngressPutSchema = z.object({
 
 const environmentPowerPutSchema = z.object({
   power: z.enum(["running", "paused", "suspended", "stopped"]),
-});
-
-const environmentIdlePolicyPutSchema = z.object({
-  idlePolicy: environmentIdlePolicySchema.nullable().optional(),
 });
 
 const environmentCredentialBindSchema = z.object({
@@ -210,12 +222,15 @@ const externalEnvironmentCreateSchema = z.object({
 
 /// Registration-key policy as the Environments page submits it. Identity
 /// mode is the key's policy; daemons never choose it.
-const registrationKeyCreateSchema = z.object({
+const registrationKeySettingsSchema = z.object({
   displayName: z.string().trim().min(1).max(128),
-  identityMode: z.enum(["persistent", "ephemeral"]),
   maxActiveEnvironments: z.number().int().min(1).optional(),
   ephemeralDisconnectGraceMs: z.number().int().min(1).optional(),
+  offlineCloseAfterMs: z.number().int().min(1).optional(),
   expiresAtMs: z.number().int().min(0).optional(),
+});
+const registrationKeyCreateSchema = registrationKeySettingsSchema.extend({
+  identityMode: z.enum(["persistent", "ephemeral"]),
 });
 
 const registrationKeyRevokeSchema = z.object({
@@ -1620,17 +1635,19 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const bindingId = c.req.query("bindingId");
-      if (bindingId) {
-        const response = await client.call("environments/templates/list", { bindingId });
+      const providerId = c.req.query("providerId");
+      if (providerId) {
+        const response = await client.call("environments/templates/list", { providerId });
         return c.json(response.result.templates);
       }
+      // One call per enabled provider so an unreachable provider drops only
+      // its own templates instead of failing the whole listing.
       const bindings = await client.call("environments/provider-bindings/list", {});
       const results = await Promise.allSettled(
         bindings.result.bindings
-          .filter((binding) => binding.status === "enabled")
+          .filter((binding) => binding.enabled)
           .map((binding) => client.call("environments/templates/list", {
-            bindingId: binding.bindingId,
+            providerId: binding.providerId,
           })),
       );
       return c.json(results.flatMap((result) =>
@@ -1646,26 +1663,20 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const params: EnvironmentListParams = {};
-      const providerId = c.req.query("providerId");
-      if (providerId) {
-        params.providerId = providerId;
+      const query = environmentListQuerySchema.safeParse(c.req.query());
+      if (!query.success) {
+        return c.json({ error: query.error.issues[0]?.message ?? "invalid query" }, 400);
       }
-      const bindingId = c.req.query("bindingId");
-      if (bindingId) {
-        params.bindingId = bindingId;
-      }
-      const status = c.req.query("status");
-      if (status) {
-        params.status = status as EnvironmentListParams["status"];
-      }
-
-      const registrationKeyId = c.req.query("registrationKeyId");
-      if (registrationKeyId) {
-        params.registrationKeyId = registrationKeyId;
-      }
+      const { includeClosed, ...filters } = query.data;
+      const params: EnvironmentListParams = {
+        ...filters,
+        ...(includeClosed === "true" ? { includeClosed: true } : {}),
+      };
       const response = await client.call("environments/list", params);
-      return c.json(response.result.environments ?? []);
+      return c.json({
+        environments: response.result.environments ?? [],
+        nextAfter: response.result.nextAfter ?? null,
+      });
     });
   });
 
@@ -1717,6 +1728,43 @@ export function gatewayRoutes(ctx: AppContext) {
       const response = await client.call("environments/registration-keys/revoke", {
         registrationKeyId: c.req.param("keyId"),
         closeEnvironments: body.data.closeEnvironments ?? false,
+      });
+      return c.json(response.result);
+    });
+  });
+
+  /// Replace a key's editable policy; its identity mode never changes.
+  app.put("/:id/environment-registration-keys/:keyId", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    const body = await parseBody(c, registrationKeySettingsSchema);
+    if (!body.ok) {
+      return body.response;
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const params: EnvironmentRegistrationKeyUpdateParams = {
+        registrationKeyId: c.req.param("keyId"),
+        ...body.data,
+      };
+      const response = await client.call("environments/registration-keys/update", params);
+      return c.json(response.result.registrationKey);
+    });
+  });
+
+  /// Retire the key's live secret and mint a new one. The plaintext secret
+  /// is in the response exactly once.
+  app.post("/:id/environment-registration-keys/:keyId/rotate", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) {
+      return c.json({ error: "not found" }, 404);
+    }
+    return withGateway(c, async () => {
+      const client = engineClientFor(ctx, access);
+      const response = await client.call("environments/registration-keys/rotate", {
+        registrationKeyId: c.req.param("keyId"),
       });
       return c.json(response.result);
     });
@@ -1779,20 +1827,22 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
-  app.put("/:id/environments/:environmentId/idle-policy", async (c) => {
+  /// Replace an environment's display name and caller metadata.
+  app.patch("/:id/environments/:environmentId", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {
       return c.json({ error: "not found" }, 404);
     }
-    const body = await parseBody(c, environmentIdlePolicyPutSchema);
+    const body = await parseBody(c, environmentUpdateSchema);
     if (!body.ok) {
       return body.response;
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("environments/idle-policy/put", {
+      const response = await client.call("environments/update", {
         environmentId: c.req.param("environmentId"),
-        ...(body.data.idlePolicy ? { idlePolicy: body.data.idlePolicy } : {}),
+        ...(body.data.displayName ? { displayName: body.data.displayName } : {}),
+        metadata: body.data.metadata ?? {},
       });
       return c.json(response.result.environment);
     });

@@ -3,15 +3,14 @@
 //! The same handshake rules as the data plane apply: `initialize` first
 //! (`notInitialized` otherwise), once (`invalidRequest` on a repeat), with
 //! [`CONTROLLER_PROTOCOL_VERSION`](crate::CONTROLLER_PROTOCOL_VERSION)
-//! (`versionMismatch` otherwise). The core methods (`template/list` and
-//! every `target/*` method except `target/adopt`) are mandatory at this
-//! version; the capabilities name the optional ones.
+//! (`versionMismatch` otherwise). `template/list`, `target/create`,
+//! `target/get` and `target/close` are mandatory at this version; the
+//! capabilities name the optional ones.
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     handshake::{ImplementationInfo, Plane},
-    routes::DataRouteBase,
     serde_util::is_false,
 };
 
@@ -35,7 +34,6 @@ pub struct ControllerInitializeResponse {
     pub plane: Plane,
     pub server_info: ImplementationInfo,
     pub capabilities: ControllerCapabilities,
-    pub routes: ControllerRoutes,
 }
 
 /// Optional controller methods. Calling an absent one is
@@ -44,25 +42,10 @@ pub struct ControllerInitializeResponse {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ControllerCapabilities {
-    /// `target/adopt` is served.
+    /// `target/setPower` is served.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub adopt_target: bool,
+    pub power: bool,
     /// `ingress/ensure` and `ingress/remove` are served.
     #[serde(default, skip_serializing_if = "is_false")]
     pub ingress: bool,
-}
-
-/// Where Lightspeed reaches a target's data plane through this provider.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ControllerRoutes {
-    /// Base URL of the data routes. A target's data route is this base
-    /// followed by
-    /// `/{universeId}/{bindingId}/{environmentId}/{incarnationId}/{targetId}`,
-    /// each segment percent-encoded
-    /// ([`provider_data_route`](crate::routes::provider_data_route)), and is
-    /// dialed with the same bearer credential as the controller. A
-    /// controller reached over `wss` must advertise a `wss` base.
-    pub data: DataRouteBase,
 }

@@ -3,8 +3,9 @@
 use environment_protocol::{
     CONTROLLER_PROTOCOL_VERSION, ENVD_PROTOCOL_VERSION,
     control::{
-        handshake::ControllerInitializeParams,
-        target::{TargetObservation, TargetPhase, TargetResponse},
+        handshake::{ControllerInitializeParams, ControllerInitializeResponse},
+        target::{CreateTargetParams, PowerState, TargetObservation, TargetPhase, TargetResponse},
+        template::ListTemplatesResponse,
     },
     data::{
         exec::{ExecInput, ExitStatus, GapReason, OutputPage},
@@ -33,9 +34,9 @@ fn decode<T: DeserializeOwned>(value: &Value) -> T {
 }
 
 #[test]
-fn both_numbers_are_three() {
-    assert_eq!(ENVD_PROTOCOL_VERSION, 3);
-    assert_eq!(CONTROLLER_PROTOCOL_VERSION, 3);
+fn both_numbers_are_four() {
+    assert_eq!(ENVD_PROTOCOL_VERSION, 4);
+    assert_eq!(CONTROLLER_PROTOCOL_VERSION, 4);
 }
 
 #[test]
@@ -150,11 +151,49 @@ fn scan_roots_are_reported_independently() {
 fn close_by_owner_answers_closed_without_a_target_id() {
     let response: TargetResponse = decode(&fixture("controller/target.close.json")["response"]);
     let TargetObservation {
-        target_id, state, ..
+        target_id,
+        phase,
+        power,
+        ..
     } = response.target;
     assert!(target_id.is_none());
-    assert_eq!(state.phase, TargetPhase::Closed);
-    assert!(state.power.is_none());
+    assert_eq!(phase, TargetPhase::Closed);
+    assert!(power.is_none());
+}
+
+#[test]
+fn owners_name_only_the_universe_and_environment() {
+    let mut params = fixture("controller/target.get.json")["params"].clone();
+    params["target"]["owner"]["bindingId"] = json!("primary");
+    assert!(
+        serde_json::from_value::<environment_protocol::control::target::GetTargetParams>(params)
+            .is_err()
+    );
+    let mut observation = fixture("controller/target.get.json")["response"].clone();
+    observation["target"]["daemonReady"] = json!(true);
+    assert!(serde_json::from_value::<TargetResponse>(observation).is_err());
+}
+
+#[test]
+fn templates_carry_power_states_and_a_default_idle_policy() {
+    let response: ListTemplatesResponse =
+        decode(&fixture("controller/template.list.json")["response"]);
+    let template = &response.templates[0];
+    assert!(template.power_states.contains(&PowerState::Paused));
+    let idle = template.idle.as_ref().expect("default idle policy");
+    assert_eq!(idle.validate(), Ok(()));
+    let create: CreateTargetParams = decode(&fixture("controller/target.create.json")["params"]);
+    assert_eq!(create.idle.expect("override").pause_after_ms, Some(600_000));
+}
+
+#[test]
+fn controller_capabilities_name_power_and_ingress_only() {
+    let response: ControllerInitializeResponse =
+        decode(&fixture("controller/initialize.json")["response"]);
+    assert!(response.capabilities.power && response.capabilities.ingress);
+    let mut routed = fixture("controller/initialize.json")["response"].clone();
+    routed["routes"] = json!({"data": "wss://p.example/routes"});
+    assert!(serde_json::from_value::<ControllerInitializeResponse>(routed).is_err());
 }
 
 #[test]

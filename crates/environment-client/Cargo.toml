@@ -5,7 +5,8 @@ edition = "2024"
 
 [features]
 # `conformance::controller`: a suite that drives any controller endpoint
-# through `ControllerClient` and checks the controller-plane contract.
+# through `ControllerClient` and checks the controller-plane contract;
+# `conformance::data_route`: checks of a data route's typed refusals.
 conformance = []
 
 [dependencies]

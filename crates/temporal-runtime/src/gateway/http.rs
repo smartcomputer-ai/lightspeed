@@ -18,16 +18,26 @@ use axum::{
     routing::{get, post},
 };
 use environment_protocol::{
-    control::target::TargetOwner,
-    ids::{BindingId, EnvironmentId, IncarnationId, ProviderTargetId, UniverseId},
-    limits::MAX_MESSAGE_BYTES,
-    routes::{CONNECT_PATH, CanonicalOrigin, DATA_PATH, canonical_origin, provider_data_route},
+    control::target::{GetTargetParams, PowerState, TargetOwner, TargetPhase, TargetRef},
+    ids::{EnvironmentId, UniverseId},
+    limits::{MAX_MESSAGE_BYTES, RETRY_AFTER_MAX_SECS},
+    metadata::DescriptiveText,
+    routes::{
+        CONNECT_PATH, CanonicalOrigin, DATA_PATH, DataRouteRefusal, canonical_origin,
+        parse_retry_after_ms, provider_data_route,
+    },
 };
-use environments::{EndpointScheme, EnvironmentEndpoint};
+use environments::{
+    EndpointScheme, EnvironmentEndpoint, EnvironmentGoneReason, EnvironmentUse,
+    EnvironmentWaitReason, WAIT_RETRY_AFTER_MS,
+};
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use store_pg::PgApiKeyStore;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::watch,
+};
 use tokio_tungstenite::{
     WebSocketStream, client_async_with_config, connect_async_with_config,
     tungstenite::{
@@ -38,13 +48,16 @@ use tokio_tungstenite::{
 use uuid::Uuid;
 
 use crate::{
-    config::{DeploymentStores, GatewayAuthMode, gateway_auth_mode_from_env},
-    environments::gateway::{ROUTE_PATH_PREFIX, RouteKey, bearer_matches, close_message},
+    config::GatewayAuthMode,
+    environments::{
+        gateway::{NO_WAKE_HEADER, ROUTE_PATH_PREFIX, RouteKey, bearer_matches, close_message},
+        signals::EnvironmentSignals,
+    },
     universe::{UniverseError, UniverseRuntime},
 };
 
 use super::{
-    GatewayAgentApi, GatewayDeploymentApi, OAuthCallbackOutcome, connect_temporal,
+    GatewayAgentApi, GatewayDeploymentApi, OAuthCallbackOutcome,
     registration::{self, RegisteredConnections},
     request_context,
 };
@@ -53,19 +66,6 @@ pub const DEFAULT_GATEWAY_BIND: &str = "127.0.0.1:18080";
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 pub use super::authentication::{ACTOR_HEADER, UNIVERSE_HEADER};
-
-#[derive(Clone, Debug)]
-pub struct GatewayServerConfig {
-    pub bind: SocketAddr,
-    pub task_queue: String,
-    pub temporal_target: String,
-    pub namespace: String,
-    pub max_request_body_bytes: usize,
-    /// Externally reachable base URL: the OAuth callback
-    /// (`{base}/auth/callback`) and the origin registered daemons sign.
-    /// Defaults to `http://{bind}`, which only a loopback bind may rely on.
-    pub public_base_url: Option<String>,
-}
 
 /// Per-request universe resolution for the HTTP edge.
 ///
@@ -91,10 +91,13 @@ pub struct GatewayState {
     resolution: UniverseResolution,
     /// Live registered-daemon connections on this replica.
     registrations: Arc<RegisteredConnections>,
-    /// The origin daemons sign registrations for: the canonical origin of
-    /// the public base URL. Absent when that URL has no WebSocket origin;
+    /// The origins a daemon's registration signature may name: the
+    /// canonical origin of the public base URL and any configured
+    /// registration URLs. Empty when none of them has a WebSocket origin;
     /// the connect route then refuses every daemon.
-    registration_origin: Option<CanonicalOrigin>,
+    registration_origins: Vec<CanonicalOrigin>,
+    /// Revocation of live environment routes and control connections.
+    signals: Arc<EnvironmentSignals>,
 }
 
 /// Which route families one HTTP listener serves, derived from the
@@ -119,20 +122,35 @@ impl GatewayRoutes {
 impl GatewayState {
     /// Route every request to one existing service instance.
     pub fn for_api(api: Arc<GatewayAgentApi>) -> Self {
-        let registration_origin = registration_origin_of(api.public_base_url());
+        let registration_origins = registration_origin_of(api.public_base_url())
+            .into_iter()
+            .collect();
+        let signals = api.environment_signals().clone();
         Self {
             resolution: UniverseResolution::FixedApi { api },
             registrations: Arc::new(RegisteredConnections::new()),
-            registration_origin,
+            registration_origins,
+            signals,
         }
+    }
+
+    /// Replace the origins registration signatures are verified against,
+    /// as [`registration_origins`] computed them at startup.
+    pub fn with_registration_origins(mut self, origins: Vec<CanonicalOrigin>) -> Self {
+        self.registration_origins = origins;
+        self
     }
 
     pub(super) fn registrations(&self) -> &Arc<RegisteredConnections> {
         &self.registrations
     }
 
-    pub(super) fn registration_origin(&self) -> Option<&CanonicalOrigin> {
-        self.registration_origin.as_ref()
+    pub(super) fn registration_origins(&self) -> &[CanonicalOrigin] {
+        &self.registration_origins
+    }
+
+    pub(super) fn signals(&self) -> &Arc<EnvironmentSignals> {
+        &self.signals
     }
 
     /// The universe a register request belongs to: the environment's
@@ -198,7 +216,10 @@ impl GatewayState {
     ) -> Self {
         let api_keys = PgApiKeyStore::new(runtime.stores().pool().clone());
         let deployment = Arc::new(GatewayDeploymentApi::new(runtime.clone()));
-        let registration_origin = registration_origin_of(&public_base_url);
+        let registration_origins = registration_origin_of(&public_base_url)
+            .into_iter()
+            .collect();
+        let signals = runtime.environment_signals().clone();
         Self {
             resolution: UniverseResolution::Multi {
                 mode,
@@ -208,7 +229,8 @@ impl GatewayState {
                 deployment,
             },
             registrations: Arc::new(RegisteredConnections::new()),
-            registration_origin,
+            registration_origins,
+            signals,
         }
     }
 
@@ -350,7 +372,7 @@ impl GatewayState {
     async fn environment_provider_credential(
         &self,
         provider_id: &environments::EnvironmentProviderId,
-    ) -> Result<auth::SecretValue, environments::EnvironmentRegistryError> {
+    ) -> Result<Option<auth::SecretValue>, environments::EnvironmentRegistryError> {
         environments::EnvironmentProviderStore::read_provider_credential(
             self.deployment_store().as_ref(),
             provider_id,
@@ -375,27 +397,54 @@ fn registration_origin_of(public_base_url: &str) -> Option<CanonicalOrigin> {
     }
 }
 
-/// The origin registered daemons must sign for, checked once at startup by
+/// The origins registered daemons may sign for, computed once at startup by
 /// a process that serves the registration route: the canonical origin of
-/// `LIGHTSPEED_PUBLIC_BASE_URL`. Without that variable the default
-/// `http://{bind}` is the true origin only on a loopback bind, so any other
-/// bind refuses to start rather than reject every remote daemon.
-pub fn registration_origin(
+/// `LIGHTSPEED_PUBLIC_BASE_URL`, then the origin of each
+/// `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` entry (for example a
+/// cluster-internal Service name daemons dial instead). Without a public
+/// base URL the default `http://{bind}` is a true origin only on a loopback
+/// bind; any other bind needs at least one configured origin, or the
+/// process refuses to start rather than reject every remote daemon. A URL
+/// without a WebSocket origin is a startup error.
+pub fn registration_origins(
     public_base_url: Option<&str>,
+    registration_urls: &[String],
     bind: SocketAddr,
-) -> anyhow::Result<CanonicalOrigin> {
-    let Some(public_base_url) = public_base_url else {
-        if !bind.ip().is_loopback() {
-            anyhow::bail!(
-                "LIGHTSPEED_PUBLIC_BASE_URL is required to serve environment registration on {bind}: \
-                 daemons sign the gateway origin they dial, and only that URL names it"
-            );
+) -> anyhow::Result<Vec<CanonicalOrigin>> {
+    let mut origins = Vec::new();
+    match public_base_url {
+        Some(public_base_url) => {
+            origins.push(canonical_origin(public_base_url).map_err(|error| {
+                anyhow::anyhow!("LIGHTSPEED_PUBLIC_BASE_URL has no WebSocket origin: {error}")
+            })?)
         }
-        return Ok(canonical_origin(&format!("http://{bind}"))?);
-    };
-    canonical_origin(public_base_url).map_err(|error| {
-        anyhow::anyhow!("LIGHTSPEED_PUBLIC_BASE_URL has no WebSocket origin: {error}")
-    })
+        None if bind.ip().is_loopback() => {
+            origins.push(canonical_origin(&format!("http://{bind}"))?);
+        }
+        None => {}
+    }
+    for url in registration_urls
+        .iter()
+        .map(|url| url.trim())
+        .filter(|url| !url.is_empty())
+    {
+        let origin = canonical_origin(url).map_err(|error| {
+            anyhow::anyhow!(
+                "LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS entry {url:?} has no WebSocket origin: {error}"
+            )
+        })?;
+        if !origins.contains(&origin) {
+            origins.push(origin);
+        }
+    }
+    if origins.is_empty() {
+        anyhow::bail!(
+            "LIGHTSPEED_PUBLIC_BASE_URL or LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS is required to serve \
+             environment registration on {bind}: daemons sign the gateway origin they dial, and only \
+             those URLs name it"
+        );
+    }
+    Ok(origins)
 }
 
 fn map_universe_error(error: UniverseError) -> AgentApiError {
@@ -405,31 +454,6 @@ fn map_universe_error(error: UniverseError) -> AgentApiError {
         }
         UniverseError::Runtime(error) => AgentApiError::internal(error.to_string()),
     }
-}
-
-pub async fn serve_gateway(config: GatewayServerConfig) -> anyhow::Result<()> {
-    let mode = gateway_auth_mode_from_env()?;
-    let client = connect_temporal(&config.temporal_target, &config.namespace).await?;
-    let stores = DeploymentStores::from_env()
-        .await?
-        .with_blob_cache(crate::config::blob_cache_from_env()?);
-    registration_origin(config.public_base_url.as_deref(), config.bind)?;
-    let public_base_url = public_base_url_or_default(&config);
-    let runtime = Arc::new(UniverseRuntime::new(
-        client,
-        config.task_queue.clone(),
-        Some(public_base_url.clone()),
-        stores,
-    )?);
-    prewarm_single_universe(&mode, &runtime).await?;
-    let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
-    let state = Arc::new(GatewayState::multi(mode, runtime, public_base_url));
-    let app = gateway_router(state, config.max_request_body_bytes, GatewayRoutes::ALL);
-    let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    tracing::info!(target: "temporal_runtime", bind = %config.bind, "gateway listening");
-    axum::serve(listener, app).await?;
-    reconciler.abort();
-    Ok(())
 }
 
 /// In `single` mode, build the pinned universe's state at startup so
@@ -443,13 +467,6 @@ pub async fn prewarm_single_universe(
         runtime.state_for(*universe_id, true).await?;
     }
     Ok(())
-}
-
-pub fn public_base_url_or_default(config: &GatewayServerConfig) -> String {
-    config
-        .public_base_url
-        .clone()
-        .unwrap_or_else(|| format!("http://{}", config.bind))
 }
 
 pub fn gateway_router(
@@ -471,7 +488,7 @@ pub fn gateway_router(
     if routes.environment {
         router = router
             .route(
-                &format!("{ROUTE_PATH_PREFIX}/{{universe}}/{{environment}}/{{incarnation}}"),
+                &format!("{ROUTE_PATH_PREFIX}/{{universe}}/{{environment}}"),
                 get(environment_route_upgrade),
             )
             .route(CONNECT_PATH, get(registration::connect_upgrade))
@@ -562,9 +579,14 @@ async fn bot_webhook_ingest(
     (status, Json(payload)).into_response()
 }
 
+/// `GET {ROUTE_PATH_PREFIX}/{universe}/{environment}`: a worker's data
+/// route. The row's use gate decides first; a usable environment is then
+/// dialed by its source. Every refusal the gate or a provider makes is a
+/// typed [`DataRouteRefusal`]; a bodiless status means the gateway itself
+/// could not reach or authorize the upstream.
 async fn environment_route_upgrade(
     State(state): State<Arc<GatewayState>>,
-    Path((universe, environment, incarnation)): Path<(String, String, String)>,
+    Path((universe, environment)): Path<(String, String)>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
@@ -577,7 +599,6 @@ async fn environment_route_upgrade(
     let key = RouteKey {
         universe_id,
         environment_id: environment,
-        incarnation_id: incarnation,
     };
     let api = match state.api_for_daemon(universe_id).await {
         Ok(api) => api,
@@ -587,6 +608,9 @@ async fn environment_route_upgrade(
         Ok(id) => id,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
+    // Subscribe before reading the row: a revocation that lands after the
+    // read still ends the route.
+    let revoked = state.signals().watch(universe_id, &key.environment_id);
     let environment = match environments::EnvironmentStore::read_environment(
         api.store().as_ref(),
         &environment_id,
@@ -594,10 +618,16 @@ async fn environment_route_upgrade(
     .await
     {
         Ok(environment) => environment,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(environments::EnvironmentRegistryError::NotFound { .. }) => {
+            return refusal_response(&DataRouteRefusal::Gone {}, None);
+        }
+        Err(error) => {
+            tracing::warn!(target: "temporal_runtime", %error, environment = %key.environment_id, "environment route could not read its environment");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
     };
-    if environment.incarnation.incarnation_id.as_str() != key.incarnation_id {
-        return StatusCode::CONFLICT.into_response();
+    if let Some(refused) = gate_refusal(&environment.use_gate(now_ms())) {
+        return refused;
     }
     let upgrade = upgrade
         .max_message_size(MAX_MESSAGE_BYTES as usize)
@@ -609,36 +639,24 @@ async fn environment_route_upgrade(
                     Ok(upstream) => upstream,
                     Err(failure) => return failure.respond(endpoint.as_str()),
                 };
-            let route = UpstreamRoute::External {
-                endpoint: endpoint.clone(),
-            };
             upgrade
-                .on_upgrade(move |socket| proxy_upstream(state, key, route, socket, upstream))
+                .on_upgrade(move |socket| proxy_upstream(revoked, socket, upstream))
                 .into_response()
         }
-        environments::EnvironmentSource::Provisioned {
-            provider_id,
-            binding_id,
-        } => {
-            let Some(target_id) = environment.incarnation.provider_target_id.clone() else {
-                return StatusCode::CONFLICT.into_response();
-            };
-            let route = UpstreamRoute::Provider {
-                provider_id: provider_id.clone(),
-                binding_id: binding_id.clone(),
-                target_id,
-            };
-            if authorize_upstream(&state, &key, &route).await.is_err() {
-                return StatusCode::CONFLICT.into_response();
-            }
-            let (endpoint, credential) = match provider_route(&state, &key, &route).await {
+        environments::EnvironmentSource::Provisioned(source) => {
+            let (endpoint, credential) = match provider_route(&state, &api, &key, source).await {
                 Ok(route) => route,
-                Err(refusal) => return refusal.respond(),
+                Err(refused) => return *refused,
             };
+            if headers.contains_key(NO_WAKE_HEADER)
+                && let Some(refused) = refuse_unless_running(&api, &key, source).await
+            {
+                return refused;
+            }
             let upstream = match dial_upstream(
                 &endpoint,
                 UpstreamTarget::Url,
-                Some(credential.expose()),
+                credential.as_ref().map(|credential| credential.expose()),
             )
             .await
             {
@@ -646,30 +664,26 @@ async fn environment_route_upgrade(
                 Err(failure) => return failure.respond(&endpoint),
             };
             upgrade
-                .on_upgrade(move |socket| proxy_upstream(state, key, route, socket, upstream))
+                .on_upgrade(move |socket| proxy_upstream(revoked, socket, upstream))
                 .into_response()
         }
-        environments::EnvironmentSource::Registered { .. } => {
-            if environment.status.is_closing_or_closed() {
-                return StatusCode::CONFLICT.into_response();
-            }
-            let (daemon_socket, control_connection_id) = match registration::open_registered_route(
+        environments::EnvironmentSource::Registered(_) => {
+            let (daemon_socket, control_ended) = match registration::open_registered_route(
                 &state, &key,
             )
             .await
             {
                 Ok(paired) => paired,
-                Err(status) => {
-                    tracing::warn!(target: "temporal_runtime", environment = %key.environment_id, %status, "registered environment data route unavailable");
-                    return status.into_response();
+                Err(refused) => {
+                    tracing::warn!(target: "temporal_runtime", environment = %key.environment_id, status = %refused.status(), "registered environment data route unavailable");
+                    return *refused;
                 }
             };
             upgrade
                 .on_upgrade(move |socket| {
                     registration::proxy_registered_route(
-                        state,
-                        key,
-                        control_connection_id,
+                        revoked,
+                        control_ended,
                         socket,
                         daemon_socket,
                     )
@@ -679,103 +693,194 @@ async fn environment_route_upgrade(
     }
 }
 
-/// How long the gateway waits for a provider route or external envd to
-/// accept the upstream WebSocket.
-const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// A provider that has not yet advertised its data routes is asked again
-/// after this long.
-const PROVIDER_ROUTES_RETRY_AFTER_SECS: u64 = 5;
-
-/// The upstream a worker route is proxied to, and what keeps it
-/// authorized.
-enum UpstreamRoute {
-    External {
-        endpoint: EnvironmentEndpoint,
-    },
-    Provider {
-        provider_id: environments::EnvironmentProviderId,
-        binding_id: environments::EnvironmentProviderBindingId,
-        target_id: ProviderTargetId,
-    },
-}
-
-/// Why a provisioned target's data route cannot be dialed now.
-enum ProviderRouteRefusal {
-    /// The provider's controller has not advertised its data routes yet.
-    NotAdvertised,
-    Status(StatusCode),
-}
-
-impl ProviderRouteRefusal {
-    fn respond(self) -> Response {
-        match self {
-            Self::NotAdvertised => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [(
-                    header::RETRY_AFTER,
-                    HeaderValue::from(PROVIDER_ROUTES_RETRY_AFTER_SECS),
-                )],
-            )
-                .into_response(),
-            Self::Status(status) => status.into_response(),
+/// The refusal a worker route answers for a gate that does not admit use,
+/// or `None` to dial. Waking and booting never come from the gate itself:
+/// only a provider answers them.
+fn gate_refusal(gate: &EnvironmentUse) -> Option<Response> {
+    let refusal = match gate {
+        EnvironmentUse::Use => return None,
+        EnvironmentUse::Wait {
+            reason,
+            retry_after_ms,
+            ..
+        } => {
+            let refusal = match reason {
+                EnvironmentWaitReason::Provisioning => DataRouteRefusal::Provisioning {},
+                EnvironmentWaitReason::Disconnected => DataRouteRefusal::Disconnected {},
+                EnvironmentWaitReason::Waking => DataRouteRefusal::Waking {},
+                EnvironmentWaitReason::Booting => DataRouteRefusal::Booting {},
+            };
+            return Some(refusal_response(&refusal, Some(*retry_after_ms)));
         }
-    }
+        EnvironmentUse::Gone { reason, message } => match reason {
+            EnvironmentGoneReason::Closing | EnvironmentGoneReason::Closed => {
+                DataRouteRefusal::Gone {}
+            }
+            EnvironmentGoneReason::Away => DataRouteRefusal::Away {},
+            EnvironmentGoneReason::Failed => DataRouteRefusal::Failed {
+                message: message
+                    .as_deref()
+                    .and_then(DescriptiveText::lossy)
+                    .unwrap_or_else(|| {
+                        DescriptiveText::new("the environment failed")
+                            .expect("a fixed failure message is valid text")
+                    }),
+            },
+        },
+    };
+    Some(refusal_response(&refusal, None))
 }
 
-/// The provider data route for a provisioned target and the credential it
-/// is dialed with. The route comes only from the base the controller
-/// advertised; a provider that has not advertised one yet is asked to
-/// retry, one without a credential is a configuration error.
+/// A typed data-route refusal: its status, a JSON body tagged by `state`,
+/// and for a retryable one `Retry-After` in whole seconds, rounded up and
+/// kept within 1 to [`RETRY_AFTER_MAX_SECS`] (default
+/// [`WAIT_RETRY_AFTER_MS`]).
+pub(super) fn refusal_response(
+    refusal: &DataRouteRefusal,
+    retry_after_ms: Option<u64>,
+) -> Response {
+    let status = StatusCode::from_u16(refusal.status()).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+    let mut response = (status, Json(refusal)).into_response();
+    if refusal.is_retryable() {
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            HeaderValue::from(retry_after_secs(retry_after_ms)),
+        );
+    }
+    response
+}
+
+fn retry_after_secs(retry_after_ms: Option<u64>) -> u64 {
+    retry_after_ms
+        .unwrap_or(WAIT_RETRY_AFTER_MS)
+        .div_ceil(1_000)
+        .clamp(1, RETRY_AFTER_MAX_SECS)
+}
+
+/// How long the gateway waits for a provider route or external envd to
+/// accept the upstream WebSocket; longer than a provider may hold a dial
+/// while it wakes the target (`MAX_DATA_ROUTE_HOLD_MS`).
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const _: () = assert!(
+    UPSTREAM_CONNECT_TIMEOUT.as_millis()
+        > environment_protocol::limits::MAX_DATA_ROUTE_HOLD_MS as u128
+);
+
+/// The provider data route of a provisioned environment and the credential
+/// it is dialed with (none when the provider has none). The universe's
+/// binding of the provider must exist and be enabled; a target the
+/// provider has not named yet is still provisioning.
 async fn provider_route(
     state: &GatewayState,
+    api: &GatewayAgentApi,
     key: &RouteKey,
-    route: &UpstreamRoute,
-) -> Result<(String, auth::SecretValue), ProviderRouteRefusal> {
-    let UpstreamRoute::Provider {
-        provider_id,
-        binding_id,
-        target_id,
-    } = route
-    else {
-        return Err(ProviderRouteRefusal::Status(StatusCode::BAD_GATEWAY));
-    };
+    source: &environments::ProvisionedSource,
+) -> Result<(String, Option<auth::SecretValue>), Box<Response>> {
+    let provider_id = &source.provider_id;
     let unavailable = |error: environments::EnvironmentRegistryError| match error {
         environments::EnvironmentRegistryError::Store { .. } => {
             tracing::warn!(target: "temporal_runtime", %error, provider = %provider_id, "provider record unavailable");
-            ProviderRouteRefusal::Status(StatusCode::SERVICE_UNAVAILABLE)
+            Box::new(StatusCode::SERVICE_UNAVAILABLE.into_response())
         }
         error => {
             tracing::error!(target: "temporal_runtime", %error, provider = %provider_id, "provider data route is misconfigured");
-            ProviderRouteRefusal::Status(StatusCode::BAD_GATEWAY)
+            Box::new(StatusCode::BAD_GATEWAY.into_response())
         }
+    };
+    match environments::EnvironmentProviderBindingStore::read_provider_binding(
+        api.store().as_ref(),
+        key.universe_id,
+        provider_id,
+    )
+    .await
+    {
+        Ok(binding) if binding.enabled => {}
+        Ok(_) | Err(environments::EnvironmentRegistryError::NotFound { .. }) => {
+            return Err(Box::new(StatusCode::FORBIDDEN.into_response()));
+        }
+        Err(error) => return Err(unavailable(error)),
+    }
+    let Some(target_id) = source.provider_target_id.as_ref() else {
+        return Err(Box::new(refusal_response(
+            &DataRouteRefusal::Provisioning {},
+            None,
+        )));
     };
     let provider = state
         .environment_provider(provider_id)
         .await
         .map_err(unavailable)?;
-    let Some(base) = provider.data_route_base.as_ref() else {
-        return Err(ProviderRouteRefusal::NotAdvertised);
-    };
+    let base = provider.effective_data_route_base().map_err(unavailable)?;
     let credential = state
         .environment_provider_credential(provider_id)
         .await
         .map_err(unavailable)?;
-    let owner = target_owner(key, binding_id).map_err(|error| {
+    let owner = target_owner(key).map_err(|error| {
         tracing::error!(target: "temporal_runtime", %error, environment = %key.environment_id, "route identity is not a valid target owner");
-        ProviderRouteRefusal::Status(StatusCode::BAD_REQUEST)
+        Box::new(StatusCode::BAD_REQUEST.into_response())
     })?;
-    Ok((provider_data_route(base, &owner, target_id), credential))
+    Ok((provider_data_route(&base, &owner, target_id), credential))
 }
 
-fn target_owner(
+/// Bound of the provider check a no-wake dial makes.
+const NO_WAKE_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// For a dial that must not wake its target ([`NO_WAKE_HEADER`]): `None`
+/// when the provider reports the target active and running right now (or
+/// active without power control), else the refusal. Nothing is dialed or
+/// written: a powered-down target is a bodiless 412, and a provider that
+/// cannot answer in time a bodiless 503.
+async fn refuse_unless_running(
+    api: &GatewayAgentApi,
     key: &RouteKey,
-    binding_id: &environments::EnvironmentProviderBindingId,
-) -> Result<TargetOwner, environment_protocol::ids::IdError> {
+    source: &environments::ProvisionedSource,
+) -> Option<Response> {
+    let (Some(target_id), Ok(owner)) = (source.provider_target_id.clone(), target_owner(key))
+    else {
+        return Some(StatusCode::SERVICE_UNAVAILABLE.into_response());
+    };
+    let service = api.environment_service();
+    let observed = tokio::time::timeout(NO_WAKE_CHECK_TIMEOUT, async {
+        let controller = service
+            .connect_provider_controller(&source.provider_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        let answer = controller
+            .client
+            .get_target(&GetTargetParams {
+                target: TargetRef {
+                    owner,
+                    target_id: Some(target_id),
+                },
+            })
+            .await
+            .map_err(|error| error.to_string());
+        controller.close().await;
+        answer.map(|response| response.target)
+    })
+    .await;
+    match observed {
+        Ok(Ok(target))
+            if target.phase == TargetPhase::Active
+                && target
+                    .power
+                    .is_none_or(|power| power == PowerState::Running) =>
+        {
+            None
+        }
+        Ok(Ok(_)) => Some(StatusCode::PRECONDITION_FAILED.into_response()),
+        Ok(Err(error)) => {
+            tracing::debug!(target: "temporal_runtime", %error, environment = %key.environment_id, "a no-wake dial could not check its target's power");
+            Some(StatusCode::SERVICE_UNAVAILABLE.into_response())
+        }
+        Err(_) => Some(StatusCode::SERVICE_UNAVAILABLE.into_response()),
+    }
+}
+
+fn target_owner(key: &RouteKey) -> Result<TargetOwner, environment_protocol::ids::IdError> {
     Ok(TargetOwner {
         universe_id: UniverseId::new(key.universe_id.to_string())?,
-        binding_id: BindingId::new(binding_id.as_str())?,
         environment_id: EnvironmentId::new(key.environment_id.as_str())?,
-        incarnation_id: IncarnationId::new(key.incarnation_id.as_str())?,
     })
 }
 
@@ -801,17 +906,31 @@ enum Upstream {
 }
 
 /// Why an upstream dial failed, and what the worker is told.
+#[derive(Debug)]
 enum UpstreamFailure {
-    /// Unreachable, slow or answering 5xx/429: the worker may retry.
+    /// The upstream answered a typed refusal: forwarded unchanged.
+    Refusal {
+        refusal: DataRouteRefusal,
+        retry_after_ms: Option<u64>,
+    },
+    /// Unreachable, slow or answering 5xx/429 without a refusal body: the
+    /// worker may retry (bodiless 503).
     Unavailable(String),
     /// The upstream refused the upgrade for good (wrong credential, no such
-    /// route) or the URL is unusable.
+    /// route) or the URL is unusable (bodiless 502).
     Refused(String),
 }
 
 impl UpstreamFailure {
     fn respond(self, endpoint: &str) -> Response {
         match self {
+            Self::Refusal {
+                refusal,
+                retry_after_ms,
+            } => {
+                tracing::info!(target: "temporal_runtime", %refusal, %endpoint, "environment upstream refused the dial");
+                refusal_response(&refusal, retry_after_ms)
+            }
             Self::Unavailable(error) => {
                 tracing::warn!(target: "temporal_runtime", %error, %endpoint, "environment upstream unavailable");
                 StatusCode::SERVICE_UNAVAILABLE.into_response()
@@ -888,6 +1007,22 @@ fn upstream_failure(error: tokio_tungstenite::tungstenite::Error) -> UpstreamFai
     match error {
         Error::Http(response) => {
             let status = response.status();
+            let retry_after_ms = response
+                .headers()
+                .get(tokio_tungstenite::tungstenite::http::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(parse_retry_after_ms);
+            let refusal = DataRouteRefusal::from_refused_upgrade(
+                status.as_u16(),
+                response.body().as_deref(),
+                retry_after_ms,
+            );
+            if let Some(refusal) = refusal {
+                return UpstreamFailure::Refusal {
+                    refusal,
+                    retry_after_ms,
+                };
+            }
             let message = format!("upgrade refused with HTTP {status}");
             if status.is_server_error() || status.as_u16() == 429 {
                 UpstreamFailure::Unavailable(message)
@@ -900,93 +1035,30 @@ fn upstream_failure(error: tokio_tungstenite::tungstenite::Error) -> UpstreamFai
     }
 }
 
-async fn authorize_upstream(
-    state: &GatewayState,
-    key: &RouteKey,
-    route: &UpstreamRoute,
-) -> anyhow::Result<()> {
-    let api = state
-        .api_for_daemon(key.universe_id)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.message))?;
-    let environment_id = environments::EnvironmentId::try_new(key.environment_id.clone())?;
-    let environment =
-        environments::EnvironmentStore::read_environment(api.store().as_ref(), &environment_id)
-            .await?;
-    if environment.incarnation.incarnation_id.as_str() != key.incarnation_id
-        || environment.status.is_closing_or_closed()
-    {
-        anyhow::bail!("environment route is stale or the environment is closing")
-    }
-    match (route, &environment.source) {
-        (
-            UpstreamRoute::External { endpoint },
-            environments::EnvironmentSource::External { endpoint: assigned },
-        ) if assigned == endpoint => Ok(()),
-        (
-            UpstreamRoute::Provider {
-                provider_id,
-                binding_id,
-                target_id,
-            },
-            environments::EnvironmentSource::Provisioned {
-                provider_id: assigned_provider,
-                binding_id: assigned_binding,
-            },
-        ) if assigned_provider == provider_id
-            && assigned_binding == binding_id
-            && environment.incarnation.provider_target_id.as_ref() == Some(target_id) =>
-        {
-            let binding = environments::EnvironmentProviderBindingStore::read_provider_binding(
-                api.store().as_ref(),
-                key.universe_id,
-                binding_id,
-            )
-            .await?;
-            if binding.status != environments::EnvironmentProviderBindingStatus::Enabled
-                || binding.provider_id != *provider_id
-            {
-                anyhow::bail!("provider binding is disabled or changed")
-            }
-            Ok(())
-        }
-        _ => anyhow::bail!("environment route no longer matches its environment"),
-    }
-}
-
-async fn proxy_upstream(
-    state: Arc<GatewayState>,
-    key: RouteKey,
-    route: UpstreamRoute,
-    worker: WebSocket,
-    upstream: Upstream,
-) {
+async fn proxy_upstream(revoked: watch::Receiver<u64>, worker: WebSocket, upstream: Upstream) {
     match upstream {
-        Upstream::Tcp(socket) => proxy_frames(state, key, route, worker, *socket).await,
-        Upstream::Unix(socket) => proxy_frames(state, key, route, worker, *socket).await,
+        Upstream::Tcp(socket) => proxy_frames(revoked, worker, *socket).await,
+        Upstream::Unix(socket) => proxy_frames(revoked, worker, *socket).await,
     }
 }
 
 /// Pipe one worker route and its upstream frame for frame, pings and pongs
-/// included, re-checking the route's authorization on an interval.
+/// included, until either side ends or the environment's routes are
+/// revoked (close code 1008).
 async fn proxy_frames<S>(
-    state: Arc<GatewayState>,
-    key: RouteKey,
-    route: UpstreamRoute,
+    mut revoked: watch::Receiver<u64>,
     mut worker: WebSocket,
     upstream: WebSocketStream<S>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (mut upstream_writer, mut upstream_reader) = upstream.split();
-    let mut reauthorize = tokio::time::interval(Duration::from_secs(5));
     loop {
         tokio::select! {
-            _ = reauthorize.tick() => {
-                if authorize_upstream(&state, &key, &route).await.is_err() {
-                    let _ = worker.send(close_message("environment route authorization changed")).await;
-                    break;
-                }
+            // A dropped revocation sender fails closed like a revocation.
+            _ = revoked.changed() => {
+                let _ = worker.send(close_message("environment route revoked")).await;
+                break;
             }
             message = worker.recv() => {
                 let Some(Ok(message)) = message else { break };
@@ -1023,6 +1095,13 @@ async fn proxy_frames<S>(
     // that vanished without a close frame never tears envd down abruptly.
     let _ = upstream_writer.send(UpstreamMessage::Close(None)).await;
     let _ = worker.send(Message::Close(None)).await;
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 /// Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document):
@@ -1237,6 +1316,7 @@ fn html_escape(value: &str) -> String {
 mod tests {
     use super::*;
     use api::AgentApiErrorKind;
+    use environment_protocol::ids::ProviderTargetId;
 
     #[test]
     fn json_rpc_responses_disable_caching() {
@@ -1283,17 +1363,12 @@ mod tests {
     }
 
     #[test]
-    fn provider_data_routes_come_from_the_advertised_base() {
+    fn provider_data_routes_name_the_universe_environment_and_target() {
         let key = RouteKey {
             universe_id: Uuid::parse_str("6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f").unwrap(),
             environment_id: "environment_1".to_owned(),
-            incarnation_id: "incarnation_1".to_owned(),
         };
-        let owner = target_owner(
-            &key,
-            &environments::EnvironmentProviderBindingId::new("primary"),
-        )
-        .unwrap();
+        let owner = target_owner(&key).unwrap();
         let base =
             environment_protocol::routes::DataRouteBase::new("wss://provider.example/routes")
                 .unwrap();
@@ -1303,45 +1378,248 @@ mod tests {
                 &owner,
                 &ProviderTargetId::new("default/pod one").unwrap()
             ),
-            "wss://provider.example/routes/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/primary/environment_1/incarnation_1/default%2Fpod%20one"
+            "wss://provider.example/routes/6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f/environment_1/default%2Fpod%20one"
+        );
+    }
+
+    fn rejected(
+        status: u16,
+        body: Option<&str>,
+        retry_after: Option<&str>,
+    ) -> tokio_tungstenite::tungstenite::Error {
+        let mut response = tokio_tungstenite::tungstenite::http::Response::builder().status(status);
+        if let Some(retry_after) = retry_after {
+            response = response.header("retry-after", retry_after);
+        }
+        tokio_tungstenite::tungstenite::Error::Http(Box::new(
+            response
+                .body(body.map(|body| body.as_bytes().to_vec()))
+                .unwrap(),
+        ))
+    }
+
+    #[test]
+    fn upstream_refusals_split_into_typed_retryable_and_permanent() {
+        assert!(matches!(
+            upstream_failure(rejected(401, None, None)),
+            UpstreamFailure::Refused(_)
+        ));
+        assert!(matches!(
+            upstream_failure(rejected(404, Some("not json"), None)),
+            UpstreamFailure::Refused(_)
+        ));
+        assert!(matches!(
+            upstream_failure(rejected(503, None, None)),
+            UpstreamFailure::Unavailable(_)
+        ));
+        assert!(matches!(
+            upstream_failure(rejected(429, None, None)),
+            UpstreamFailure::Unavailable(_)
+        ));
+        let UpstreamFailure::Refusal {
+            refusal,
+            retry_after_ms,
+        } = upstream_failure(rejected(503, Some(r#"{"state":"waking"}"#), Some("3")))
+        else {
+            panic!("a typed provider refusal is forwarded");
+        };
+        assert_eq!(refusal, DataRouteRefusal::Waking {});
+        assert_eq!(retry_after_ms, Some(3_000));
+        let UpstreamFailure::Refusal {
+            refusal,
+            retry_after_ms,
+        } = upstream_failure(rejected(
+            409,
+            Some(r#"{"state":"failed","message":"disk lost"}"#),
+            None,
+        ))
+        else {
+            panic!("a failed target is forwarded");
+        };
+        assert_eq!(refusal.status(), 409);
+        assert_eq!(retry_after_ms, None);
+        let UpstreamFailure::Refusal { retry_after_ms, .. } =
+            upstream_failure(rejected(503, Some(r#"{"state":"booting"}"#), Some("3600")))
+        else {
+            panic!("a booting target is forwarded");
+        };
+        assert_eq!(retry_after_ms, Some(RETRY_AFTER_MAX_SECS * 1_000));
+    }
+
+    #[test]
+    fn a_refusal_whose_body_was_not_read_is_forwarded_by_its_status() {
+        let forwarded = |status: u16, retry_after: Option<&str>| match upstream_failure(rejected(
+            status,
+            None,
+            retry_after,
+        )) {
+            UpstreamFailure::Refusal {
+                refusal,
+                retry_after_ms,
+            } => Some((refusal, retry_after_ms)),
+            _ => None,
+        };
+        assert_eq!(
+            forwarded(410, None),
+            Some((DataRouteRefusal::Gone {}, None))
+        );
+        assert!(matches!(
+            forwarded(409, None),
+            Some((DataRouteRefusal::Failed { .. }, None))
+        ));
+        assert_eq!(
+            forwarded(503, Some("2")),
+            Some((DataRouteRefusal::Booting {}, Some(2_000)))
+        );
+        // A 503 without `Retry-After` names no wait: a bodiless 503.
+        assert_eq!(forwarded(503, None), None);
+    }
+
+    fn body_of(response: Response) -> DataRouteRefusal {
+        let bytes =
+            futures::executor::block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+                .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn refusals_carry_their_status_body_and_retry_hint() {
+        let waking = refusal_response(&DataRouteRefusal::Waking {}, Some(2_500));
+        assert_eq!(waking.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            waking.headers().get(header::RETRY_AFTER),
+            Some(&HeaderValue::from(3_u64))
+        );
+        assert_eq!(
+            waking.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json"))
+        );
+        assert_eq!(body_of(waking), DataRouteRefusal::Waking {});
+
+        let defaulted = refusal_response(&DataRouteRefusal::Disconnected {}, None);
+        assert_eq!(
+            defaulted.headers().get(header::RETRY_AFTER),
+            Some(&HeaderValue::from(WAIT_RETRY_AFTER_MS / 1_000))
+        );
+        assert_eq!(retry_after_secs(Some(0)), 1);
+        assert_eq!(
+            retry_after_secs(Some(10 * 60 * 1_000)),
+            RETRY_AFTER_MAX_SECS
+        );
+
+        let gone = refusal_response(&DataRouteRefusal::Gone {}, Some(5_000));
+        assert_eq!(gone.status(), StatusCode::GONE);
+        assert!(
+            gone.headers().get(header::RETRY_AFTER).is_none(),
+            "only retryable refusals carry Retry-After"
         );
     }
 
     #[test]
-    fn upstream_refusals_split_into_retryable_and_permanent() {
-        let refused = |status: u16| {
-            upstream_failure(tokio_tungstenite::tungstenite::Error::Http(Box::new(
-                tokio_tungstenite::tungstenite::http::Response::builder()
-                    .status(status)
-                    .body(None)
-                    .unwrap(),
-            )))
+    fn the_use_gate_maps_to_route_refusals() {
+        assert!(gate_refusal(&EnvironmentUse::Use).is_none());
+        let wait = |reason| EnvironmentUse::Wait {
+            reason,
+            retry_after_ms: 2_000,
+            until_ms: None,
         };
-        assert!(matches!(refused(401), UpstreamFailure::Refused(_)));
-        assert!(matches!(refused(404), UpstreamFailure::Refused(_)));
-        assert!(matches!(refused(503), UpstreamFailure::Unavailable(_)));
-        assert!(matches!(refused(429), UpstreamFailure::Unavailable(_)));
+        let gone = |reason, message: Option<&str>| EnvironmentUse::Gone {
+            reason,
+            message: message.map(str::to_owned),
+        };
+        for (gate, status, expected) in [
+            (
+                wait(EnvironmentWaitReason::Provisioning),
+                StatusCode::SERVICE_UNAVAILABLE,
+                DataRouteRefusal::Provisioning {},
+            ),
+            (
+                wait(EnvironmentWaitReason::Disconnected),
+                StatusCode::SERVICE_UNAVAILABLE,
+                DataRouteRefusal::Disconnected {},
+            ),
+            (
+                gone(EnvironmentGoneReason::Closing, None),
+                StatusCode::GONE,
+                DataRouteRefusal::Gone {},
+            ),
+            (
+                gone(EnvironmentGoneReason::Closed, None),
+                StatusCode::GONE,
+                DataRouteRefusal::Gone {},
+            ),
+            (
+                gone(EnvironmentGoneReason::Away, Some("daemon away since 1")),
+                StatusCode::GONE,
+                DataRouteRefusal::Away {},
+            ),
+            (
+                gone(EnvironmentGoneReason::Failed, Some("boot disk missing")),
+                StatusCode::CONFLICT,
+                DataRouteRefusal::Failed {
+                    message: DescriptiveText::new("boot disk missing").unwrap(),
+                },
+            ),
+        ] {
+            let response = gate_refusal(&gate).expect("the gate refuses");
+            assert_eq!(response.status(), status, "{gate:?}");
+            assert_eq!(body_of(response), expected, "{gate:?}");
+        }
     }
 
     #[test]
-    fn the_registration_origin_comes_from_the_public_base_url() {
+    fn registration_origins_come_from_the_public_base_url_and_configured_urls() {
         let loopback: SocketAddr = "127.0.0.1:18080".parse().unwrap();
         let public: SocketAddr = "0.0.0.0:18080".parse().unwrap();
+        let origins = |base: Option<&str>, urls: &[&str], bind| {
+            registration_origins(
+                base,
+                &urls.iter().map(|url| (*url).to_owned()).collect::<Vec<_>>(),
+                bind,
+            )
+            .map(|origins| {
+                origins
+                    .iter()
+                    .map(|origin| origin.as_str().to_owned())
+                    .collect::<Vec<_>>()
+            })
+        };
         assert_eq!(
-            registration_origin(None, loopback).unwrap().as_str(),
-            "ws://127.0.0.1:18080"
+            origins(None, &[], loopback).unwrap(),
+            ["ws://127.0.0.1:18080"]
         );
         assert!(
-            registration_origin(None, public).is_err(),
-            "a non-loopback bind needs the public base URL"
+            origins(None, &[], public).is_err(),
+            "a non-loopback bind needs a configured origin"
         );
         assert_eq!(
-            registration_origin(Some("https://Lightspeed.example/base/"), public)
-                .unwrap()
-                .as_str(),
-            "wss://lightspeed.example"
+            origins(Some("https://Lightspeed.example/base/"), &[], public).unwrap(),
+            ["wss://lightspeed.example"]
         );
-        assert!(registration_origin(Some("lightspeed.example"), public).is_err());
+        assert!(origins(Some("lightspeed.example"), &[], public).is_err());
+        assert_eq!(
+            origins(
+                Some("https://lightspeed.example"),
+                &[
+                    " ws://lightspeed-gateway.lightspeed.svc:18080/environment-gateway/connect ",
+                    "",
+                    "https://lightspeed.example/other",
+                ],
+                public,
+            )
+            .unwrap(),
+            [
+                "wss://lightspeed.example",
+                "ws://lightspeed-gateway.lightspeed.svc:18080"
+            ],
+            "configured URLs are reduced to origins, trimmed and deduplicated"
+        );
+        assert_eq!(
+            origins(None, &["ws://gateway.internal:18080"], public).unwrap(),
+            ["ws://gateway.internal:18080"],
+            "a configured URL alone serves a non-loopback bind"
+        );
+        assert!(origins(None, &["gateway.internal"], public).is_err());
     }
 
     #[test]

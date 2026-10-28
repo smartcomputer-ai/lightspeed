@@ -49,10 +49,10 @@ incus cluster unset member-a scheduler.instance
 
 ## Verification
 
-The live tests are opt-in. The topology and reconciliation test is
-non-destructive; `the_controller_conforms_on_live_incus` runs the controller
-conformance suite and creates and deletes one VM in the universe
-`lightspeed-conformance`, binding `incus-live`:
+The live tests are opt-in. The topology and inventory test is
+non-destructive; every other test in `tests/incus_live.rs` creates and
+deletes one VM in the universe `lightspeed-conformance`, covering controller
+and data conformance, waking on dial, and the idle loop:
 
 ```bash
 LIGHTSPEED_INCUS_PROVIDER_CONFIG=/absolute/path/provider.json \
@@ -60,7 +60,7 @@ LIGHTSPEED_INCUS_PROVIDER_CONFIG=/absolute/path/provider.json \
 ```
 
 Before production rollout, also provision an expendable environment, verify
-its `incusMember` target metadata, disable the serving API endpoint, exercise
-filesystem/process/PTY/job and public-ingress traffic through another API
-endpoint, and close the environment. Repeat with a `clusterGroup`-constrained
-template and a cordoned member.
+its placement with `incus list` (the `LOCATION` column), disable the serving
+API endpoint, exercise filesystem/process/PTY/job and public-ingress traffic
+through another API endpoint, and close the environment. Repeat with a
+`clusterGroup`-constrained template and a cordoned member.

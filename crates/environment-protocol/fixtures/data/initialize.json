@@ -1,13 +1,13 @@
 {
   "params": {
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "clientInfo": {
       "name": "lightspeed-runtime",
       "version": "0.5.0"
     }
   },
   "response": {
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "plane": "data",
     "daemonInstanceId": "envd_01jb8x7k2m",
     "serverInfo": {
@@ -87,11 +87,11 @@
   },
   "error": {
     "code": -32005,
-    "message": "protocol version 2 is not supported; this peer speaks 3",
+    "message": "protocol version 3 is not supported; this peer speaks 4",
     "data": {
       "kind": "versionMismatch",
-      "expected": 3,
-      "received": 2
+      "expected": 4,
+      "received": 3
     }
   }
 }

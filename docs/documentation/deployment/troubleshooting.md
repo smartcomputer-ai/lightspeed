@@ -21,7 +21,7 @@ are authorized to see them.
 | Sign-in or universe access fails | [Authentication and universe access](#authentication-and-universe-access) |
 | A run is queued, waiting, or apparently stuck | [Session progress](#session-progress) |
 | The model rejects a call or tools are absent | [Models and MCP](#models-and-mcp) |
-| A machine is offline or a command cannot see a file | [Execution environments](#execution-environments) |
+| A machine is disconnected or a command cannot see a file | [Execution environments](#execution-environments) |
 | A larger upload or stored payload fails | [Blob writes](#blob-writes) |
 | Chat messages do not reach the agent or return | [Chat delivery](#chat-delivery) |
 | Closing work does not reclaim storage or compute | [Retention and cleanup](#retention-and-cleanup) |
@@ -161,9 +161,11 @@ explains execution modes and discovery behavior.
 
 ## Execution environments
 
-Begin with the environment's source, lifecycle, and power state. A paused or
-stopped VM needs a wake path; an offline registered machine needs its daemon;
-a provisioning failure needs the provider and template that created it.
+Begin with the environment's source, state, status, and state message. A
+paused or stopped VM wakes when a tool connects to it, so a call that keeps
+waiting points at the provider's data route; a disconnected registered
+machine needs its daemon; a provisioning failure needs the provider and
+template that created it.
 
 For a registered daemon, inspect its own output and both public WebSocket
 paths. The control connection can be established while data routing is still
@@ -173,8 +175,9 @@ and token. Retain the daemon state directory so a restart proves the same
 identity. A closed identity cannot reconnect as a new environment merely by
 reusing its key.
 
-For Incus, inspect provider `/health`, the universe provider binding, selected
-template, instance boot, and guest daemon. Follow the specific procedures in
+For Incus, inspect provider `/health`, the universe provider binding, which
+must be enabled for its environments to be reachable, the selected template,
+instance boot, and guest daemon. Follow the specific procedures in
 [Bring your own compute](../environments/bring-your-own-compute.md),
 [Incus VMs](../environments/incus-vms.md), and
 [Networking and ingress](../environments/networking-and-ingress.md).

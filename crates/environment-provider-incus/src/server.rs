@@ -1,5 +1,6 @@
 //! The provider's listener: the controller plane on `/control` and the data
-//! routes under `/routes`, both behind the provider credential.
+//! routes under `/routes`, both behind the provider credential when one is
+//! configured.
 //!
 //! Every target method answers promptly with the current observation. Slow
 //! Incus work (an image pull, a boot, a graceful shutdown) runs as one
@@ -8,6 +9,11 @@
 //! `closing`, and a failed create `failed` with its error as the `message`.
 //! Job state is in memory; Incus itself, read through the deterministic owner
 //! name, is the record of every target.
+//!
+//! The provider owns its targets' power. `target/setPower` serves manual
+//! changes, the idle loop ([`crate::idle`]) powers idle targets down and
+//! closes them on its own clock, and a data route dial wakes a powered-down
+//! target before it relays.
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -16,7 +22,7 @@ use std::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -25,7 +31,7 @@ use axum::{
         Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket, rejection::WebSocketUpgradeRejection},
     },
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -34,26 +40,27 @@ use environment_protocol::{
     control::{
         handshake::{
             ControllerCapabilities, ControllerInitializeParams, ControllerInitializeResponse,
-            ControllerRoutes,
         },
         ingress::{EnsureIngressParams, RemoveIngressParams},
         target::{
-            AdoptTargetParams, CloseTargetParams, CreateTargetParams, GetTargetParams,
-            IngressObservation, PowerState, SetTargetPowerParams, TargetObservation, TargetOwner,
-            TargetPhase, TargetRef, TargetResponse, TargetState,
+            CloseTargetParams, CreateTargetParams, GetTargetParams, IngressObservation, PowerState,
+            SetTargetPowerParams, TargetObservation, TargetOwner, TargetPhase, TargetRef,
+            TargetResponse,
         },
         template::{EnvironmentTemplate, ListTemplatesParams, ListTemplatesResponse},
     },
     error::{BusyReason, Capability, PreconditionReason, ProtocolError},
     handshake::{ImplementationInfo, Plane},
-    ids::{BindingId, EnvironmentId, IncarnationId, ProviderTargetId, TemplateId, UniverseId},
+    idle::IdleAction,
+    ids::{EnvironmentId, ProviderTargetId, TemplateId, UniverseId},
     jsonrpc::{self, Request, Response as RpcResponse},
-    limits::MAX_MESSAGE_BYTES,
+    limits::{MAX_DATA_ROUTE_HOLD_MS, MAX_MESSAGE_BYTES, RETRY_AFTER_MAX_SECS},
     manifest::{
-        self, ControllerInitialize, IngressEnsure, IngressRemove, MessageKind, TargetAdopt,
-        TargetClose, TargetCreate, TargetGet, TargetSetPower, TemplateList,
+        self, ControllerInitialize, IngressEnsure, IngressRemove, MessageKind, TargetClose,
+        TargetCreate, TargetGet, TargetSetPower, TemplateList,
     },
     metadata::{DescriptiveText, Metadata, validate_metadata_entry},
+    routes::DataRouteRefusal,
 };
 use futures_util::{FutureExt as _, SinkExt as _, StreamExt as _, future::BoxFuture};
 use serde::Serialize;
@@ -61,9 +68,10 @@ use serde_json::Value;
 use tokio::sync::{Mutex as AsyncMutex, Semaphore, mpsc, watch};
 
 use crate::{
-    Config, IncusBackend,
-    incus::{AdoptionSource, InstanceStatus, OwnedTarget, SUPPORTED_POWER_STATES},
-    ingress, policy, relay,
+    Config, IncusBackend, idle,
+    incus::{InstanceStatus, OwnedTarget, SUPPORTED_POWER_STATES, unsupported_idle_stage},
+    ingress, policy,
+    relay::{self, GuestSocket, Relays},
 };
 
 /// How long a mutation waits for its background job before it answers with
@@ -77,38 +85,56 @@ const _: () = assert!(
     MAX_CONCURRENT_REQUESTS >= environment_protocol::limits::MIN_CONCURRENT_REQUESTS as usize
 );
 
+/// `Retry-After` of a data route's 503 refusal: about one guest boot step.
+const RETRY_AFTER_SECS: u64 = 2;
+
+const _: () = assert!(RETRY_AFTER_SECS >= 1 && RETRY_AFTER_SECS <= RETRY_AFTER_MAX_SECS);
+
+/// Bound on one guest dial attempt while a data route dial waits, so the
+/// wait re-reads the instance between attempts.
+const DIAL_ATTEMPT: Duration = Duration::from_secs(1);
+
+/// Pause between two looks at the instance while a data route dial waits.
+const HOLD_POLL: Duration = Duration::from_millis(250);
+
 #[derive(Clone)]
-struct App<B> {
-    config: Config,
-    backend: B,
-    work: Arc<Work>,
+pub(crate) struct App<B> {
+    pub(crate) config: Config,
+    pub(crate) backend: B,
+    pub(crate) work: Arc<Work>,
+    pub(crate) relays: Relays,
+    /// When data route dials last woke instances.
+    pub(crate) wakes: idle::Wakes,
     initialize: Arc<ControllerInitializeResponse>,
+    /// How long a data route dial may wait for its target before it refuses.
+    data_route_hold: Duration,
 }
 
 impl<B: IncusBackend> App<B> {
-    fn new(config: Config, backend: B) -> Self {
+    pub(crate) fn new(config: Config, backend: B) -> Self {
         let initialize = ControllerInitializeResponse {
             protocol_version: CONTROLLER_PROTOCOL_VERSION,
             plane: Plane::Controller,
             server_info: server_info(),
             capabilities: ControllerCapabilities {
-                adopt_target: true,
+                power: true,
                 ingress: config.ingress.is_some(),
             },
-            routes: ControllerRoutes {
-                data: config.data_route_base.clone(),
-            },
         };
+        let wakes = idle::Wakes::new(idle::wake_grace(config.idle_check_seconds));
         Self {
             config,
             backend,
             work: Arc::default(),
+            relays: Relays::default(),
+            wakes,
             initialize: Arc::new(initialize),
+            data_route_hold: Duration::from_millis(MAX_DATA_ROUTE_HOLD_MS),
         }
     }
 }
 
-fn server_info() -> ImplementationInfo {
+pub(crate) fn server_info() -> ImplementationInfo {
     let info = ImplementationInfo::new("lightspeed-provider-incus")
         .expect("the provider name is a valid implementation name");
     let info = info
@@ -129,25 +155,30 @@ pub async fn serve<B: IncusBackend>(config: Config, backend: B) -> anyhow::Resul
     serve_on(listener, config, backend).await
 }
 
-/// Serve on an already bound listener.
+/// Serve on an already bound listener, with the idle loop running beside
+/// it.
 pub async fn serve_on<B: IncusBackend>(
     listener: tokio::net::TcpListener,
     config: Config,
     backend: B,
 ) -> anyhow::Result<()> {
-    axum::serve(listener, router(config, backend)).await?;
+    let app = App::new(config, backend);
+    let idle_loop = tokio::spawn(idle::run(app.clone()));
+    let served = axum::serve(listener, router(app)).await;
+    idle_loop.abort();
+    served?;
     Ok(())
 }
 
-fn router<B: IncusBackend>(config: Config, backend: B) -> Router {
+fn router<B: IncusBackend>(app: App<B>) -> Router {
     Router::new()
         .route("/health", get(health::<B>))
         .route("/control", get(control_upgrade::<B>))
         .route(
-            "/routes/{universe}/{binding}/{environment}/{incarnation}/{target}",
+            "/routes/{universe}/{environment}/{target}",
             get(data_upgrade::<B>),
         )
-        .with_state(App::new(config, backend))
+        .with_state(app)
 }
 
 async fn health<B: IncusBackend>(State(app): State<App<B>>) -> Response {
@@ -157,13 +188,17 @@ async fn health<B: IncusBackend>(State(app): State<App<B>>) -> Response {
     }
 }
 
-/// True when the request carries the provider credential as a bearer token.
+/// True when no credential is configured, or when the request carries it as
+/// a bearer token.
 fn authorized(config: &Config, headers: &HeaderMap) -> bool {
+    let Some(credential) = &config.credential else {
+        return true;
+    };
     headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|token| config.credential.matches(token))
+        .is_some_and(|token| credential.matches(token))
 }
 
 fn unauthorized() -> Response {
@@ -196,60 +231,169 @@ async fn control_upgrade<B: IncusBackend>(
     }
 }
 
+/// A target's data route. A powered-down target is woken first; the dial
+/// then waits, at most the protocol's hold bound, until envd answers, and
+/// otherwise refuses with a typed [`DataRouteRefusal`]. The whole dial and
+/// the relay after it hold the instance's [`RelayHold`](relay::RelayHold),
+/// so the idle loop leaves it alone.
 async fn data_upgrade<B: IncusBackend>(
     State(app): State<App<B>>,
-    Path((universe, binding, environment, incarnation, target_id)): Path<(
-        String,
-        String,
-        String,
-        String,
-        String,
-    )>,
+    Path((universe, environment, target_id)): Path<(String, String, String)>,
     headers: HeaderMap,
     upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
     if !authorized(&app.config, &headers) {
         return unauthorized();
     }
-    let owner = match (
-        UniverseId::new(universe),
-        BindingId::new(binding),
-        EnvironmentId::new(environment),
-        IncarnationId::new(incarnation),
-    ) {
-        (Ok(universe_id), Ok(binding_id), Ok(environment_id), Ok(incarnation_id)) => TargetOwner {
+    let owner = match (UniverseId::new(universe), EnvironmentId::new(environment)) {
+        (Ok(universe_id), Ok(environment_id)) => TargetOwner {
             universe_id,
-            binding_id,
             environment_id,
-            incarnation_id,
         },
         _ => return StatusCode::NOT_FOUND.into_response(),
-    };
-    if target_id != policy::instance_name(&owner) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let target = match app
-        .backend
-        .get_owned(&policy::binding_of(&owner), &target_id)
-        .await
-    {
-        Ok(Some(target)) if target.owner == owner => target,
-        Ok(Some(_)) => return StatusCode::CONFLICT.into_response(),
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
     };
     let upgrade = match upgrade {
         Ok(upgrade) => upgrade,
         Err(rejection) => return rejection.into_response(),
     };
-    let guest = match relay::dial_guest(&app.config, &target).await {
-        Ok(guest) => guest,
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    };
-    let config = app.config.clone();
-    with_limits(upgrade)
-        .on_upgrade(move |socket| relay::proxy(config, socket, guest))
-        .into_response()
+    // Any other id names no target this owner can hold.
+    if target_id != policy::instance_name(&owner) {
+        return refuse(DataRouteRefusal::Gone {});
+    }
+    let hold = app.relays.hold(&target_id);
+    let mut woke = false;
+    let dialed = tokio::time::timeout(
+        app.data_route_hold,
+        wake_and_dial(&app, &owner, &target_id, &mut woke),
+    )
+    .await;
+    // A woken instance gets the wake grace once this connection ends, so
+    // the caller's next dial, or its first `use`, arrives before the idle
+    // loop looks again.
+    if woke && !matches!(dialed, Ok(Ok(_))) {
+        app.wakes.record(&target_id, Instant::now());
+    }
+    match dialed {
+        Ok(Ok(guest)) => {
+            let config = app.config.clone();
+            let wakes = woke.then(|| app.wakes.clone());
+            with_limits(upgrade)
+                .on_upgrade(move |socket| async move {
+                    let _hold = hold;
+                    relay::proxy(config, socket, guest).await;
+                    if let Some(wakes) = wakes {
+                        wakes.record(&target_id, Instant::now());
+                    }
+                })
+                .into_response()
+        }
+        Ok(Err(DialRefusal::Refused(refusal))) => refuse(refusal),
+        Ok(Err(DialRefusal::Backend)) => StatusCode::BAD_GATEWAY.into_response(),
+        Err(_) if woke => refuse(DataRouteRefusal::Waking {}),
+        Err(_) => refuse(DataRouteRefusal::Booting {}),
+    }
+}
+
+/// Why a data route dial does not upgrade.
+enum DialRefusal {
+    Refused(DataRouteRefusal),
+    /// Incus could not be read; answered 502 without a body.
+    Backend,
+}
+
+/// Wake the owner's instance when it is powered down, then dial its envd
+/// until it answers. Runs until it succeeds or meets a terminal state; the
+/// caller bounds it. `woke` records that this dial started a wake.
+async fn wake_and_dial<B: IncusBackend>(
+    app: &App<B>,
+    owner: &TargetOwner,
+    name: &str,
+    woke: &mut bool,
+) -> Result<GuestSocket, DialRefusal> {
+    loop {
+        let job = app
+            .work
+            .view(name)
+            .filter(Slot::running)
+            .map(|slot| slot.kind);
+        if job == Some(WorkKind::Close) {
+            return Err(DialRefusal::Refused(DataRouteRefusal::Gone {}));
+        }
+        // A wake runs only after the power-down it superseded, which the
+        // slot no longer shows: until the wake finished, the instance may
+        // still read running while it is about to freeze or stop.
+        if job == Some(WorkKind::Power(PowerState::Running)) {
+            *woke = true;
+            tokio::time::sleep(HOLD_POLL).await;
+            continue;
+        }
+        let target = match app.backend.get_owned(&owner.universe_id, name).await {
+            Ok(Some(target)) if target.owner == *owner => Some(target),
+            // A create still running has no instance to show yet.
+            Ok(_) if job == Some(WorkKind::Create) => None,
+            Ok(_) => return Err(DialRefusal::Refused(DataRouteRefusal::Gone {})),
+            Err(_) => return Err(DialRefusal::Backend),
+        };
+        // A create still running starts the instance itself.
+        if let Some(target) = target.filter(|_| job != Some(WorkKind::Create)) {
+            let powering_down =
+                matches!(job, Some(WorkKind::Power(power)) if power != PowerState::Running);
+            match target.status {
+                InstanceStatus::Error => {
+                    return Err(DialRefusal::Refused(DataRouteRefusal::Failed {
+                        message: DescriptiveText::lossy(INSTANCE_ERROR)
+                            .expect("the error text is descriptive"),
+                    }));
+                }
+                InstanceStatus::Frozen | InstanceStatus::Stopped | InstanceStatus::Stopping => {
+                    wake(app, owner, name);
+                    *woke = true;
+                }
+                InstanceStatus::Running | InstanceStatus::Starting if powering_down => {
+                    wake(app, owner, name);
+                    *woke = true;
+                }
+                InstanceStatus::Running | InstanceStatus::Starting => {
+                    if target.ipv4_address.is_some() {
+                        let attempt =
+                            DIAL_ATTEMPT.min(Duration::from_secs(app.config.dial_timeout_seconds));
+                        if let Ok(guest) =
+                            relay::dial_guest_within(&app.config, &target, attempt).await
+                        {
+                            return Ok(guest);
+                        }
+                    }
+                }
+                InstanceStatus::Other => {}
+            }
+        }
+        tokio::time::sleep(HOLD_POLL).await;
+    }
+}
+
+/// Power the instance up as its background job, unless a wake is already
+/// running. A power-down job still running finishes first, then this one
+/// runs; [`wake_and_dial`] dials only once it finished.
+fn wake<B: IncusBackend>(app: &App<B>, owner: &TargetOwner, name: &str) {
+    app.work.start(
+        name,
+        WorkKind::Power(PowerState::Running),
+        power_job(&app.backend, &owner.universe_id, name, PowerState::Running),
+    );
+}
+
+/// A data route refusal: its status, its JSON body and, for a 503,
+/// `Retry-After`.
+fn refuse(refusal: DataRouteRefusal) -> Response {
+    let status = StatusCode::from_u16(refusal.status()).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
+    let retryable = refusal.is_retryable();
+    let mut response = (status, Json(refusal)).into_response();
+    if retryable {
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from(RETRY_AFTER_SECS));
+    }
+    response
 }
 
 /// One controller connection: the JSON-RPC envelope, the `initialize`-first
@@ -383,26 +527,15 @@ async fn route<B: IncusBackend>(app: &App<B>, request: &Request) -> Result<Value
     else {
         return Err(ProtocolError::method_not_found(&request.method));
     };
-    let capabilities = &app.initialize.capabilities;
-    match spec.capability {
-        Some(Capability::AdoptTarget) if !capabilities.adopt_target => {
-            return Err(ProtocolError::capability_unavailable(
-                Capability::AdoptTarget,
-                "this provider does not adopt targets",
-            ));
-        }
-        Some(Capability::Ingress) if !capabilities.ingress => {
-            return Err(ProtocolError::capability_unavailable(
-                Capability::Ingress,
-                "this provider has no public ingress configured",
-            ));
-        }
-        _ => {}
+    if spec.capability == Some(Capability::Ingress) && !app.initialize.capabilities.ingress {
+        return Err(ProtocolError::capability_unavailable(
+            Capability::Ingress,
+            "this provider has no public ingress configured",
+        ));
     }
     match request.method.as_str() {
         TemplateList::NAME => encode(list_templates(app, request.params()?)),
         TargetCreate::NAME => encode(create_target(app, request.params()?).await?),
-        TargetAdopt::NAME => encode(adopt_target(app, request.params()?).await?),
         TargetGet::NAME => encode(get_target(app, request.params()?).await?),
         TargetSetPower::NAME => encode(set_target_power(app, request.params()?).await?),
         TargetClose::NAME => encode(close_target(app, request.params()?).await?),
@@ -417,6 +550,7 @@ fn encode<T: Serialize>(value: T) -> Result<Value, ProtocolError> {
         .map_err(|error| ProtocolError::internal(format!("encode result: {error}")))
 }
 
+/// Every universe gets the same provider-wide templates.
 fn list_templates<B>(app: &App<B>, _params: ListTemplatesParams) -> ListTemplatesResponse {
     ListTemplatesResponse {
         templates: app
@@ -427,7 +561,9 @@ fn list_templates<B>(app: &App<B>, _params: ListTemplatesParams) -> ListTemplate
                 template_id: template.template_id.clone(),
                 display_name: template.display_name.clone(),
                 description: template.description.clone(),
+                power_states: SUPPORTED_POWER_STATES.to_vec(),
                 public_ingress: template.public_ingress,
+                idle: template.idle.clone(),
                 deprecated: template.deprecated,
                 resources: Some(template.resources.clone()),
                 metadata: display_metadata([(
@@ -446,23 +582,42 @@ async fn get_target<B: IncusBackend>(
     let owner = &params.target.owner;
     let name = resolve(app, &params.target).await?;
     let observed = observe(app, owner, &name).await?;
-    observation(app, owner, &name, &observed, true)
-        .await
+    observation(app, owner, &name, &observed)
         .map(|target| TargetResponse { target })
         .ok_or_else(|| ProtocolError::not_found(format!("no target exists for owner {name}")))
+}
+
+/// The wire path of an idle stage's threshold in `target/create` params.
+fn idle_stage_field(action: IdleAction) -> &'static str {
+    match action {
+        IdleAction::Pause => "idle.pauseAfterMs",
+        IdleAction::Suspend => "idle.suspendAfterMs",
+        IdleAction::Stop => "idle.stopAfterMs",
+        IdleAction::Close => "idle.closeAfterMs",
+    }
 }
 
 async fn create_target<B: IncusBackend>(
     app: &App<B>,
     params: CreateTargetParams,
 ) -> Result<TargetResponse, ProtocolError> {
+    if let Some(idle) = &params.idle {
+        idle.validate()
+            .map_err(|error| ProtocolError::invalid_field("idle", error.to_string()))?;
+        if let Some(action) = unsupported_idle_stage(idle) {
+            return Err(ProtocolError::invalid_field(
+                idle_stage_field(action),
+                format!("the Incus provider cannot carry out the {action} stage"),
+            ));
+        }
+    }
     let owner = params.owner;
     let name = policy::instance_name(&owner);
     let observed = observe(app, &owner, &name).await?;
     if observed.holds_target() {
         // Idempotent per owner: an owner that holds a target gets it back,
         // and no creation policy runs again.
-        return observed_response(app, &owner, &name, &observed).await;
+        return observed_response(app, &owner, &name, &observed);
     }
     let template = app
         .config
@@ -484,90 +639,27 @@ async fn create_target<B: IncusBackend>(
         ));
     }
     let template = template.clone();
+    // The target keeps the policy it was created with, even when the
+    // template's default changes later.
+    let idle = params.idle.or_else(|| template.idle.clone());
     let backend = app.backend.clone();
     let job_owner = owner.clone();
     let job_name = name.clone();
     let job = async move {
-        let binding = policy::binding_of(&job_owner);
-        if backend.get_owned(&binding, &job_name).await?.is_some() {
+        let universe_id = &job_owner.universe_id;
+        if backend.get_owned(universe_id, &job_name).await?.is_some() {
             return Ok(());
         }
-        backend.reconcile_binding(&binding).await?;
+        backend.reconcile_universe(universe_id).await?;
         backend.ensure_image(&template.image_fingerprint).await?;
-        backend.create_vm(&job_owner, &template).await
+        backend
+            .create_vm(&job_owner, &template, idle.as_ref())
+            .await
     };
     let target = mutate(app, &owner, &name, WorkKind::Create, job.boxed())
         .await?
         .ok_or_else(|| ProtocolError::unavailable("the created Incus instance is not visible"))?;
     Ok(TargetResponse { target })
-}
-
-async fn adopt_target<B: IncusBackend>(
-    app: &App<B>,
-    params: AdoptTargetParams,
-) -> Result<TargetResponse, ProtocolError> {
-    let owner = params.owner;
-    let source = params.source_target;
-    let name = policy::instance_name(&owner);
-    let observed = observe(app, &owner, &name).await?;
-    let adopting_this = match (&observed.instance, &observed.slot) {
-        (_, Some(slot)) if slot.running() && slot.kind == WorkKind::Close => true,
-        (Some(instance), _) => instance.adoption_source.as_deref() == Some(source.as_str()),
-        (None, Some(slot)) if slot.running() => slot.kind == WorkKind::Adopt,
-        (None, _) => {
-            crate::incus::parse_source_target(source.as_str())
-                .map_err(|error| ProtocolError::invalid_field("sourceTarget", error.to_string()))?;
-            match app
-                .backend
-                .adoption_source(&source)
-                .await
-                .map_err(unavailable)?
-            {
-                AdoptionSource::Adoptable => {}
-                AdoptionSource::Missing => {
-                    return Err(ProtocolError::not_found(format!(
-                        "adoption source {source} does not exist"
-                    )));
-                }
-                AdoptionSource::Managed => {
-                    return Err(ProtocolError::failed_precondition(
-                        PreconditionReason::OwnerMismatch,
-                        format!("adoption source {source} already belongs to an owner"),
-                    ));
-                }
-                AdoptionSource::NotAdoptable(reason) => {
-                    return Err(ProtocolError::failed_precondition(
-                        PreconditionReason::NotAdoptable,
-                        format!("adoption source {source}: {reason}"),
-                    ));
-                }
-            }
-            let backend = app.backend.clone();
-            let job_owner = owner.clone();
-            let job_name = name.clone();
-            let job = async move {
-                let binding = policy::binding_of(&job_owner);
-                if backend.get_owned(&binding, &job_name).await?.is_some() {
-                    return Ok(());
-                }
-                backend.reconcile_binding(&binding).await?;
-                backend.adopt_vm(&job_owner, &source).await
-            };
-            let target = mutate(app, &owner, &name, WorkKind::Adopt, job.boxed())
-                .await?
-                .ok_or_else(|| {
-                    ProtocolError::unavailable("the adopted Incus instance is not visible")
-                })?;
-            return Ok(TargetResponse { target });
-        }
-    };
-    if !adopting_this {
-        return Err(ProtocolError::failed_precondition(
-            PreconditionReason::OwnerMismatch,
-            "the owner already holds a different target",
-        ));
-    }
-    observed_response(app, &owner, &name, &observed).await
 }
 
 async fn set_target_power<B: IncusBackend>(
@@ -584,29 +676,19 @@ async fn set_target_power<B: IncusBackend>(
     let owner = &params.target.owner;
     let name = resolve(app, &params.target).await?;
     let observed = observe(app, owner, &name).await?;
-    let current = observation(app, owner, &name, &observed, false)
-        .await
+    let current = observation(app, owner, &name, &observed)
         .ok_or_else(|| ProtocolError::not_found(format!("target {name} does not exist")))?;
-    if current.state.phase != TargetPhase::Active {
+    if current.phase != TargetPhase::Active {
         return Err(ProtocolError::failed_precondition(
             PreconditionReason::TargetNotActive,
-            format!("target {name} is {:?}, not active", current.state.phase),
+            format!("target {name} is {:?}, not active", current.phase),
         ));
     }
-    if current.state.power == Some(power) && !observed.slot.as_ref().is_some_and(Slot::running) {
-        return observed_response(app, owner, &name, &observed).await;
+    if current.power == Some(power) && !observed.slot.as_ref().is_some_and(Slot::running) {
+        return observed_response(app, owner, &name, &observed);
     }
-    let backend = app.backend.clone();
-    let binding = policy::binding_of(owner);
-    let job_name = name.clone();
-    let job = async move {
-        let target = backend
-            .get_owned(&binding, &job_name)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("the Incus instance disappeared"))?;
-        backend.set_power(&target, power).await
-    };
-    let target = mutate(app, owner, &name, WorkKind::Power(power), job.boxed())
+    let job = power_job(&app.backend, &owner.universe_id, &name, power);
+    let target = mutate(app, owner, &name, WorkKind::Power(power), job)
         .await?
         .ok_or_else(|| ProtocolError::not_found(format!("target {name} disappeared")))?;
     Ok(TargetResponse { target })
@@ -625,16 +707,11 @@ async fn close_target<B: IncusBackend>(
             target: closed(owner),
         });
     }
-    let backend = app.backend.clone();
-    let binding = policy::binding_of(owner);
-    let job_name = name.clone();
-    let job = async move {
-        match backend.get_owned(&binding, &job_name).await? {
-            Some(target) => backend.delete_vm(&target).await,
-            None => Ok(()),
-        }
-    };
-    app.work.start(&name, WorkKind::Close, job.boxed());
+    app.work.start(
+        &name,
+        WorkKind::Close,
+        close_job(&app.backend, &owner.universe_id, &name),
+    );
     wait_for_work(app, &name).await;
     let observed = observe(app, owner, &name).await?;
     if !observed.holds_target() {
@@ -642,19 +719,51 @@ async fn close_target<B: IncusBackend>(
             target: closed(owner),
         });
     }
-    let mut target = observation(app, owner, &name, &observed, false)
-        .await
-        .unwrap_or_else(|| closed(owner));
+    let mut target = observation(app, owner, &name, &observed).unwrap_or_else(|| closed(owner));
     // Until the instance is gone, a close answers closing, with the error of
     // a failed attempt as its message; the next close tries again.
-    target.state = TargetState {
-        phase: TargetPhase::Closing,
-        power: None,
-        daemon_ready: false,
-        message: target.state.message,
-    };
-    target.supported_power_states.clear();
+    target.phase = TargetPhase::Closing;
+    target.power = None;
     Ok(TargetResponse { target })
+}
+
+/// The background job that moves the instance `name` toward `power`.
+pub(crate) fn power_job<B: IncusBackend>(
+    backend: &B,
+    universe_id: &UniverseId,
+    name: &str,
+    power: PowerState,
+) -> BoxFuture<'static, anyhow::Result<()>> {
+    let backend = backend.clone();
+    let universe_id = universe_id.clone();
+    let name = name.to_owned();
+    async move {
+        let target = backend
+            .get_owned(&universe_id, &name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("the Incus instance disappeared"))?;
+        backend.set_power(&target, power).await
+    }
+    .boxed()
+}
+
+/// The background job that destroys the instance `name`, if it still
+/// exists.
+pub(crate) fn close_job<B: IncusBackend>(
+    backend: &B,
+    universe_id: &UniverseId,
+    name: &str,
+) -> BoxFuture<'static, anyhow::Result<()>> {
+    let backend = backend.clone();
+    let universe_id = universe_id.clone();
+    let name = name.to_owned();
+    async move {
+        match backend.get_owned(&universe_id, &name).await? {
+            Some(target) => backend.delete_vm(&target).await,
+            None => Ok(()),
+        }
+    }
+    .boxed()
 }
 
 async fn ensure_ingress<B: IncusBackend>(
@@ -664,8 +773,8 @@ async fn ensure_ingress<B: IncusBackend>(
     let owner = &params.target.owner;
     let name = resolve(app, &params.target).await?;
     let observed = observe(app, owner, &name).await?;
-    let Some(instance) = ingress_subject(app, owner, &name, &observed).await? else {
-        return observed_response(app, owner, &name, &observed).await;
+    let Some(instance) = ingress_subject(app, owner, &name, &observed)? else {
+        return observed_response(app, owner, &name, &observed);
     };
     let port = TemplateId::new(instance.template_id.as_str())
         .ok()
@@ -683,14 +792,14 @@ async fn ensure_ingress<B: IncusBackend>(
     if instance.ingress_hostname.as_deref() == Some(hostname.as_str())
         && instance.ingress_port == Some(port)
     {
-        return observed_response(app, owner, &name, &observed).await;
+        return observed_response(app, owner, &name, &observed);
     }
     let backend = app.backend.clone();
-    let binding = policy::binding_of(owner);
+    let universe_id = owner.universe_id.clone();
     let job_name = name.clone();
     let job = async move {
         let target = backend
-            .get_owned(&binding, &job_name)
+            .get_owned(&universe_id, &job_name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("the Incus instance disappeared"))?;
         backend.set_ingress(&target, Some((&hostname, port))).await
@@ -714,18 +823,18 @@ async fn remove_ingress<B: IncusBackend>(
     let owner = &params.target.owner;
     let name = resolve(app, &params.target).await?;
     let observed = observe(app, owner, &name).await?;
-    let Some(instance) = ingress_subject(app, owner, &name, &observed).await? else {
-        return observed_response(app, owner, &name, &observed).await;
+    let Some(instance) = ingress_subject(app, owner, &name, &observed)? else {
+        return observed_response(app, owner, &name, &observed);
     };
     if instance.ingress_hostname.is_none() && instance.ingress_port.is_none() {
-        return observed_response(app, owner, &name, &observed).await;
+        return observed_response(app, owner, &name, &observed);
     }
     let backend = app.backend.clone();
-    let binding = policy::binding_of(owner);
+    let universe_id = owner.universe_id.clone();
     let job_name = name.clone();
     let job = async move {
         let target = backend
-            .get_owned(&binding, &job_name)
+            .get_owned(&universe_id, &job_name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("the Incus instance disappeared"))?;
         backend.set_ingress(&target, None).await
@@ -745,16 +854,15 @@ async fn remove_ingress<B: IncusBackend>(
 /// The instance whose ingress may change, `None` when the target is closing
 /// (the caller answers with the observation), or an error when there is no
 /// instance yet or at all.
-async fn ingress_subject<B: IncusBackend>(
+fn ingress_subject<B>(
     app: &App<B>,
     owner: &TargetOwner,
     name: &str,
     observed: &Observed,
 ) -> Result<Option<OwnedTarget>, ProtocolError> {
-    let current = observation(app, owner, name, observed, false)
-        .await
+    let current = observation(app, owner, name, observed)
         .ok_or_else(|| ProtocolError::not_found(format!("target {name} does not exist")))?;
-    if current.state.phase == TargetPhase::Closing {
+    if current.phase == TargetPhase::Closing {
         return Ok(None);
     }
     observed.instance.clone().map(Some).ok_or_else(|| {
@@ -781,7 +889,7 @@ async fn resolve<B: IncusBackend>(
         let foreign = app.work.view(target_id.as_str()).is_some()
             || app
                 .backend
-                .get_owned(&policy::binding_of(&target.owner), target_id.as_str())
+                .get_owned(&target.owner.universe_id, target_id.as_str())
                 .await
                 .map_err(unavailable)?
                 .is_some();
@@ -814,7 +922,7 @@ async fn observe<B: IncusBackend>(
 ) -> Result<Observed, ProtocolError> {
     let instance = app
         .backend
-        .get_owned(&policy::binding_of(owner), name)
+        .get_owned(&owner.universe_id, name)
         .await
         .map_err(unavailable)?;
     if let Some(instance) = &instance
@@ -828,33 +936,49 @@ async fn observe<B: IncusBackend>(
     })
 }
 
-async fn observed_response<B: IncusBackend>(
+fn observed_response<B>(
     app: &App<B>,
     owner: &TargetOwner,
     name: &str,
     observed: &Observed,
 ) -> Result<TargetResponse, ProtocolError> {
-    observation(app, owner, name, observed, true)
-        .await
+    observation(app, owner, name, observed)
         .map(|target| TargetResponse { target })
         .ok_or_else(|| ProtocolError::not_found(format!("target {name} does not exist")))
 }
 
+/// The phase, power and message of an observation.
+struct Condition {
+    phase: TargetPhase,
+    power: Option<PowerState>,
+    message: Option<DescriptiveText>,
+}
+
+impl Condition {
+    fn phase(phase: TargetPhase, message: &str) -> Self {
+        Self {
+            phase,
+            power: None,
+            message: DescriptiveText::lossy(message),
+        }
+    }
+}
+
 /// The observation of a target, or `None` when the owner holds nothing.
-/// `probe` runs the envd liveness probe for a running instance.
 ///
 /// `targetId` is reported only once the Incus instance exists. Until then
-/// the runtime keeps sending the idempotent `target/create` (or
-/// `target/adopt`), which starts the job again when it failed or was lost
-/// with a provider restart; a failed attempt is reported as `provisioning`
-/// with its error as `message`, so the runtime retries it until its
-/// provisioning deadline instead of failing at the first Incus hiccup.
-async fn observation<B: IncusBackend>(
+/// the runtime keeps sending the idempotent `target/create`, which starts
+/// the job again when it failed or was lost with a provider restart; a
+/// failed attempt is reported as `provisioning` with its error as
+/// `message`, so the runtime retries it until its provisioning deadline
+/// instead of failing at the first Incus hiccup. Whether envd answers is
+/// not part of an observation: the runtime's open handshake over the data
+/// route proves it.
+fn observation<B>(
     app: &App<B>,
     owner: &TargetOwner,
     name: &str,
     observed: &Observed,
-    probe: bool,
 ) -> Option<TargetObservation> {
     let failure = observed.slot.as_ref().and_then(Slot::failure);
     let running = observed
@@ -865,114 +989,69 @@ async fn observation<B: IncusBackend>(
     let failed_creation = observed
         .slot
         .as_ref()
-        .filter(|slot| !slot.running())
-        .and_then(|slot| match slot.kind {
-            WorkKind::Create => Some("target/create"),
-            WorkKind::Adopt => Some("target/adopt"),
-            _ => None,
-        });
-    let state = match (running, &observed.instance) {
+        .is_some_and(|slot| !slot.running() && slot.kind == WorkKind::Create);
+    let condition = match (running, &observed.instance) {
         (Some(WorkKind::Close), _) => {
-            phase_state(TargetPhase::Closing, None, "closing the Incus instance")
+            Condition::phase(TargetPhase::Closing, "closing the Incus instance")
         }
-        (Some(WorkKind::Create), _) => phase_state(
+        (Some(WorkKind::Create), _) => Condition::phase(
             TargetPhase::Provisioning,
-            None,
             "creating and starting the Incus instance",
         ),
-        (Some(WorkKind::Adopt), _) => phase_state(
-            TargetPhase::Provisioning,
-            None,
-            "adopting the Incus instance",
-        ),
         (_, Some(instance)) => {
-            let mut state = instance_state(instance);
-            if probe && instance.status == InstanceStatus::Running {
-                state.daemon_ready = relay::probe_guest(&app.config, instance).await;
+            let mut condition = instance_condition(instance);
+            if condition.message.is_none() {
+                condition.message = failure.and_then(DescriptiveText::lossy);
             }
-            if state.message.is_none() {
-                state.message = failure.and_then(DescriptiveText::lossy);
-            }
-            state
+            condition
         }
-        (_, None) => {
-            let retried_by = failed_creation?;
-            phase_state(
-                TargetPhase::Provisioning,
-                None,
-                &format!(
-                    "the last attempt failed and the next {retried_by} retries it: {}",
-                    failure.unwrap_or("unknown error")
-                ),
-            )
-        }
+        (_, None) if failed_creation => Condition::phase(
+            TargetPhase::Provisioning,
+            &format!(
+                "the last attempt failed and the next target/create retries it: {}",
+                failure.unwrap_or("unknown error")
+            ),
+        ),
+        (_, None) => return None,
     };
     let target_id = match &observed.instance {
         Some(_) => Some(ProviderTargetId::new(name).ok()?),
         None => None,
     };
-    let instance = observed.instance.as_ref();
-    let ingress = instance
+    let ingress = observed
+        .instance
+        .as_ref()
         .and_then(|instance| instance.ingress_hostname.as_deref())
         .and_then(|hostname| ingress::public_endpoint(&app.config, hostname).ok())
         .map(|endpoint| IngressObservation { endpoint });
-    let metadata = instance.map_or_else(Metadata::default, |instance| {
-        display_metadata([
-            ("templateId", instance.template_id.as_str()),
-            ("imageFingerprint", instance.image_fingerprint.as_str()),
-            (
-                "incusMember",
-                instance.location.as_deref().unwrap_or_default(),
-            ),
-        ])
-    });
-    let supported_power_states = if state.phase == TargetPhase::Closing {
-        Vec::new()
-    } else {
-        SUPPORTED_POWER_STATES.to_vec()
-    };
     Some(TargetObservation {
         target_id,
         owner: owner.clone(),
-        display_name: None,
-        state,
-        supported_power_states,
+        phase: condition.phase,
+        power: condition.power,
+        message: condition.message,
         ingress,
-        metadata,
     })
 }
 
-fn phase_state(phase: TargetPhase, power: Option<PowerState>, message: &str) -> TargetState {
-    TargetState {
-        phase,
-        power,
-        daemon_ready: false,
-        message: DescriptiveText::lossy(message),
-    }
-}
+const INSTANCE_ERROR: &str = "Incus reports the instance in the Error state";
 
-/// The two-axis state an Incus instance status maps to. A starting VM is
+/// The phase and power an Incus instance status maps to. A starting VM is
 /// reported running and a stopping one stopped: `power` names where the
-/// target is going, and `daemonReady` says whether envd answers yet.
-fn instance_state(instance: &OwnedTarget) -> TargetState {
-    let active = |power| TargetState {
+/// target is going.
+fn instance_condition(instance: &OwnedTarget) -> Condition {
+    let active = |power| Condition {
         phase: TargetPhase::Active,
         power: Some(power),
-        daemon_ready: false,
         message: None,
     };
     match instance.status {
         InstanceStatus::Running | InstanceStatus::Starting => active(PowerState::Running),
         InstanceStatus::Frozen => active(PowerState::Paused),
         InstanceStatus::Stopped | InstanceStatus::Stopping => active(PowerState::Stopped),
-        InstanceStatus::Error => phase_state(
-            TargetPhase::Failed,
-            None,
-            "Incus reports the instance in the Error state",
-        ),
-        InstanceStatus::Other => phase_state(
+        InstanceStatus::Error => Condition::phase(TargetPhase::Failed, INSTANCE_ERROR),
+        InstanceStatus::Other => Condition::phase(
             TargetPhase::Unknown,
-            None,
             "Incus reports an instance status this provider does not recognize",
         ),
     }
@@ -982,16 +1061,10 @@ fn closed(owner: &TargetOwner) -> TargetObservation {
     TargetObservation {
         target_id: None,
         owner: owner.clone(),
-        display_name: None,
-        state: TargetState {
-            phase: TargetPhase::Closed,
-            power: None,
-            daemon_ready: false,
-            message: None,
-        },
-        supported_power_states: Vec::new(),
+        phase: TargetPhase::Closed,
+        power: None,
+        message: None,
         ingress: None,
-        metadata: Metadata::default(),
     }
 }
 
@@ -1028,7 +1101,7 @@ async fn mutate<B: IncusBackend>(
     app.work.start(name, kind, job);
     wait_for_work(app, name).await;
     let observed = observe(app, owner, name).await?;
-    Ok(observation(app, owner, name, &observed, true).await)
+    Ok(observation(app, owner, name, &observed))
 }
 
 async fn wait_for_work<B>(app: &App<B>, name: &str) {
@@ -1039,9 +1112,8 @@ async fn wait_for_work<B>(app: &App<B>, name: &str) {
 
 /// The background job kinds; at most one job per target is current.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WorkKind {
+pub(crate) enum WorkKind {
     Create,
-    Adopt,
     Power(PowerState),
     Ingress { enabled: bool },
     Close,
@@ -1081,7 +1153,7 @@ impl Slot {
 /// current slot (a close supersedes a running create) and its job runs once
 /// the earlier one finished.
 #[derive(Default)]
-struct Work {
+pub(crate) struct Work {
     next_id: AtomicU64,
     inner: StdMutex<WorkInner>,
 }
@@ -1101,7 +1173,7 @@ impl Work {
 
     /// Run `job` as the target's current job unless a job of the same kind
     /// is already running.
-    fn start(
+    pub(crate) fn start(
         self: &Arc<Self>,
         name: &str,
         kind: WorkKind,
@@ -1185,6 +1257,11 @@ impl Work {
         self.lock().slots.get(name).cloned()
     }
 
+    /// True while a job of the target runs.
+    pub(crate) fn busy(&self, name: &str) -> bool {
+        self.lock().slots.get(name).is_some_and(Slot::running)
+    }
+
     fn done(&self, name: &str) -> Option<watch::Receiver<bool>> {
         self.lock()
             .slots
@@ -1195,16 +1272,15 @@ impl Work {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use async_trait::async_trait;
+    use environment_client::{ConnectOptions, DataClient, conformance::data_route::check_refusal};
     use environment_protocol::{
-        control::target::BindingRef,
         error::{ErrorData, ProtocolErrorKind},
-        ids::ProviderNativeRef,
+        idle::IdlePolicy,
         jsonrpc::Id,
-        routes::DataRouteBase,
     };
 
     use super::*;
@@ -1217,18 +1293,25 @@ mod tests {
         policy::tests::owner,
     };
 
-    const CREDENTIAL: &str = "0123456789abcdef0123456789abcdef";
+    pub(crate) const CREDENTIAL: &str = "0123456789abcdef0123456789abcdef";
 
     /// An in-memory Incus: instances by name, every mutation instant.
     #[derive(Clone, Default)]
-    struct FakeBackend {
-        instances: Arc<StdMutex<BTreeMap<String, OwnedTarget>>>,
-        creates: Arc<AtomicUsize>,
-        deletes: Arc<AtomicUsize>,
+    pub(crate) struct FakeBackend {
+        pub(crate) instances: Arc<StdMutex<BTreeMap<String, OwnedTarget>>>,
+        pub(crate) creates: Arc<AtomicUsize>,
+        pub(crate) deletes: Arc<AtomicUsize>,
+        /// Every `set_power` target state, in order.
+        pub(crate) power_calls: Arc<StdMutex<Vec<PowerState>>>,
     }
 
     impl FakeBackend {
-        fn insert(&self, owner: &TargetOwner, template_id: &str, status: InstanceStatus) {
+        pub(crate) fn insert(
+            &self,
+            owner: &TargetOwner,
+            template_id: &str,
+            status: InstanceStatus,
+        ) {
             let name = policy::instance_name(owner);
             self.instances.lock().unwrap().insert(
                 name.clone(),
@@ -1236,8 +1319,7 @@ mod tests {
                     target_id: ProviderTargetId::new(name).unwrap(),
                     owner: owner.clone(),
                     template_id: template_id.to_owned(),
-                    image_fingerprint: "fingerprint".to_owned(),
-                    adoption_source: None,
+                    idle: None,
                     status,
                     ipv4_address: None,
                     ingress_hostname: None,
@@ -1245,6 +1327,16 @@ mod tests {
                     location: None,
                 },
             );
+        }
+
+        pub(crate) fn update(&self, owner: &TargetOwner, change: impl FnOnce(&mut OwnedTarget)) {
+            let name = policy::instance_name(owner);
+            change(self.instances.lock().unwrap().get_mut(&name).unwrap());
+        }
+
+        pub(crate) fn get(&self, owner: &TargetOwner) -> Option<OwnedTarget> {
+            let name = policy::instance_name(owner);
+            self.instances.lock().unwrap().get(&name).cloned()
         }
     }
 
@@ -1261,7 +1353,7 @@ mod tests {
             })
         }
 
-        async fn reconcile_binding(&self, _binding: &BindingRef) -> anyhow::Result<()> {
+        async fn reconcile_universe(&self, _universe_id: &UniverseId) -> anyhow::Result<()> {
             Ok(())
         }
 
@@ -1275,7 +1367,7 @@ mod tests {
 
         async fn get_owned(
             &self,
-            binding: &BindingRef,
+            universe_id: &UniverseId,
             name: &str,
         ) -> anyhow::Result<Option<OwnedTarget>> {
             Ok(self
@@ -1283,7 +1375,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .get(name)
-                .filter(|target| target.binding() == *binding)
+                .filter(|target| target.universe() == universe_id)
                 .cloned())
         }
 
@@ -1291,6 +1383,7 @@ mod tests {
             &self,
             owner: &TargetOwner,
             template: &TemplatePolicy,
+            idle: Option<&IdlePolicy>,
         ) -> anyhow::Result<()> {
             self.creates.fetch_add(1, Ordering::SeqCst);
             self.insert(
@@ -1298,22 +1391,8 @@ mod tests {
                 template.template_id.as_str(),
                 InstanceStatus::Running,
             );
+            self.update(owner, |target| target.idle = idle.cloned());
             Ok(())
-        }
-
-        async fn adoption_source(
-            &self,
-            _source: &ProviderNativeRef,
-        ) -> anyhow::Result<AdoptionSource> {
-            Ok(AdoptionSource::Missing)
-        }
-
-        async fn adopt_vm(
-            &self,
-            _owner: &TargetOwner,
-            _source: &ProviderNativeRef,
-        ) -> anyhow::Result<()> {
-            anyhow::bail!("the fake backend adopts nothing")
         }
 
         async fn delete_vm(&self, target: &OwnedTarget) -> anyhow::Result<()> {
@@ -1335,6 +1414,7 @@ mod tests {
         }
 
         async fn set_power(&self, target: &OwnedTarget, power: PowerState) -> anyhow::Result<()> {
+            self.power_calls.lock().unwrap().push(power);
             if let Some(instance) = self.instances.lock().unwrap().get_mut(target.name()) {
                 instance.status = match power {
                     PowerState::Running => InstanceStatus::Running,
@@ -1346,7 +1426,7 @@ mod tests {
         }
     }
 
-    fn template(id: &str, deprecated: bool) -> TemplatePolicy {
+    pub(crate) fn template(id: &str, deprecated: bool) -> TemplatePolicy {
         TemplatePolicy {
             template_id: TemplateId::new(id).unwrap(),
             display_name: environment_protocol::metadata::DisplayName::new("Small").unwrap(),
@@ -1359,19 +1439,25 @@ mod tests {
             public_ingress: false,
             ingress_port: None,
             deprecated,
+            idle: None,
             resources: Default::default(),
         }
     }
 
-    fn config() -> Config {
-        let templates = [template("small", false), template("retired", true)]
+    /// A provider config whose guests' envd listens on `envd_port`.
+    pub(crate) fn config_with(envd_port: u16, credential: Option<&str>) -> Config {
+        let mut idling = template("idling", false);
+        idling.idle = Some(IdlePolicy {
+            pause_after_ms: Some(600_000),
+            ..IdlePolicy::default()
+        });
+        let templates = [template("small", false), template("retired", true), idling]
             .into_iter()
             .map(|template| (template.template_id.clone(), template))
             .collect();
         Config(Arc::new(ConfigInner {
             controller_listen: "127.0.0.1:0".parse().unwrap(),
-            credential: ProviderCredential::new(CREDENTIAL).unwrap(),
-            data_route_base: DataRouteBase::new("ws://127.0.0.1:19090/routes").unwrap(),
+            credential: credential.map(|credential| ProviderCredential::new(credential).unwrap()),
             incus: IncusConfig {
                 mode: IncusMode::Single,
                 endpoints: vec!["https://incus.test".to_owned()],
@@ -1386,9 +1472,14 @@ mod tests {
             network: NetworkPolicy::default(),
             relay_idle_seconds: 60,
             dial_timeout_seconds: 1,
-            envd_port: 19091,
+            idle_check_seconds: 60,
+            envd_port,
             ingress: None,
         }))
+    }
+
+    fn config() -> Config {
+        config_with(19091, Some(CREDENTIAL))
     }
 
     fn app() -> (App<FakeBackend>, FakeBackend) {
@@ -1415,6 +1506,15 @@ mod tests {
         }
     }
 
+    fn create(owner: &TargetOwner, template: &str) -> CreateTargetParams {
+        CreateTargetParams {
+            owner: owner.clone(),
+            template_id: TemplateId::new(template).unwrap(),
+            display_name: None,
+            idle: None,
+        }
+    }
+
     fn reason(error: &ProtocolError) -> Option<PreconditionReason> {
         match error.data {
             ErrorData::FailedPrecondition { reason } => Some(reason),
@@ -1427,7 +1527,8 @@ mod tests {
         let (app, _) = app();
         let mut initialized = false;
         let params = |version: u32| serde_json::json!({"protocolVersion": version, "clientInfo": {"name": "test"}});
-        let request = Request::new(Id::Number(1), "initialize", &params(4)).unwrap();
+        let other = CONTROLLER_PROTOCOL_VERSION + 1;
+        let request = Request::new(Id::Number(1), "initialize", &params(other)).unwrap();
         let mismatch = initialize(&app, &mut initialized, &request)
             .result
             .unwrap_err();
@@ -1435,25 +1536,60 @@ mod tests {
             mismatch.data,
             ErrorData::VersionMismatch {
                 expected: CONTROLLER_PROTOCOL_VERSION,
-                received: 4
+                received: other
             }
         );
         assert!(!initialized);
 
-        let request = Request::new(Id::Number(2), "initialize", &params(3)).unwrap();
+        let request = Request::new(
+            Id::Number(2),
+            "initialize",
+            &params(CONTROLLER_PROTOCOL_VERSION),
+        )
+        .unwrap();
         let response: ControllerInitializeResponse = initialize(&app, &mut initialized, &request)
             .decode()
             .unwrap();
         assert!(initialized);
         assert_eq!(response.plane, Plane::Controller);
-        assert!(response.capabilities.adopt_target);
+        assert!(response.capabilities.power);
         assert!(!response.capabilities.ingress);
-        assert_eq!(response.routes.data.as_str(), "ws://127.0.0.1:19090/routes");
 
         let repeat = initialize(&app, &mut initialized, &request)
             .result
             .unwrap_err();
         assert_eq!(repeat.kind(), ProtocolErrorKind::InvalidRequest);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn templates_offer_power_states_and_their_idle_default() {
+        let (app, _) = app();
+        let request = Request::new(
+            Id::Number(1),
+            TemplateList::NAME,
+            &ListTemplatesParams {
+                universe_id: UniverseId::new("u").unwrap(),
+            },
+        )
+        .unwrap();
+        let listed: ListTemplatesResponse =
+            serde_json::from_value(route(&app, &request).await.unwrap()).unwrap();
+        let idling = listed
+            .templates
+            .iter()
+            .find(|template| template.template_id.as_str() == "idling")
+            .unwrap();
+        assert_eq!(idling.power_states, SUPPORTED_POWER_STATES);
+        assert_eq!(
+            idling.idle.as_ref().and_then(|idle| idle.pause_after_ms),
+            Some(600_000)
+        );
+        let small = listed
+            .templates
+            .iter()
+            .find(|template| template.template_id.as_str() == "small")
+            .unwrap();
+        assert_eq!(small.idle, None);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1463,11 +1599,15 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(unknown.kind(), ProtocolErrorKind::MethodNotFound);
+        let adopt = call(&app, "target/adopt", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(adopt.kind(), ProtocolErrorKind::MethodNotFound);
         let ingress = call(
             &app,
             IngressEnsure::NAME,
             &EnsureIngressParams {
-                target: by_owner(&owner("u", "b", "e")),
+                target: by_owner(&owner("u", "e")),
             },
         )
         .await
@@ -1487,7 +1627,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn get_never_creates_and_answers_not_found() {
         let (app, backend) = app();
-        let owner = owner("u", "b", "e");
+        let owner = owner("u", "e");
         for _ in 0..2 {
             let error = call(
                 &app,
@@ -1520,11 +1660,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn create_is_idempotent_per_owner_and_applies_policy_only_once() {
         let (app, backend) = app();
-        let owner = owner("u", "b", "e");
-        let params = CreateTargetParams {
-            owner: owner.clone(),
-            template_id: TemplateId::new("small").unwrap(),
-        };
+        let owner = owner("u", "e");
+        let params = create(&owner, "small");
         let first = call(&app, TargetCreate::NAME, &params).await.unwrap();
         let second = call(&app, TargetCreate::NAME, &params).await.unwrap();
         assert_eq!(first.owner, owner);
@@ -1533,65 +1670,111 @@ mod tests {
             first.target_id.as_ref().map(ProviderTargetId::as_str),
             Some(policy::instance_name(&owner).as_str())
         );
-        assert_eq!(second.state.phase, TargetPhase::Active);
-        assert_eq!(second.state.power, Some(PowerState::Running));
+        assert_eq!(second.phase, TargetPhase::Active);
+        assert_eq!(second.power, Some(PowerState::Running));
         assert_eq!(backend.creates.load(Ordering::SeqCst), 1);
 
         // A target that already exists comes back even when its template
         // has been deprecated since: observation applies no creation policy.
-        let existing = crate::policy::tests::owner("u", "b", "old");
+        let existing = crate::policy::tests::owner("u", "old");
         backend.insert(&existing, "retired", InstanceStatus::Stopped);
-        let observed = call(
-            &app,
-            TargetCreate::NAME,
-            &CreateTargetParams {
-                owner: existing.clone(),
-                template_id: TemplateId::new("retired").unwrap(),
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(observed.state.power, Some(PowerState::Stopped));
+        let observed = call(&app, TargetCreate::NAME, &create(&existing, "retired"))
+            .await
+            .unwrap();
+        assert_eq!(observed.power, Some(PowerState::Stopped));
         assert_eq!(backend.creates.load(Ordering::SeqCst), 1);
 
-        let refused = call(
-            &app,
-            TargetCreate::NAME,
-            &CreateTargetParams {
-                owner: crate::policy::tests::owner("u", "b", "new"),
-                template_id: TemplateId::new("retired").unwrap(),
-            },
-        )
-        .await
-        .unwrap_err();
+        let fresh = crate::policy::tests::owner("u", "new");
+        let refused = call(&app, TargetCreate::NAME, &create(&fresh, "retired"))
+            .await
+            .unwrap_err();
         assert_eq!(
             reason(&refused),
             Some(PreconditionReason::TemplateDeprecated)
         );
-        let missing = call(
-            &app,
-            TargetCreate::NAME,
-            &CreateTargetParams {
-                owner: crate::policy::tests::owner("u", "b", "new"),
-                template_id: TemplateId::new("absent").unwrap(),
-            },
-        )
-        .await
-        .unwrap_err();
+        let missing = call(&app, TargetCreate::NAME, &create(&fresh, "absent"))
+            .await
+            .unwrap_err();
         assert_eq!(missing.kind(), ProtocolErrorKind::NotFound);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_records_the_override_or_the_template_idle_default() {
+        let (app, backend) = app();
+        let defaulted = owner("u", "defaulted");
+        call(&app, TargetCreate::NAME, &create(&defaulted, "idling"))
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.get(&defaulted).unwrap().idle,
+            app.config.templates[&TemplateId::new("idling").unwrap()]
+                .idle
+                .clone()
+        );
+
+        let overridden = owner("u", "overridden");
+        let idle = IdlePolicy {
+            stop_after_ms: Some(1_800_000),
+            ..IdlePolicy::default()
+        };
+        let mut params = create(&overridden, "idling");
+        params.idle = Some(idle.clone());
+        call(&app, TargetCreate::NAME, &params).await.unwrap();
+        assert_eq!(backend.get(&overridden).unwrap().idle, Some(idle));
+
+        let none = owner("u", "none");
+        call(&app, TargetCreate::NAME, &create(&none, "small"))
+            .await
+            .unwrap();
+        assert_eq!(backend.get(&none).unwrap().idle, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_refuses_an_invalid_idle_override() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        let mut params = create(&owner, "small");
+        params.idle = Some(IdlePolicy {
+            pause_after_ms: Some(600_000),
+            stop_after_ms: Some(60_000),
+            ..IdlePolicy::default()
+        });
+        let refused = call(&app, TargetCreate::NAME, &params).await.unwrap_err();
+        assert_eq!(refused.kind(), ProtocolErrorKind::InvalidParams);
+        assert_eq!(backend.creates.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_refuses_an_idle_stage_incus_cannot_reach() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        let mut params = create(&owner, "small");
+        params.idle = Some(IdlePolicy {
+            pause_after_ms: Some(60_000),
+            suspend_after_ms: Some(600_000),
+            ..IdlePolicy::default()
+        });
+        let refused = call(&app, TargetCreate::NAME, &params).await.unwrap_err();
+        assert_eq!(refused.kind(), ProtocolErrorKind::InvalidParams);
+        assert!(matches!(
+            &refused.data,
+            ErrorData::InvalidParams { field: Some(field), .. } if field == "idle.suspendAfterMs"
+        ));
+        assert_eq!(backend.creates.load(Ordering::SeqCst), 0);
+        assert!(backend.get(&owner).is_none());
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_foreign_target_id_is_an_owner_mismatch() {
         let (app, backend) = app();
-        let holder = owner("u", "b", "holder");
+        let holder = owner("u", "holder");
         backend.insert(&holder, "small", InstanceStatus::Running);
         let error = call(
             &app,
             TargetGet::NAME,
             &GetTargetParams {
                 target: TargetRef {
-                    owner: owner("u", "b", "other"),
+                    owner: owner("u", "other"),
                     target_id: Some(ProviderTargetId::new(policy::instance_name(&holder)).unwrap()),
                 },
             },
@@ -1604,7 +1787,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn close_by_owner_destroys_and_is_idempotent() {
         let (app, backend) = app();
-        let owner = owner("u", "b", "e");
+        let owner = owner("u", "e");
         backend.insert(&owner, "small", InstanceStatus::Running);
         let closed = call(
             &app,
@@ -1615,7 +1798,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(closed.state.phase, TargetPhase::Closed);
+        assert_eq!(closed.phase, TargetPhase::Closed);
         assert_eq!(closed.target_id, None);
         assert_eq!(closed.owner, owner);
         let again = call(
@@ -1627,7 +1810,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(again.state.phase, TargetPhase::Closed);
+        assert_eq!(again.phase, TargetPhase::Closed);
         assert_eq!(backend.deletes.load(Ordering::SeqCst), 1);
         let gone = call(
             &app,
@@ -1644,7 +1827,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn power_changes_need_an_active_target_and_a_supported_state() {
         let (app, backend) = app();
-        let owner = owner("u", "b", "e");
+        let owner = owner("u", "e");
         let set = |power| SetTargetPowerParams {
             target: by_owner(&owner),
             power,
@@ -1662,7 +1845,8 @@ mod tests {
         let paused = call(&app, TargetSetPower::NAME, &set(PowerState::Paused))
             .await
             .unwrap();
-        assert_eq!(paused.state.power, Some(PowerState::Paused));
+        assert_eq!(paused.phase, TargetPhase::Active);
+        assert_eq!(paused.power, Some(PowerState::Paused));
 
         backend.insert(&owner, "small", InstanceStatus::Error);
         let failed = call(&app, TargetSetPower::NAME, &set(PowerState::Running))
@@ -1672,9 +1856,35 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn observations_carry_power_only_while_active() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        let get = || GetTargetParams {
+            target: by_owner(&owner),
+        };
+        for (status, power) in [
+            (InstanceStatus::Running, Some(PowerState::Running)),
+            (InstanceStatus::Starting, Some(PowerState::Running)),
+            (InstanceStatus::Frozen, Some(PowerState::Paused)),
+            (InstanceStatus::Stopping, Some(PowerState::Stopped)),
+            (InstanceStatus::Stopped, Some(PowerState::Stopped)),
+        ] {
+            backend.insert(&owner, "small", status);
+            let observed = call(&app, TargetGet::NAME, &get()).await.unwrap();
+            assert_eq!(observed.phase, TargetPhase::Active, "{status:?}");
+            assert_eq!(observed.power, power, "{status:?}");
+        }
+        backend.insert(&owner, "small", InstanceStatus::Error);
+        let failed = call(&app, TargetGet::NAME, &get()).await.unwrap();
+        assert_eq!(failed.phase, TargetPhase::Failed);
+        assert_eq!(failed.power, None);
+        assert!(failed.message.is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn a_failed_create_is_provisioning_without_an_id_and_retried_by_create() {
         let (app, backend) = app();
-        let owner = owner("u", "b", "e");
+        let owner = owner("u", "e");
         let name = policy::instance_name(&owner);
         app.work.start(
             &name,
@@ -1693,26 +1903,18 @@ mod tests {
         .unwrap();
         // No instance exists, so no id is handed out and the runtime keeps
         // sending target/create.
-        assert_eq!(observed.state.phase, TargetPhase::Provisioning);
+        assert_eq!(observed.phase, TargetPhase::Provisioning);
         assert_eq!(observed.target_id, None);
         assert!(
             observed
-                .state
                 .message
                 .as_ref()
                 .is_some_and(|message| message.as_str().contains("image server unreachable"))
         );
-        let created = call(
-            &app,
-            TargetCreate::NAME,
-            &CreateTargetParams {
-                owner: owner.clone(),
-                template_id: TemplateId::new("small").unwrap(),
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(created.state.phase, TargetPhase::Active);
+        let created = call(&app, TargetCreate::NAME, &create(&owner, "small"))
+            .await
+            .unwrap();
+        assert_eq!(created.phase, TargetPhase::Active);
         assert_eq!(
             created.target_id.as_ref().map(ProviderTargetId::as_str),
             Some(name.as_str())
@@ -1723,7 +1925,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn closing_an_owner_whose_create_failed_forgets_the_failure() {
         let (app, _) = app();
-        let owner = owner("u", "b", "e");
+        let owner = owner("u", "e");
         let name = policy::instance_name(&owner);
         app.work.start(
             &name,
@@ -1742,7 +1944,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(closed.state.phase, TargetPhase::Closed);
+        assert_eq!(closed.phase, TargetPhase::Closed);
         assert!(app.work.view(&name).is_none());
     }
 
@@ -1762,28 +1964,257 @@ mod tests {
         assert!(authorized(&config, &headers));
     }
 
+    #[test]
+    fn without_a_credential_every_request_is_authorized() {
+        let config = config_with(19091, None);
+        let mut headers = HeaderMap::new();
+        assert!(authorized(&config, &headers));
+        headers.insert(header::AUTHORIZATION, "Bearer anything".parse().unwrap());
+        assert!(authorized(&config, &headers));
+    }
+
+    /// A guest envd stand-in on loopback that accepts WebSocket upgrades
+    /// and answers nothing. Returns its port.
+    pub(crate) async fn silent_envd() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    if let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await {
+                        while let Some(Ok(_)) = socket.next().await {}
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// Serve `app`'s routes on loopback with a short data route hold.
+    /// Returns the data route URL of `owner`'s target.
+    async fn serve_routes(mut app: App<FakeBackend>, owner: &TargetOwner) -> String {
+        app.data_route_hold = Duration::from_millis(1_000);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(app)).await });
+        format!(
+            "ws://{address}/routes/{}/{}/{}",
+            owner.universe_id,
+            owner.environment_id,
+            policy::instance_name(owner)
+        )
+    }
+
+    fn data_options() -> ConnectOptions {
+        ConnectOptions::new(ImplementationInfo::new("test").unwrap()).with_bearer_token(CREDENTIAL)
+    }
+
+    /// Dial a data route that must refuse, and return its conforming refusal.
+    async fn refused(url: &str) -> DataRouteRefusal {
+        let error = match DataClient::connect_initialized(url, data_options()).await {
+            Ok(_) => panic!("the data route upgraded"),
+            Err(error) => error,
+        };
+        check_refusal(&error)
+            .unwrap_or_else(|problem| panic!("{problem}"))
+            .clone()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_data_route_without_a_target_is_gone() {
+        let (app, _) = app();
+        let owner = owner("u", "e");
+        let url = serve_routes(app, &owner).await;
+        assert_eq!(refused(&url).await, DataRouteRefusal::Gone {});
+        let foreign = format!("{}x", url);
+        assert_eq!(refused(&foreign).await, DataRouteRefusal::Gone {});
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_broken_instance_refuses_as_failed() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        backend.insert(&owner, "small", InstanceStatus::Error);
+        let url = serve_routes(app, &owner).await;
+        assert!(matches!(
+            refused(&url).await,
+            DataRouteRefusal::Failed { .. }
+        ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_running_target_whose_envd_does_not_answer_is_booting() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        // No guest address yet: envd cannot be reached.
+        backend.insert(&owner, "small", InstanceStatus::Running);
+        let url = serve_routes(app, &owner).await;
+        assert_eq!(refused(&url).await, DataRouteRefusal::Booting {});
+        assert!(backend.power_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stopped_target_is_woken_and_waking_until_envd_answers() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        backend.insert(&owner, "small", InstanceStatus::Stopped);
+        let wakes = app.wakes.clone();
+        let url = serve_routes(app, &owner).await;
+        assert_eq!(refused(&url).await, DataRouteRefusal::Waking {});
+        assert_eq!(
+            backend.power_calls.lock().unwrap().as_slice(),
+            [PowerState::Running]
+        );
+        assert_eq!(backend.get(&owner).unwrap().status, InstanceStatus::Running);
+        assert!(wakes.within_grace(&policy::instance_name(&owner), Instant::now()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_paused_target_wakes_on_dial_and_relays() {
+        let port = silent_envd().await;
+        let backend = FakeBackend::default();
+        let app = App::new(config_with(port, Some(CREDENTIAL)), backend.clone());
+        let relays = app.relays.clone();
+        let owner = owner("u", "e");
+        backend.insert(&owner, "small", InstanceStatus::Frozen);
+        backend.update(&owner, |target| {
+            target.ipv4_address = Some("127.0.0.1".to_owned());
+        });
+        let wakes = app.wakes.clone();
+        let url = serve_routes(app, &owner).await;
+        let socket = dial_route(&url).await;
+        assert_eq!(backend.get(&owner).unwrap().status, InstanceStatus::Running);
+        assert_eq!(
+            backend.power_calls.lock().unwrap().as_slice(),
+            [PowerState::Running]
+        );
+        // The relay holds the instance while it runs.
+        let name = policy::instance_name(&owner);
+        assert!(relays.active(&name));
+        drop(socket);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while relays.active(&name) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the relay releases the instance when it ends");
+        // The woken instance has its grace from the end of the connection.
+        assert!(wakes.within_grace(&name, Instant::now()));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dial_during_a_power_down_waits_for_the_wake_behind_it() {
+        let port = silent_envd().await;
+        let backend = FakeBackend::default();
+        let app = App::new(config_with(port, Some(CREDENTIAL)), backend.clone());
+        let owner = owner("u", "e");
+        let name = policy::instance_name(&owner);
+        backend.insert(&owner, "small", InstanceStatus::Running);
+        backend.update(&owner, |target| {
+            target.ipv4_address = Some("127.0.0.1".to_owned());
+        });
+        // A pause still in progress: the instance reads running until it
+        // freezes.
+        let pausing = backend.clone();
+        let target = backend.get(&owner).unwrap();
+        app.work.start(
+            &name,
+            WorkKind::Power(PowerState::Paused),
+            async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                pausing.set_power(&target, PowerState::Paused).await
+            }
+            .boxed(),
+        );
+        let url = serve_routes(app, &owner).await;
+        let _socket = dial_route(&url).await;
+        // The dial upgraded only after the wake that followed the pause.
+        assert_eq!(
+            backend.power_calls.lock().unwrap().as_slice(),
+            [PowerState::Paused, PowerState::Running]
+        );
+        assert_eq!(backend.get(&owner).unwrap().status, InstanceStatus::Running);
+    }
+
+    /// Open the data route `url` with the configured credential and expect
+    /// it to upgrade.
+    async fn dial_route(url: &str) -> GuestSocket {
+        let mut request =
+            tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(url)
+                .unwrap();
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            format!("Bearer {CREDENTIAL}").parse().unwrap(),
+        );
+        let (socket, response) = tokio_tungstenite::connect_async(request)
+            .await
+            .expect("the target relays");
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        socket
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_data_route_needs_the_configured_credential() {
+        let (app, backend) = app();
+        let owner = owner("u", "e");
+        backend.insert(&owner, "small", InstanceStatus::Running);
+        let url = serve_routes(app, &owner).await;
+        let options = ConnectOptions::new(ImplementationInfo::new("test").unwrap());
+        match DataClient::connect_initialized(&url, options).await {
+            Err(environment_client::ClientError::UpgradeRejected { status: 401, .. }) => {}
+            Err(error) => panic!("expected HTTP 401, got {error}"),
+            Ok(_) => panic!("the data route upgraded without the credential"),
+        }
+    }
+
     /// The client's controller conformance suite against this server over
     /// a real WebSocket, with the in-memory backend standing in for Incus.
     #[tokio::test(flavor = "current_thread")]
     async fn the_controller_passes_the_conformance_suite() {
-        use environment_client::{
-            ConnectOptions,
-            conformance::controller::{ControllerConformance, run},
-        };
+        use environment_client::conformance::controller::{ControllerConformance, run};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(serve_on(listener, config(), FakeBackend::default()));
-        let options = ConnectOptions::new(ImplementationInfo::new("conformance").unwrap())
-            .with_bearer_token(CREDENTIAL);
         let counter = Arc::new(AtomicUsize::new(0));
         let owner_factory: Arc<dyn Fn() -> TargetOwner + Send + Sync> = Arc::new(move || {
             let environment = format!("env-{}", counter.fetch_add(1, Ordering::SeqCst));
-            owner("conformance", "fake", &environment)
+            owner("conformance", &environment)
         });
         let mut suite = ControllerConformance::new(
             format!("ws://{address}/control"),
-            options,
+            data_options(),
+            TemplateId::new("small").unwrap(),
+            owner_factory,
+        );
+        suite.poll_interval = Duration::from_millis(10);
+        suite.settle_timeout = Duration::from_secs(10);
+        let report = run(&suite).await;
+        server.abort();
+        report.into_result().expect("the controller conforms");
+    }
+
+    /// The same suite against a provider configured without a credential.
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_controller_conforms_without_a_credential() {
+        use environment_client::conformance::controller::{ControllerConformance, run};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_on(
+            listener,
+            config_with(19091, None),
+            FakeBackend::default(),
+        ));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let owner_factory: Arc<dyn Fn() -> TargetOwner + Send + Sync> = Arc::new(move || {
+            let environment = format!("env-{}", counter.fetch_add(1, Ordering::SeqCst));
+            owner("conformance", &environment)
+        });
+        let mut suite = ControllerConformance::new(
+            format!("ws://{address}/control"),
+            ConnectOptions::new(ImplementationInfo::new("conformance").unwrap()),
             TemplateId::new("small").unwrap(),
             owner_factory,
         );

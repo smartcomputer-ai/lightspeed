@@ -6,7 +6,7 @@
 /// writes, delegates research to a second bot that runs sub-agents, and
 /// takes the Monday numbers from a metrics bot — the personal-agent pattern
 /// built from bots, triggers, workspaces, skills, and one Mac mini at home.
-import type { Environment, SecretGrant, UniverseSetup } from "@/api";
+import type { SecretGrant, UniverseSetup } from "@/api";
 import type { SessionSummaryView } from "@lightspeed-ai/sdk";
 import { appendExchange, appendScriptedRun, closeSession, newSession, refreshDemoCompactionView } from "../engine";
 import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type SessionRecord, type UniverseState } from "../store";
@@ -53,7 +53,9 @@ import {
   modelProvider,
   pollTrigger,
   profile,
+  externalEnvironment,
   providerBinding,
+  registeredEnvironment,
   receipt,
   recent,
   runCommand,
@@ -71,7 +73,7 @@ import {
   type ScriptedEvent,
   mcpDisplay,
 } from "./builders";
-import { INCUS_PROVIDER_ID, TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
+import { TELEGRAM_ADA_ACCOUNT_ID, WHATSAPP_ADA_ACCOUNT_ID } from "./platform";
 
 export const PERSONAL_ASSISTANT_UNIVERSE_ID = "33333333-3333-4333-8333-333333333333";
 export const PERSONAL_ASSISTANT_SLUG = "personal-assistant";
@@ -872,23 +874,11 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
 }
 
 function seedEnvironments(universe: UniverseState): void {
-  const macMini: Environment = {
+  universe.environments.set(ENV_MAC_MINI, externalEnvironment({
     environmentId: ENV_MAC_MINI,
     requestId: `req-${hex("ada-mac-mini", 12)}`,
-    source: {
-      type: "external",
-      endpoint: "ws://mac-mini.tailnet:19091",
-    },
+    endpoint: "ws://mac-mini.tailnet:19091",
     displayName: "Mac mini (home)",
-    status: "ready",
-    desiredPower: "running",
-    incarnation: {
-      incarnationId: `inc-${hex("ada-mac-mini-inc", 10)}`,
-      createdAtMs: ago(35 * DAY_MS),
-      updatedAtMs: ago(HOUR_MS + 42 * MINUTE_MS),
-    },
-    publicIngressEnabled: false,
-    publicEndpoint: null,
     metadata: {
       owner: "ada",
       os: "macOS 15",
@@ -897,12 +887,11 @@ function seedEnvironments(universe: UniverseState): void {
     },
     createdAtMs: ago(35 * DAY_MS),
     updatedAtMs: ago(HOUR_MS + 42 * MINUTE_MS),
-  };
-  universe.environments.set(ENV_MAC_MINI, macMini);
+  }));
 
   // A registration key is the group of the daemons it admitted: Ada's
   // laptop dials in from wherever she is, keeps its identity in its state
-  // directory, and simply shows as offline while the lid is closed.
+  // directory, and simply shows as disconnected while the lid is closed.
   const homeDevicesKey = "registration_key_home_devices";
   universe.registrationKeys.push({
     registrationKeyId: homeDevicesKey,
@@ -915,40 +904,22 @@ function seedEnvironments(universe: UniverseState): void {
     activeEnvironmentCount: 1,
     lastRegisteredAtMs: ago(9 * DAY_MS),
     createdAtMs: ago(9 * DAY_MS),
+    updatedAtMs: ago(9 * DAY_MS),
   });
-  const laptopDaemonId = `daemon_${hex("ada-laptop-daemon", 64)}`;
-  universe.environments.set("env-ada-laptop", {
+  universe.environments.set("env-ada-laptop", registeredEnvironment({
     environmentId: "env-ada-laptop",
-    requestId: `daemon:${laptopDaemonId}`,
-    source: {
-      type: "registered",
-      registrationKeyId: homeDevicesKey,
-      daemonId: laptopDaemonId,
-      identityMode: "persistent",
-    },
-    displayName: "Ada's laptop",
-    status: "offline",
-    desiredPower: "running",
-    incarnation: {
-      incarnationId: `inc-${hex("ada-laptop-inc", 10)}`,
-      createdAtMs: ago(9 * DAY_MS),
-      updatedAtMs: ago(3 * HOUR_MS),
-    },
-    publicIngressEnabled: false,
-    publicEndpoint: null,
-    metadata: {
-      "envd.os": "macos",
-      "envd.arch": "arm64",
-      "lightspeed.envd.version": "0.1.0",
-    },
+    registrationKeyId: homeDevicesKey,
+    daemonId: `daemon_${hex("ada-laptop-daemon", 64)}`,
+    identityMode: "persistent",
+    connected: false,
+    connectionChangedAtMs: ago(3 * HOUR_MS),
     lastSeenAtMs: ago(3 * HOUR_MS),
+    displayName: "Ada's laptop",
     createdAtMs: ago(9 * DAY_MS),
     updatedAtMs: ago(3 * HOUR_MS),
-  });
+  }));
   universe.providerBindings.push(
     providerBinding({
-      revision: 1,
-      metadata: { project: "personal-assistant", note: "enabled for provisioned sandboxes; nothing uses it yet" },
       createdAtMs: ago(24 * DAY_MS),
       updatedAtMs: ago(24 * DAY_MS),
     }),

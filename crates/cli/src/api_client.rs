@@ -15,8 +15,7 @@ use api::{
     BlobPutParams, BlobPutResponse, BlobReadParams, BlobReadResponse, EnvironmentCloseParams,
     EnvironmentCloseResponse, EnvironmentCredentialBindParams, EnvironmentCredentialBindResponse,
     EnvironmentCredentialListParams, EnvironmentCredentialListResponse,
-    EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse,
-    EnvironmentIdlePolicyPutParams, EnvironmentIdlePolicyPutResponse, EnvironmentListParams,
+    EnvironmentCredentialUnbindParams, EnvironmentCredentialUnbindResponse, EnvironmentListParams,
     EnvironmentListResponse, EnvironmentPowerPutParams, EnvironmentPowerPutResponse,
     EnvironmentProviderBindingListParams, EnvironmentProviderBindingListResponse,
     EnvironmentReadParams, EnvironmentReadResponse, JsonRpcRequest, JsonRpcResponse,
@@ -28,7 +27,7 @@ use api::{
     METHOD_AUTH_PROVIDERS_LIST, METHOD_AUTH_PROVIDERS_READ, METHOD_BLOBS_HAS, METHOD_BLOBS_PUT,
     METHOD_BLOBS_READ, METHOD_ENVIRONMENTS_CLOSE, METHOD_ENVIRONMENTS_CREDENTIALS_BIND,
     METHOD_ENVIRONMENTS_CREDENTIALS_LIST, METHOD_ENVIRONMENTS_CREDENTIALS_UNBIND,
-    METHOD_ENVIRONMENTS_IDLE_POLICY_PUT, METHOD_ENVIRONMENTS_LIST, METHOD_ENVIRONMENTS_POWER_PUT,
+    METHOD_ENVIRONMENTS_LIST, METHOD_ENVIRONMENTS_POWER_PUT,
     METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST, METHOD_ENVIRONMENTS_READ,
     METHOD_MCP_SERVERS_DELETE, METHOD_MCP_SERVERS_LIST, METHOD_MCP_SERVERS_PUT,
     METHOD_MCP_SERVERS_READ, METHOD_MODELS_LIST, METHOD_PROFILES_DELETE, METHOD_PROFILES_LIST,
@@ -578,12 +577,11 @@ impl HttpAgentApi {
         self.request(METHOD_ENVIRONMENTS_POWER_PUT, params).await
     }
 
-    pub(crate) async fn put_environment_idle_policy(
+    pub(crate) async fn update_environment(
         &self,
-        params: EnvironmentIdlePolicyPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentIdlePolicyPutResponse>, AgentApiError> {
-        self.request(METHOD_ENVIRONMENTS_IDLE_POLICY_PUT, params)
-            .await
+        params: api::EnvironmentUpdateParams,
+    ) -> Result<AgentApiOutcome<api::EnvironmentUpdateResponse>, AgentApiError> {
+        self.request(api::METHOD_ENVIRONMENTS_UPDATE, params).await
     }
 
     pub(crate) async fn create_environment_registration_key(
@@ -607,6 +605,22 @@ impl HttpAgentApi {
         params: api::EnvironmentRegistrationKeyListParams,
     ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyListResponse>, AgentApiError> {
         self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST, params)
+            .await
+    }
+
+    pub(crate) async fn update_environment_registration_key(
+        &self,
+        params: api::EnvironmentRegistrationKeyUpdateParams,
+    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyUpdateResponse>, AgentApiError> {
+        self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE, params)
+            .await
+    }
+
+    pub(crate) async fn rotate_environment_registration_key(
+        &self,
+        params: api::EnvironmentRegistrationKeyRotateParams,
+    ) -> Result<AgentApiOutcome<api::EnvironmentRegistrationKeyRotateResponse>, AgentApiError> {
+        self.request(api::METHOD_ENVIRONMENTS_REGISTRATION_KEYS_ROTATE, params)
             .await
     }
 

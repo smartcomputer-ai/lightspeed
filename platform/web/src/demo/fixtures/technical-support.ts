@@ -5,7 +5,7 @@
 /// that files minimal-repro issues, while a status watcher and the on-call
 /// bot it pages keep the helpdesk briefed during incidents — bot federation
 /// end to end, plus the profiles, KB, environment, and integrations behind it.
-import type { Environment, GitHubApp, SecretGrant } from "@/api";
+import type { GitHubApp, SecretGrant } from "@/api";
 import { appendScriptedRun, newSession } from "../engine";
 import { universeApiKey, type DemoResponder, type DemoStore, type DemoToolCall, type DemoTurn, type UniverseState } from "../store";
 import {
@@ -50,6 +50,7 @@ import {
   pollTrigger,
   profile,
   providerBinding,
+  provisionedEnvironment,
   recent,
   runCommand,
   scheduleTrigger,
@@ -711,33 +712,21 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
 }
 
 function seedEnvironments(universe: UniverseState): void {
-  const requestId = `req-${hex("support-tools", 12)}`;
-  const environment: Environment = {
+  universe.environments.set(ENV_SUPPORT_TOOLS, provisionedEnvironment({
     environmentId: ENV_SUPPORT_TOOLS,
-    requestId,
-    source: { type: "provisioned", providerId: "incus-eu-1", bindingId: "incus-eu-1" },
+    requestId: `req-${hex("support-tools", 12)}`,
+    providerId: "incus-eu-1",
+    templateId: "dev-small-v1",
+    targetId: "ls-support-tools-7b2e91",
     displayName: "Support tools",
-    status: "paused",
-    desiredPower: "paused",
-    idlePolicy: { pauseAfterMs: 30 * MINUTE_MS, stopAfterMs: 12 * HOUR_MS },
-    incarnation: {
-      incarnationId: `inc-${hex("support-tools-inc", 10)}`,
-      provisionRequestId: requestId,
-      providerTargetId: "ls-support-tools-7b2e91",
-      templateId: "dev-small-v1",
-      powerStates: ["running", "paused", "stopped"],
-      createdAtMs: ago(29 * DAY_MS),
-      updatedAtMs: ago(2 * HOUR_MS + 6 * MINUTE_MS),
-    },
-    publicIngressEnabled: false,
-    publicEndpoint: null,
+    power: "paused",
+    idle: { pauseAfterMs: 30 * MINUTE_MS, stopAfterMs: 12 * HOUR_MS },
     metadata: { role: "support-tooling", tools: "nw (sandbox + read-only production key), slack, jq, curl" },
     createdAtMs: ago(29 * DAY_MS),
     updatedAtMs: ago(2 * HOUR_MS + 6 * MINUTE_MS),
-  };
-  universe.environments.set(ENV_SUPPORT_TOOLS, environment);
+  }));
   universe.providerBindings.push(
-    providerBinding({ revision: 2, metadata: { project: "technical-support" }, createdAtMs: ago(30 * DAY_MS), updatedAtMs: ago(30 * DAY_MS) }),
+    providerBinding({ createdAtMs: ago(30 * DAY_MS), updatedAtMs: ago(30 * DAY_MS) }),
   );
   universe.environmentTemplates.push(
     template({

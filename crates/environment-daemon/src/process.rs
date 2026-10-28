@@ -202,8 +202,8 @@ impl ProcessManager {
     }
 
     /// Process groups whose root exited while members still run, adopted
-    /// groups of an earlier instance included. Leftovers are not running
-    /// work: they never hold the idle clock.
+    /// groups of an earlier instance included. They hold the idle clock
+    /// like running work.
     pub fn leftover_group_count(&self) -> u32 {
         let live = {
             let table = self.table();

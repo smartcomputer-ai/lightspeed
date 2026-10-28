@@ -1,73 +1,70 @@
-/// Universe environments: provisioned and external records, the provider
-/// bindings and templates they come from, credential bindings, and a
-/// simulated provider lifecycle (provisioning → booting → ready, closing →
-/// closed, power convergence) so the Environments page has state to watch.
+/// Universe environments: provisioned, external and registered records, the
+/// provider bindings and templates they come from, credential bindings, and a
+/// simulated provider lifecycle (provisioning → open, closing → closed) so
+/// the Environments page has state to watch. Power and ingress are
+/// synchronous provider calls, as in the core.
 import { Hono } from "hono";
 import type { Context } from "hono";
+import type {
+  EnvironmentIdlePolicyView,
+  EnvironmentPowerStateView,
+  EnvironmentStateView,
+} from "@lightspeed-ai/sdk";
 import type {
   Environment,
   EnvironmentCredential,
   EnvironmentCredentialSource,
   EnvironmentRegistrationKey,
 } from "@/api";
+import { displayStatus } from "../fixtures/builders";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody, universeFor } from "./common";
-
-type PowerState = Environment["desiredPower"];
-type LifecycleStatus = Environment["status"];
-type IdlePolicy = NonNullable<Environment["idlePolicy"]>;
-
-/// What the demo provider advertises once a target is observed — the Incus
-/// provider's set, which has no suspend.
-const DEMO_POWER_STATES: PowerState[] = ["running", "paused", "stopped"];
-
-/// The observed status a converged power intent settles on.
-const POWER_STATUS: Record<PowerState, LifecycleStatus> = {
-  running: "ready",
-  paused: "paused",
-  suspended: "suspended",
-  stopped: "offline",
-};
 
 const IDLE_STAGES = ["pauseAfterMs", "suspendAfterMs", "stopAfterMs", "closeAfterMs"] as const;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const ENVD_ENDPOINT = /^(wss?:\/\/|unix:\/\/\/)[^\s]+$/;
 const DEV_ENVD_ENDPOINT = "ws://127.0.0.1:19091";
+const DEMO_DAEMON = { version: "0.1.0", protocolVersion: 4 };
+const LIST_DEFAULT_LIMIT = 100;
 
 export interface ProvisionParams {
   requestId: string;
-  bindingId: string;
+  providerId: string;
   templateId: string;
   displayName?: string | null;
-  idlePolicy?: unknown;
+  idle?: EnvironmentIdlePolicyView | null;
   metadata?: Record<string, unknown>;
 }
 
-/// Pending simulated transitions per environment. A newer intent (close, a
-/// power change) bumps the epoch so stale timers drop instead of overwriting
-/// what the newer intent already settled.
+/// Recompute the derived display status after any write, the way the core's
+/// view derives it on every read.
+function settle(environment: Environment, now = Date.now()): Environment {
+  environment.status = displayStatus(environment);
+  environment.updatedAtMs = now;
+  return environment;
+}
+
+function setState(environment: Environment, state: EnvironmentStateView, now = Date.now()): void {
+  environment.state = state;
+  environment.stateChangedAtMs = now;
+  if (state === "closed") {
+    environment.closedAtMs = now;
+    environment.stateMessage = null;
+  }
+  settle(environment, now);
+}
+
+/// Pending simulated provider work per environment. A close bumps the epoch
+/// so stale provisioning timers drop instead of reopening the row.
 const epochs = new WeakMap<Environment, number>();
 
-function transition(environment: Environment, steps: Array<[LifecycleStatus, number]>): void {
+function schedule(environment: Environment, steps: Array<[number, () => void]>): void {
   const epoch = (epochs.get(environment) ?? 0) + 1;
   epochs.set(environment, epoch);
-  for (const [status, delayMs] of steps) {
+  for (const [delayMs, step] of steps) {
     setTimeout(() => {
-      if (epochs.get(environment) !== epoch || environment.status === "closed") return;
-      const now = Date.now();
-      environment.status = status;
-      environment.updatedAtMs = now;
-      environment.incarnation.updatedAtMs = now;
-      if (status === "booting" && !environment.incarnation.providerTargetId) {
-        environment.incarnation.providerTargetId = `ls-${environment.environmentId}`;
-      }
-      if (
-        status === "ready"
-        && environment.source.type === "provisioned"
-        && !environment.incarnation.powerStates?.length
-      ) {
-        environment.incarnation.powerStates = [...DEMO_POWER_STATES];
-      }
+      if (epochs.get(environment) !== epoch || environment.state === "closed") return;
+      step();
     }, delayMs);
   }
 }
@@ -76,7 +73,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isPowerState(value: unknown): value is PowerState {
+function isPowerState(value: unknown): value is EnvironmentPowerStateView {
   return value === "running" || value === "paused" || value === "suspended" || value === "stopped";
 }
 
@@ -90,26 +87,26 @@ function stringMetadata(value: unknown): Record<string, string> {
   return metadata;
 }
 
-/// The engine's idle-policy rules: at least one stage, every threshold a
+/// The protocol's idle-policy rules: at least one stage, every threshold a
 /// positive integer, non-decreasing pause → suspend → stop → close.
-function parseIdlePolicy(value: unknown): { policy: IdlePolicy | null } | { error: string } {
+function parseIdlePolicy(value: unknown): { policy: EnvironmentIdlePolicyView | null } | { error: string } {
   if (value === undefined || value === null) return { policy: null };
   if (!isRecord(value)) return { error: "idle policy must be an object" };
-  const policy: IdlePolicy = {};
+  const policy: EnvironmentIdlePolicyView = {};
   let previous: [string, number] | null = null;
   for (const key of IDLE_STAGES) {
     const threshold = value[key];
     if (threshold === undefined || threshold === null) continue;
     if (typeof threshold !== "number" || !Number.isInteger(threshold) || threshold <= 0) {
-      return { error: `idle policy ${key} must be a positive integer` };
+      return { error: `idle policy ${key} threshold must be positive` };
     }
     if (previous && threshold < previous[1]) {
-      return { error: `idle policy ${key} must not be below ${previous[0]}` };
+      return { error: `idle policy ${key} threshold must not be below ${previous[0]}` };
     }
     policy[key] = threshold;
     previous = [key, threshold];
   }
-  if (!previous) return { error: "idle policy must set at least one stage" };
+  if (!previous) return { error: "idle policy sets no stage" };
   return { policy };
 }
 
@@ -123,6 +120,7 @@ function findByRequestId(universe: UniverseState, requestId: string): Environmen
 /// `environments/create` semantics: the request id dedupes inside the
 /// universe, the binding must be enabled, and the record is accepted before
 /// any provider work. An unknown template fails asynchronously, the way a
+/// provider refusal of `target/create` does.
 export function provisionEnvironment(
   store: DemoStore,
   universe: UniverseState,
@@ -130,66 +128,82 @@ export function provisionEnvironment(
 ): { environment: Environment; created: boolean } | { error: string } {
   const existing = findByRequestId(universe, params.requestId);
   if (existing) return { environment: existing, created: false };
-  const binding = universe.providerBindings.find(
-    (candidate) => candidate.bindingId === params.bindingId,
-  );
-  if (!binding || binding.status !== "enabled") {
-    return { error: "environment provider binding is missing or disabled" };
-  }
-  const idlePolicy = parseIdlePolicy(params.idlePolicy);
-  if ("error" in idlePolicy) return { error: idlePolicy.error };
+  const binding = universe.providerBindings.find((candidate) => candidate.providerId === params.providerId);
+  if (!binding) return { error: `environment provider binding not found: ${params.providerId}` };
+  if (!binding.enabled) return { error: `environment provider binding is disabled: ${params.providerId}` };
   const template = universe.environmentTemplates.find(
-    (candidate) =>
-      candidate.templateId === params.templateId
-      && (candidate.bindingId === binding.bindingId || candidate.providerId === binding.providerId),
+    (candidate) => candidate.providerId === params.providerId && candidate.templateId === params.templateId,
   );
   const environmentId = store.nextId("env");
   const now = Date.now();
   const environment: Environment = {
     environmentId,
     requestId: params.requestId,
-    source: { type: "provisioned", providerId: binding.providerId, bindingId: binding.bindingId },
-    displayName: params.displayName ?? null,
-    status: "provisioning",
-    desiredPower: "running",
-    ...(idlePolicy.policy ? { idlePolicy: idlePolicy.policy } : {}),
-    incarnation: {
-      incarnationId: `inc-${environmentId}-1`,
-      provisionRequestId: params.requestId,
+    source: {
+      type: "provisioned",
+      providerId: params.providerId,
       templateId: params.templateId,
-      createdAtMs: now,
-      updatedAtMs: now,
+      ...(params.idle ? { idle: params.idle } : {}),
     },
-    publicIngressEnabled: false,
+    displayName: params.displayName ?? null,
+    state: "provisioning",
+    status: "provisioning",
+    stateChangedAtMs: now,
     metadata: stringMetadata(params.metadata),
     createdAtMs: now,
     updatedAtMs: now,
   };
   universe.environments.set(environmentId, environment);
+  const source = environment.source;
+  if (source.type !== "provisioned") throw new Error("unreachable");
   if (template) {
-    transition(environment, [["booting", 2_500], ["ready", 6_000]]);
+    schedule(environment, [
+      [2_500, () => {
+        source.targetId = `ls-${environmentId}`;
+        source.observed = { phase: "provisioning", message: "booting", observedAtMs: Date.now() };
+        environment.stateMessage = "waiting for the provider: booting";
+        settle(environment);
+      }],
+      [6_000, () => {
+        source.observed = { phase: "active", power: "running", observedAtMs: Date.now() };
+        environment.stateMessage = null;
+        environment.daemon = DEMO_DAEMON;
+        setState(environment, "open");
+      }],
+    ]);
   } else {
-    environment.lifecycleError = {
-      message: `unknown template ${params.templateId}`,
-      firstAtMs: now,
-      lastAtMs: now,
-    };
-    transition(environment, [["failed", 1_500]]);
+    schedule(environment, [[1_500, () => {
+      environment.stateMessage = `the provider refused target/create: unknown template ${params.templateId}`;
+      setState(environment, "failed");
+    }]]);
   }
   return { environment, created: true };
 }
 
-/// `environments/close`: closing at once, closed a moment later. Ingress
-/// drops immediately because nothing will answer on it.
-export function closeEnvironment(universe: UniverseState, environmentId: string): Environment | null {
+/// `environments/close`: a provisioned environment is closing until the
+/// provider reports its target gone; external and registered ones close at
+/// once.
+export function closeEnvironment(
+  universe: UniverseState,
+  environmentId: string,
+  reason: NonNullable<Environment["closeReason"]> = "requested",
+): Environment | null {
   const environment = universe.environments.get(environmentId);
   if (!environment) return null;
-  if (environment.status === "closed" || environment.status === "closing") return environment;
-  environment.status = "closing";
-  environment.updatedAtMs = Date.now();
-  environment.publicIngressEnabled = false;
-  environment.publicEndpoint = null;
-  transition(environment, [["closed", 2_000]]);
+  if (environment.state === "closed" || environment.state === "closing") return environment;
+  environment.closeReason = reason;
+  const source = environment.source;
+  if (source.type !== "provisioned") {
+    setState(environment, "closed");
+    return environment;
+  }
+  environment.stateMessage = null;
+  setState(environment, "closing");
+  schedule(environment, [[2_000, () => {
+    source.observed = { phase: "closed", observedAtMs: Date.now() };
+    source.publicEndpoint = null;
+    setState(environment, "closed");
+  }]]);
   return environment;
 }
 
@@ -262,6 +276,42 @@ function locate(
   return universe && environment ? { universe, environment } : null;
 }
 
+type RegistrationKeyBody = {
+  displayName?: string;
+  identityMode?: "persistent" | "ephemeral";
+  maxActiveEnvironments?: number;
+  ephemeralDisconnectGraceMs?: number;
+  offlineCloseAfterMs?: number;
+  expiresAtMs?: number;
+};
+
+/// The editable policy of `registration-keys/create` and `/update`: a full
+/// replace, so an absent field is unset.
+function registrationKeyPolicy(
+  body: RegistrationKeyBody,
+  identityMode: "persistent" | "ephemeral",
+): Pick<
+  EnvironmentRegistrationKey,
+  "displayName" | "maxActiveEnvironments" | "ephemeralDisconnectGraceMs" | "offlineCloseAfterMs" | "expiresAtMs"
+> | { error: string } {
+  const displayName = body.displayName?.trim();
+  if (!displayName) return { error: "displayName is required" };
+  if (body.offlineCloseAfterMs !== undefined && identityMode === "ephemeral") {
+    return { error: "offlineCloseAfterMs applies to persistent keys only" };
+  }
+  return {
+    displayName,
+    maxActiveEnvironments: body.maxActiveEnvironments ?? null,
+    ephemeralDisconnectGraceMs: body.ephemeralDisconnectGraceMs ?? 300_000,
+    offlineCloseAfterMs: body.offlineCloseAfterMs ?? null,
+    expiresAtMs: body.expiresAtMs ?? null,
+  };
+}
+
+function mintSecret(): string {
+  return `lsrk_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "").slice(0, 11)}`;
+}
+
 export function environmentRoutes(store: DemoStore): Hono {
   const app = new Hono();
 
@@ -271,40 +321,48 @@ export function environmentRoutes(store: DemoStore): Hono {
     return c.json(universe.providerBindings);
   });
 
-  /// Templates of enabled bindings only, like the gateway's fan-out.
+  /// Templates of enabled bindings only, like `environments/templates/list`.
   app.get("/:id/environment-templates", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    const bindingId = c.req.query("bindingId");
+    const providerId = c.req.query("providerId");
     const enabled = new Set(
-      universe.providerBindings
-        .filter((binding) => binding.status === "enabled")
-        .map((binding) => binding.bindingId),
+      universe.providerBindings.filter((binding) => binding.enabled).map((binding) => binding.providerId),
     );
     return c.json(
       universe.environmentTemplates.filter(
-        (template) =>
-          enabled.has(template.bindingId) && (!bindingId || template.bindingId === bindingId),
+        (template) => enabled.has(template.providerId) && (!providerId || template.providerId === providerId),
       ),
     );
   });
 
+  /// One page of `environments/list`, in environment id order; closed rows
+  /// only with `includeClosed` or `state=closed`.
   app.get("/:id/environments", (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
     const providerId = c.req.query("providerId");
-    const bindingId = c.req.query("bindingId");
-    const status = c.req.query("status");
+    const state = c.req.query("state");
     const registrationKeyId = c.req.query("registrationKeyId");
-    const environments = [...universe.environments.values()].filter((environment) => {
-      const source = environment.source;
-      return (!providerId || (source.type === "provisioned" && source.providerId === providerId))
-        && (!bindingId || (source.type === "provisioned" && source.bindingId === bindingId))
-        && (!status || environment.status === status)
-        && (!registrationKeyId
-          || (source.type === "registered" && source.registrationKeyId === registrationKeyId));
+    const includeClosed = c.req.query("includeClosed") === "true" || state === "closed";
+    const after = c.req.query("after");
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? LIST_DEFAULT_LIMIT) || LIST_DEFAULT_LIMIT, 1), 500);
+    const matching = [...universe.environments.values()]
+      .filter((environment) => {
+        const source = environment.source;
+        return (includeClosed || environment.state !== "closed")
+          && (!providerId || (source.type === "provisioned" && source.providerId === providerId))
+          && (!state || environment.state === state)
+          && (!registrationKeyId
+            || (source.type === "registered" && source.registrationKeyId === registrationKeyId))
+          && (!after || environment.environmentId > after);
+      })
+      .sort((a, b) => (a.environmentId < b.environmentId ? -1 : a.environmentId > b.environmentId ? 1 : 0));
+    const environments = matching.slice(0, limit);
+    return c.json({
+      environments,
+      nextAfter: matching.length > limit ? environments[environments.length - 1]!.environmentId : null,
     });
-    return c.json(environments);
   });
 
   app.get("/:id/environment-registration-keys", (c) => {
@@ -316,33 +374,49 @@ export function environmentRoutes(store: DemoStore): Hono {
   app.post("/:id/environment-registration-keys", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
-    const body = await readBody<{
-      displayName?: string;
-      identityMode?: "persistent" | "ephemeral";
-      maxActiveEnvironments?: number;
-      ephemeralDisconnectGraceMs?: number;
-      expiresAtMs?: number;
-    }>(c);
-    const displayName = body.displayName?.trim();
-    if (!displayName) return badRequest(c, "displayName is required");
+    const body = await readBody<RegistrationKeyBody>(c);
+    const identityMode = body.identityMode === "ephemeral" ? "ephemeral" : "persistent";
+    const policy = registrationKeyPolicy(body, identityMode);
+    if ("error" in policy) return badRequest(c, policy.error);
     const now = Date.now();
-    const random = crypto.randomUUID().replace(/-/g, "");
-    const secret = `lsrk_${random}${crypto.randomUUID().replace(/-/g, "").slice(0, 11)}`;
+    const secret = mintSecret();
     const key: EnvironmentRegistrationKey = {
-      registrationKeyId: `registration_key_${random}`,
-      displayName,
+      registrationKeyId: `registration_key_${crypto.randomUUID().replace(/-/g, "")}`,
       keyPrefix: secret.slice(0, 12),
-      identityMode: body.identityMode === "ephemeral" ? "ephemeral" : "persistent",
-      ...(body.maxActiveEnvironments === undefined ? {} : { maxActiveEnvironments: body.maxActiveEnvironments }),
-      ephemeralDisconnectGraceMs: body.ephemeralDisconnectGraceMs ?? 300_000,
-      ...(body.expiresAtMs === undefined ? {} : { expiresAtMs: body.expiresAtMs }),
+      identityMode,
+      ...policy,
       status: "active",
       registeredEnvironmentCount: 0,
       activeEnvironmentCount: 0,
       createdAtMs: now,
+      updatedAtMs: now,
     };
     universe.registrationKeys.push(key);
     return c.json({ registrationKey: withUsage(universe, key), secret }, 201);
+  });
+
+  app.put("/:id/environment-registration-keys/:keyId", async (c) => {
+    const universe = universeFor(store, c);
+    if (!universe) return notFound(c);
+    const key = universe.registrationKeys.find((k) => k.registrationKeyId === c.req.param("keyId"));
+    if (!key) return notFound(c);
+    const policy = registrationKeyPolicy(await readBody<RegistrationKeyBody>(c), key.identityMode);
+    if ("error" in policy) return badRequest(c, policy.error);
+    Object.assign(key, policy, { updatedAtMs: Date.now() });
+    return c.json(withUsage(universe, key));
+  });
+
+  /// Retires the live secret; daemons already admitted keep reconnecting.
+  app.post("/:id/environment-registration-keys/:keyId/rotate", (c) => {
+    const universe = universeFor(store, c);
+    if (!universe) return notFound(c);
+    const key = universe.registrationKeys.find((k) => k.registrationKeyId === c.req.param("keyId"));
+    if (!key) return notFound(c);
+    if (key.status === "revoked") return conflict(c, "registration key unavailable: revoked");
+    const secret = mintSecret();
+    key.keyPrefix = secret.slice(0, 12);
+    key.updatedAtMs = Date.now();
+    return c.json({ registrationKey: withUsage(universe, key), secret });
   });
 
   app.post("/:id/environment-registration-keys/:keyId/revoke", async (c) => {
@@ -361,9 +435,9 @@ export function environmentRoutes(store: DemoStore): Hono {
         if (
           environment.source.type === "registered"
           && environment.source.registrationKeyId === key.registrationKeyId
-          && !["closing", "closed"].includes(environment.status)
+          && environment.state !== "closed"
         ) {
-          closeEnvironment(universe, environment.environmentId);
+          closeEnvironment(universe, environment.environmentId, "keyRevoked");
           closedEnvironmentIds.push(environment.environmentId);
         }
       }
@@ -376,35 +450,35 @@ export function environmentRoutes(store: DemoStore): Hono {
     if (!universe) return notFound(c);
     const body = await readBody<{
       requestId?: unknown;
-      bindingId?: unknown;
+      providerId?: unknown;
       templateId?: unknown;
       displayName?: unknown;
       metadata?: unknown;
-      idlePolicy?: unknown;
+      idle?: unknown;
     }>(c);
     const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
-    const bindingId = typeof body.bindingId === "string" ? body.bindingId.trim() : "";
+    const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
     const templateId = typeof body.templateId === "string" ? body.templateId.trim() : "";
-    if (!requestId || !bindingId || !templateId) {
-      return badRequest(c, "requestId, bindingId, and templateId are required");
+    if (!requestId || !providerId || !templateId) {
+      return badRequest(c, "requestId, providerId, and templateId are required");
     }
-    const idlePolicy = parseIdlePolicy(body.idlePolicy);
-    if ("error" in idlePolicy) return badRequest(c, idlePolicy.error);
+    const idle = parseIdlePolicy(body.idle);
+    if ("error" in idle) return badRequest(c, idle.error);
     const result = provisionEnvironment(store, universe, {
       requestId,
-      bindingId,
+      providerId,
       templateId,
       displayName: typeof body.displayName === "string" && body.displayName.trim()
         ? body.displayName.trim()
         : null,
-      idlePolicy: idlePolicy.policy,
+      idle: idle.policy,
       metadata: isRecord(body.metadata) ? body.metadata : {},
     });
     if ("error" in result) return conflict(c, result.error);
     return c.json(result.environment, 201);
   });
 
-  /// A directly attached `lightspeed-envd`: no provider, ready at once.
+  /// A directly attached `lightspeed-envd`: no provider, open at once.
   app.post("/:id/environments/external", async (c) => {
     const universe = universeFor(store, c);
     if (!universe) return notFound(c);
@@ -425,10 +499,9 @@ export function environmentRoutes(store: DemoStore): Hono {
       displayName: typeof body.displayName === "string" && body.displayName.trim()
         ? body.displayName.trim()
         : null,
+      state: "open",
       status: "ready",
-      desiredPower: "running",
-      incarnation: { incarnationId: `inc-${environmentId}-1`, createdAtMs: now, updatedAtMs: now },
-      publicIngressEnabled: false,
+      stateChangedAtMs: now,
       metadata: {},
       createdAtMs: now,
       updatedAtMs: now,
@@ -449,89 +522,75 @@ export function environmentRoutes(store: DemoStore): Hono {
     return c.json(found.environment);
   });
 
+  /// `environments/update`: a full replace of name and caller metadata.
+  app.patch("/:id/environments/:environmentId", async (c) => {
+    const found = locate(store, c);
+    if (!found) return notFound(c);
+    const { environment } = found;
+    if (environment.state === "closed") return badRequest(c, "environment closed");
+    const body = await readBody<{ displayName?: unknown; metadata?: unknown }>(c);
+    environment.displayName = typeof body.displayName === "string" && body.displayName.trim()
+      ? body.displayName.trim()
+      : null;
+    environment.metadata = stringMetadata(body.metadata);
+    return c.json(settle(environment));
+  });
+
   app.delete("/:id/environments/:environmentId", (c) => {
     const found = locate(store, c);
     if (!found) return notFound(c);
     return c.json(closeEnvironment(found.universe, found.environment.environmentId));
   });
 
+  /// `environments/power/put`: a synchronous provider call; only the
+  /// returned observation is kept.
   app.put("/:id/environments/:environmentId/power", async (c) => {
     const found = locate(store, c);
     if (!found) return notFound(c);
-    const { environment } = found;
+    const { universe, environment } = found;
     const body = await readBody<{ power?: unknown }>(c);
     const power = body.power;
     if (!isPowerState(power)) {
       return badRequest(c, "power must be one of running, paused, suspended, stopped");
     }
-    if (environment.source.type !== "provisioned") {
-      return conflict(c, "external environments have no power control");
+    const source = environment.source;
+    if (source.type !== "provisioned") {
+      return badRequest(c, "only provisioned environments have provider power control");
     }
-    if (["closing", "closed", "failed"].includes(environment.status)) {
-      return badRequest(c, "cannot change power of a closing, closed, or failed environment");
+    if (environment.state !== "open") return badRequest(c, `environment is ${environment.state}`);
+    const template = universe.environmentTemplates.find(
+      (candidate) => candidate.providerId === source.providerId && candidate.templateId === source.templateId,
+    );
+    if (!template?.powerStates.includes(power)) {
+      return badRequest(c, `the template does not support power state ${power}`);
     }
-    const supported = environment.incarnation.powerStates ?? [];
-    if (power !== "running" && !supported.includes(power)) {
-      return conflict(c, `environment power state ${power} is not supported by the provider`);
-    }
-    environment.desiredPower = power;
-    environment.updatedAtMs = Date.now();
-    // The reconciler converges asynchronously; simulate it. Waking goes
-    // through booting like a real resume, and an environment still coming
-    // up keeps the lifecycle it is already on.
-    if (POWER_STATUS[power] !== environment.status) {
-      if (power !== "running") {
-        transition(environment, [[POWER_STATUS[power], 1_200]]);
-      } else if (environment.status !== "provisioning" && environment.status !== "booting") {
-        transition(environment, [["booting", 800], ["ready", 2_500]]);
-      }
-    }
-    return c.json(environment);
+    source.observed = { phase: "active", power, observedAtMs: Date.now() };
+    return c.json(settle(environment));
   });
 
-  app.put("/:id/environments/:environmentId/idle-policy", async (c) => {
-    const found = locate(store, c);
-    if (!found) return notFound(c);
-    const { environment } = found;
-    const body = await readBody<{ idlePolicy?: unknown }>(c);
-    if (environment.source.type !== "provisioned") {
-      return badRequest(c, "external environments have no power control");
-    }
-    const parsed = parseIdlePolicy(body.idlePolicy);
-    if ("error" in parsed) return badRequest(c, parsed.error);
-    if (parsed.policy) {
-      environment.idlePolicy = parsed.policy;
-    } else {
-      delete environment.idlePolicy;
-    }
-    environment.updatedAtMs = Date.now();
-    return c.json(environment);
-  });
-
+  /// `environments/ingress/put`: a synchronous provider call that returns
+  /// the public endpoint.
   app.put("/:id/environments/:environmentId/ingress", async (c) => {
     const found = locate(store, c);
     if (!found) return notFound(c);
     const { universe, environment } = found;
     const body = await readBody<{ enabled?: unknown }>(c);
     if (typeof body.enabled !== "boolean") return badRequest(c, "enabled must be a boolean");
-    if (environment.source.type !== "provisioned") {
-      return conflict(c, "public ingress is available only for provisioned environments");
+    const source = environment.source;
+    if (source.type !== "provisioned") {
+      return badRequest(c, "public ingress is available only for provisioned environments");
     }
+    if (environment.state !== "open") return badRequest(c, `environment is ${environment.state}`);
     const template = universe.environmentTemplates.find(
-      (candidate) => candidate.templateId === environment.incarnation.templateId,
+      (candidate) => candidate.providerId === source.providerId && candidate.templateId === source.templateId,
     );
     if (body.enabled && !template?.publicIngress) {
-      return conflict(c, "provider template does not permit public ingress");
+      return badRequest(c, "provider template does not permit public ingress");
     }
-    if (body.enabled && environment.status !== "ready") {
-      return conflict(c, "environment must be ready before ingress can be enabled");
-    }
-    environment.publicIngressEnabled = body.enabled;
-    environment.publicEndpoint = body.enabled
+    source.publicEndpoint = body.enabled
       ? `https://${environment.environmentId.replace(/[^a-z0-9]/gi, "")}.env.lightspeed.demo`
       : null;
-    environment.updatedAtMs = Date.now();
-    return c.json(environment);
+    return c.json(settle(environment));
   });
 
   app.get("/:id/environments/:environmentId/credentials", (c) => {
@@ -607,7 +666,7 @@ function withUsage(universe: UniverseState, key: EnvironmentRegistrationKey): En
   return {
     ...key,
     registeredEnvironmentCount: mine.length,
-    activeEnvironmentCount: mine.filter((environment) => environment.status !== "closed").length,
+    activeEnvironmentCount: mine.filter((environment) => environment.state !== "closed").length,
     ...(lastRegisteredAtMs === null ? {} : { lastRegisteredAtMs }),
   };
 }

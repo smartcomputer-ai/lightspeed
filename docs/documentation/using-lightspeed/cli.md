@@ -417,28 +417,40 @@ full context window rather than a specific rejected entry, use the
 ## Provision environments from the CLI
 
 A deployment administrator registers a provider controller and binds it to a
-universe. `environment provider put --file provider.json` takes a
-`DeploymentEnvironmentProviderPutParams` document; `environment binding put
---file binding.json` takes `DeploymentProviderBindingPutParams`, including its
-explicit `universeId`. The public API reference documents their fields. These
-operations require a deployment key; provider list/read/delete do as well.
-Binding deletion acts on the selected universe. Normal environment and template
-operations operate within the selected universe.
+universe. `environment provider put` takes the provider ID, its
+`--controller-endpoint`, and optionally `--display-name`, `--data-route-base`
+(required for a `unix://` controller), and `--credential-file`; omitting the
+credential keeps the stored one, and `--clear-credential` removes it.
+`environment binding put PROVIDER_ID --enabled` (or `--disabled`) binds the
+selected universe. These operations require a deployment key; provider
+list/read/delete and binding delete do as well. Normal environment and
+template operations operate within the selected universe.
 
 ```bash
-lightspeed environment provider list
-lightspeed environment binding list
-lightspeed environment template list --binding local
-lightspeed environment create --binding local --template linux-v1 --request-id provision-my-machine
+lightspeed environment provider put incus-local --controller-endpoint ws://127.0.0.1:19090/control --credential-file ./provider-credential
+lightspeed environment binding put incus-local --enabled
+lightspeed environment template list --provider incus-local
+lightspeed environment create --provider incus-local --template linux-v1 --request-id provision-my-machine
 lightspeed environment register wss://machine.example/envd --request-id register-my-machine
+lightspeed environment list --include-closed --limit 50
 lightspeed environment read ENVIRONMENT_ID
+lightspeed environment update ENVIRONMENT_ID --name "Build machine" --metadata team=release
 lightspeed environment power ENVIRONMENT_ID paused
 lightspeed environment ingress ENVIRONMENT_ID --enable
 ```
 
 Reuse the same request ID when retrying an uncertain provisioning or external
-registration request. Creation and closure can be asynchronous: inspect the
-returned lifecycle state with `environment read`. Outbound daemons continue to
-use `environment registration-key create|list|read|revoke`. Credentials bound
-with `environment credential bind` supply the environment's configured secret
-references; attachment access controls the agent's permitted use of the machine.
+registration request. Creation and closure of a provisioned environment are
+asynchronous: inspect the returned state with `environment read`. `power` and
+`ingress` wait for the provider's answer and print what it reported; the
+provider keeps owning power afterwards. `environment list` omits closed
+environments unless `--include-closed` is given, and returns one page at a
+time; when more remain, it prints the `--after` value for the next page. `environment update`
+replaces the display name and metadata, so omitted flags clear them.
+
+Outbound daemons use `environment registration-key create|list|read|update|rotate|revoke`.
+`update` replaces a key's group name and policy, including
+`--offline-close-after-min` for a persistent key; `rotate` prints a new secret
+once and retires the old one. Credentials bound with `environment credential
+bind` supply the environment's configured secret references; attachment
+access controls the agent's permitted use of the machine.

@@ -325,7 +325,7 @@ where
         let environment_id = if environment {
             let key = state.api.create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
                 display_name:"Code capability test".into(), identity_mode:api::EnvironmentIdentityModeView::Ephemeral,
-                max_active_environments:Some(1), ephemeral_disconnect_grace_ms:None, expires_at_ms:None,
+                max_active_environments:Some(1), ephemeral_disconnect_grace_ms:None, offline_close_after_ms:None, expires_at_ms:None,
             }).await?.result;
             let connect_url = format!("ws://{address}{}", environment_protocol::routes::CONNECT_PATH);
             let mut registration = environment_daemon::config::RegistrationConfig::new(connect_url.clone(), environment_daemon::upgrade::resolve_discovery_url(Some(&connect_url), None)?);
@@ -338,7 +338,7 @@ where
             Some(tokio::time::timeout(Duration::from_secs(30), async {
                 loop {
                     let records = state.api.list_environments(api::EnvironmentListParams::default()).await?.result.environments;
-                    if let Some(record) = records.into_iter().find(|record| record.status == api::EnvironmentLifecycleStatusView::Ready) { return anyhow::Ok(record.environment_id); }
+                    if let Some(record) = records.into_iter().find(|record| record.state == api::EnvironmentStateView::Open) { return anyhow::Ok(record.environment_id); }
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }).await??)

@@ -5,8 +5,8 @@ use environment_protocol::{data::handshake::InitializeResponse, handshake::Imple
 use uuid::Uuid;
 
 /// Path prefix of the worker routes the environment gateway serves:
-/// `{prefix}/{universe}/{environment}/{incarnation}`. Runtime-internal: only
-/// Lightspeed's own workers dial it, with the deployment token.
+/// `{prefix}/{universe}/{environment}`. Runtime-internal: only Lightspeed's
+/// own workers dial it, with the deployment token.
 pub const ROUTE_PATH_PREFIX: &str = "/environment-gateway/routes";
 
 /// Connect bound (TCP, TLS and upgrade) of a worker route. The gateway
@@ -17,11 +17,18 @@ pub const ROUTE_PATH_PREFIX: &str = "/environment-gateway/routes";
 pub const WORKER_ROUTE_CONNECT_TIMEOUT: Duration =
     Duration::from_secs(crate::gateway::registration::STREAM_OPEN_TIMEOUT.as_secs() + 5);
 
+/// Runtime-internal header of a worker route dial that must not wake a
+/// powered-down target: environment source discovery. The gateway asks the
+/// provider for a provisioned target's current power first and refuses the
+/// dial (bodiless 412) unless the target is active and running; the
+/// recorded observation cannot decide, since providers power targets down
+/// on their own clock. Other sources have no power to keep.
+pub const NO_WAKE_HEADER: &str = "lightspeed-no-wake";
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RouteKey {
     pub universe_id: Uuid,
     pub environment_id: String,
-    pub incarnation_id: String,
 }
 
 #[derive(Clone)]
@@ -68,19 +75,18 @@ impl EnvironmentGatewayClientConfig {
         RouteKey {
             universe_id,
             environment_id: environment.environment_id.to_string(),
-            incarnation_id: environment.incarnation.incarnation_id.to_string(),
         }
     }
 
-    /// The worker route of one environment incarnation: a data-plane
-    /// endpoint whatever the environment's source.
+    /// The worker route of one environment: a data-plane endpoint whatever
+    /// the environment's source. Instead of upgrading, the gateway may
+    /// answer a typed `DataRouteRefusal`.
     pub fn endpoint(&self, key: &RouteKey) -> String {
         format!(
-            "{}{ROUTE_PATH_PREFIX}/{}/{}/{}",
+            "{}{ROUTE_PATH_PREFIX}/{}/{}",
             websocket_base(&self.base_url),
             key.universe_id,
             environment_protocol::routes::encode_path_segment(&key.environment_id),
-            environment_protocol::routes::encode_path_segment(&key.incarnation_id),
         )
     }
 
@@ -103,6 +109,13 @@ impl EnvironmentGatewayClientConfig {
             .with_user_agent(user_agent);
         options.connect_timeout = WORKER_ROUTE_CONNECT_TIMEOUT;
         options
+    }
+
+    /// [`connect_options`](Self::connect_options) for a dial that must not
+    /// wake its target ([`NO_WAKE_HEADER`]).
+    pub fn no_wake_connect_options(&self, user_agent: impl Into<String>) -> ConnectOptions {
+        self.connect_options(user_agent)
+            .with_header(NO_WAKE_HEADER, "1")
     }
 
     /// Dial the worker route of `key` and complete the data-plane
@@ -169,7 +182,6 @@ mod tests {
         RouteKey {
             universe_id: Uuid::nil(),
             environment_id: "environment-a".to_owned(),
-            incarnation_id: "incarnation-a".to_owned(),
         }
     }
 
@@ -178,7 +190,7 @@ mod tests {
         let config = EnvironmentGatewayClientConfig::new("https://gateway.test/", "secret");
         assert_eq!(
             config.endpoint(&key()),
-            "wss://gateway.test/environment-gateway/routes/00000000-0000-0000-0000-000000000000/environment-a/incarnation-a"
+            "wss://gateway.test/environment-gateway/routes/00000000-0000-0000-0000-000000000000/environment-a"
         );
         let local = EnvironmentGatewayClientConfig::new("http://127.0.0.1:18080", "secret");
         assert!(

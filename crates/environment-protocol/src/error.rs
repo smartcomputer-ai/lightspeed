@@ -232,8 +232,7 @@ pub enum PreconditionReason {
     EnvironmentClosed,
     /// The daemon identity is bound to another universe.
     IdentityInUse,
-    /// The target belongs to another owner, or (`target/adopt`) the owner
-    /// already holds a different target.
+    /// The target belongs to another owner.
     OwnerMismatch,
     /// The template is deprecated and creates no new targets.
     TemplateDeprecated,
@@ -242,9 +241,6 @@ pub enum PreconditionReason {
     /// A power change on a target whose `phase` is not `active`
     /// (provisioning, closing, closed or failed).
     TargetNotActive,
-    /// `target/adopt`: the source target exists but the provider cannot take
-    /// it over, for example an instance of a kind it does not manage.
-    NotAdoptable,
 }
 
 /// Why a `permissionDenied` request was refused.
@@ -308,8 +304,8 @@ pub enum Capability {
     ProcessPty,
     /// The `job` family.
     Job,
-    /// The controller's `adoptTarget` capability.
-    AdoptTarget,
+    /// The controller's `power` capability.
+    Power,
     /// The controller's `ingress` capability.
     Ingress,
 }

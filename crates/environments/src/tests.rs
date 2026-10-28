@@ -1,9 +1,14 @@
 use std::collections::BTreeMap;
 
-use environment_protocol::{ids::ProviderTargetId, metadata::MAX_METADATA_ENTRIES};
+use environment_protocol::{
+    ids::ProviderTargetId,
+    metadata::{DescriptiveText, MAX_METADATA_ENTRIES},
+};
 use uuid::Uuid;
 
 use super::*;
+
+const PROVIDER: &str = "incus-local";
 
 fn endpoint(value: &str) -> EnvironmentEndpoint {
     EnvironmentEndpoint::parse(value).expect("endpoint")
@@ -15,55 +20,76 @@ fn target(value: &str) -> ProviderTargetId {
 
 fn provider() -> PutEnvironmentProvider {
     PutEnvironmentProvider {
-        provider_id: EnvironmentProviderId::new("incus-local"),
+        provider_id: EnvironmentProviderId::new(PROVIDER),
         display_name: Some("Local Incus".to_owned()),
         controller_endpoint: endpoint("ws://127.0.0.1:19090/control"),
-        metadata: BTreeMap::new(),
-        credential: Some(SecretValue::new("provider-secret")),
+        data_route_base: None,
+        credential: ProviderCredentialChange::Set(SecretValue::new("provider-secret")),
         updated_at_ms: 1_000,
     }
 }
 
-fn observe(
-    environment_id: &EnvironmentId,
-    target_id: Option<&str>,
-    status: EnvironmentStatus,
-    at: i64,
-) -> ObserveProvisionedEnvironment {
-    ObserveProvisionedEnvironment {
-        environment_id: environment_id.clone(),
-        provider_target_id: target_id.map(target),
-        status,
-        power_states: vec![PowerState::Running, PowerState::Paused],
-        daemon_build: None,
+fn binding(universe_id: Uuid, enabled: bool, at: i64) -> PutEnvironmentProviderBinding {
+    PutEnvironmentProviderBinding {
+        universe_id,
+        provider_id: EnvironmentProviderId::new(PROVIDER),
+        enabled,
+        updated_at_ms: at,
+    }
+}
+
+fn create(request: &str, environment: &str, at: i64) -> CreateEnvironment {
+    CreateEnvironment {
+        request_id: EnvironmentProvisionRequestId::new(request),
+        environment_id: EnvironmentId::new(environment),
+        provider_id: EnvironmentProviderId::new(PROVIDER),
+        template_id: EnvironmentTemplateId::new("rust-v1"),
+        idle: None,
+        display_name: None,
+        metadata: BTreeMap::new(),
+        created_at_ms: at,
+    }
+}
+
+fn external(request: &str, environment: &str, at: i64) -> CreateExternalEnvironment {
+    CreateExternalEnvironment {
+        request_id: EnvironmentProvisionRequestId::new(request),
+        environment_id: EnvironmentId::new(environment),
+        endpoint: endpoint("ws://envd.example:9000"),
+        display_name: None,
+        metadata: BTreeMap::new(),
+        created_at_ms: at,
+    }
+}
+
+fn build(version: &str) -> DaemonBuild {
+    DaemonBuild {
+        version: Some(version.to_owned()),
+        git_sha: Some("aaaa".to_owned()),
+        protocol_version: 4,
+    }
+}
+
+fn observed(phase: TargetPhase, power: Option<PowerState>, at: i64) -> ObservedTarget {
+    ObservedTarget {
+        phase,
+        power,
+        message: None,
         observed_at_ms: at,
     }
 }
 
-fn binding(universe_id: Uuid, expected_revision: Option<u64>) -> PutEnvironmentProviderBinding {
-    PutEnvironmentProviderBinding {
-        universe_id,
-        binding_id: EnvironmentProviderBindingId::new("primary"),
-        provider_id: EnvironmentProviderId::new("incus-local"),
-        status: EnvironmentProviderBindingStatus::Enabled,
-        metadata: BTreeMap::new(),
-        expected_revision,
-        updated_at_ms: 1_000 + expected_revision.unwrap_or(0) as i64,
-    }
-}
-
-fn create(request: &str, environment: &str, incarnation: &str, at: i64) -> CreateEnvironment {
-    CreateEnvironment {
-        request_id: EnvironmentProvisionRequestId::new(request),
-        environment_id: EnvironmentId::new(environment),
-        incarnation_id: EnvironmentIncarnationId::new(incarnation),
-        binding_id: EnvironmentProviderBindingId::new("primary"),
-        template_id: EnvironmentTemplateId::new("rust-v1"),
-        display_name: None,
-        metadata: BTreeMap::new(),
-
-        idle_policy: None,
-        created_at_ms: at,
+fn observation(
+    environment_id: &EnvironmentId,
+    target_id: Option<&str>,
+    target: ObservedTarget,
+) -> RecordTargetObservation {
+    RecordTargetObservation {
+        environment_id: environment_id.clone(),
+        provider_target_id: target_id.map(self::target),
+        observed_at_ms: target.observed_at_ms,
+        observed: target,
+        public_endpoint: None,
     }
 }
 
@@ -72,292 +98,296 @@ async fn store() -> (Uuid, InMemoryEnvironmentRegistryStore) {
     let store = InMemoryEnvironmentRegistryStore::for_universe(universe_id);
     store.put_provider(provider()).await.expect("provider");
     store
-        .put_provider_binding(binding(universe_id, None))
+        .put_provider_binding(binding(universe_id, true, 1_000))
         .await
         .expect("binding");
     (universe_id, store)
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn binding_put_is_revisioned_and_unique_per_provider() {
-    let (universe_id, store) = store().await;
-    let first = store
-        .read_provider_binding(universe_id, &EnvironmentProviderBindingId::new("primary"))
+async fn open_provisioned(
+    store: &InMemoryEnvironmentRegistryStore,
+    environment: &str,
+) -> EnvironmentRecord {
+    let created = store
+        .create_environment(create(&format!("req-{environment}"), environment, 2_000))
         .await
-        .expect("read");
-    assert_eq!(first.revision, 1);
-
-    let conflict = store
-        .put_provider_binding(binding(universe_id, None))
+        .expect("create");
+    store
+        .record_target_observation(observation(
+            &created.environment_id,
+            Some(&format!("target-{environment}")),
+            observed(TargetPhase::Active, Some(PowerState::Running), 2_100),
+        ))
         .await
-        .expect_err("stale write");
-    assert!(matches!(
-        conflict,
-        EnvironmentRegistryError::RevisionConflict {
-            actual: Some(1),
-            ..
-        }
-    ));
-
-    let second = store
-        .put_provider_binding(binding(universe_id, Some(1)))
+        .expect("observe");
+    store
+        .open_environment(OpenEnvironment {
+            environment_id: created.environment_id,
+            daemon_build: build("0.5.0"),
+            at_ms: 2_200,
+        })
         .await
-        .expect("replace");
-    assert_eq!(second.revision, 2);
-
-    let mut duplicate = binding(universe_id, None);
-    duplicate.binding_id = EnvironmentProviderBindingId::new("secondary");
-    assert!(matches!(
-        store.put_provider_binding(duplicate).await,
-        Err(EnvironmentRegistryError::AlreadyExists { .. })
-    ));
+        .expect("open")
 }
 
+// --- providers and bindings --------------------------------------------------
+
 #[tokio::test(flavor = "current_thread")]
-async fn provider_delete_requires_all_bindings_to_be_removed() {
-    let (universe_id, store) = store().await;
-    let provider_id = EnvironmentProviderId::new("incus-local");
+async fn provider_credentials_are_optional_and_follow_the_change() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    let provider_id = EnvironmentProviderId::new(PROVIDER);
+    let mut bare = provider();
+    bare.credential = ProviderCredentialChange::Keep;
+    let created = store
+        .put_provider(bare.clone())
+        .await
+        .expect("no credential");
+    assert!(!created.has_credential);
+    assert_eq!(
+        store
+            .read_provider_credential(&provider_id)
+            .await
+            .expect("read"),
+        None
+    );
+
+    let mut unprintable = provider();
+    unprintable.credential = ProviderCredentialChange::Set(SecretValue::new("two words"));
     assert!(matches!(
-        store.delete_provider(&provider_id).await,
+        store.put_provider(unprintable).await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
-    store
-        .delete_provider_binding(universe_id, &EnvironmentProviderBindingId::new("primary"))
-        .await
-        .expect("delete binding");
-    let deleted = store
-        .delete_provider(&provider_id)
-        .await
-        .expect("delete provider");
-    assert_eq!(deleted.provider_id, provider_id);
+
+    let set = store.put_provider(provider()).await.expect("set");
+    assert!(set.has_credential);
+    assert_eq!(set.created_at_ms, 1_000);
+    bare.updated_at_ms = 2_000;
+    let kept = store.put_provider(bare).await.expect("keep");
+    assert!(kept.has_credential);
+    assert_eq!(
+        store
+            .read_provider_credential(&provider_id)
+            .await
+            .expect("read")
+            .expect("stored")
+            .expose(),
+        "provider-secret"
+    );
+
+    let mut clear = provider();
+    clear.credential = ProviderCredentialChange::Clear;
+    clear.updated_at_ms = 3_000;
+    let cleared = store.put_provider(clear).await.expect("clear");
+    assert!(!cleared.has_credential);
+    assert_eq!(
+        store
+            .read_provider_credential(&provider_id)
+            .await
+            .expect("read"),
+        None
+    );
     assert!(matches!(
-        store.read_provider(&provider_id).await,
+        store
+            .read_provider_credential(&EnvironmentProviderId::new("missing"))
+            .await,
         Err(EnvironmentRegistryError::NotFound { .. })
     ));
+    let debug = format!("{:?}", provider());
+    assert!(!debug.contains("provider-secret"));
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn stable_request_id_returns_the_original_environment() {
-    let (_, store) = store().await;
-    let first = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("first");
-    let retry = store
-        .create_environment(create(
-            "request-1",
-            "different-environment",
-            "different-incarnation",
-            3_000,
-        ))
-        .await
-        .expect("retry");
-    assert_eq!(retry.environment_id, first.environment_id);
+#[test]
+fn data_route_base_is_configured_or_derived_and_never_downgrades() {
+    let derived = provider().into_record(None).expect("derived");
     assert_eq!(
-        retry.incarnation.incarnation_id,
-        first.incarnation.incarnation_id
+        derived.effective_data_route_base().expect("base").as_str(),
+        "ws://127.0.0.1:19090/routes"
     );
+
+    let mut configured = provider();
+    configured.data_route_base = Some(DataRouteBase::new("ws://relay.example:7000/data").unwrap());
+    let configured = configured.into_record(None).expect("configured");
     assert_eq!(
-        store
-            .list_environments(ListEnvironments::default())
-            .await
-            .expect("list")
-            .len(),
-        1
+        configured
+            .effective_data_route_base()
+            .expect("base")
+            .as_str(),
+        "ws://relay.example:7000/data"
     );
-}
 
-#[tokio::test(flavor = "current_thread")]
-async fn adoption_creates_a_provisioned_environment_without_a_template() {
-    let (_, store) = store().await;
-    let adopted = store
-        .adopt_environment(AdoptEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("adopt-request-1"),
-            environment_id: EnvironmentId::new("environment-adopted"),
-            incarnation_id: EnvironmentIncarnationId::new("incarnation-adopted"),
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            source_target: "legacy/hand-built-vm".to_owned(),
-            display_name: Some("Hand-built VM".to_owned()),
-            metadata: BTreeMap::new(),
-            created_at_ms: 2_000,
-        })
-        .await
-        .expect("adopt");
-
-    assert_eq!(adopted.status, EnvironmentStatus::Provisioning);
+    let mut downgrade = provider();
+    downgrade.controller_endpoint = endpoint("wss://incus.example.com/control");
+    downgrade.data_route_base = Some(DataRouteBase::new("ws://incus.example.com/routes").unwrap());
     assert!(matches!(
-        adopted.source,
-        EnvironmentSource::Provisioned { .. }
+        downgrade.into_record(None),
+        Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
-    assert_eq!(adopted.incarnation.template_id, None);
-    assert_eq!(
-        adopted.incarnation.adoption_source_target.as_deref(),
-        Some("legacy/hand-built-vm")
-    );
 
-    let retry = store
-        .adopt_environment(AdoptEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("adopt-request-1"),
-            environment_id: EnvironmentId::new("ignored-on-retry"),
-            incarnation_id: EnvironmentIncarnationId::new("ignored-on-retry"),
-            binding_id: EnvironmentProviderBindingId::new("primary"),
-            source_target: "legacy/another-vm".to_owned(),
-            display_name: None,
-            metadata: BTreeMap::new(),
-            created_at_ms: 3_000,
-        })
-        .await
-        .expect("idempotent retry");
-    assert_eq!(retry.environment_id, adopted.environment_id);
+    let mut unix = provider();
+    unix.controller_endpoint = endpoint("unix:///run/incus-provider.sock");
+    assert!(matches!(
+        unix.clone().into_record(None),
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    unix.data_route_base = Some(DataRouteBase::new("ws://127.0.0.1:19091/routes").unwrap());
+    unix.into_record(None).expect("unix with a configured base");
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn lightspeed_does_not_enforce_provider_quota() {
-    let (_, store) = store().await;
-    let first = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
+async fn bindings_are_one_per_provider_and_guard_deletes() {
+    let (universe_id, store) = store().await;
+    let provider_id = EnvironmentProviderId::new(PROVIDER);
+    let replaced = store
+        .put_provider_binding(binding(universe_id, false, 1_500))
         .await
-        .expect("first");
-    store
-        .fail_environment_lifecycle(FailEnvironmentLifecycle {
-            environment_id: first.environment_id.clone(),
-            message: "provider failed".to_owned(),
-            daemon_build: None,
-            observed_at_ms: 3_000,
-        })
-        .await
-        .expect("fail");
-    store
-        .create_environment(create("request-2", "environment-2", "incarnation-2", 4_000))
-        .await
-        .expect("second intent");
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn provider_observation_populates_only_the_current_incarnation() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    let target_id = target("target-1");
-    let observed = store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some("target-1"),
-            EnvironmentStatus::Ready,
-            3_000,
-        ))
-        .await
-        .expect("observe");
-    assert_eq!(observed.status, EnvironmentStatus::Ready);
-    assert_eq!(observed.incarnation.provider_target_id, Some(target_id));
-    assert_eq!(
-        observed.incarnation.power_states,
-        vec![PowerState::Running, PowerState::Paused]
-    );
-    assert_eq!(
-        observed.incarnation.template_id,
-        Some(EnvironmentTemplateId::new("rust-v1"))
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn public_ingress_intent_and_realized_endpoint_are_recorded_apart() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some("target-1"),
-            EnvironmentStatus::Ready,
-            2_500,
-        ))
-        .await
-        .expect("observe");
-    let enabled = store
-        .set_environment_ingress(SetEnvironmentIngress {
-            environment_id: environment.environment_id.clone(),
-            enabled: true,
-            updated_at_ms: 3_000,
-        })
-        .await
-        .expect("enable ingress");
-    assert!(enabled.public_ingress_enabled);
-    assert_eq!(enabled.public_endpoint, None);
-    // The intent is pending until the provider reports an endpoint.
-    assert!(enabled.ingress_diverges());
+        .expect("replace");
+    assert!(!replaced.enabled);
+    assert_eq!(replaced.created_at_ms, 1_000);
     assert_eq!(
         store
-            .list_environments_needing_reconcile(ReconcileScope::Converging)
+            .list_provider_bindings(universe_id)
             .await
             .unwrap()
             .len(),
         1
     );
-    let realized = store
-        .record_environment_ingress(RecordEnvironmentIngress {
+    assert!(matches!(
+        store
+            .put_provider_binding(PutEnvironmentProviderBinding {
+                provider_id: EnvironmentProviderId::new("missing"),
+                ..binding(universe_id, true, 1_600)
+            })
+            .await,
+        Err(EnvironmentRegistryError::NotFound { .. })
+    ));
+
+    // A disabled binding refuses creates; a missing one is not found.
+    assert!(matches!(
+        store
+            .create_environment(create("r-1", "env-1", 2_000))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    store
+        .put_provider_binding(binding(universe_id, true, 1_700))
+        .await
+        .expect("enable");
+    let environment = store
+        .create_environment(create("r-1", "env-1", 2_000))
+        .await
+        .expect("create");
+
+    // Live environments guard the binding and the provider.
+    assert!(matches!(
+        store
+            .delete_provider_binding(universe_id, &provider_id)
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+        store.delete_provider(&provider_id).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    store
+        .begin_close_environment(BeginCloseEnvironment {
             environment_id: environment.environment_id.clone(),
-            public_endpoint: Some("https://opaque.env.example".to_owned()),
-            observed_at_ms: 3_500,
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 3_000,
         })
         .await
-        .expect("record realized ingress");
-    assert_eq!(
-        realized.public_endpoint.as_deref(),
-        Some("https://opaque.env.example")
-    );
-    assert!(!realized.ingress_diverges());
-    let disabled = store
-        .set_environment_ingress(SetEnvironmentIngress {
-            environment_id: environment.environment_id.clone(),
-            enabled: false,
-            updated_at_ms: 4_000,
-        })
-        .await
-        .expect("disable ingress");
-    assert!(!disabled.public_ingress_enabled);
-    // The endpoint stays recorded until the provider removed it.
-    assert!(disabled.public_endpoint.is_some());
-    assert!(disabled.ingress_diverges());
-    let removed = store
-        .record_environment_ingress(RecordEnvironmentIngress {
+        .expect("begin close");
+    store
+        .finish_close_environment(FinishCloseEnvironment {
             environment_id: environment.environment_id,
-            public_endpoint: None,
-            observed_at_ms: 4_500,
+            at_ms: 3_100,
         })
         .await
-        .expect("record removed ingress");
-    assert_eq!(removed.public_endpoint, None);
-    assert!(!removed.ingress_diverges());
+        .expect("close");
+    store
+        .delete_provider_binding(universe_id, &provider_id)
+        .await
+        .expect("delete binding");
+    assert!(matches!(
+        store
+            .create_environment(create("r-2", "env-2", 4_000))
+            .await,
+        Err(EnvironmentRegistryError::NotFound { .. })
+    ));
+    store
+        .delete_provider(&provider_id)
+        .await
+        .expect("delete provider");
+}
+
+// --- creates -----------------------------------------------------------------
+
+#[tokio::test(flavor = "current_thread")]
+async fn request_ids_are_idempotent_only_for_identical_inputs() {
+    let (_, store) = store().await;
+    let first = store
+        .create_environment(create("request-1", "environment-1", 2_000))
+        .await
+        .expect("first");
+    assert_eq!(first.state, EnvironmentState::Provisioning);
+    let source = first.provisioned().expect("provisioned");
+    assert_eq!(source.next_attempt_at_ms, Some(2_000));
+    assert_eq!(source.attempts, 0);
+
+    // A retry with a fresh environment id and time converges.
+    let retry = store
+        .create_environment(create("request-1", "other-environment", 3_000))
+        .await
+        .expect("retry");
+    assert_eq!(retry, first);
+
+    let mut changed = create("request-1", "other-environment", 3_000);
+    changed.idle = Some(IdlePolicy {
+        pause_after_ms: Some(60_000),
+        ..IdlePolicy::default()
+    });
+    assert!(matches!(
+        store.create_environment(changed).await,
+        Err(EnvironmentRegistryError::AlreadyExists { .. })
+    ));
+    // Another kind cannot claim the same request id.
+    assert!(matches!(
+        store
+            .create_external_environment(external("request-1", "ext", 3_000))
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists { .. })
+    ));
+    assert!(matches!(
+        store
+            .create_environment(create("request-2", "environment-1", 3_000))
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists { .. })
+    ));
+
+    let external_row = store
+        .create_external_environment(external("ext-1", "ext-env", 4_000))
+        .await
+        .expect("external");
+    assert_eq!(external_row.state, EnvironmentState::Open);
+    assert_eq!(
+        store
+            .create_external_environment(external("ext-1", "ext-env-2", 5_000))
+            .await
+            .expect("external retry"),
+        external_row
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn external_environment_cannot_enable_provider_managed_ingress() {
-    let store = InMemoryEnvironmentRegistryStore::new();
-    let environment = store
-        .create_external_environment(CreateExternalEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("external-request"),
-            environment_id: EnvironmentId::new("external-environment"),
-            incarnation_id: EnvironmentIncarnationId::new("external-incarnation"),
-            endpoint: endpoint("ws://envd.example"),
-            display_name: None,
-            metadata: BTreeMap::new(),
-            created_at_ms: 1_000,
-        })
-        .await
-        .expect("external");
+async fn invalid_idle_overrides_are_refused() {
+    let (_, store) = store().await;
+    let mut request = create("request-1", "environment-1", 2_000);
+    request.idle = Some(IdlePolicy {
+        pause_after_ms: Some(30),
+        stop_after_ms: Some(10),
+        ..IdlePolicy::default()
+    });
     assert!(matches!(
-        store
-            .set_environment_ingress(SetEnvironmentIngress {
-                environment_id: environment.environment_id,
-                enabled: true,
-                updated_at_ms: 2_000,
-            })
-            .await,
+        store.create_environment(request).await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
 }
@@ -367,287 +397,814 @@ async fn external_environment_persists_its_endpoint() {
     let store = InMemoryEnvironmentRegistryStore::new();
     let environment = store
         .create_external_environment(CreateExternalEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("external-request"),
-            environment_id: EnvironmentId::new("external-environment"),
-            incarnation_id: EnvironmentIncarnationId::new("external-incarnation"),
             endpoint: endpoint("unix:///run/lightspeed/envd.sock"),
-            display_name: None,
-            metadata: BTreeMap::new(),
-            created_at_ms: 1_000,
+            ..external("external-request", "external-environment", 1_000)
         })
         .await
         .expect("create external environment");
-    let EnvironmentSource::External { endpoint } = environment.source else {
+    let EnvironmentSource::External { endpoint } = &environment.source else {
         panic!("external source")
     };
     assert_eq!(endpoint.as_str(), "unix:///run/lightspeed/envd.sock");
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn disabled_binding_blocks_create_and_live_references_block_delete() {
-    let (universe_id, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    let mut disabled = binding(universe_id, Some(1));
-    disabled.status = EnvironmentProviderBindingStatus::Disabled;
-    store.put_provider_binding(disabled).await.expect("disable");
-    assert!(matches!(
-        store
-            .create_environment(create("request-2", "environment-2", "incarnation-2", 3_000))
-            .await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    assert!(matches!(
-        store
-            .delete_provider_binding(universe_id, &EnvironmentProviderBindingId::new("primary"))
-            .await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    store
-        .finish_close_environment(FinishCloseEnvironment {
-            environment_id: environment.environment_id,
-            observed_at_ms: 4_000,
-        })
-        .await
-        .expect("close");
-    store
-        .delete_provider_binding(universe_id, &EnvironmentProviderBindingId::new("primary"))
-        .await
-        .expect("delete");
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn environment_metadata_filters_require_every_pair() {
-    let (_universe, store) = store().await;
-    // Metadata filters by containment: every listed pair must match.
-    let mut tagged = create("tagged", "env-tagged", "inc-tagged", 3);
-    tagged.metadata = BTreeMap::from([
-        ("source".to_owned(), "harbor".to_owned()),
-        ("job".to_owned(), "nightly".to_owned()),
-    ]);
-    store
-        .create_environment(tagged)
-        .await
-        .expect("create tagged");
-    let by_metadata = store
-        .list_environments(ListEnvironments {
-            metadata: BTreeMap::from([("job".to_owned(), "nightly".to_owned())]),
-            ..ListEnvironments::default()
-        })
-        .await
-        .expect("list by metadata");
-    assert_eq!(by_metadata.len(), 1);
-    assert_eq!(by_metadata[0].environment_id.as_str(), "env-tagged");
-    let mismatched = store
-        .list_environments(ListEnvironments {
-            metadata: BTreeMap::from([
-                ("job".to_owned(), "nightly".to_owned()),
-                ("trial".to_owned(), "1".to_owned()),
-            ]),
-            ..ListEnvironments::default()
-        })
-        .await
-        .expect("list by mismatched metadata");
-    assert!(mismatched.is_empty());
-}
-
-#[test]
-fn idle_policy_validates_monotone_stages_and_picks_the_supported_due_action() {
-    let policy = EnvironmentIdlePolicy {
-        pause_after_ms: Some(10),
-        suspend_after_ms: Some(20),
-        stop_after_ms: Some(30),
-        close_after_ms: Some(40),
-    };
-    policy.validate().expect("valid");
-    assert!(EnvironmentIdlePolicy::default().validate().is_err());
-    assert!(
-        EnvironmentIdlePolicy {
-            pause_after_ms: Some(0),
-            ..EnvironmentIdlePolicy::default()
-        }
-        .validate()
-        .is_err()
-    );
-    assert!(
-        EnvironmentIdlePolicy {
-            pause_after_ms: Some(30),
-            stop_after_ms: Some(10),
-            ..EnvironmentIdlePolicy::default()
-        }
-        .validate()
-        .is_err()
-    );
-    let incus = [PowerState::Running, PowerState::Paused, PowerState::Stopped];
-    assert_eq!(policy.due_action(5, &incus), None);
-    assert_eq!(policy.due_action(10, &incus), Some(IdleAction::Pause));
-    // Suspend is due but unsupported by this provider: pause stays the
-    // most escalated applicable stage.
-    assert_eq!(policy.due_action(25, &incus), Some(IdleAction::Pause));
-    assert_eq!(policy.due_action(30, &incus), Some(IdleAction::Stop));
-    assert_eq!(policy.due_action(40, &incus), Some(IdleAction::Close));
-    // Close never needs provider support.
-    assert_eq!(policy.due_action(40, &[]), Some(IdleAction::Close));
-    assert_eq!(policy.due_action(30, &[]), None);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn power_intent_and_idle_policy_are_provisioned_only_and_drive_reconcile_lists() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    assert_eq!(environment.desired_power, PowerState::Running);
-    assert!(environment.idle_policy.is_none());
-
-    store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some("target-1"),
-            EnvironmentStatus::Ready,
-            3_000,
-        ))
-        .await
-        .expect("observe");
-    // Ready and converged: nothing to reconcile, but a steady pass still
-    // observes the target.
-    assert!(
-        store
-            .list_environments_needing_reconcile(ReconcileScope::Converging)
-            .await
-            .unwrap()
-            .is_empty()
-    );
     assert_eq!(
+        environment.display_status(),
+        EnvironmentDisplayStatus::Ready
+    );
+    assert_eq!(environment.use_gate(1_000), EnvironmentUse::Use);
+}
+
+// --- provisioned lifecycle ---------------------------------------------------
+
+#[tokio::test(flavor = "current_thread")]
+async fn provisioning_opens_after_the_handshake_and_records_the_build() {
+    let (_, store) = store().await;
+    let created = store
+        .create_environment(create("request-1", "environment-1", 2_000))
+        .await
+        .expect("create");
+    let scheduled = store
+        .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+            environment_id: created.environment_id.clone(),
+            expected_state: EnvironmentState::Provisioning,
+            next_attempt_at_ms: 4_000,
+            attempts: 1,
+            state_message: Some(format!("connect failed\u{7}{}", "x".repeat(2_000))),
+            at_ms: 2_000,
+        })
+        .await
+        .expect("schedule");
+    let message = scheduled.state_message.as_deref().expect("message");
+    assert!(message.len() <= STATE_MESSAGE_MAX_BYTES);
+    assert!(!message.contains('\u{7}'));
+    assert_eq!(
+        scheduled.provisioned().unwrap().next_attempt_at_ms,
+        Some(4_000)
+    );
+
+    let opened = open_provisioned(&store, "environment-2").await;
+    assert_eq!(opened.state, EnvironmentState::Open);
+    assert_eq!(opened.state_message, None);
+    assert_eq!(opened.state_changed_at_ms, 2_200);
+    assert_eq!(opened.daemon_build, Some(build("0.5.0")));
+    let source = opened.provisioned().unwrap();
+    assert_eq!(source.next_attempt_at_ms, None);
+    assert_eq!(
+        source.provider_target_id,
+        Some(target("target-environment-2"))
+    );
+
+    // Opening twice, or scheduling an open row, is skipped.
+    let again = store
+        .open_environment(OpenEnvironment {
+            environment_id: opened.environment_id.clone(),
+            daemon_build: build("9.9.9"),
+            at_ms: 3_000,
+        })
+        .await
+        .expect("skipped");
+    assert_eq!(again, opened);
+    let unscheduled = store
+        .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+            environment_id: opened.environment_id.clone(),
+            expected_state: EnvironmentState::Provisioning,
+            next_attempt_at_ms: 5_000,
+            attempts: 2,
+            state_message: None,
+            at_ms: 3_000,
+        })
+        .await
+        .expect("skipped");
+    assert_eq!(unscheduled, opened);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn work_lists_due_rows_earliest_first() {
+    let (_, store) = store().await;
+    for (request, environment, at) in [("r-a", "env-a", 3_000), ("r-b", "env-b", 1_500)] {
         store
-            .list_environments_needing_reconcile(ReconcileScope::WithSteady)
+            .create_environment(create(request, environment, at))
             .await
-            .unwrap()
-            .len(),
+            .expect("create");
+    }
+    store
+        .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+            environment_id: EnvironmentId::new("env-a"),
+            expected_state: EnvironmentState::Provisioning,
+            next_attempt_at_ms: 2_500,
+            attempts: 1,
+            state_message: None,
+            at_ms: 3_000,
+        })
+        .await
+        .expect("schedule");
+    let open = open_provisioned(&store, "env-open").await;
+
+    let due = store.list_environment_work(2_600, 10).await.expect("work");
+    let ids: Vec<&str> = due
+        .iter()
+        .map(|record| record.environment_id.as_str())
+        .collect();
+    assert_eq!(ids, ["env-b", "env-a"]);
+    assert_eq!(
+        store.list_environment_work(2_600, 1).await.unwrap().len(),
         1
     );
-    let paused = store
-        .set_environment_power(SetEnvironmentPower {
-            environment_id: environment.environment_id.clone(),
-            desired_power: PowerState::Paused,
-            updated_at_ms: 4_000,
-        })
-        .await
-        .expect("set power");
-    assert_eq!(paused.desired_power, PowerState::Paused);
-    assert!(paused.power_diverges());
-    let pending = store
-        .list_environments_needing_reconcile(ReconcileScope::Converging)
-        .await
-        .unwrap();
-    assert_eq!(pending.len(), 1);
-
-    // Observed paused: converged again.
-    store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some("target-1"),
-            EnvironmentStatus::Paused,
-            5_000,
-        ))
-        .await
-        .expect("observe paused");
     assert!(
         store
-            .list_environments_needing_reconcile(ReconcileScope::Converging)
+            .list_environment_work(1_000, 10)
             .await
             .unwrap()
             .is_empty()
     );
 
-    // Idle policy only lists ready environments.
-    let policy = EnvironmentIdlePolicy {
-        pause_after_ms: Some(60_000),
-        ..EnvironmentIdlePolicy::default()
-    };
-    store
-        .set_environment_idle_policy(SetEnvironmentIdlePolicy {
-            environment_id: environment.environment_id.clone(),
-            idle_policy: Some(policy.clone()),
-            updated_at_ms: 6_000,
-        })
-        .await
-        .expect("policy");
-    assert!(
-        store
-            .list_environments_with_idle_policy()
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some("target-1"),
-            EnvironmentStatus::Ready,
-            7_000,
-        ))
-        .await
-        .expect("observe ready");
-    let candidates = store.list_environments_with_idle_policy().await.unwrap();
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].idle_policy, Some(policy));
+    let open_rows = store.list_open_provisioned_environments().await.unwrap();
+    assert_eq!(open_rows.len(), 1);
+    assert_eq!(open_rows[0].environment_id, open.environment_id);
+}
 
-    // External environments have no power control.
-    let external = store
-        .create_external_environment(CreateExternalEnvironment {
-            request_id: EnvironmentProvisionRequestId::new("external-1"),
-            environment_id: EnvironmentId::new("external-env"),
-            incarnation_id: EnvironmentIncarnationId::new("external-inc"),
-            endpoint: endpoint("ws://envd.test:9000"),
-            display_name: None,
-            metadata: BTreeMap::new(),
-            created_at_ms: 8_000,
+#[tokio::test(flavor = "current_thread")]
+async fn failing_applies_to_provisioning_and_open_rows_only() {
+    let (_, store) = store().await;
+    let created = store
+        .create_environment(create("request-1", "environment-1", 2_000))
+        .await
+        .expect("create");
+    let failed = store
+        .fail_environment(FailEnvironment {
+            environment_id: created.environment_id.clone(),
+            message: "protocol mismatch: local 4, remote 3".to_owned(),
+            daemon_build: Some(DaemonBuild {
+                version: None,
+                git_sha: None,
+                protocol_version: 3,
+            }),
+            at_ms: 3_000,
         })
+        .await
+        .expect("fail");
+    assert_eq!(failed.state, EnvironmentState::Failed);
+    assert_eq!(failed.provisioned().unwrap().next_attempt_at_ms, None);
+    assert_eq!(failed.daemon_build.as_ref().unwrap().protocol_version, 3);
+    assert_eq!(
+        failed.use_gate(3_000),
+        EnvironmentUse::Gone {
+            reason: EnvironmentGoneReason::Failed,
+            message: Some("protocol mismatch: local 4, remote 3".to_owned()),
+        }
+    );
+    // A failed row cannot fail again; it can close.
+    let again = store
+        .fail_environment(FailEnvironment {
+            environment_id: created.environment_id.clone(),
+            message: "other".to_owned(),
+            daemon_build: None,
+            at_ms: 3_500,
+        })
+        .await
+        .expect("skipped");
+    assert_eq!(again, failed);
+    let closing = store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: created.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 4_000,
+        })
+        .await
+        .expect("close failed row");
+    assert_eq!(closing.state, EnvironmentState::Closing);
+    assert_eq!(closing.state_message, None);
+
+    let external_row = store
+        .create_external_environment(external("ext", "ext-env", 2_000))
         .await
         .expect("external");
     assert!(matches!(
         store
-            .set_environment_power(SetEnvironmentPower {
-                environment_id: external.environment_id.clone(),
-                desired_power: PowerState::Paused,
-                updated_at_ms: 9_000,
-            })
-            .await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-
-    // Closing environments cannot change power.
-    store
-        .begin_close_environment(BeginCloseEnvironment {
-            environment_id: environment.environment_id.clone(),
-            updated_at_ms: 10_000,
-        })
-        .await
-        .expect("close");
-    assert!(matches!(
-        store
-            .set_environment_power(SetEnvironmentPower {
-                environment_id: environment.environment_id.clone(),
-                desired_power: PowerState::Running,
-                updated_at_ms: 11_000,
+            .fail_environment(FailEnvironment {
+                environment_id: external_row.environment_id,
+                message: "x".to_owned(),
+                daemon_build: None,
+                at_ms: 3_000,
             })
             .await,
         Err(EnvironmentRegistryError::InvalidInput { .. })
     ));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_wins_over_work_that_was_in_flight() {
+    let (_, store) = store().await;
+    let created = store
+        .create_environment(create("request-1", "environment-1", 2_000))
+        .await
+        .expect("create");
+    let closing = store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: created.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 2_500,
+        })
+        .await
+        .expect("begin close");
+    assert_eq!(closing.state, EnvironmentState::Closing);
+    assert_eq!(
+        closing.close_reason,
+        Some(EnvironmentCloseReason::Requested)
+    );
+    assert_eq!(
+        closing.provisioned().unwrap().next_attempt_at_ms,
+        Some(2_500)
+    );
+
+    // The create that was in flight answers: the target id is recorded so
+    // the close can address it, but the row stays closing.
+    let observed = store
+        .record_target_observation(observation(
+            &created.environment_id,
+            Some("ls-3f2a"),
+            observed(TargetPhase::Active, Some(PowerState::Running), 3_000),
+        ))
+        .await
+        .expect("observe");
+    assert_eq!(observed.state, EnvironmentState::Closing);
+    assert_eq!(
+        observed.provisioned().unwrap().provider_target_id,
+        Some(target("ls-3f2a"))
+    );
+    for skipped in [
+        store
+            .open_environment(OpenEnvironment {
+                environment_id: created.environment_id.clone(),
+                daemon_build: build("0.5.0"),
+                at_ms: 3_100,
+            })
+            .await
+            .expect("open skipped"),
+        store
+            .fail_environment(FailEnvironment {
+                environment_id: created.environment_id.clone(),
+                message: "late".to_owned(),
+                daemon_build: None,
+                at_ms: 3_200,
+            })
+            .await
+            .expect("fail skipped"),
+        store
+            .begin_close_environment(BeginCloseEnvironment {
+                environment_id: created.environment_id.clone(),
+                reason: EnvironmentCloseReason::KeyRevoked,
+                at_ms: 3_300,
+            })
+            .await
+            .expect("close skipped"),
+    ] {
+        assert_eq!(skipped.state, EnvironmentState::Closing);
+        assert_eq!(
+            skipped.close_reason,
+            Some(EnvironmentCloseReason::Requested)
+        );
+    }
+
+    // The provision step that read the row while provisioning reschedules
+    // it: skipped, so the close keeps its own schedule and message.
+    let rescheduled = store
+        .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+            environment_id: created.environment_id.clone(),
+            expected_state: EnvironmentState::Provisioning,
+            next_attempt_at_ms: 300_000,
+            attempts: 3,
+            state_message: Some("waiting for the provider".to_owned()),
+            at_ms: 3_400,
+        })
+        .await
+        .expect("schedule skipped");
+    assert_eq!(rescheduled.state, EnvironmentState::Closing);
+    assert_eq!(rescheduled.state_message, None);
+    let source = rescheduled.provisioned().unwrap();
+    assert_eq!(source.next_attempt_at_ms, Some(2_500));
+    assert_eq!(source.attempts, 0);
+    // The close step's own reschedule still applies.
+    let close_retry = store
+        .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+            environment_id: created.environment_id.clone(),
+            expected_state: EnvironmentState::Closing,
+            next_attempt_at_ms: 3_600,
+            attempts: 1,
+            state_message: None,
+            at_ms: 3_500,
+        })
+        .await
+        .expect("schedule close retry");
+    assert_eq!(
+        close_retry.provisioned().unwrap().next_attempt_at_ms,
+        Some(3_600)
+    );
+
+    let closed = store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: created.environment_id.clone(),
+            at_ms: 4_000,
+        })
+        .await
+        .expect("finish");
+    assert_eq!(closed.state, EnvironmentState::Closed);
+    assert_eq!(closed.closed_at_ms, Some(4_000));
+    assert_eq!(closed.close_reason, Some(EnvironmentCloseReason::Requested));
+    assert_eq!(closed.provisioned().unwrap().next_attempt_at_ms, None);
+    let finished_again = store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: created.environment_id,
+            at_ms: 5_000,
+        })
+        .await
+        .expect("skipped");
+    assert_eq!(finished_again, closed);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn observations_keep_the_target_id_and_never_go_back_in_time() {
+    let (_, store) = store().await;
+    let created = store
+        .create_environment(create("request-1", "environment-1", 2_000))
+        .await
+        .expect("create");
+    let pending = store
+        .record_target_observation(observation(
+            &created.environment_id,
+            None,
+            observed(TargetPhase::Provisioning, None, 2_500),
+        ))
+        .await
+        .expect("no id yet");
+    assert_eq!(pending.provisioned().unwrap().provider_target_id, None);
+
+    // Natural provider ids are opaque: slashes and colons are fine.
+    let natural = "arn:aws:ec2:eu-west-1:123456789012:instance/i-0abc";
+    store
+        .record_target_observation(observation(
+            &created.environment_id,
+            Some(natural),
+            observed(TargetPhase::Active, Some(PowerState::Running), 3_000),
+        ))
+        .await
+        .expect("id assigned");
+    let stale = store
+        .record_target_observation(RecordTargetObservation {
+            public_endpoint: Some("https://stale.example".to_owned()),
+            ..observation(
+                &created.environment_id,
+                None,
+                observed(TargetPhase::Provisioning, None, 2_800),
+            )
+        })
+        .await
+        .expect("stale");
+    let source = stale.provisioned().unwrap();
+    assert_eq!(source.provider_target_id, Some(target(natural)));
+    assert_eq!(source.observed.as_ref().unwrap().phase, TargetPhase::Active);
+    assert_eq!(source.public_endpoint, None);
+    assert_eq!(stale.state, EnvironmentState::Provisioning);
+
+    assert!(matches!(
+        store
+            .record_target_observation(observation(
+                &created.environment_id,
+                Some("another-target"),
+                observed(TargetPhase::Active, None, 4_000),
+            ))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    // Power without the active phase is not a valid observation.
+    assert!(matches!(
+        store
+            .record_target_observation(observation(
+                &created.environment_id,
+                None,
+                observed(TargetPhase::Unknown, Some(PowerState::Paused), 4_000),
+            ))
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    // Another live row of the provider cannot claim the same target.
+    let other = store
+        .create_environment(create("request-2", "environment-2", 2_000))
+        .await
+        .expect("other");
+    assert!(matches!(
+        store
+            .record_target_observation(observation(
+                &other.environment_id,
+                Some(natural),
+                observed(TargetPhase::Active, None, 4_000),
+            ))
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_provider_ending_a_target_closes_open_and_failed_rows() {
+    let (_, store) = store().await;
+    let open = open_provisioned(&store, "env-open").await;
+    let ended = store
+        .end_provisioned_environment(EndProvisionedEnvironment {
+            environment_id: open.environment_id.clone(),
+            at_ms: 5_000,
+        })
+        .await
+        .expect("end");
+    assert_eq!(ended.state, EnvironmentState::Closed);
+    assert_eq!(
+        ended.close_reason,
+        Some(EnvironmentCloseReason::ProviderEnded)
+    );
+    assert_eq!(ended.closed_at_ms, Some(5_000));
+
+    let provisioning = store
+        .create_environment(create("r-p", "env-p", 2_000))
+        .await
+        .expect("create");
+    let skipped = store
+        .end_provisioned_environment(EndProvisionedEnvironment {
+            environment_id: provisioning.environment_id.clone(),
+            at_ms: 5_000,
+        })
+        .await
+        .expect("skipped");
+    assert_eq!(skipped, provisioning);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_closed_environment_keeps_no_public_endpoint() {
+    let (_, store) = store().await;
+    let with_endpoint =
+        |environment_id: &EnvironmentId, target: ObservedTarget| RecordTargetObservation {
+            public_endpoint: Some("https://env.example.test".to_owned()),
+            ..observation(environment_id, None, target)
+        };
+
+    // The provider ending the target clears the endpoint.
+    let open = open_provisioned(&store, "env-ended").await;
+    let exposed = store
+        .record_target_observation(with_endpoint(
+            &open.environment_id,
+            observed(TargetPhase::Active, Some(PowerState::Running), 4_000),
+        ))
+        .await
+        .expect("observe");
+    assert_eq!(
+        exposed.provisioned().unwrap().public_endpoint.as_deref(),
+        Some("https://env.example.test")
+    );
+    let ended = store
+        .end_provisioned_environment(EndProvisionedEnvironment {
+            environment_id: open.environment_id.clone(),
+            at_ms: 5_000,
+        })
+        .await
+        .expect("end");
+    assert_eq!(ended.provisioned().unwrap().public_endpoint, None);
+    // A late observation does not bring it back.
+    let late = store
+        .record_target_observation(with_endpoint(
+            &open.environment_id,
+            observed(TargetPhase::Closed, None, 6_000),
+        ))
+        .await
+        .expect("late observation");
+    assert_eq!(late.state, EnvironmentState::Closed);
+    assert_eq!(late.provisioned().unwrap().public_endpoint, None);
+
+    // So does finishing a requested close; closing keeps it until then.
+    let created = store
+        .create_environment(create("r-close", "env-close", 2_000))
+        .await
+        .expect("create");
+    store
+        .record_target_observation(RecordTargetObservation {
+            provider_target_id: Some(target("ls-close")),
+            ..with_endpoint(
+                &created.environment_id,
+                observed(TargetPhase::Active, Some(PowerState::Running), 3_000),
+            )
+        })
+        .await
+        .expect("observe");
+    let closing = store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: created.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 3_500,
+        })
+        .await
+        .expect("begin close");
+    assert!(closing.provisioned().unwrap().public_endpoint.is_some());
+    let closed = store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: created.environment_id,
+            at_ms: 4_000,
+        })
+        .await
+        .expect("finish");
+    assert_eq!(closed.provisioned().unwrap().public_endpoint, None);
+}
+
+// --- display status and the use gate ----------------------------------------
+
+#[test]
+fn display_status_refines_open_rows_by_observation() {
+    let mut record = create("r", "e", 1_000).record().expect("record");
+    assert_eq!(
+        record.display_status(),
+        EnvironmentDisplayStatus::Provisioning
+    );
+    record.state = EnvironmentState::Open;
+    if let EnvironmentSource::Provisioned(source) = &mut record.source {
+        source.next_attempt_at_ms = None;
+    }
+    assert_eq!(record.display_status(), EnvironmentDisplayStatus::Ready);
+    for (phase, power, status) in [
+        (TargetPhase::Active, None, EnvironmentDisplayStatus::Ready),
+        (
+            TargetPhase::Active,
+            Some(PowerState::Running),
+            EnvironmentDisplayStatus::Ready,
+        ),
+        (
+            TargetPhase::Active,
+            Some(PowerState::Paused),
+            EnvironmentDisplayStatus::Paused,
+        ),
+        (
+            TargetPhase::Active,
+            Some(PowerState::Suspended),
+            EnvironmentDisplayStatus::Suspended,
+        ),
+        (
+            TargetPhase::Active,
+            Some(PowerState::Stopped),
+            EnvironmentDisplayStatus::Stopped,
+        ),
+        (
+            TargetPhase::Provisioning,
+            None,
+            EnvironmentDisplayStatus::Provisioning,
+        ),
+        (
+            TargetPhase::Closing,
+            None,
+            EnvironmentDisplayStatus::Closing,
+        ),
+        (
+            TargetPhase::Unknown,
+            None,
+            EnvironmentDisplayStatus::Unknown,
+        ),
+        (TargetPhase::Failed, None, EnvironmentDisplayStatus::Unknown),
+        (TargetPhase::Closed, None, EnvironmentDisplayStatus::Unknown),
+    ] {
+        if let EnvironmentSource::Provisioned(source) = &mut record.source {
+            source.observed = Some(observed(phase, power, 1_500));
+        }
+        record.validate().expect("valid");
+        assert_eq!(record.display_status(), status, "{phase:?} {power:?}");
+        // An observation never blocks use: the dial decides.
+        assert_eq!(record.use_gate(2_000), EnvironmentUse::Use);
+    }
+    for (state, status) in [
+        (EnvironmentState::Closing, EnvironmentDisplayStatus::Closing),
+        (EnvironmentState::Closed, EnvironmentDisplayStatus::Closed),
+        (EnvironmentState::Failed, EnvironmentDisplayStatus::Failed),
+    ] {
+        record.state = state;
+        assert_eq!(record.display_status(), status);
+    }
+}
+
+#[test]
+fn the_use_gate_covers_every_state() {
+    let provisioning = create("r", "e", 1_000).record().expect("record");
+    assert_eq!(
+        provisioning.use_gate(1_000),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Provisioning,
+            retry_after_ms: WAIT_RETRY_AFTER_MS,
+            until_ms: None,
+        }
+    );
+    for (state, reason, message) in [
+        (
+            EnvironmentState::Closing,
+            EnvironmentGoneReason::Closing,
+            None,
+        ),
+        (
+            EnvironmentState::Closed,
+            EnvironmentGoneReason::Closed,
+            None,
+        ),
+        (
+            EnvironmentState::Failed,
+            EnvironmentGoneReason::Failed,
+            Some("broken".to_owned()),
+        ),
+    ] {
+        let record = EnvironmentRecord {
+            state,
+            state_message: message.clone(),
+            ..provisioning.clone()
+        };
+        assert_eq!(
+            record.use_gate(1_000),
+            EnvironmentUse::Gone { reason, message }
+        );
+    }
+}
+
+fn registered_record(mode: RegisteredIdentityMode, connected: bool) -> EnvironmentRecord {
+    let key = mint_registration_key(
+        EnvironmentRegistrationKeyId::new("rk"),
+        registration_policy(mode),
+        1_000,
+    )
+    .expect("mint")
+    .record;
+    let mut record = register("rk", "env", &daemon_key(0x51), 1_000)
+        .record(&key)
+        .expect("record");
+    if let EnvironmentSource::Registered(source) = &mut record.source {
+        source.connected = connected;
+        source.connection_changed_at_ms = 10_000;
+    }
+    record
+}
+
+#[test]
+fn a_disconnected_registered_daemon_is_waited_for_by_identity_mode() {
+    let connected = registered_record(RegisteredIdentityMode::Persistent, true);
+    assert_eq!(connected.use_gate(10_000), EnvironmentUse::Use);
+    assert_eq!(connected.display_status(), EnvironmentDisplayStatus::Ready);
+
+    let persistent = registered_record(RegisteredIdentityMode::Persistent, false);
+    assert_eq!(persistent.display_status(), EnvironmentDisplayStatus::Away);
+    let until = 10_000 + REGISTERED_RECONNECT_WAIT_MS;
+    assert_eq!(
+        persistent.use_gate(until - 1),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Disconnected,
+            retry_after_ms: WAIT_RETRY_AFTER_MS,
+            until_ms: Some(until),
+        }
+    );
+    assert_eq!(
+        persistent.use_gate(until + 12_500),
+        EnvironmentUse::Gone {
+            reason: EnvironmentGoneReason::Away,
+            message: Some("daemon away for 2m12s".to_owned()),
+        }
+    );
+
+    let ephemeral = registered_record(RegisteredIdentityMode::Ephemeral, false);
+    assert!(matches!(
+        ephemeral.use_gate(10_001),
+        EnvironmentUse::Gone {
+            reason: EnvironmentGoneReason::Away,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn away_spans_read_as_compact_durations() {
+    for (ms, expected) in [
+        (-5, "0s"),
+        (999, "0s"),
+        (45_000, "45s"),
+        (120_000, "2m"),
+        (192_000, "3m12s"),
+        (3_600_000, "1h"),
+        (3_900_000, "1h5m"),
+    ] {
+        assert_eq!(compact_duration(ms), expected);
+    }
+}
+
+#[test]
+fn route_refusals_map_to_wait_or_gone() {
+    let failed = DataRouteRefusal::Failed {
+        message: DescriptiveText::new("disk full").unwrap(),
+    };
+    for (refusal, expected) in [
+        (
+            DataRouteRefusal::Waking {},
+            EnvironmentUse::Wait {
+                reason: EnvironmentWaitReason::Waking,
+                retry_after_ms: 5_000,
+                until_ms: None,
+            },
+        ),
+        (
+            DataRouteRefusal::Booting {},
+            EnvironmentUse::Wait {
+                reason: EnvironmentWaitReason::Booting,
+                retry_after_ms: 5_000,
+                until_ms: None,
+            },
+        ),
+        (
+            DataRouteRefusal::Provisioning {},
+            EnvironmentUse::Wait {
+                reason: EnvironmentWaitReason::Provisioning,
+                retry_after_ms: 5_000,
+                until_ms: None,
+            },
+        ),
+        (
+            DataRouteRefusal::Disconnected {},
+            EnvironmentUse::Wait {
+                reason: EnvironmentWaitReason::Disconnected,
+                retry_after_ms: 5_000,
+                until_ms: None,
+            },
+        ),
+        (
+            DataRouteRefusal::Away {},
+            EnvironmentUse::Gone {
+                reason: EnvironmentGoneReason::Away,
+                message: None,
+            },
+        ),
+        (
+            DataRouteRefusal::Gone {},
+            EnvironmentUse::Gone {
+                reason: EnvironmentGoneReason::Closed,
+                message: None,
+            },
+        ),
+        (
+            failed,
+            EnvironmentUse::Gone {
+                reason: EnvironmentGoneReason::Failed,
+                message: Some("disk full".to_owned()),
+            },
+        ),
+    ] {
+        assert_eq!(
+            EnvironmentUse::from_route_refusal(&refusal, Some(5_000)),
+            expected
+        );
+    }
+    assert_eq!(
+        EnvironmentUse::from_route_refusal(&DataRouteRefusal::Waking {}, None),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Waking,
+            retry_after_ms: WAIT_RETRY_AFTER_MS,
+            until_ms: None,
+        }
+    );
+
+    // A registered row that reads connected but has no control handle.
+    let ephemeral = registered_record(RegisteredIdentityMode::Ephemeral, true);
+    assert_eq!(
+        ephemeral.bound_route_refusal(&DataRouteRefusal::Disconnected {}, None),
+        EnvironmentUse::Gone {
+            reason: EnvironmentGoneReason::Away,
+            message: Some("daemon is not connected".to_owned()),
+        }
+    );
+    let persistent = registered_record(RegisteredIdentityMode::Persistent, true);
+    assert_eq!(
+        persistent.bound_route_refusal(&DataRouteRefusal::Disconnected {}, Some(1_000)),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Disconnected,
+            retry_after_ms: 1_000,
+            until_ms: None,
+        }
+    );
+    assert_eq!(
+        ephemeral.bound_route_refusal(&DataRouteRefusal::Booting {}, None),
+        EnvironmentUse::from_route_refusal(&DataRouteRefusal::Booting {}, None)
+    );
+}
+
+// --- registration keys -------------------------------------------------------
+
 fn registration_policy(mode: RegisteredIdentityMode) -> RegistrationKeyPolicy {
     RegistrationKeyPolicy {
-        display_name: "harbor campaign".to_owned(),
+        display_name: "fleet".to_owned(),
         identity_mode: mode,
         max_active_environments: None,
         ephemeral_disconnect_grace_ms: None,
+        offline_close_after_ms: None,
         expires_at_ms: None,
     }
+}
+
+/// The secret hash [`minted_key`] stores for key `id`, so [`register`] can
+/// present it.
+fn key_secret_hash(id: &str) -> String {
+    registration_key_hash(&format!("{REGISTRATION_KEY_SECRET_PREFIX}test-{id}"))
 }
 
 async fn minted_key(
@@ -655,11 +1212,12 @@ async fn minted_key(
     id: &str,
     policy: RegistrationKeyPolicy,
 ) -> MintedRegistrationKey {
-    let minted =
+    let mut minted =
         mint_registration_key(EnvironmentRegistrationKeyId::new(id), policy, 1_000).expect("mint");
+    minted.secret.secret_hash = key_secret_hash(id);
     store
         .create_registration_key(CreateEnvironmentRegistrationKey {
-            secret_hash: minted.secret_hash.clone(),
+            secret_hash: minted.secret.secret_hash.clone(),
             record: minted.record.clone(),
         })
         .await
@@ -679,30 +1237,32 @@ fn register(
 ) -> CreateRegisteredEnvironment {
     CreateRegisteredEnvironment {
         registration_key_id: EnvironmentRegistrationKeyId::new(key),
+        secret_hash: key_secret_hash(key),
         environment_id: EnvironmentId::new(environment),
-        incarnation_id: EnvironmentIncarnationId::new(format!("{environment}-inc")),
         daemon_public_key: public_key.to_owned(),
         display_name: Some("worker".to_owned()),
         metadata: BTreeMap::new(),
+        daemon_build: build("0.1.0"),
         created_at_ms: at,
     }
 }
 
 #[test]
-fn daemon_id_and_request_id_derive_from_the_public_key() {
+fn daemon_ids_derive_from_the_public_key() {
     let public_key = [7u8; 32];
     let daemon_id = EnvironmentDaemonId::from_public_key(&public_key);
     assert!(daemon_id.as_str().starts_with(DAEMON_ID_PREFIX));
     assert_eq!(daemon_id.as_str().len(), DAEMON_ID_PREFIX.len() + 64);
     assert_eq!(daemon_id, EnvironmentDaemonId::from_public_key(&public_key));
     assert_ne!(daemon_id, EnvironmentDaemonId::from_public_key(&[8u8; 32]));
-    let request_id = EnvironmentProvisionRequestId::for_daemon(&daemon_id);
-    assert_eq!(
-        request_id.as_str(),
-        format!("{DAEMON_PROVISION_REQUEST_PREFIX}{}", daemon_id.as_str())
-    );
     assert!(validate_daemon_public_key(&daemon_key(0xab)).is_ok());
     assert!(validate_daemon_public_key("ABCD").is_err());
+
+    let record = registered_record(RegisteredIdentityMode::Persistent, true);
+    assert_eq!(
+        record.registered().unwrap().daemon_id(),
+        EnvironmentDaemonId::from_public_key(&[0x51u8; 32])
+    );
 }
 
 #[test]
@@ -713,14 +1273,16 @@ fn minted_registration_keys_return_the_secret_once_and_redact_debug() {
         5,
     )
     .expect("mint");
-    let secret = minted.secret.expose().to_owned();
+    let secret = minted.secret.secret.expose().to_owned();
     assert!(secret.starts_with(REGISTRATION_KEY_SECRET_PREFIX));
-    assert_eq!(minted.secret_hash, registration_key_hash(&secret));
+    assert_eq!(minted.secret.secret_hash, registration_key_hash(&secret));
+    assert_eq!(minted.record.key_prefix, minted.secret.key_prefix);
     assert_eq!(
         minted.record.key_prefix.len(),
         REGISTRATION_KEY_DISPLAY_PREFIX_LEN
     );
     assert!(secret.starts_with(&minted.record.key_prefix));
+    assert_eq!(minted.record.updated_at_ms, 5);
     let debug = format!("{minted:?}");
     assert!(!debug.contains(&secret[REGISTRATION_KEY_DISPLAY_PREFIX_LEN..]));
     assert!(
@@ -736,24 +1298,220 @@ fn minted_registration_keys_return_the_secret_once_and_redact_debug() {
     );
 }
 
+#[test]
+fn offline_close_applies_only_to_persistent_keys() {
+    let policy = |mode, offline| RegistrationKeyPolicy {
+        offline_close_after_ms: offline,
+        ..registration_policy(mode)
+    };
+    let id = || EnvironmentRegistrationKeyId::new("rk");
+    mint_registration_key(
+        id(),
+        policy(RegisteredIdentityMode::Persistent, Some(60_000)),
+        1,
+    )
+    .expect("persistent");
+    for refused in [
+        policy(RegisteredIdentityMode::Ephemeral, Some(60_000)),
+        policy(RegisteredIdentityMode::Persistent, Some(0)),
+    ] {
+        assert!(matches!(
+            mint_registration_key(id(), refused, 1),
+            Err(EnvironmentRegistryError::InvalidInput { .. })
+        ));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn key_settings_replace_the_editable_policy() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "rk",
+        RegistrationKeyPolicy {
+            max_active_environments: Some(3),
+            ..registration_policy(RegisteredIdentityMode::Persistent)
+        },
+    )
+    .await;
+    let settings = RegistrationKeySettings {
+        display_name: "renamed fleet".to_owned(),
+        max_active_environments: None,
+        ephemeral_disconnect_grace_ms: None,
+        offline_close_after_ms: Some(3_600_000),
+        expires_at_ms: Some(99_000),
+    };
+    let updated = store
+        .update_registration_key(UpdateEnvironmentRegistrationKey {
+            registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
+            settings: settings.clone(),
+            updated_at_ms: 2_000,
+        })
+        .await
+        .expect("update");
+    assert_eq!(updated.display_name, "renamed fleet");
+    assert_eq!(updated.max_active_environments, None);
+    assert_eq!(updated.offline_close_after_ms, Some(3_600_000));
+    assert_eq!(updated.identity_mode, RegisteredIdentityMode::Persistent);
+    assert_eq!(updated.updated_at_ms, 2_000);
+
+    let refused = store
+        .update_registration_key(UpdateEnvironmentRegistrationKey {
+            registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
+            settings: RegistrationKeySettings {
+                display_name: String::new(),
+                ..settings
+            },
+            updated_at_ms: 3_000,
+        })
+        .await;
+    assert!(matches!(
+        refused,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store
+            .read_registration_key(&EnvironmentRegistrationKeyId::new("rk"))
+            .await
+            .unwrap(),
+        updated
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rotation_retires_the_live_secret_and_keeps_the_group() {
+    let (_, store) = store().await;
+    let minted = minted_key(
+        &store,
+        "rk",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    let admitted = store
+        .create_registered_environment(register("rk", "env-1", &daemon_key(0x61), 1_500))
+        .await
+        .expect("admit");
+
+    let fresh = mint_registration_secret();
+    let rotated = store
+        .rotate_registration_key(RotateEnvironmentRegistrationKey {
+            registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
+            secret_hash: fresh.secret_hash.clone(),
+            key_prefix: fresh.key_prefix.clone(),
+            rotated_at_ms: 2_000,
+        })
+        .await
+        .expect("rotate");
+    assert_eq!(rotated.key_prefix, fresh.key_prefix);
+    assert_eq!(rotated.updated_at_ms, 2_000);
+    assert!(
+        store
+            .resolve_registration_key(&minted.secret.secret_hash)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .resolve_registration_key(&fresh.secret_hash)
+            .await
+            .unwrap()
+            .map(|key| key.registration_key_id),
+        Some(EnvironmentRegistrationKeyId::new("rk"))
+    );
+    // The admitted daemon still belongs to the key's group.
+    let usage = store
+        .registration_key_usage(&EnvironmentRegistrationKeyId::new("rk"))
+        .await
+        .unwrap();
+    assert_eq!(usage.active, 1);
+    assert_eq!(
+        store
+            .read_environment(&admitted.environment_id)
+            .await
+            .unwrap()
+            .registration_key_id(),
+        Some(&EnvironmentRegistrationKeyId::new("rk"))
+    );
+    // An admission that resolved the key before the rotation committed
+    // presents the retired secret and is refused; the live one admits.
+    assert!(matches!(
+        store
+            .create_registered_environment(register("rk", "env-2", &daemon_key(0x62), 2_100))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable {
+            reason: "rotated",
+            ..
+        })
+    ));
+    let admitted_fresh = store
+        .create_registered_environment(CreateRegisteredEnvironment {
+            secret_hash: fresh.secret_hash.clone(),
+            ..register("rk", "env-2", &daemon_key(0x62), 2_100)
+        })
+        .await
+        .expect("admit with the live secret");
+    assert_eq!(admitted_fresh.state, EnvironmentState::Open);
+
+    // A retired secret cannot come back.
+    assert!(matches!(
+        store
+            .rotate_registration_key(RotateEnvironmentRegistrationKey {
+                registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
+                secret_hash: minted.secret.secret_hash.clone(),
+                key_prefix: minted.secret.key_prefix.clone(),
+                rotated_at_ms: 3_000,
+            })
+            .await,
+        Err(EnvironmentRegistryError::AlreadyExists { .. })
+    ));
+
+    store
+        .revoke_registration_key(RevokeEnvironmentRegistrationKey {
+            registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
+            revoked_at_ms: 4_000,
+        })
+        .await
+        .expect("revoke");
+    let another = mint_registration_secret();
+    assert!(matches!(
+        store
+            .rotate_registration_key(RotateEnvironmentRegistrationKey {
+                registration_key_id: EnvironmentRegistrationKeyId::new("rk"),
+                secret_hash: another.secret_hash,
+                key_prefix: another.key_prefix,
+                rotated_at_ms: 5_000,
+            })
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable {
+            reason: "revoked",
+            ..
+        })
+    ));
+}
+
+// --- registered environments -------------------------------------------------
+
 #[tokio::test(flavor = "current_thread")]
 async fn registered_admission_is_keyed_by_daemon_identity() {
-    let (_universe_id, store) = store().await;
+    let (_, store) = store().await;
     let minted = minted_key(
         &store,
         "rk-eph",
         registration_policy(RegisteredIdentityMode::Ephemeral),
     )
     .await;
-    let resolved = store
-        .resolve_registration_key(&minted.secret_hash)
-        .await
-        .expect("resolve")
-        .expect("known");
-    assert_eq!(resolved.registration_key_id.as_str(), "rk-eph");
+    assert_eq!(
+        store
+            .resolve_registration_key(&minted.secret.secret_hash)
+            .await
+            .expect("resolve")
+            .map(|key| key.registration_key_id),
+        Some(EnvironmentRegistrationKeyId::new("rk-eph"))
+    );
     assert!(
         store
-            .resolve_registration_key("0000")
+            .resolve_registration_key(&"0".repeat(64))
             .await
             .expect("resolve")
             .is_none()
@@ -764,25 +1522,21 @@ async fn registered_admission_is_keyed_by_daemon_identity() {
         .create_registered_environment(register("rk-eph", "env-a", &public_key, 2_000))
         .await
         .expect("register");
-    assert_eq!(created.status, EnvironmentStatus::Ready);
-    assert_eq!(created.last_seen_at_ms, Some(2_000));
-    assert_eq!(
-        created.source.identity_mode(),
-        Some(RegisteredIdentityMode::Ephemeral)
-    );
-    assert_eq!(
-        created.request_id,
-        EnvironmentProvisionRequestId::for_daemon(&EnvironmentDaemonId::from_public_key(
-            &[0x11u8; 32]
-        ))
-    );
+    assert_eq!(created.state, EnvironmentState::Open);
+    assert_eq!(created.request_id, None);
+    assert_eq!(created.daemon_build, Some(build("0.1.0")));
+    let source = created.registered().expect("registered");
+    assert!(source.connected);
+    assert_eq!(source.identity_mode, RegisteredIdentityMode::Ephemeral);
+    assert_eq!(source.connection_changed_at_ms, 2_000);
+    assert_eq!(source.last_seen_at_ms, 2_000);
 
     // A retried first registration converges on the same environment.
     let retried = store
         .create_registered_environment(register("rk-eph", "env-b", &public_key, 2_500))
         .await
         .expect("retry");
-    assert_eq!(retried.environment_id, created.environment_id);
+    assert_eq!(retried, created);
     assert_eq!(
         store
             .read_environment_by_daemon_public_key(&public_key)
@@ -792,105 +1546,236 @@ async fn registered_admission_is_keyed_by_daemon_identity() {
         Some(created.environment_id.clone())
     );
 
-    let offline = store
-        .observe_registered_environment(ObserveRegisteredEnvironment {
-            environment_id: created.environment_id.clone(),
-            observation: RegisteredConnectionObservation::Disconnected,
-            observed_at_ms: 3_000,
-            metadata: BTreeMap::new(),
-        })
-        .await
-        .expect("disconnect");
-    assert_eq!(offline.status, EnvironmentStatus::Offline);
-    assert_eq!(offline.last_seen_at_ms, Some(2_000));
-    assert!(offline.registered_daemon_absent(3_000, 60_000));
-
-    // A reconnecting daemon may be a newer build: the admission re-records
-    // its build facts on the row.
-    let back = store
-        .observe_registered_environment(ObserveRegisteredEnvironment {
-            environment_id: created.environment_id.clone(),
-            observation: RegisteredConnectionObservation::Connected,
-            observed_at_ms: 4_000,
-            metadata: DaemonBuild {
-                version: Some("0.2.0".to_owned()),
-                git_sha: Some("bbbb".to_owned()),
-                protocol_version: 3,
-            }
-            .metadata(),
-        })
-        .await
-        .expect("reconnect");
-    assert_eq!(back.status, EnvironmentStatus::Ready);
-    assert_eq!(back.last_seen_at_ms, Some(4_000));
-    assert_eq!(
-        back.metadata
-            .get(ENVD_VERSION_METADATA_KEY)
-            .map(String::as_str),
-        Some("0.2.0")
-    );
-    assert_eq!(
-        back.metadata
-            .get(ENVD_GIT_SHA_METADATA_KEY)
-            .map(String::as_str),
-        Some("bbbb")
-    );
-    assert_eq!(
-        back.metadata
-            .get(ENVD_PROTOCOL_VERSION_METADATA_KEY)
-            .map(String::as_str),
-        Some("3")
-    );
-    assert!(!back.registered_daemon_absent(4_500, 60_000));
-    assert!(back.registered_daemon_absent(100_000, 60_000));
-
-    store
+    let closed = store
         .begin_close_environment(BeginCloseEnvironment {
             environment_id: created.environment_id.clone(),
-            updated_at_ms: 5_000,
-        })
-        .await
-        .expect("begin close");
-    let closed = store
-        .finish_close_environment(FinishCloseEnvironment {
-            environment_id: created.environment_id.clone(),
-            observed_at_ms: 5_100,
+            reason: EnvironmentCloseReason::Departed,
+            at_ms: 3_000,
         })
         .await
         .expect("close");
-    assert_eq!(closed.status, EnvironmentStatus::Closed);
-    // A late heartbeat cannot resurrect a closed environment.
-    let still_closed = store
-        .observe_registered_environment(ObserveRegisteredEnvironment {
-            environment_id: created.environment_id.clone(),
-            observation: RegisteredConnectionObservation::Connected,
-            observed_at_ms: 5_200,
-            metadata: BTreeMap::from([(ENVD_GIT_SHA_METADATA_KEY.to_owned(), "cccc".to_owned())]),
-        })
+    assert_eq!(closed.state, EnvironmentState::Closed);
+    assert_eq!(closed.close_reason, Some(EnvironmentCloseReason::Departed));
+    assert_eq!(closed.closed_at_ms, Some(3_000));
+
+    // The identity is spent: a reconnect is refused, a fresh admission
+    // returns the closed row.
+    assert!(matches!(
+        store
+            .mark_registered_connected(MarkRegisteredConnected {
+                environment_id: created.environment_id.clone(),
+                daemon_build: build("0.2.0"),
+                at_ms: 4_000,
+            })
+            .await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    let spent = store
+        .create_registered_environment(register("rk-eph", "env-c", &public_key, 5_000))
         .await
-        .expect("late heartbeat");
-    assert_eq!(still_closed.status, EnvironmentStatus::Closed);
-    assert_eq!(
-        still_closed
-            .metadata
-            .get(ENVD_GIT_SHA_METADATA_KEY)
-            .map(String::as_str),
-        Some("bbbb")
+        .expect("spent");
+    assert_eq!(spent.environment_id, created.environment_id);
+    assert_eq!(spent.state, EnvironmentState::Closed);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn connection_writes_happen_on_transitions_and_coarse_stamps() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "rk",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    let created = store
+        .create_registered_environment(register("rk", "env", &daemon_key(0x71), 10_000))
+        .await
+        .expect("register");
+    let id = created.environment_id.clone();
+    let stamp = |at_ms| StampRegisteredSeen {
+        environment_id: id.clone(),
+        at_ms,
+    };
+    assert!(
+        !store
+            .stamp_registered_seen(stamp(10_000 + REGISTERED_LIVENESS_STAMP_MS - 1))
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .stamp_registered_seen(stamp(10_000 + REGISTERED_LIVENESS_STAMP_MS))
+            .await
+            .unwrap()
     );
 
-    // The identity is spent: the same key with a fresh environment id is
-    // refused, and a different registration key cannot move it either.
-    let spent = store
-        .create_registered_environment(register("rk-eph", "env-c", &public_key, 6_000))
+    let away = store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
+            environment_id: id.clone(),
+            at_ms: 400_000,
+        })
         .await
-        .expect("dedup");
-    assert_eq!(spent.environment_id, created.environment_id);
-    assert_eq!(spent.status, EnvironmentStatus::Closed);
+        .expect("disconnect");
+    let source = away.registered().unwrap();
+    assert!(!source.connected);
+    assert_eq!(source.connection_changed_at_ms, 400_000);
+    assert_eq!(
+        source.last_seen_at_ms,
+        10_000 + REGISTERED_LIVENESS_STAMP_MS
+    );
+    // A superseded connection's late disconnect writes nothing, and a
+    // disconnected row takes no stamps.
+    let again = store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
+            environment_id: id.clone(),
+            at_ms: 500_000,
+        })
+        .await
+        .expect("skipped");
+    assert_eq!(again, away);
+    assert!(
+        !store
+            .stamp_registered_seen(stamp(10_000_000))
+            .await
+            .unwrap()
+    );
+
+    let back = store
+        .mark_registered_connected(MarkRegisteredConnected {
+            environment_id: id.clone(),
+            daemon_build: build("0.2.0"),
+            at_ms: 600_000,
+        })
+        .await
+        .expect("reconnect");
+    let source = back.registered().unwrap();
+    assert!(source.connected);
+    assert_eq!(source.connection_changed_at_ms, 600_000);
+    assert_eq!(source.last_seen_at_ms, 600_000);
+    assert_eq!(back.daemon_build, Some(build("0.2.0")));
+
+    assert_eq!(
+        store.repair_registered_connections(700_000).await.unwrap(),
+        1
+    );
+    let repaired = store.read_environment(&id).await.unwrap();
+    let source = repaired.registered().unwrap();
+    assert!(!source.connected);
+    assert_eq!(source.connection_changed_at_ms, 700_000);
+    assert_eq!(source.last_seen_at_ms, 600_000);
+    assert_eq!(
+        store.repair_registered_connections(800_000).await.unwrap(),
+        0
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_registered_sweep_disconnects_stale_rows_and_closes_by_key_policy() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "rk-eph",
+        RegistrationKeyPolicy {
+            ephemeral_disconnect_grace_ms: Some(60_000),
+            ..registration_policy(RegisteredIdentityMode::Ephemeral)
+        },
+    )
+    .await;
+    minted_key(
+        &store,
+        "rk-off",
+        RegistrationKeyPolicy {
+            offline_close_after_ms: Some(600_000),
+            ..registration_policy(RegisteredIdentityMode::Persistent)
+        },
+    )
+    .await;
+    minted_key(
+        &store,
+        "rk-keep",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    let start = 1_000_000;
+    for (key, environment, seed) in [
+        ("rk-eph", "eph-stale", 0x81),
+        ("rk-eph", "eph-away", 0x82),
+        ("rk-off", "off-away", 0x83),
+        ("rk-keep", "keep-away", 0x84),
+        ("rk-keep", "keep-live", 0x85),
+    ] {
+        store
+            .create_registered_environment(register(key, environment, &daemon_key(seed), start))
+            .await
+            .expect("register");
+    }
+    for environment in ["eph-away", "off-away", "keep-away"] {
+        store
+            .mark_registered_disconnected(MarkRegisteredDisconnected {
+                environment_id: EnvironmentId::new(environment),
+                at_ms: start,
+            })
+            .await
+            .expect("disconnect");
+    }
+    // keep-live keeps stamping; eph-stale's gateway died silently.
+    let now = start + REGISTERED_STALE_AFTER_MS + 1;
+    store
+        .stamp_registered_seen(StampRegisteredSeen {
+            environment_id: EnvironmentId::new("keep-live"),
+            at_ms: now - 1_000,
+        })
+        .await
+        .expect("stamp");
+
+    let sweep = store
+        .sweep_registered_environments(now)
+        .await
+        .expect("sweep");
+    assert_eq!(sweep.disconnected, [EnvironmentId::new("eph-stale")]);
+    assert_eq!(
+        sweep.closed,
+        [
+            (
+                EnvironmentId::new("eph-away"),
+                EnvironmentCloseReason::EphemeralGrace
+            ),
+            (
+                EnvironmentId::new("eph-stale"),
+                EnvironmentCloseReason::EphemeralGrace
+            ),
+            (
+                EnvironmentId::new("off-away"),
+                EnvironmentCloseReason::OfflineTimeout
+            ),
+        ]
+    );
+    let stale = store
+        .read_environment(&EnvironmentId::new("eph-stale"))
+        .await
+        .unwrap();
+    assert_eq!(stale.state, EnvironmentState::Closed);
+    assert_eq!(stale.registered().unwrap().connection_changed_at_ms, start);
+    for open in ["keep-away", "keep-live"] {
+        assert_eq!(
+            store
+                .read_environment(&EnvironmentId::new(open))
+                .await
+                .unwrap()
+                .state,
+            EnvironmentState::Open
+        );
+    }
+    let quiet = store
+        .sweep_registered_environments(now)
+        .await
+        .expect("sweep");
+    assert_eq!(quiet, RegisteredSweep::default());
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn registration_key_policy_gates_admission_without_touching_reconnects() {
-    let (_universe_id, store) = store().await;
+    let (_, store) = store().await;
     minted_key(
         &store,
         "rk-cap",
@@ -922,14 +1807,8 @@ async fn registration_key_policy_gates_admission_without_touching_reconnects() {
     store
         .begin_close_environment(BeginCloseEnvironment {
             environment_id: first.environment_id.clone(),
-            updated_at_ms: 3_000,
-        })
-        .await
-        .expect("begin close");
-    store
-        .finish_close_environment(FinishCloseEnvironment {
-            environment_id: first.environment_id.clone(),
-            observed_at_ms: 3_100,
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 3_000,
         })
         .await
         .expect("close");
@@ -966,28 +1845,32 @@ async fn registration_key_policy_gates_admission_without_touching_reconnects() {
         .await
         .expect("revoke again");
     assert_eq!(again.revoked_at_ms, Some(4_000));
-    let refused = store
-        .create_registered_environment(register("rk-cap", "env-3", &daemon_key(0x23), 5_000))
-        .await
-        .expect_err("revoked");
     assert!(matches!(
-        refused,
-        EnvironmentRegistryError::RegistrationKeyUnavailable {
+        store
+            .create_registered_environment(register("rk-cap", "env-3", &daemon_key(0x23), 5_000))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable {
             reason: "revoked",
             ..
-        }
+        })
     ));
     // Known daemons never consult the key.
-    let reconnect = store
-        .observe_registered_environment(ObserveRegisteredEnvironment {
+    store
+        .mark_registered_disconnected(MarkRegisteredDisconnected {
             environment_id: EnvironmentId::new("env-2"),
-            observation: RegisteredConnectionObservation::Connected,
-            observed_at_ms: 5_500,
-            metadata: BTreeMap::new(),
+            at_ms: 5_400,
+        })
+        .await
+        .expect("disconnect");
+    let reconnect = store
+        .mark_registered_connected(MarkRegisteredConnected {
+            environment_id: EnvironmentId::new("env-2"),
+            daemon_build: build("0.1.1"),
+            at_ms: 5_500,
         })
         .await
         .expect("reconnect after revoke");
-    assert_eq!(reconnect.status, EnvironmentStatus::Ready);
+    assert!(reconnect.registered().unwrap().connected);
 
     minted_key(
         &store,
@@ -998,36 +1881,222 @@ async fn registration_key_policy_gates_admission_without_touching_reconnects() {
         },
     )
     .await;
-    let expired = store
-        .create_registered_environment(register("rk-exp", "env-4", &daemon_key(0x24), 2_000))
-        .await
-        .expect_err("expired");
     assert!(matches!(
-        expired,
-        EnvironmentRegistryError::RegistrationKeyUnavailable {
+        store
+            .create_registered_environment(register("rk-exp", "env-4", &daemon_key(0x24), 2_000))
+            .await,
+        Err(EnvironmentRegistryError::RegistrationKeyUnavailable {
             reason: "expired",
             ..
-        }
+        })
     ));
-    let keys = store.list_registration_keys().await.expect("list");
-    assert_eq!(keys.len(), 2);
+    assert_eq!(store.list_registration_keys().await.unwrap().len(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn metadata_is_caller_only_and_bounded() {
+    let (_, store) = store().await;
+    minted_key(
+        &store,
+        "rk",
+        registration_policy(RegisteredIdentityMode::Persistent),
+    )
+    .await;
+    let mut full = register("rk", "env-full", &daemon_key(0x31), 1_000);
+    full.metadata = (0..MAX_METADATA_ENTRIES as usize)
+        .map(|index| (format!("caller.key{index}"), "v".to_owned()))
+        .collect();
+    store
+        .create_registered_environment(full)
+        .await
+        .expect("full caller allowance");
+
+    let mut over = register("rk", "env-over", &daemon_key(0x32), 1_000);
+    over.metadata = (0..=MAX_METADATA_ENTRIES as usize)
+        .map(|index| (format!("caller.key{index}"), "v".to_owned()))
+        .collect();
+    assert!(matches!(
+        store.create_registered_environment(over).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    let mut reserved = register("rk", "env-reserved", &daemon_key(0x33), 1_000);
+    reserved.metadata = BTreeMap::from([("lightspeed.envd.version".to_owned(), "1".to_owned())]);
+    assert!(matches!(
+        store.create_registered_environment(reserved).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+}
+
+// --- updates and listing -----------------------------------------------------
+
+#[tokio::test(flavor = "current_thread")]
+async fn updates_replace_name_and_metadata_until_closed() {
+    let store = InMemoryEnvironmentRegistryStore::new();
+    let created = store
+        .create_external_environment(external("ext", "ext-env", 1_000))
+        .await
+        .expect("external");
+    let update = |name: Option<&str>, at| UpdateEnvironment {
+        environment_id: created.environment_id.clone(),
+        display_name: name.map(str::to_owned),
+        metadata: BTreeMap::from([("team".to_owned(), "infra".to_owned())]),
+        updated_at_ms: at,
+    };
+    let updated = store
+        .update_environment(update(Some("builder"), 2_000))
+        .await
+        .expect("update");
+    assert_eq!(updated.display_name.as_deref(), Some("builder"));
+    assert_eq!(
+        updated.metadata.get("team").map(String::as_str),
+        Some("infra")
+    );
+    assert_eq!(updated.updated_at_ms, 2_000);
+
+    // A refused change leaves the stored record untouched.
+    assert!(matches!(
+        store.update_environment(update(Some(""), 2_500)).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+    assert_eq!(
+        store
+            .read_environment(&created.environment_id)
+            .await
+            .unwrap(),
+        updated
+    );
+
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: created.environment_id.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 3_000,
+        })
+        .await
+        .expect("close");
+    assert!(matches!(
+        store.update_environment(update(None, 4_000)).await,
+        Err(EnvironmentRegistryError::InvalidInput { .. })
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn listing_pages_by_id_and_hides_closed_rows_by_default() {
+    let (_, store) = store().await;
+    for index in 0..5 {
+        let mut request = create(&format!("r-{index}"), &format!("env-{index}"), 2_000);
+        if index % 2 == 0 {
+            request.metadata = BTreeMap::from([("job".to_owned(), "nightly".to_owned())]);
+        }
+        store.create_environment(request).await.expect("create");
+    }
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: EnvironmentId::new("env-1"),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: 3_000,
+        })
+        .await
+        .expect("close");
+    store
+        .finish_close_environment(FinishCloseEnvironment {
+            environment_id: EnvironmentId::new("env-1"),
+            at_ms: 3_100,
+        })
+        .await
+        .expect("closed");
+
+    let ids = |page: &EnvironmentPage| -> Vec<String> {
+        page.environments
+            .iter()
+            .map(|record| record.environment_id.to_string())
+            .collect()
+    };
+    let first = store
+        .list_environments(ListEnvironments {
+            limit: 2,
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("page 1");
+    assert_eq!(ids(&first), ["env-0", "env-2"]);
+    assert_eq!(first.next_after, Some(EnvironmentId::new("env-2")));
+    let second = store
+        .list_environments(ListEnvironments {
+            limit: 2,
+            after: first.next_after.clone(),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("page 2");
+    assert_eq!(ids(&second), ["env-3", "env-4"]);
+    assert_eq!(second.next_after, None);
+
+    let with_closed = store
+        .list_environments(ListEnvironments {
+            include_closed: true,
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("all");
+    assert_eq!(with_closed.environments.len(), 5);
+    let only_closed = store
+        .list_environments(ListEnvironments {
+            state: Some(EnvironmentState::Closed),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("closed");
+    assert_eq!(ids(&only_closed), ["env-1"]);
+
+    let tagged = store
+        .list_environments(ListEnvironments {
+            metadata: BTreeMap::from([("job".to_owned(), "nightly".to_owned())]),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("metadata");
+    assert_eq!(ids(&tagged), ["env-0", "env-2", "env-4"]);
+    let mismatched = store
+        .list_environments(ListEnvironments {
+            metadata: BTreeMap::from([
+                ("job".to_owned(), "nightly".to_owned()),
+                ("trial".to_owned(), "1".to_owned()),
+            ]),
+            ..ListEnvironments::default()
+        })
+        .await
+        .expect("mismatched");
+    assert!(mismatched.environments.is_empty());
+
+    for limit in [0, LIST_ENVIRONMENTS_MAX_LIMIT + 1] {
+        assert!(matches!(
+            store
+                .list_environments(ListEnvironments {
+                    limit,
+                    ..ListEnvironments::default()
+                })
+                .await,
+            Err(EnvironmentRegistryError::InvalidInput { .. })
+        ));
+    }
+    assert_eq!(
+        ListEnvironments::default().limit,
+        LIST_ENVIRONMENTS_DEFAULT_LIMIT
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn registered_environments_list_by_key() {
-    let (_universe_id, store) = store().await;
-    minted_key(
-        &store,
-        "rk-a",
-        registration_policy(RegisteredIdentityMode::Persistent),
-    )
-    .await;
-    minted_key(
-        &store,
-        "rk-b",
-        registration_policy(RegisteredIdentityMode::Persistent),
-    )
-    .await;
+    let (_, store) = store().await;
+    for key in ["rk-a", "rk-b"] {
+        minted_key(
+            &store,
+            key,
+            registration_policy(RegisteredIdentityMode::Persistent),
+        )
+        .await;
+    }
     let a = store
         .create_registered_environment(register("rk-a", "env-a", &daemon_key(0x31), 2_000))
         .await
@@ -1036,333 +2105,45 @@ async fn registered_environments_list_by_key() {
         .create_registered_environment(register("rk-b", "env-b", &daemon_key(0x32), 2_000))
         .await
         .expect("b");
-
     let by_key = store
         .list_environments(ListEnvironments {
-            metadata: Default::default(),
             registration_key_id: Some(EnvironmentRegistrationKeyId::new("rk-a")),
             ..ListEnvironments::default()
         })
         .await
         .expect("list");
-    assert_eq!(by_key.len(), 1);
-    assert_eq!(by_key[0].environment_id, a.environment_id);
+    assert_eq!(by_key.environments.len(), 1);
+    assert_eq!(by_key.environments[0].environment_id, a.environment_id);
 }
 
-/// The gateway stamps reserved entries on top of whatever a daemon sent, so
-/// a daemon using its whole allowance must still be admitted; the allowance
-/// itself stays enforced on the caller's keys.
-#[tokio::test(flavor = "current_thread")]
-async fn reserved_metadata_sits_on_top_of_the_caller_allowance() {
-    let (_universe_id, store) = store().await;
-    minted_key(
-        &store,
-        "rk-meta",
-        registration_policy(RegisteredIdentityMode::Persistent),
-    )
-    .await;
-    let reserved = DaemonBuild {
-        version: Some("0.1.0".to_owned()),
-        git_sha: Some("a".repeat(40)),
-        protocol_version: 2,
+#[test]
+fn states_and_close_reasons_round_trip_their_stored_names() {
+    for state in [
+        EnvironmentState::Provisioning,
+        EnvironmentState::Open,
+        EnvironmentState::Closing,
+        EnvironmentState::Closed,
+        EnvironmentState::Failed,
+    ] {
+        assert_eq!(EnvironmentState::parse(state.as_str()), Some(state));
+        assert_eq!(
+            serde_json::to_value(state).unwrap(),
+            serde_json::json!(state.as_str())
+        );
     }
-    .metadata();
-
-    let mut full = register("rk-meta", "env-meta", &daemon_key(0x31), 1_000);
-    full.metadata = (0..MAX_METADATA_ENTRIES as usize)
-        .map(|index| (format!("caller.key{index}"), "v".to_owned()))
-        .collect();
-    full.metadata.extend(reserved.clone());
-    let created = store
-        .create_registered_environment(full)
-        .await
-        .expect("full caller allowance plus reserved entries");
-    assert_eq!(
-        created.metadata.len(),
-        MAX_METADATA_ENTRIES as usize + reserved.len()
-    );
-
-    let mut over = register("rk-meta", "env-over", &daemon_key(0x32), 1_000);
-    over.metadata = (0..=MAX_METADATA_ENTRIES as usize)
-        .map(|index| (format!("caller.key{index}"), "v".to_owned()))
-        .collect();
-    assert!(matches!(
-        store.create_registered_environment(over).await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn provider_credentials_are_required_once_and_kept_across_puts() {
-    let store = InMemoryEnvironmentRegistryStore::new();
-    let provider_id = EnvironmentProviderId::new("incus-local");
-    let mut without = provider();
-    without.credential = None;
-    assert!(matches!(
-        store.put_provider(without.clone()).await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    let mut unprintable = provider();
-    unprintable.credential = Some(SecretValue::new("two words"));
-    assert!(matches!(
-        store.put_provider(unprintable).await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-
-    store.put_provider(provider()).await.expect("create");
-    without.updated_at_ms = 2_000;
-    let replaced = store.put_provider(without).await.expect("replace");
-    assert_eq!(replaced.created_at_ms, 1_000);
-    assert_eq!(
-        store
-            .read_provider_credential(&provider_id)
-            .await
-            .expect("credential")
-            .expose(),
-        "provider-secret"
-    );
-    let debug = format!("{:?}", provider());
-    assert!(!debug.contains("provider-secret"));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn controller_facts_follow_the_registered_endpoint() {
-    let store = InMemoryEnvironmentRegistryStore::new();
-    let provider_id = EnvironmentProviderId::new("incus-local");
-    let created = store.put_provider(provider()).await.expect("create");
-    assert_eq!(created.controller_features, None);
-    assert_eq!(created.data_route_base, None);
-
-    let base = DataRouteBase::new("ws://127.0.0.1:19090/data").expect("base");
-    let features = ControllerFeatures {
-        adopt_target: true,
-        ingress: false,
-    };
-    let recorded = store
-        .record_provider_controller(RecordProviderController {
-            provider_id: provider_id.clone(),
-            controller_endpoint: created.controller_endpoint.clone(),
-            features,
-            data_route_base: base.clone(),
-        })
-        .await
-        .expect("record");
-    assert_eq!(recorded.controller_features, Some(features));
-    assert_eq!(recorded.data_route_base, Some(base.clone()));
-
-    // A put that keeps the endpoint keeps the facts.
-    let mut same = provider();
-    same.credential = None;
-    same.display_name = Some("Renamed".to_owned());
-    let kept = store.put_provider(same).await.expect("rename");
-    assert_eq!(kept.data_route_base, Some(base.clone()));
-
-    // A new endpoint clears them, and an initialize that raced the change
-    // cannot write facts of the old endpoint back.
-    let mut moved = provider();
-    moved.credential = None;
-    moved.controller_endpoint = endpoint("wss://incus.example.com/control");
-    let moved = store.put_provider(moved).await.expect("move");
-    assert_eq!(moved.controller_features, None);
-    assert_eq!(moved.data_route_base, None);
-    let stale = store
-        .record_provider_controller(RecordProviderController {
-            provider_id,
-            controller_endpoint: created.controller_endpoint,
-            features,
-            data_route_base: base,
-        })
-        .await
-        .expect("stale record");
-    assert_eq!(stale.data_route_base, None);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn a_racing_observation_never_overwrites_a_close() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    store
-        .begin_close_environment(BeginCloseEnvironment {
-            environment_id: environment.environment_id.clone(),
-            updated_at_ms: 2_500,
-        })
-        .await
-        .expect("begin close");
-
-    // The create that was in flight when the close arrived answers: the
-    // target id is still recorded so the close can address it, but the
-    // status stays closing.
-    let observed = store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some("ls-3f2a"),
-            EnvironmentStatus::Ready,
-            3_000,
-        ))
-        .await
-        .expect("observe");
-    assert_eq!(observed.status, EnvironmentStatus::Closing);
-    assert_eq!(
-        observed.incarnation.provider_target_id,
-        Some(target("ls-3f2a"))
-    );
-
-    let failed = store
-        .fail_environment_lifecycle(FailEnvironmentLifecycle {
-            environment_id: environment.environment_id.clone(),
-            message: "power change failed".to_owned(),
-            daemon_build: None,
-            observed_at_ms: 3_500,
-        })
-        .await
-        .expect("fail");
-    assert_eq!(failed.status, EnvironmentStatus::Closing);
-    assert_eq!(failed.lifecycle_error, None);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn observations_without_a_target_id_keep_the_recorded_one() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    let pending = store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            None,
-            EnvironmentStatus::Provisioning,
-            2_500,
-        ))
-        .await
-        .expect("no id yet");
-    assert_eq!(pending.incarnation.provider_target_id, None);
-    // Natural provider ids are opaque: slashes and colons are fine.
-    let natural = "arn:aws:ec2:eu-west-1:123456789012:instance/i-0abc";
-    store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            Some(natural),
-            EnvironmentStatus::Booting,
-            3_000,
-        ))
-        .await
-        .expect("id assigned");
-    let kept = store
-        .observe_provisioned_environment(observe(
-            &environment.environment_id,
-            None,
-            EnvironmentStatus::Booting,
-            3_500,
-        ))
-        .await
-        .expect("id kept");
-    assert_eq!(kept.incarnation.provider_target_id, Some(target(natural)));
-    assert!(matches!(
-        store
-            .observe_provisioned_environment(observe(
-                &environment.environment_id,
-                Some("another-target"),
-                EnvironmentStatus::Ready,
-                4_000,
-            ))
-            .await,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn lifecycle_errors_accumulate_until_a_steady_observation() {
-    let (_, store) = store().await;
-    let environment = store
-        .create_environment(create("request-1", "environment-1", "incarnation-1", 2_000))
-        .await
-        .expect("create");
-    let first = store
-        .record_environment_lifecycle_error(RecordEnvironmentLifecycleError {
-            environment_id: environment.environment_id.clone(),
-            message: "controller unavailable".to_owned(),
-            observed_at_ms: 3_000,
-        })
-        .await
-        .expect("first error");
-    assert_eq!(first.status, EnvironmentStatus::Provisioning);
-    let second = store
-        .record_environment_lifecycle_error(RecordEnvironmentLifecycleError {
-            environment_id: environment.environment_id.clone(),
-            message: format!("connect failed\u{7}{}", "x".repeat(2_000)),
-            observed_at_ms: 4_000,
-        })
-        .await
-        .expect("second error");
-    let error = second.lifecycle_error.expect("recorded");
-    assert_eq!(error.first_at_ms, 3_000);
-    assert_eq!(error.last_at_ms, 4_000);
-    assert!(error.message.len() <= 1024);
-    assert!(!error.message.contains('\u{7}'));
-
-    let ready = store
-        .observe_provisioned_environment(ObserveProvisionedEnvironment {
-            daemon_build: Some(DaemonBuild {
-                version: Some("0.5.0".to_owned()),
-                git_sha: None,
-                protocol_version: 3,
-            }),
-            ..observe(
-                &environment.environment_id,
-                Some("target-1"),
-                EnvironmentStatus::Ready,
-                5_000,
-            )
-        })
-        .await
-        .expect("ready");
-    assert_eq!(ready.lifecycle_error, None);
-    assert_eq!(
-        ready
-            .metadata
-            .get(ENVD_PROTOCOL_VERSION_METADATA_KEY)
-            .map(String::as_str),
-        Some("3")
-    );
-}
-
-/// A change whose result fails validation must leave the stored record as
-/// it was, so a bad value can never become durable.
-#[tokio::test(flavor = "current_thread")]
-async fn refused_changes_leave_the_stored_record_untouched() {
-    let (_universe_id, store) = store().await;
-    minted_key(
-        &store,
-        "rk-poison",
-        registration_policy(RegisteredIdentityMode::Persistent),
-    )
-    .await;
-    let created = store
-        .create_registered_environment(register("rk-poison", "env-p", &daemon_key(0x41), 1_000))
-        .await
-        .expect("register");
-    let refused = store
-        .observe_registered_environment(ObserveRegisteredEnvironment {
-            environment_id: created.environment_id.clone(),
-            observation: RegisteredConnectionObservation::Connected,
-            observed_at_ms: 2_000,
-            metadata: BTreeMap::from([(
-                ENVD_VERSION_METADATA_KEY.to_owned(),
-                "bad\u{0}version".to_owned(),
-            )]),
-        })
-        .await;
-    assert!(matches!(
-        refused,
-        Err(EnvironmentRegistryError::InvalidInput { .. })
-    ));
-    let stored = store
-        .read_environment(&created.environment_id)
-        .await
-        .expect("still readable");
-    assert_eq!(stored, created);
+    for reason in [
+        EnvironmentCloseReason::Requested,
+        EnvironmentCloseReason::KeyRevoked,
+        EnvironmentCloseReason::EphemeralGrace,
+        EnvironmentCloseReason::Departed,
+        EnvironmentCloseReason::OfflineTimeout,
+        EnvironmentCloseReason::ProviderEnded,
+    ] {
+        assert_eq!(EnvironmentCloseReason::parse(reason.as_str()), Some(reason));
+        assert_eq!(
+            serde_json::to_value(reason).unwrap(),
+            serde_json::json!(reason.as_str())
+        );
+    }
+    assert_eq!(EnvironmentState::parse("ready"), None);
 }

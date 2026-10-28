@@ -496,19 +496,7 @@ pub(super) async fn start(
         jobs.push(job);
     }
 
-    let instance = deps
-        .environments
-        .read_environment(&environment_id)
-        .await
-        .map_err(activity_error)?;
-    if matches!(
-        instance.status,
-        environments::EnvironmentStatus::Closing | environments::EnvironmentStatus::Closed
-    ) {
-        return Err(non_retryable_activity_error(anyhow::anyhow!(
-            "cannot start jobs on closing environment instance {environment_id}"
-        )));
-    }
+    let instance = usable_instance(deps, &environment_id).await?;
     let client = job_client(deps, &instance).await?;
     let response = client
         .start_jobs(&StartJobsParams { request_id, jobs })
@@ -546,11 +534,7 @@ pub(super) async fn poll(
             resolutions: BTreeMap::new(),
         });
     }
-    let instance = deps
-        .environments
-        .read_environment(&environment_id)
-        .await
-        .map_err(activity_error)?;
+    let instance = usable_instance(deps, &environment_id).await?;
     let client = job_client(deps, &instance).await?;
     let result = poll_jobs(deps, &client, &environment_id, &job_ids).await;
     let _ = client.close().await;
@@ -703,11 +687,7 @@ pub(super) async fn cancel(
     if job_ids.is_empty() {
         return Ok(EnvironmentJobCancelActivityResult { jobs: Vec::new() });
     }
-    let instance = deps
-        .environments
-        .read_environment(&environment_id)
-        .await
-        .map_err(activity_error)?;
+    let instance = usable_instance(deps, &environment_id).await?;
     let client = job_client(deps, &instance).await?;
     let result = cancel_jobs(&client, &job_ids, request.scope, request.force).await;
     let _ = client.close().await;
@@ -759,8 +739,34 @@ fn configured(
     })
 }
 
-/// An initialized data client for the environment's current incarnation;
-/// the daemon must serve the `job` family.
+/// The environment through the single use gate before a job call dials it:
+/// the activity retries a wait (provisioning, or a daemon reconnecting) and
+/// fails for good on an environment that is closing, closed, failed or away.
+async fn usable_instance(
+    deps: &EnvironmentJobActivityDeps,
+    environment_id: &EnvironmentId,
+) -> Result<EnvironmentRecord, ActivityError> {
+    use crate::environments::resolver::{EnvironmentResolveError, EnvironmentResolver};
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(activity_error)?
+        .as_millis();
+    EnvironmentResolver::new(deps.environments.clone())
+        .resolve_for_connection(environment_id, i64::try_from(now_ms).unwrap_or(i64::MAX))
+        .await
+        .map_err(|error| match error {
+            EnvironmentResolveError::NotReady { .. }
+            | EnvironmentResolveError::Unreachable { .. }
+            | EnvironmentResolveError::Store(environments::EnvironmentRegistryError::Store {
+                ..
+            }) => activity_error(error),
+            other => non_retryable_activity_error(other),
+        })
+}
+
+/// An initialized data client for the environment; the daemon must serve
+/// the `job` family.
 async fn job_client(
     deps: &EnvironmentJobActivityDeps,
     instance: &EnvironmentRecord,

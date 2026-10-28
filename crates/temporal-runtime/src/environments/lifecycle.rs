@@ -1,266 +1,176 @@
+//! Environment lifecycle: the API handlers and the reconciler.
+//!
+//! Lightspeed keeps durable retries for the two things it alone decides:
+//! create until accepted (and opened by one data-plane handshake), and
+//! close until gone. Everything a provider does while a target runs —
+//! power, idle, wake, ingress — is the provider's; the slow display sweep
+//! only records what it reports, and acts only when it reports the target
+//! failed or gone. Power and ingress API calls are synchronous
+//! pass-throughs that store nothing but the returned observation.
+
 use super::provider_controllers::{
-    ControllerDisposition, ControllerError, ControllerFeature, ProviderController, ProviderPass,
+    ControllerDisposition, ControllerError, ControllerFeature, PASS_THROUGH_TIMEOUT,
+    ProviderController, ProviderControllerConnector, call_disposition, connect_provider_controller,
     provider_connect_options,
 };
 use super::providers::{
-    environment_view, map_environments_error, parse_environment_provider_binding_id,
-    registry_idle_policy, registry_lifecycle_status, registry_power_state,
+    environment_view, map_environments_error, parse_environment_provider_id, registry_idle_policy,
+    registry_power_state, registry_state,
 };
+use super::signals::EnvironmentSignals;
 use super::*;
 
 use ::environments::{
     BeginCloseEnvironment, CreateEnvironment, CreateExternalEnvironment, DaemonBuild,
-    EnvironmentEndpoint, EnvironmentId, EnvironmentIncarnationId, EnvironmentLifecycleError,
-    EnvironmentProviderId, EnvironmentProvisionRequestId, EnvironmentRecord,
-    EnvironmentRegistryError, EnvironmentSource, EnvironmentStatus, EnvironmentStore,
-    EnvironmentTemplateId, FailEnvironmentLifecycle, FinishCloseEnvironment, ListEnvironments,
-    ObserveProvisionedEnvironment, PowerState, ReconcileScope, RecordEnvironmentIngress,
-    RecordEnvironmentLifecycleError, SetEnvironmentIdlePolicy, SetEnvironmentIngress,
-    SetEnvironmentPower,
+    EndProvisionedEnvironment, EnvironmentCloseReason, EnvironmentEndpoint, EnvironmentId,
+    EnvironmentProviderId, EnvironmentProviderStore, EnvironmentProvisionRequestId,
+    EnvironmentRecord, EnvironmentRegistryError, EnvironmentState, EnvironmentStore,
+    EnvironmentTemplateId, FailEnvironment, FinishCloseEnvironment, ListEnvironments,
+    ObservedTarget, OpenEnvironment, RecordTargetObservation, ScheduleEnvironmentAttempt,
+    UpdateEnvironment, WAIT_RETRY_AFTER_MS,
 };
-use auth::SecretValue;
 use environment_client::{ClientError, DataClient};
 use environment_protocol::{
     control::{
         ingress::{EnsureIngressParams, RemoveIngressParams},
         target::{
-            AdoptTargetParams, CloseTargetParams, CreateTargetParams, GetTargetParams,
-            SetTargetPowerParams, TargetObservation, TargetOwner, TargetPhase, TargetRef,
-            TargetState,
+            CloseTargetParams, CreateTargetParams, GetTargetParams, SetTargetPowerParams,
+            TargetObservation, TargetOwner, TargetPhase, TargetRef,
         },
     },
-    error::PreconditionReason,
-    ids::{BindingId, IncarnationId, ProviderNativeRef, TemplateId, UniverseId},
-    routes::provider_data_route,
+    ids::{TemplateId, UniverseId},
+    manifest::{IngressEnsure, IngressRemove, TargetSetPower},
+    metadata::DisplayName,
+    routes::{DataRouteRefusal, provider_data_route},
 };
+use futures_util::{StreamExt, stream};
+use std::{collections::BTreeMap, time::Duration};
 
-/// How long a provisioning, booting or unknown environment may go without
-/// converging (transient errors such as an unreachable provider, or
-/// observations that make no progress, such as a guest whose envd never
-/// answers) before it is failed with the last error.
+/// How long a provisioning environment may take, from entering
+/// `provisioning` to its open handshake, before it is failed.
 pub(crate) const PROVISIONING_DEADLINE_MS: i64 = 30 * 60 * 1000;
 
-/// How often a reconcile pass also observes steady provisioned
-/// environments with `target/get`, so a target deleted or changed out of
-/// band is noticed and ingress converges.
-pub(crate) const STEADY_OBSERVATION_INTERVAL: std::time::Duration =
-    std::time::Duration::from_secs(120);
+/// Re-check interval while the provider reports work in progress.
+pub(crate) const POLL_MS: i64 = 2_000;
 
-/// A repeated transient error is written again only after this long, so a
-/// provider that stays down does not rewrite every row on every pass.
-const LIFECYCLE_ERROR_REFRESH_MS: i64 = 30 * 1000;
+/// First backoff after a failed attempt; doubled per attempt.
+const BACKOFF_BASE_MS: i64 = 2_000;
 
-/// What one target observation means for its environment.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TargetVerdict {
-    /// Record this status.
-    Status(EnvironmentStatus),
-    /// Running, and the provider's own probe reached envd: Ready once the
-    /// runtime's data-plane handshake succeeds.
-    DaemonReady,
-    /// Broken or gone for good.
-    Failed(String),
-    /// The provider cannot tell; retried like a transient error.
-    Unknown(String),
+/// Longest backoff between attempts.
+const BACKOFF_MAX_MS: i64 = 5 * 60 * 1000;
+
+/// Rows of one provider in flight at once, over one shared controller
+/// connection.
+pub(crate) const PROVIDER_CONCURRENCY: usize = 8;
+
+/// Rows one work pass takes from a universe.
+pub(crate) const WORK_BATCH: u32 = 256;
+
+/// How often the reconciler wakes without a nudge.
+pub(crate) const WORK_TICK: Duration = Duration::from_secs(1);
+
+/// How often the display sweep observes open provisioned environments.
+pub(crate) const DISPLAY_SWEEP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// The delay before attempt `attempts + 1` after `attempts` consecutive
+/// failures: 2 s doubling, at most 5 min.
+pub(crate) fn backoff_delay_ms(attempts: u32) -> i64 {
+    let shift = attempts.saturating_sub(1).min(8);
+    (BACKOFF_BASE_MS << shift).min(BACKOFF_MAX_MS)
 }
 
-/// Map a target's two-axis state to the environment lifecycle. A target
-/// that closes while its environment is not closing was closed out of band.
-pub(crate) fn target_verdict(state: &TargetState) -> TargetVerdict {
-    let message = state.message.as_ref().map(|message| message.as_str());
-    match state.phase {
-        TargetPhase::Provisioning => TargetVerdict::Status(EnvironmentStatus::Provisioning),
-        TargetPhase::Active => match state.power {
-            Some(PowerState::Running) if state.daemon_ready => TargetVerdict::DaemonReady,
-            Some(PowerState::Running) => TargetVerdict::Status(EnvironmentStatus::Booting),
-            Some(PowerState::Paused) => TargetVerdict::Status(EnvironmentStatus::Paused),
-            Some(PowerState::Suspended) => TargetVerdict::Status(EnvironmentStatus::Suspended),
-            Some(PowerState::Stopped) => TargetVerdict::Status(EnvironmentStatus::Offline),
-            None => TargetVerdict::Unknown(
-                "the provider reported an active target without a power state".to_owned(),
-            ),
-        },
-        TargetPhase::Closing => {
-            TargetVerdict::Failed("the provider is closing the environment's target".to_owned())
-        }
-        TargetPhase::Closed => {
-            TargetVerdict::Failed("the provider closed the environment's target".to_owned())
-        }
-        TargetPhase::Failed => TargetVerdict::Failed(
-            message
-                .unwrap_or("the provider reported the target failed")
-                .to_owned(),
-        ),
-        TargetPhase::Unknown => TargetVerdict::Unknown(
-            message
-                .unwrap_or("the provider cannot tell the target's state")
-                .to_owned(),
-        ),
-    }
+/// True once a provisioning row has been provisioning for the deadline.
+pub(crate) fn provisioning_deadline_passed(record: &EnvironmentRecord, now_ms: i64) -> bool {
+    record.state == EnvironmentState::Provisioning
+        && now_ms.saturating_sub(record.state_changed_at_ms) >= PROVISIONING_DEADLINE_MS
 }
 
-/// The lifecycle note for an observation that leaves a converging
-/// environment where it was: recorded like a transient error, so the
-/// provisioning deadline runs while nothing progresses.
-pub(crate) fn waiting_note(status: EnvironmentStatus, state: &TargetState) -> String {
-    let waiting = match status {
-        EnvironmentStatus::Booting => "waiting for envd to answer on the target",
-        _ => "waiting for the provider to provision the target",
-    };
-    match &state.message {
-        Some(message) => format!("{waiting}: {}", message.as_str()),
-        None => waiting.to_owned(),
-    }
-}
-
-/// True once transient errors or stalled observations have persisted past
-/// the provisioning deadline.
-pub(crate) fn provisioning_deadline_passed(
-    error: Option<&EnvironmentLifecycleError>,
-    now_ms: i64,
-) -> bool {
-    error.is_some_and(|error| now_ms.saturating_sub(error.first_at_ms) >= PROVISIONING_DEADLINE_MS)
-}
-
-/// True when `message` at `now_ms` is worth a write over `recorded`.
-fn lifecycle_error_is_news(
-    recorded: Option<&EnvironmentLifecycleError>,
-    message: &str,
-    now_ms: i64,
-) -> bool {
-    let cleaned = EnvironmentLifecycleError::record(None, message, now_ms).message;
-    recorded.is_none_or(|recorded| {
-        recorded.message != cleaned
-            || now_ms.saturating_sub(recorded.last_at_ms) >= LIFECYCLE_ERROR_REFRESH_MS
-    })
-}
-
-/// The outcome of the data-plane handshake at the Ready transition.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum DaemonProbe {
-    Ready(DaemonBuild),
-    /// envd speaks another protocol version and can never serve this
-    /// runtime.
-    Mismatch {
-        local: u32,
-        remote: u32,
-    },
-    /// envd did not complete the handshake; retried.
-    Unreachable(String),
-}
-
-/// Run `initialize` against a target's data route, with the provider
-/// credential, and close the connection again.
-pub(crate) async fn probe_daemon(endpoint: &str, credential: &SecretValue) -> DaemonProbe {
-    match DataClient::connect_initialized(endpoint, provider_connect_options(credential)).await {
-        Ok((client, initialized)) => {
-            let _ = client.close().await;
-            DaemonProbe::Ready(DaemonBuild::from_implementation(
-                &initialized.server_info,
-                initialized.protocol_version,
-            ))
-        }
-        Err(ClientError::VersionMismatch { local, remote, .. }) => {
-            DaemonProbe::Mismatch { local, remote }
-        }
-        Err(error) => DaemonProbe::Unreachable(format!(
-            "envd did not complete the data-plane handshake: {error}"
-        )),
-    }
-}
-
-/// The controller-plane owner of an environment's current incarnation.
+/// The controller-plane owner of a provisioned environment.
 pub(crate) fn target_owner(
     universe_id: uuid::Uuid,
     environment: &EnvironmentRecord,
-) -> Result<TargetOwner, ControllerError> {
-    let binding_id = environment
-        .binding_id()
-        .ok_or_else(|| invalid_registry("only provisioned environments have a provider target"))?;
-    let invalid = |error: environment_protocol::ids::IdError| {
-        invalid_registry(format!(
-            "environment ids do not fit the controller protocol: {error}"
-        ))
-    };
+) -> Result<TargetOwner, EnvironmentRegistryError> {
+    let invalid =
+        |error: environment_protocol::ids::IdError| EnvironmentRegistryError::InvalidInput {
+            message: format!("environment ids do not fit the controller protocol: {error}"),
+        };
     Ok(TargetOwner {
         universe_id: UniverseId::new(universe_id.to_string()).map_err(invalid)?,
-        binding_id: BindingId::new(binding_id.as_str()).map_err(invalid)?,
         environment_id: environment_protocol::ids::EnvironmentId::new(
             environment.environment_id.as_str(),
         )
         .map_err(invalid)?,
-        incarnation_id: IncarnationId::new(environment.incarnation.incarnation_id.as_str())
-            .map_err(invalid)?,
     })
 }
 
+/// The wire name of a target phase, for state messages.
+fn phase_name(phase: TargetPhase) -> &'static str {
+    match phase {
+        TargetPhase::Provisioning => "provisioning",
+        TargetPhase::Active => "active",
+        TargetPhase::Closing => "closing",
+        TargetPhase::Closed => "closed",
+        TargetPhase::Failed => "failed",
+        TargetPhase::Unknown => "unknown",
+    }
+}
+
+/// What a provider observation records: power only on an active target.
+fn observed_target(observation: &TargetObservation, now_ms: i64) -> ObservedTarget {
+    ObservedTarget {
+        phase: observation.phase,
+        power: observation
+            .power
+            .filter(|_| observation.phase == TargetPhase::Active),
+        message: observation
+            .message
+            .as_ref()
+            .map(|message| message.as_str().to_owned()),
+        observed_at_ms: now_ms,
+    }
+}
+
+fn observation_request(
+    environment: &EnvironmentRecord,
+    observation: &TargetObservation,
+    now_ms: i64,
+) -> RecordTargetObservation {
+    RecordTargetObservation {
+        environment_id: environment.environment_id.clone(),
+        provider_target_id: observation.target_id.clone(),
+        observed: observed_target(observation, now_ms),
+        public_endpoint: observation
+            .ingress
+            .as_ref()
+            .map(|ingress| ingress.endpoint.as_str().to_owned()),
+        observed_at_ms: now_ms,
+    }
+}
+
 /// Wall-clock milliseconds for reconciler writes.
-fn clock_ms() -> i64 {
+pub(crate) fn clock_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
 }
 
-fn invalid_registry(message: impl Into<String>) -> ControllerError {
-    ControllerError::Registry(EnvironmentRegistryError::InvalidInput {
-        message: message.into(),
-    })
-}
-
 impl EnvironmentService {
-    /// `environments/ingress/put`: record the public ingress intent. The
-    /// reconciler converges the provider toward it while the environment is
-    /// ready and records the realized endpoint. Enabling is refused up front
-    /// when the provider does not offer ingress.
-    pub(crate) async fn put_environment_ingress_record(
-        &self,
-        params: EnvironmentIngressPutParams,
-    ) -> Result<EnvironmentIngressPutResponse, AgentApiError> {
-        let environment_id = parse_registry_environment_id(params.environment_id)?;
-        let environment = EnvironmentStore::read_environment(self.store.as_ref(), &environment_id)
-            .await
-            .map_err(map_environments_error)?;
-        if matches!(
-            environment.status,
-            EnvironmentStatus::Closing | EnvironmentStatus::Closed | EnvironmentStatus::Failed
-        ) {
-            return Err(AgentApiError::rejected(
-                "public ingress requires an environment that is not closing, closed or failed",
-            ));
+    fn reconciler(&self) -> Reconciler<'_> {
+        Reconciler {
+            universe_id: self.store.config().universe_id,
+            environments: self.store.as_ref(),
+            providers: self.store.as_ref(),
+            connector: self.provider_controller_connector.as_ref(),
+            signals: &self.signals,
         }
-        let EnvironmentSource::Provisioned { provider_id, .. } = &environment.source else {
-            return Err(AgentApiError::rejected(
-                "provider-managed ingress is unavailable for external environments",
-            ));
-        };
-        if params.enabled {
-            self.require_controller_feature(provider_id, ControllerFeature::Ingress)
-                .await?;
-        }
-        let environment = EnvironmentStore::set_environment_ingress(
-            self.store.as_ref(),
-            SetEnvironmentIngress {
-                environment_id,
-                enabled: params.enabled,
-                updated_at_ms: now_ms()?,
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(EnvironmentIngressPutResponse {
-            environment: environment_view(&environment),
-        })
     }
 
     pub(crate) async fn create_external_environment_record(
         &self,
         params: EnvironmentExternalCreateParams,
     ) -> Result<EnvironmentExternalCreateResponse, AgentApiError> {
-        let request_id =
-            EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid environment request id: {error}"))
-            })?;
+        let request_id = parse_request_id(params.request_id)?;
         let endpoint = EnvironmentEndpoint::parse(&params.endpoint).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid environment endpoint: {error}"))
         })?;
@@ -269,7 +179,6 @@ impl EnvironmentService {
             CreateExternalEnvironment {
                 request_id,
                 environment_id: allocate_environment_id(),
-                incarnation_id: allocate_incarnation_id(),
                 endpoint,
                 display_name: params.display_name,
                 metadata: validated_caller_metadata(params.metadata)?,
@@ -283,132 +192,198 @@ impl EnvironmentService {
         })
     }
 
+    /// `environments/create`: accept the creation and nudge the
+    /// reconciler; provider I/O belongs to the reconciler.
     pub(crate) async fn create_environment_record(
         &self,
         params: EnvironmentCreateParams,
     ) -> Result<EnvironmentCreateResponse, AgentApiError> {
-        let environment = self.accept_environment_create(params).await?;
+        let request_id = parse_request_id(params.request_id)?;
+        let provider_id = parse_environment_provider_id(params.provider_id)?;
+        let template_id = EnvironmentTemplateId::try_new(params.template_id).map_err(|error| {
+            AgentApiError::invalid_request(format!("invalid environment template id: {error}"))
+        })?;
+        let idle = params.idle.as_ref().map(registry_idle_policy).transpose()?;
+        let environment = EnvironmentStore::create_environment(
+            self.store.as_ref(),
+            CreateEnvironment {
+                request_id,
+                environment_id: allocate_environment_id(),
+                provider_id,
+                template_id,
+                idle,
+                display_name: params.display_name,
+                metadata: validated_caller_metadata(params.metadata)?,
+                created_at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+        if environment.state == EnvironmentState::Provisioning {
+            self.signals.nudge_work();
+        }
         Ok(EnvironmentCreateResponse {
             environment: environment_view(&environment),
         })
     }
 
-    /// Accept environment creation; provider I/O belongs to the reconciler.
-    pub(crate) async fn accept_environment_create(
-        &self,
-        params: EnvironmentCreateParams,
-    ) -> Result<EnvironmentRecord, AgentApiError> {
-        let request_id =
-            EnvironmentProvisionRequestId::try_new(params.request_id).map_err(|error| {
-                AgentApiError::invalid_request(format!("invalid environment request id: {error}"))
-            })?;
-        let binding_id = parse_environment_provider_binding_id(params.binding_id)?;
-        let template_id = EnvironmentTemplateId::try_new(params.template_id).map_err(|error| {
-            AgentApiError::invalid_request(format!("invalid environment template id: {error}"))
-        })?;
-        let idle_policy = params.idle_policy.as_ref().map(registry_idle_policy);
-        if let Some(policy) = &idle_policy {
-            policy.validate().map_err(map_environments_error)?;
-        }
-        EnvironmentStore::create_environment(
-            self.store.as_ref(),
-            CreateEnvironment {
-                request_id,
-                environment_id: allocate_environment_id(),
-                incarnation_id: allocate_incarnation_id(),
-                binding_id,
-                template_id,
-                display_name: params.display_name,
-                metadata: validated_caller_metadata(params.metadata)?,
-                idle_policy,
-                created_at_ms: now_ms()?,
-            },
-        )
-        .await
-        .map_err(map_environments_error)
-    }
-
-    /// `environments/power/put`: record power intent. Provider support is
-    /// checked against the states observed on the current incarnation; the
-    /// reconciler converges asynchronously.
+    /// `environments/power/put`: a synchronous `target/setPower`
+    /// pass-through. Only the returned observation is stored.
     pub(crate) async fn put_environment_power_record(
         &self,
         params: EnvironmentPowerPutParams,
     ) -> Result<EnvironmentPowerPutResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
-        let desired_power = registry_power_state(params.power);
-        let environment = EnvironmentStore::read_environment(self.store.as_ref(), &environment_id)
-            .await
-            .map_err(map_environments_error)?;
-        if !matches!(environment.source, EnvironmentSource::Provisioned { .. }) {
-            return Err(AgentApiError::rejected(
-                "external environments have no power control",
-            ));
-        }
-        if desired_power != PowerState::Running
-            && !environment
-                .incarnation
-                .power_states
-                .contains(&desired_power)
-        {
-            return Err(AgentApiError::rejected(
-                if environment.incarnation.power_states.is_empty() {
-                    format!(
-                        "environment power state {desired_power} is unavailable: the provider has not reported power support for this environment yet"
-                    )
-                } else {
-                    format!(
-                        "environment power state {desired_power} is not supported by the provider (supported: {})",
-                        environment
-                            .incarnation
-                            .power_states
-                            .iter()
-                            .map(|state| state.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
+        let power = registry_power_state(params.power);
+        let environment = self
+            .open_provisioned(&environment_id, "power control")
+            .await?;
+        let environment = self
+            .pass_through(
+                &environment,
+                ControllerFeature::Power,
+                |controller, target| {
+                    Box::pin(async move {
+                        controller
+                            .client
+                            .call_with_timeout::<TargetSetPower>(
+                                &SetTargetPowerParams { target, power },
+                                PASS_THROUGH_TIMEOUT,
+                            )
+                            .await
+                    })
                 },
-            ));
-        }
-        let environment = EnvironmentStore::set_environment_power(
-            self.store.as_ref(),
-            SetEnvironmentPower {
-                environment_id,
-                desired_power,
-                updated_at_ms: now_ms()?,
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
+            )
+            .await?;
         Ok(EnvironmentPowerPutResponse {
             environment: environment_view(&environment),
         })
     }
 
-    /// `environments/idle-policy/put`: replace or clear the staged idle
-    /// policy of a provisioned environment.
-    pub(crate) async fn put_environment_idle_policy_record(
+    /// `environments/ingress/put`: a synchronous `ingress/ensure` or
+    /// `ingress/remove` pass-through; the reported endpoint is cached.
+    pub(crate) async fn put_environment_ingress_record(
         &self,
-        params: EnvironmentIdlePolicyPutParams,
-    ) -> Result<EnvironmentIdlePolicyPutResponse, AgentApiError> {
+        params: EnvironmentIngressPutParams,
+    ) -> Result<EnvironmentIngressPutResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
-        let idle_policy = params.idle_policy.as_ref().map(registry_idle_policy);
-        if let Some(policy) = &idle_policy {
-            policy.validate().map_err(map_environments_error)?;
-        }
-        let environment = EnvironmentStore::set_environment_idle_policy(
-            self.store.as_ref(),
-            SetEnvironmentIdlePolicy {
-                environment_id,
-                idle_policy,
-                updated_at_ms: now_ms()?,
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
-        Ok(EnvironmentIdlePolicyPutResponse {
+        let enabled = params.enabled;
+        let environment = self
+            .open_provisioned(&environment_id, "provider-managed ingress")
+            .await?;
+        let environment = self
+            .pass_through(
+                &environment,
+                ControllerFeature::Ingress,
+                |controller, target| {
+                    Box::pin(async move {
+                        if enabled {
+                            controller
+                                .client
+                                .call_with_timeout::<IngressEnsure>(
+                                    &EnsureIngressParams { target },
+                                    PASS_THROUGH_TIMEOUT,
+                                )
+                                .await
+                        } else {
+                            controller
+                                .client
+                                .call_with_timeout::<IngressRemove>(
+                                    &RemoveIngressParams { target },
+                                    PASS_THROUGH_TIMEOUT,
+                                )
+                                .await
+                        }
+                    })
+                },
+            )
+            .await?;
+        Ok(EnvironmentIngressPutResponse {
             environment: environment_view(&environment),
         })
+    }
+
+    /// The environment a pass-through acts on: provisioned and open.
+    async fn open_provisioned(
+        &self,
+        environment_id: &EnvironmentId,
+        what: &str,
+    ) -> Result<EnvironmentRecord, AgentApiError> {
+        let environment = EnvironmentStore::read_environment(self.store.as_ref(), environment_id)
+            .await
+            .map_err(map_environments_error)?;
+        if environment.provisioned().is_none() {
+            return Err(AgentApiError::rejected(format!(
+                "{what} is available only for provisioned environments"
+            )));
+        }
+        if environment.state != EnvironmentState::Open {
+            return Err(AgentApiError::rejected(format!(
+                "environment {environment_id} is {}; {what} needs an open environment",
+                environment.state
+            )));
+        }
+        Ok(environment)
+    }
+
+    /// Run one synchronous controller call against an open provisioned
+    /// environment's target and record the observation it answers.
+    async fn pass_through<F>(
+        &self,
+        environment: &EnvironmentRecord,
+        feature: ControllerFeature,
+        call: F,
+    ) -> Result<EnvironmentRecord, AgentApiError>
+    where
+        F: for<'a> FnOnce(
+            &'a ProviderController,
+            TargetRef,
+        ) -> futures_util::future::BoxFuture<
+            'a,
+            Result<environment_protocol::control::target::TargetResponse, ClientError>,
+        >,
+    {
+        let source = environment
+            .provisioned()
+            .ok_or_else(|| AgentApiError::internal("pass-through on a non-provisioned row"))?;
+        let provider_id = source.provider_id.clone();
+        let target_id = source.provider_target_id.clone().ok_or_else(|| {
+            AgentApiError::rejected(format!(
+                "environment {} has no provider target",
+                environment.environment_id
+            ))
+        })?;
+        let owner = target_owner(self.store.config().universe_id, environment)
+            .map_err(map_environments_error)?;
+        let controller = self
+            .connect_provider_controller(&provider_id)
+            .await
+            .map_err(ControllerError::into_api_error)?;
+        let answered = match controller.require(feature) {
+            Ok(()) => call(
+                &controller,
+                TargetRef {
+                    owner: owner.clone(),
+                    target_id: Some(target_id),
+                },
+            )
+            .await
+            .map_err(|error| controller.call_error(error)),
+            Err(error) => Err(error),
+        };
+        controller.close().await;
+        let observation = answered.map_err(ControllerError::into_api_error)?.target;
+        if observation.owner != owner {
+            return Err(AgentApiError::internal(format!(
+                "provider {provider_id} answered with another owner's target"
+            )));
+        }
+        EnvironmentStore::record_target_observation(
+            self.store.as_ref(),
+            observation_request(environment, &observation, now_ms()?),
+        )
+        .await
+        .map_err(map_environments_error)
     }
 
     pub(crate) async fn read_environment_record(
@@ -424,353 +399,374 @@ impl EnvironmentService {
         })
     }
 
+    /// `environments/update`: replace the display name and caller metadata.
+    pub(crate) async fn update_environment_record(
+        &self,
+        params: EnvironmentUpdateParams,
+    ) -> Result<EnvironmentUpdateResponse, AgentApiError> {
+        let environment_id = parse_registry_environment_id(params.environment_id)?;
+        let environment = EnvironmentStore::update_environment(
+            self.store.as_ref(),
+            UpdateEnvironment {
+                environment_id,
+                display_name: params.display_name,
+                metadata: validated_caller_metadata(params.metadata)?,
+                updated_at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+        Ok(EnvironmentUpdateResponse {
+            environment: environment_view(&environment),
+        })
+    }
+
     pub(crate) async fn list_environment_records(
         &self,
         params: EnvironmentListParams,
     ) -> Result<EnvironmentListResponse, AgentApiError> {
-        let environments = EnvironmentStore::list_environments(
+        let page = EnvironmentStore::list_environments(
             self.store.as_ref(),
             ListEnvironments {
-                metadata: params.metadata,
                 provider_id: params
                     .provider_id
-                    .map(super::providers::parse_environment_provider_id)
+                    .map(parse_environment_provider_id)
                     .transpose()?,
-                binding_id: params
-                    .binding_id
-                    .map(parse_environment_provider_binding_id)
-                    .transpose()?,
-                status: params.status.map(registry_lifecycle_status),
                 registration_key_id: params
                     .registration_key_id
                     .map(parse_registration_key_id)
+                    .transpose()?,
+                state: params.state.map(registry_state),
+                include_closed: params.include_closed,
+                metadata: params.metadata,
+                limit: params
+                    .limit
+                    .unwrap_or(::environments::LIST_ENVIRONMENTS_DEFAULT_LIMIT),
+                after: params
+                    .after
+                    .map(parse_registry_environment_id)
                     .transpose()?,
             },
         )
         .await
         .map_err(map_environments_error)?;
         Ok(EnvironmentListResponse {
-            environments: environments.iter().map(environment_view).collect(),
+            environments: page.environments.iter().map(environment_view).collect(),
+            next_after: page.next_after.map(|id| id.to_string()),
         })
     }
 
+    /// `environments/close`: a provisioned environment moves to `closing`
+    /// and the reconciler is nudged; external and registered ones close at
+    /// once and their live routes end.
     pub(crate) async fn close_environment_record(
         &self,
         params: EnvironmentCloseParams,
     ) -> Result<EnvironmentCloseResponse, AgentApiError> {
         let environment_id = parse_registry_environment_id(params.environment_id)?;
-        let environment = EnvironmentStore::begin_close_environment(
-            self.store.as_ref(),
-            BeginCloseEnvironment {
-                environment_id,
-                updated_at_ms: now_ms()?,
-            },
-        )
-        .await
-        .map_err(map_environments_error)?;
+        let environment = self
+            .begin_close(&environment_id, EnvironmentCloseReason::Requested)
+            .await?;
         Ok(EnvironmentCloseResponse {
             environment: environment_view(&environment),
         })
     }
 
-    /// Public entry point for one reconciliation pass; used by acceptance
-    /// tests that drive the reconciler deterministically instead of running
-    /// the background loop.
-    /// The pass includes steady environments.
-    pub async fn reconcile_environments_once(&self) -> Result<usize, AgentApiError> {
-        let mut pass = ProviderPass::default();
-        let result = self
-            .reconcile_environment_lifecycle_pass(&mut pass, ReconcileScope::WithSteady)
-            .await;
-        pass.close().await;
-        result
+    /// Begin closing one environment with `reason`, then signal: the
+    /// reconciler for a provisioned row, live routes for every row.
+    pub(crate) async fn begin_close(
+        &self,
+        environment_id: &EnvironmentId,
+        reason: EnvironmentCloseReason,
+    ) -> Result<EnvironmentRecord, AgentApiError> {
+        let environment = EnvironmentStore::begin_close_environment(
+            self.store.as_ref(),
+            BeginCloseEnvironment {
+                environment_id: environment_id.clone(),
+                reason,
+                at_ms: now_ms()?,
+            },
+        )
+        .await
+        .map_err(map_environments_error)?;
+        if environment.state == EnvironmentState::Closing {
+            self.signals.nudge_work();
+        }
+        self.signals
+            .revoke(self.store.config().universe_id, environment_id.as_str());
+        Ok(environment)
     }
 
-    /// Reconcile this universe once, sharing `pass`'s controller
-    /// connections and unhealthy-provider skips with the rest of the
-    /// deployment pass. The registered sweep and the provisioned pass run
-    /// independently: an error in one never stops the other, and one
-    /// environment's error never stops the rest.
-    pub(crate) async fn reconcile_environment_lifecycle_pass(
+    /// Start a work pass, as its own task, for every provider of this
+    /// universe with due provisioning or closing rows and no pass in
+    /// flight; returns how many it started. The caller never waits on a
+    /// provider, so a slow or hung controller delays only its own rows.
+    pub(crate) async fn start_environment_work(
         &self,
-        pass: &mut ProviderPass,
-        scope: ReconcileScope,
+        now_ms: i64,
+        work: &ProviderWork,
     ) -> Result<usize, AgentApiError> {
-        let registered = self.reconcile_registered_once().await;
-        let provisioned = self.reconcile_provisioned_once(pass, scope).await;
-        match (registered, provisioned) {
-            (Ok(registered), Ok(provisioned)) => Ok(registered + provisioned),
-            (Err(error), Ok(_)) => Err(AgentApiError {
-                message: format!("registered environments: {}", error.message),
-                ..error
-            }),
-            (Ok(_), Err(error)) => Err(error),
-            (Err(registered), Err(provisioned)) => Err(AgentApiError {
-                message: format!(
-                    "registered environments: {}; {}",
-                    registered.message, provisioned.message
-                ),
-                ..provisioned
-            }),
-        }
-    }
-
-    /// One pass over every environment `scope` selects. Calls are
-    /// idempotent per owner, so a crash after controller I/O is recovered
-    /// by a later pass making the same calls again.
-    async fn reconcile_provisioned_once(
-        &self,
-        pass: &mut ProviderPass,
-        scope: ReconcileScope,
-    ) -> Result<usize, AgentApiError> {
-        let environments =
-            EnvironmentStore::list_environments_needing_reconcile(self.store.as_ref(), scope)
-                .await
-                .map_err(map_environments_error)?;
-        let mut changed = 0;
-        let mut first_error: Option<AgentApiError> = None;
-        for environment in environments {
-            match self.reconcile_environment(pass, &environment).await {
-                Ok(did_change) => changed += usize::from(did_change),
-                Err(error) => {
-                    tracing::debug!(
-                        target: "temporal_runtime",
-                        environment_id = %environment.environment_id,
-                        %error,
-                        "environment reconcile step failed"
-                    );
-                    first_error.get_or_insert(AgentApiError {
-                        message: format!(
-                            "environment {}: {}",
-                            environment.environment_id, error.message
-                        ),
-                        ..error
-                    });
-                }
-            }
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(changed),
-        }
-    }
-
-    async fn reconcile_environment(
-        &self,
-        pass: &mut ProviderPass,
-        environment: &EnvironmentRecord,
-    ) -> Result<bool, AgentApiError> {
-        let EnvironmentSource::Provisioned { provider_id, .. } = &environment.source else {
-            // External and registered environments hold no provider target.
-            if environment.status == EnvironmentStatus::Closing {
-                self.finish_close(environment)
-                    .await
-                    .map_err(map_environments_error)?;
-                return Ok(true);
-            }
-            return Ok(false);
-        };
-        let step = match environment.status {
-            EnvironmentStatus::Closing => self.close_target(pass, environment, provider_id).await,
-            EnvironmentStatus::Provisioning
-            | EnvironmentStatus::Booting
-            | EnvironmentStatus::Unknown => {
-                self.observe_target(pass, environment, provider_id).await
-            }
-            _ if environment.power_diverges() => {
-                self.converge_power(pass, environment, provider_id).await
-            }
-            // Steady targets (and ready ones whose ingress diverges) are
-            // observed with `target/get`: a vanished target fails the
-            // environment, and ingress converges from the observation.
-            _ if environment.is_steady_provisioned() => {
-                self.observe_target(pass, environment, provider_id).await
-            }
-            _ => return Ok(false),
-        };
-        match step {
-            Ok(changed) => Ok(changed),
-            Err(error) => {
-                pass.observe_failure(&error).await;
-                self.controller_failure(environment, error).await
-            }
-        }
-    }
-
-    /// Decide what a failed controller interaction does to the environment.
-    async fn controller_failure(
-        &self,
-        environment: &EnvironmentRecord,
-        error: ControllerError,
-    ) -> Result<bool, AgentApiError> {
-        if let ControllerError::Registry(error) = error {
-            return Err(map_environments_error(error));
-        }
-        let converging = matches!(
-            environment.status,
-            EnvironmentStatus::Closing
-                | EnvironmentStatus::Provisioning
-                | EnvironmentStatus::Booting
-                | EnvironmentStatus::Unknown
-        );
-        if !converging && error.disposition() != ControllerDisposition::Gone {
-            // A steady environment whose power change failed keeps serving
-            // in its current state. The error is reported with the pass
-            // instead of recorded, so it cannot start a provisioning
-            // deadline that a later wake would inherit.
-            return Err(error.into_api_error());
-        }
-        self.decide_controller_failure(environment, error)
+        let universe_id = self.store.config().universe_id;
+        let rows = self
+            .store
+            .list_environment_work(now_ms, WORK_BATCH)
             .await
-            .map_err(map_environments_error)
+            .map_err(map_environments_error)?;
+        let mut started = 0;
+        for (provider_id, rows) in by_provider(rows) {
+            let Some(claim) = work.claim(universe_id, &provider_id) else {
+                continue;
+            };
+            let service = self.clone();
+            tokio::spawn(async move {
+                let outcome = service
+                    .reconciler()
+                    .work_provider(provider_id, rows, now_ms)
+                    .await;
+                claim.finish(outcome.into_result());
+            });
+            started += 1;
+        }
+        Ok(started)
     }
 
-    async fn decide_controller_failure(
+    /// One display sweep over this universe's open provisioned rows.
+    pub(crate) async fn run_display_sweep(&self, now_ms: i64) -> Result<usize, AgentApiError> {
+        self.reconciler().run_display_sweep(now_ms).await
+    }
+
+    /// One work pass that treats every scheduled row as due, then the
+    /// display sweep of this universe; acceptance tests drive the
+    /// reconciler with it instead of the background loop.
+    pub async fn reconcile_environments_once(&self) -> Result<usize, AgentApiError> {
+        let reconciler = self.reconciler();
+        let worked = reconciler.run_work(i64::MAX, clock_ms()).await;
+        let swept = reconciler.run_display_sweep(clock_ms()).await;
+        Ok(worked? + swept?)
+    }
+}
+
+/// The reconciler of one universe, over its stores.
+pub(crate) struct Reconciler<'a> {
+    pub(crate) universe_id: uuid::Uuid,
+    pub(crate) environments: &'a dyn EnvironmentStore,
+    pub(crate) providers: &'a dyn EnvironmentProviderStore,
+    pub(crate) connector: &'a dyn ProviderControllerConnector,
+    pub(crate) signals: &'a EnvironmentSignals,
+}
+
+/// What one pass over a group of rows did.
+#[derive(Default)]
+struct PassOutcome {
+    changed: usize,
+    first_error: Option<AgentApiError>,
+}
+
+impl PassOutcome {
+    fn absorb(&mut self, environment_id: &EnvironmentId, result: Result<bool, AgentApiError>) {
+        match result {
+            Ok(changed) => self.changed += usize::from(changed),
+            Err(error) => {
+                tracing::debug!(
+                    target: "temporal_runtime",
+                    %environment_id,
+                    %error,
+                    "environment reconcile step failed"
+                );
+                self.first_error.get_or_insert(AgentApiError {
+                    message: format!("environment {environment_id}: {}", error.message),
+                    ..error
+                });
+            }
+        }
+    }
+
+    fn merge(&mut self, other: PassOutcome) {
+        self.changed += other.changed;
+        if self.first_error.is_none() {
+            self.first_error = other.first_error;
+        }
+    }
+
+    fn into_result(self) -> Result<usize, AgentApiError> {
+        match self.first_error {
+            Some(error) => Err(error),
+            None => Ok(self.changed),
+        }
+    }
+}
+
+/// Group rows by provider; rows without one are not provisioned.
+fn by_provider(
+    rows: Vec<EnvironmentRecord>,
+) -> BTreeMap<EnvironmentProviderId, Vec<EnvironmentRecord>> {
+    let mut groups: BTreeMap<EnvironmentProviderId, Vec<EnvironmentRecord>> = BTreeMap::new();
+    for row in rows {
+        if let Some(provider_id) = row.provider_id().cloned() {
+            groups.entry(provider_id).or_default().push(row);
+        }
+    }
+    groups
+}
+
+/// How a step's registry failure is treated: the row's own records that
+/// cannot be written (a contract breach the provider caused) back off like
+/// a transient error; a missing row is done; a store failure is the pass's.
+fn step_registry_error(error: &EnvironmentRegistryError) -> Option<String> {
+    match error {
+        EnvironmentRegistryError::InvalidInput { message } => Some(message.clone()),
+        EnvironmentRegistryError::AlreadyExists { kind, id } => {
+            Some(format!("the provider's answer conflicts with {kind} {id}"))
+        }
+        _ => None,
+    }
+}
+
+impl Reconciler<'_> {
+    /// Work on the rows due at `list_at_ms`; `now_ms` stamps writes and
+    /// decides deadlines and backoff. Providers run in parallel, each with
+    /// at most [`PROVIDER_CONCURRENCY`] rows in flight over one controller
+    /// connection.
+    pub(crate) async fn run_work(
         &self,
-        environment: &EnvironmentRecord,
-        error: ControllerError,
-    ) -> Result<bool, EnvironmentRegistryError> {
-        let error = match error {
-            ControllerError::Registry(error) => return Err(error),
-            error => error,
+        list_at_ms: i64,
+        now_ms: i64,
+    ) -> Result<usize, AgentApiError> {
+        let rows = self
+            .environments
+            .list_environment_work(list_at_ms, WORK_BATCH)
+            .await
+            .map_err(map_environments_error)?;
+        let groups = by_provider(rows);
+        let outcomes = futures_util::future::join_all(
+            groups
+                .into_iter()
+                .map(|(provider_id, rows)| self.work_provider(provider_id, rows, now_ms)),
+        )
+        .await;
+        let mut outcome = PassOutcome::default();
+        for provider in outcomes {
+            outcome.merge(provider);
+        }
+        outcome.into_result()
+    }
+
+    async fn work_provider(
+        &self,
+        provider_id: EnvironmentProviderId,
+        rows: Vec<EnvironmentRecord>,
+        now_ms: i64,
+    ) -> PassOutcome {
+        let mut outcome = PassOutcome::default();
+        let controller =
+            match connect_provider_controller(self.providers, self.connector, &provider_id).await {
+                Ok(controller) => Some(controller),
+                Err(error) => {
+                    let unregistered = matches!(
+                        error,
+                        ControllerError::Registry(EnvironmentRegistryError::NotFound { .. })
+                    );
+                    let message = error.to_string();
+                    for row in &rows {
+                        let result = self
+                            .without_controller(row, unregistered, &message, now_ms)
+                            .await;
+                        outcome.absorb(&row.environment_id, result);
+                    }
+                    None
+                }
+            };
+        let Some(controller) = controller else {
+            return outcome;
         };
-        let message = error.to_string();
-        let disposition = error.disposition();
-        match environment.status {
-            EnvironmentStatus::Closing if disposition == ControllerDisposition::Gone => {
-                self.finish_close(environment).await?;
-                Ok(true)
+        let controller = &controller;
+        let results = stream::iter(rows)
+            .map(|row| async move {
+                let result = self.step(controller, &row, now_ms).await;
+                (row.environment_id, result)
+            })
+            .buffer_unordered(PROVIDER_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+        controller.close().await;
+        for (environment_id, result) in results {
+            outcome.absorb(&environment_id, result);
+        }
+        outcome
+    }
+
+    /// A due row whose provider controller could not be reached. A closing
+    /// row of a provider that is no longer registered is closed: nothing
+    /// can reach its target any more.
+    async fn without_controller(
+        &self,
+        row: &EnvironmentRecord,
+        unregistered: bool,
+        message: &str,
+        now_ms: i64,
+    ) -> Result<bool, AgentApiError> {
+        let result = match row.state {
+            EnvironmentState::Closing if unregistered => {
+                tracing::warn!(
+                    target: "temporal_runtime",
+                    environment_id = %row.environment_id,
+                    "closing an environment whose provider is no longer registered"
+                );
+                self.finish_close(row, now_ms).await
             }
-            EnvironmentStatus::Closing => self.record_lifecycle_error(environment, &message).await,
-            EnvironmentStatus::Provisioning
-            | EnvironmentStatus::Booting
-            | EnvironmentStatus::Unknown => match disposition {
-                ControllerDisposition::Transient => {
-                    self.transient_failure(environment, &message).await
-                }
-                ControllerDisposition::Refused => self.fail(environment, &message, None).await,
-                ControllerDisposition::Gone => {
-                    let message = if environment.incarnation.provider_target_id.is_some() {
-                        format!("provider target disappeared: {message}")
-                    } else {
-                        message
-                    };
-                    self.fail(environment, &message, None).await
-                }
+            EnvironmentState::Provisioning if provisioning_deadline_passed(row, now_ms) => {
+                self.deadline(row, now_ms).await
+            }
+            EnvironmentState::Provisioning if unregistered => {
+                self.fail(row, message, None, now_ms).await
+            }
+            _ => self.backoff(row, message, now_ms).await,
+        };
+        result.map_err(map_environments_error)
+    }
+
+    async fn step(
+        &self,
+        controller: &ProviderController,
+        row: &EnvironmentRecord,
+        now_ms: i64,
+    ) -> Result<bool, AgentApiError> {
+        let attempt = match row.state {
+            EnvironmentState::Provisioning => self.provision_step(controller, row, now_ms).await,
+            EnvironmentState::Closing => self.close_step(controller, row, now_ms).await,
+            _ => Ok(false),
+        };
+        match attempt {
+            Ok(changed) => Ok(changed),
+            Err(EnvironmentRegistryError::NotFound { .. }) => Ok(false),
+            Err(error) => match step_registry_error(&error) {
+                Some(message) => self
+                    .backoff(row, &message, now_ms)
+                    .await
+                    .map_err(map_environments_error),
+                None => Err(map_environments_error(error)),
             },
-            // Only a vanished target reaches here for a steady environment.
-            _ => {
-                self.fail(
-                    environment,
-                    &format!("provider target disappeared: {message}"),
-                    None,
-                )
-                .await
-            }
         }
     }
 
-    /// Keep the status and record the error; fail once errors persisted
-    /// past the provisioning deadline.
-    async fn transient_failure(
+    /// One step of a provisioning row: create while no target id is
+    /// recorded, observe once one is, and open after one data-plane
+    /// handshake with the target's envd.
+    async fn provision_step(
         &self,
-        environment: &EnvironmentRecord,
-        message: &str,
+        controller: &ProviderController,
+        row: &EnvironmentRecord,
+        now_ms: i64,
     ) -> Result<bool, EnvironmentRegistryError> {
-        let now = clock_ms();
-        if provisioning_deadline_passed(environment.lifecycle_error.as_ref(), now) {
-            return self
-                .fail(
-                    environment,
-                    &format!(
-                        "provisioning did not finish within {} minutes; last error: {message}",
-                        PROVISIONING_DEADLINE_MS / 60_000
-                    ),
-                    None,
-                )
-                .await;
+        if provisioning_deadline_passed(row, now_ms) {
+            return self.deadline(row, now_ms).await;
         }
-        self.record_lifecycle_error(environment, message).await
-    }
-
-    async fn record_lifecycle_error(
-        &self,
-        environment: &EnvironmentRecord,
-        message: &str,
-    ) -> Result<bool, EnvironmentRegistryError> {
-        let now = clock_ms();
-        if !lifecycle_error_is_news(environment.lifecycle_error.as_ref(), message, now) {
+        let Some(source) = row.provisioned() else {
             return Ok(false);
-        }
-        EnvironmentStore::record_environment_lifecycle_error(
-            self.store.as_ref(),
-            RecordEnvironmentLifecycleError {
-                environment_id: environment.environment_id.clone(),
-                message: message.to_owned(),
-                observed_at_ms: now,
-            },
-        )
-        .await?;
-        Ok(true)
-    }
-
-    async fn fail(
-        &self,
-        environment: &EnvironmentRecord,
-        message: &str,
-        daemon_build: Option<DaemonBuild>,
-    ) -> Result<bool, EnvironmentRegistryError> {
-        EnvironmentStore::fail_environment_lifecycle(
-            self.store.as_ref(),
-            FailEnvironmentLifecycle {
-                environment_id: environment.environment_id.clone(),
-                message: message.to_owned(),
-                daemon_build,
-                observed_at_ms: clock_ms(),
-            },
-        )
-        .await?;
-        Ok(true)
-    }
-
-    async fn finish_close(
-        &self,
-        environment: &EnvironmentRecord,
-    ) -> Result<(), EnvironmentRegistryError> {
-        EnvironmentStore::finish_close_environment(
-            self.store.as_ref(),
-            FinishCloseEnvironment {
-                environment_id: environment.environment_id.clone(),
-                observed_at_ms: clock_ms(),
-            },
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Converging and steady environments: create (or adopt) while no
-    /// target id is recorded, observe with `target/get` once one is.
-    /// Creation is never re-sent for a known target.
-    async fn observe_target(
-        &self,
-        pass: &mut ProviderPass,
-        environment: &EnvironmentRecord,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<bool, ControllerError> {
-        let controller = pass
-            .controller(
-                self.store.as_ref(),
-                self.provider_controller_connector.as_ref(),
-                provider_id,
-            )
-            .await?;
-        let owner = target_owner(self.store.config().universe_id, environment)?;
-        let response = match (
-            &environment.incarnation.provider_target_id,
-            &environment.incarnation.template_id,
-            &environment.incarnation.adoption_source_target,
-        ) {
-            (Some(target_id), _, _) => {
+        };
+        let owner = target_owner(self.universe_id, row)?;
+        let answer = match &source.provider_target_id {
+            Some(target_id) => {
                 controller
                     .client
                     .get_target(&GetTargetParams {
@@ -781,485 +777,582 @@ impl EnvironmentService {
                     })
                     .await
             }
-            (None, Some(template_id), None) => {
-                let template_id = TemplateId::new(template_id.as_str()).map_err(|error| {
-                    invalid_registry(format!("template id does not fit the protocol: {error}"))
-                })?;
+            None => {
+                let template_id =
+                    TemplateId::new(source.template_id.as_str()).map_err(|error| {
+                        EnvironmentRegistryError::InvalidInput {
+                            message: format!("template id does not fit the protocol: {error}"),
+                        }
+                    })?;
                 controller
                     .client
                     .create_target(&CreateTargetParams {
                         owner: owner.clone(),
                         template_id,
+                        display_name: row
+                            .display_name
+                            .as_deref()
+                            .and_then(|name| DisplayName::new(name).ok()),
+                        idle: source.idle.clone(),
                     })
                     .await
-            }
-            (None, None, Some(source_target)) => {
-                controller.require(ControllerFeature::AdoptTarget)?;
-                let source_target =
-                    ProviderNativeRef::new(source_target.as_str()).map_err(|error| {
-                        invalid_registry(format!("adoption source is not valid: {error}"))
-                    })?;
-                controller
-                    .client
-                    .adopt_target(&AdoptTargetParams {
-                        owner: owner.clone(),
-                        source_target,
-                    })
-                    .await
-            }
-            _ => {
-                return Err(invalid_registry(
-                    "provisioned incarnation has neither a template nor an adoption source",
-                ));
             }
         };
-        let observation = response
-            .map_err(|error| controller.call_error(error))?
-            .target;
-        self.apply_observation(&controller, environment, &owner, observation)
-            .await
+        let observation = match answer {
+            Ok(response) => response.target,
+            Err(error) => {
+                let error = controller.call_error(error);
+                return match error.disposition() {
+                    ControllerDisposition::Transient => {
+                        self.backoff(row, &error.to_string(), now_ms).await
+                    }
+                    ControllerDisposition::Refused => {
+                        self.fail(row, &error.to_string(), None, now_ms).await
+                    }
+                    ControllerDisposition::Gone => {
+                        let message = if source.provider_target_id.is_some() {
+                            format!("the provider target disappeared: {error}")
+                        } else {
+                            error.to_string()
+                        };
+                        self.fail(row, &message, None, now_ms).await
+                    }
+                };
+            }
+        };
+        if observation.owner != owner {
+            return self
+                .backoff(
+                    row,
+                    &format!(
+                        "provider {} answered with another owner's target",
+                        controller.provider_id
+                    ),
+                    now_ms,
+                )
+                .await;
+        }
+        let recorded = self
+            .environments
+            .record_target_observation(observation_request(row, &observation, now_ms))
+            .await?;
+        // A close that landed while this step was in flight owns the row's
+        // schedule now; its own step picks the target up next.
+        if recorded.state != EnvironmentState::Provisioning {
+            return Ok(true);
+        }
+        let message = observation.message.as_ref().map(|message| message.as_str());
+        match observation.phase {
+            TargetPhase::Provisioning => {
+                let note = match message {
+                    Some(message) => format!("waiting for the provider: {message}"),
+                    None => "waiting for the provider".to_owned(),
+                };
+                self.schedule(&recorded, now_ms + POLL_MS, 0, Some(note), now_ms)
+                    .await
+            }
+            TargetPhase::Active => {
+                self.open_handshake(controller, &recorded, &owner, now_ms)
+                    .await
+            }
+            TargetPhase::Failed => {
+                self.fail(
+                    &recorded,
+                    message.unwrap_or("the provider reported the target failed"),
+                    None,
+                    now_ms,
+                )
+                .await
+            }
+            TargetPhase::Closing | TargetPhase::Closed => {
+                self.fail(
+                    &recorded,
+                    "the provider ended the target before it opened",
+                    None,
+                    now_ms,
+                )
+                .await
+            }
+            TargetPhase::Unknown => {
+                self.backoff(
+                    &recorded,
+                    message.unwrap_or("the provider cannot tell the target's state"),
+                    now_ms,
+                )
+                .await
+            }
+        }
     }
 
-    /// Steady environments whose power diverges from the intent: one
-    /// idempotent `target/setPower` per pass. A target that is not active
-    /// is observed instead.
-    async fn converge_power(
+    /// The only readiness proof: `initialize` over the target's data route.
+    /// A typed refusal that may clear is waited out at its `Retry-After`.
+    async fn open_handshake(
         &self,
-        pass: &mut ProviderPass,
-        environment: &EnvironmentRecord,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<bool, ControllerError> {
-        let Some(target_id) = environment.incarnation.provider_target_id.clone() else {
-            return self.observe_target(pass, environment, provider_id).await;
+        controller: &ProviderController,
+        row: &EnvironmentRecord,
+        owner: &TargetOwner,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let Some(target_id) = row
+            .provisioned()
+            .and_then(|source| source.provider_target_id.clone())
+        else {
+            return self
+                .backoff(
+                    row,
+                    "the provider reported an active target without a targetId",
+                    now_ms,
+                )
+                .await;
         };
-        let controller = pass
-            .controller(
-                self.store.as_ref(),
-                self.provider_controller_connector.as_ref(),
-                provider_id,
-            )
-            .await?;
-        let owner = target_owner(self.store.config().universe_id, environment)?;
-        let target = TargetRef {
-            owner: owner.clone(),
-            target_id: Some(target_id),
+        let route = provider_data_route(&controller.data_route_base, owner, &target_id);
+        match DataClient::connect_initialized(
+            &route,
+            provider_connect_options(controller.credential.as_ref()),
+        )
+        .await
+        {
+            Ok((client, initialized)) => {
+                let _ = client.close().await;
+                let written = self
+                    .environments
+                    .open_environment(OpenEnvironment {
+                        environment_id: row.environment_id.clone(),
+                        daemon_build: DaemonBuild::from_implementation(
+                            &initialized.server_info,
+                            initialized.protocol_version,
+                        ),
+                        at_ms: now_ms,
+                    })
+                    .await?;
+                Ok(written.state == EnvironmentState::Open)
+            }
+            Err(ClientError::VersionMismatch { local, remote, .. }) => {
+                self.fail(
+                    row,
+                    &format!(
+                        "the environment's envd speaks protocol version {remote}; this runtime requires {local}"
+                    ),
+                    Some(DaemonBuild {
+                        version: None,
+                        git_sha: None,
+                        protocol_version: remote,
+                    }),
+                    now_ms,
+                )
+                .await
+            }
+            Err(error) => match error.data_route_refusal() {
+                Some(refusal) if refusal.is_retryable() => {
+                    let retry_after = i64::try_from(
+                        error.retry_after_ms().unwrap_or(WAIT_RETRY_AFTER_MS),
+                    )
+                    .unwrap_or(i64::MAX);
+                    self.schedule(
+                        row,
+                        now_ms.saturating_add(retry_after),
+                        0,
+                        Some(format!("waiting for envd: {refusal}")),
+                        now_ms,
+                    )
+                    .await
+                }
+                Some(DataRouteRefusal::Gone {}) => {
+                    self.fail(row, "the provider closed the target", None, now_ms)
+                        .await
+                }
+                Some(DataRouteRefusal::Failed { message }) => {
+                    self.fail(row, message.as_str(), None, now_ms).await
+                }
+                _ => {
+                    self.backoff(
+                        row,
+                        &format!("envd did not complete the data-plane handshake: {error}"),
+                        now_ms,
+                    )
+                    .await
+                }
+            },
+        }
+    }
+
+    /// One step of a closing row: `target/close` by owner, with the target
+    /// id when one is recorded, until the provider reports it gone. Closing
+    /// has no deadline: a provider still closing is polled, and any other
+    /// phase it answers (a target it cannot remove) backs off like an
+    /// error.
+    async fn close_step(
+        &self,
+        controller: &ProviderController,
+        row: &EnvironmentRecord,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let owner = target_owner(self.universe_id, row)?;
+        let target_id = row
+            .provisioned()
+            .and_then(|source| source.provider_target_id.clone());
+        match controller
+            .client
+            .close_target(&CloseTargetParams {
+                target: TargetRef { owner, target_id },
+            })
+            .await
+        {
+            Ok(response) => match response.target.phase {
+                TargetPhase::Closed => self.finish_close(row, now_ms).await,
+                TargetPhase::Closing => {
+                    self.schedule(
+                        row,
+                        now_ms + POLL_MS,
+                        0,
+                        Some("waiting for the provider to close the target".to_owned()),
+                        now_ms,
+                    )
+                    .await
+                }
+                phase => {
+                    let message = match response.target.message.as_ref() {
+                        Some(message) => format!(
+                            "the provider answered close with a {} target: {}",
+                            phase_name(phase),
+                            message.as_str()
+                        ),
+                        None => format!(
+                            "the provider answered close with a {} target",
+                            phase_name(phase)
+                        ),
+                    };
+                    self.backoff(row, &message, now_ms).await
+                }
+            },
+            Err(error) if call_disposition(&error) == ControllerDisposition::Gone => {
+                self.finish_close(row, now_ms).await
+            }
+            Err(error) => {
+                let error = controller.call_error(error);
+                self.backoff(row, &error.to_string(), now_ms).await
+            }
+        }
+    }
+
+    /// Observe every open provisioned row with `target/get` and record what
+    /// the provider reports. A failed target fails its row; a closed or
+    /// missing one closes it (`provider_ended`). Power is never touched.
+    pub(crate) async fn run_display_sweep(&self, now_ms: i64) -> Result<usize, AgentApiError> {
+        let rows = self
+            .environments
+            .list_open_provisioned_environments()
+            .await
+            .map_err(map_environments_error)?;
+        let outcomes = futures_util::future::join_all(
+            by_provider(rows)
+                .into_iter()
+                .map(|(provider_id, rows)| self.sweep_provider(provider_id, rows, now_ms)),
+        )
+        .await;
+        let mut outcome = PassOutcome::default();
+        for provider in outcomes {
+            outcome.merge(provider);
+        }
+        outcome.into_result()
+    }
+
+    async fn sweep_provider(
+        &self,
+        provider_id: EnvironmentProviderId,
+        rows: Vec<EnvironmentRecord>,
+        now_ms: i64,
+    ) -> PassOutcome {
+        let mut outcome = PassOutcome::default();
+        let controller =
+            match connect_provider_controller(self.providers, self.connector, &provider_id).await {
+                Ok(controller) => controller,
+                Err(error) => {
+                    tracing::debug!(
+                        target: "temporal_runtime",
+                        %provider_id,
+                        %error,
+                        "display sweep skipped an unreachable provider"
+                    );
+                    return outcome;
+                }
+            };
+        let controller = &controller;
+        let results = stream::iter(rows)
+            .map(|row| async move {
+                let result = self.observe_open(controller, &row, now_ms).await;
+                (row.environment_id, result)
+            })
+            .buffer_unordered(PROVIDER_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+        controller.close().await;
+        for (environment_id, result) in results {
+            outcome.absorb(
+                &environment_id,
+                match result {
+                    Err(EnvironmentRegistryError::NotFound { .. }) => Ok(false),
+                    other => other.map_err(map_environments_error),
+                },
+            );
+        }
+        outcome
+    }
+
+    async fn observe_open(
+        &self,
+        controller: &ProviderController,
+        row: &EnvironmentRecord,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let Some(target_id) = row
+            .provisioned()
+            .and_then(|source| source.provider_target_id.clone())
+        else {
+            return Ok(false);
         };
+        let owner = target_owner(self.universe_id, row)?;
         let observation = match controller
             .client
-            .set_target_power(&SetTargetPowerParams {
-                target: target.clone(),
-                power: environment.desired_power,
+            .get_target(&GetTargetParams {
+                target: TargetRef {
+                    owner: owner.clone(),
+                    target_id: Some(target_id),
+                },
             })
             .await
         {
             Ok(response) => response.target,
+            Err(error) if call_disposition(&error) == ControllerDisposition::Gone => {
+                return self.end(row, now_ms).await;
+            }
             Err(error) => {
-                let error = controller.call_error(error);
-                if error.precondition() != Some(PreconditionReason::TargetNotActive) {
-                    return Err(error);
-                }
-                controller
-                    .client
-                    .get_target(&GetTargetParams { target })
-                    .await
-                    .map_err(|error| controller.call_error(error))?
-                    .target
-            }
-        };
-        self.apply_observation(&controller, environment, &owner, observation)
-            .await
-    }
-
-    /// Close by owner, with the target id when one is recorded: the provider
-    /// destroys whatever the owner holds, ingress included, and answers
-    /// `closed` once nothing is left. A closing target is closed again on
-    /// later passes (close is idempotent).
-    async fn close_target(
-        &self,
-        pass: &mut ProviderPass,
-        environment: &EnvironmentRecord,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<bool, ControllerError> {
-        let controller = match pass
-            .controller(
-                self.store.as_ref(),
-                self.provider_controller_connector.as_ref(),
-                provider_id,
-            )
-            .await
-        {
-            Err(ControllerError::Registry(EnvironmentRegistryError::NotFound { .. })) => {
-                // The provider record is gone, so nothing can reach its
-                // targets any more.
-                tracing::warn!(
+                tracing::debug!(
                     target: "temporal_runtime",
-                    environment_id = %environment.environment_id,
-                    %provider_id,
-                    "closing an environment whose provider is no longer registered"
+                    environment_id = %row.environment_id,
+                    %error,
+                    "display sweep could not observe a target"
                 );
-                self.finish_close(environment).await?;
-                return Ok(true);
+                return Ok(false);
             }
-            other => other?,
         };
-        let owner = target_owner(self.store.config().universe_id, environment)?;
-        let observation = controller
-            .client
-            .close_target(&CloseTargetParams {
-                target: TargetRef {
-                    owner,
-                    target_id: environment.incarnation.provider_target_id.clone(),
-                },
-            })
-            .await
-            .map_err(|error| controller.call_error(error))?
-            .target;
-        if observation.state.phase == TargetPhase::Closed {
-            self.finish_close(environment).await?;
-            return Ok(true);
+        if observation.owner != owner {
+            return Ok(false);
         }
-        let (_, changed) = self
-            .record_observation(environment, &observation, environment.status, None)
+        let recorded = self
+            .environments
+            .record_target_observation(observation_request(row, &observation, now_ms))
             .await?;
-        Ok(changed)
-    }
-
-    /// Record an observation and act on it: the Ready transition runs the
-    /// data-plane handshake first, and ingress converges against the
-    /// recorded intent on running targets.
-    async fn apply_observation(
-        &self,
-        controller: &ProviderController,
-        environment: &EnvironmentRecord,
-        owner: &TargetOwner,
-        observation: TargetObservation,
-    ) -> Result<bool, ControllerError> {
-        if observation.owner != *owner {
-            return Err(controller.call_error(ClientError::Decode(
-                "the provider answered with another owner's target".to_owned(),
-            )));
-        }
-        match target_verdict(&observation.state) {
-            // A ready environment became ready through the runtime's own
-            // data-plane handshake; the provider's liveness probe alone does
-            // not demote it.
-            TargetVerdict::Status(EnvironmentStatus::Booting)
-                if environment.status == EnvironmentStatus::Ready =>
-            {
-                let (recorded, changed) = self
-                    .record_observation(environment, &observation, EnvironmentStatus::Ready, None)
-                    .await?;
-                let converged = self
-                    .converge_ingress(controller, &recorded, owner, &observation)
-                    .await;
-                Ok(changed || converged)
+        match observation.phase {
+            TargetPhase::Failed => {
+                let message = observation
+                    .message
+                    .as_ref()
+                    .map(|message| message.as_str())
+                    .unwrap_or("the provider reported the target failed");
+                self.fail(&recorded, message, None, now_ms).await
             }
-            TargetVerdict::Status(status) => {
-                let (recorded, changed) = self
-                    .record_observation(environment, &observation, status, None)
-                    .await?;
-                let stalled = environment.status == status
-                    && matches!(
-                        status,
-                        EnvironmentStatus::Provisioning | EnvironmentStatus::Booting
-                    );
-                if !stalled {
-                    return Ok(changed);
-                }
-                let noted = self
-                    .transient_failure(&recorded, &waiting_note(status, &observation.state))
-                    .await?;
-                Ok(changed || noted)
-            }
-            TargetVerdict::Failed(message) => {
-                self.record_observation(environment, &observation, environment.status, None)
-                    .await?;
-                Ok(self.fail(environment, &message, None).await?)
-            }
-            TargetVerdict::Unknown(message) => {
-                let (recorded, _) = self
-                    .record_observation(environment, &observation, EnvironmentStatus::Unknown, None)
-                    .await?;
-                self.transient_failure(&recorded, &message).await?;
-                Ok(true)
-            }
-            TargetVerdict::DaemonReady if environment.status == EnvironmentStatus::Ready => {
-                let (recorded, changed) = self
-                    .record_observation(environment, &observation, EnvironmentStatus::Ready, None)
-                    .await?;
-                let converged = self
-                    .converge_ingress(controller, &recorded, owner, &observation)
-                    .await;
-                Ok(changed || converged)
-            }
-            TargetVerdict::DaemonReady => {
-                let Some(target_id) = &observation.target_id else {
-                    let (recorded, _) = self
-                        .record_observation(
-                            environment,
-                            &observation,
-                            EnvironmentStatus::Booting,
-                            None,
-                        )
-                        .await?;
-                    self.transient_failure(
-                        &recorded,
-                        "the provider reported a running target without a targetId",
-                    )
-                    .await?;
-                    return Ok(true);
-                };
-                let endpoint = provider_data_route(&controller.data_route_base, owner, target_id);
-                match probe_daemon(&endpoint, &controller.credential).await {
-                    DaemonProbe::Ready(build) => {
-                        let (recorded, _) = self
-                            .record_observation(
-                                environment,
-                                &observation,
-                                EnvironmentStatus::Ready,
-                                Some(build),
-                            )
-                            .await?;
-                        self.converge_ingress(controller, &recorded, owner, &observation)
-                            .await;
-                        Ok(true)
-                    }
-                    DaemonProbe::Mismatch { local, remote } => {
-                        self.record_observation(
-                            environment,
-                            &observation,
-                            environment.status,
-                            None,
-                        )
-                        .await?;
-                        self.fail(
-                            environment,
-                            &format!(
-                                "the environment's envd speaks protocol version {remote}; this runtime requires {local}"
-                            ),
-                            Some(DaemonBuild {
-                                version: None,
-                                git_sha: None,
-                                protocol_version: remote,
-                            }),
-                        )
-                        .await
-                        .map_err(ControllerError::from)
-                    }
-                    DaemonProbe::Unreachable(message) => {
-                        let (recorded, _) = self
-                            .record_observation(
-                                environment,
-                                &observation,
-                                EnvironmentStatus::Booting,
-                                None,
-                            )
-                            .await?;
-                        self.transient_failure(&recorded, &message).await?;
-                        Ok(true)
-                    }
-                }
-            }
+            TargetPhase::Closed => self.end(&recorded, now_ms).await,
+            _ => Ok(recorded != *row),
         }
     }
 
-    /// Persist an observation when it changes the record: status, target
-    /// id, power states or the daemon build. Returns the current record.
-    async fn record_observation(
+    async fn deadline(
         &self,
-        environment: &EnvironmentRecord,
-        observation: &TargetObservation,
-        status: EnvironmentStatus,
+        row: &EnvironmentRecord,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let message = format!(
+            "provisioning did not finish within {} minutes: {}",
+            PROVISIONING_DEADLINE_MS / 60_000,
+            row.state_message.as_deref().unwrap_or("no progress")
+        );
+        self.fail(row, &message, None, now_ms).await
+    }
+
+    async fn backoff(
+        &self,
+        row: &EnvironmentRecord,
+        message: &str,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let attempts = row
+            .provisioned()
+            .map_or(0, |source| source.attempts)
+            .saturating_add(1);
+        self.schedule(
+            row,
+            now_ms.saturating_add(backoff_delay_ms(attempts)),
+            attempts,
+            Some(message.to_owned()),
+            now_ms,
+        )
+        .await
+    }
+
+    async fn schedule(
+        &self,
+        row: &EnvironmentRecord,
+        next_attempt_at_ms: i64,
+        attempts: u32,
+        state_message: Option<String>,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let written = self
+            .environments
+            .schedule_environment_attempt(ScheduleEnvironmentAttempt {
+                environment_id: row.environment_id.clone(),
+                expected_state: row.state,
+                next_attempt_at_ms,
+                attempts,
+                state_message,
+                at_ms: now_ms,
+            })
+            .await?;
+        Ok(written != *row)
+    }
+
+    async fn fail(
+        &self,
+        row: &EnvironmentRecord,
+        message: &str,
         daemon_build: Option<DaemonBuild>,
-    ) -> Result<(EnvironmentRecord, bool), ControllerError> {
-        let target_changed = observation.target_id.is_some()
-            && environment.incarnation.provider_target_id != observation.target_id;
-        let changed = environment.status != status
-            || target_changed
-            || environment.incarnation.power_states != observation.supported_power_states
-            || daemon_build.is_some();
-        if !changed {
-            return Ok((environment.clone(), false));
-        }
-        let recorded = EnvironmentStore::observe_provisioned_environment(
-            self.store.as_ref(),
-            ObserveProvisionedEnvironment {
-                environment_id: environment.environment_id.clone(),
-                provider_target_id: observation.target_id.clone(),
-                status,
-                power_states: observation.supported_power_states.clone(),
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let written = self
+            .environments
+            .fail_environment(FailEnvironment {
+                environment_id: row.environment_id.clone(),
+                message: message.to_owned(),
                 daemon_build,
-                observed_at_ms: clock_ms(),
-            },
-        )
-        .await?;
-        Ok((recorded, true))
+                at_ms: now_ms,
+            })
+            .await?;
+        Ok(written.state == EnvironmentState::Failed)
     }
 
-    /// Converge a running target's ingress toward the recorded intent. The
-    /// recorded endpoint always mirrors what the provider last reported.
-    /// Ingress methods answer promptly and may continue in the background,
-    /// so an answer that has not converged yet is pending: the intent stays
-    /// and a later observation checks again. Only a typed refusal of
-    /// `ingress/ensure` drops the intent. Ingress failures never fail the
-    /// environment and are never recorded as lifecycle errors, so they
-    /// cannot start a provisioning deadline. Returns whether the record
-    /// changed.
-    async fn converge_ingress(
+    async fn finish_close(
         &self,
-        controller: &ProviderController,
-        environment: &EnvironmentRecord,
-        owner: &TargetOwner,
-        observation: &TargetObservation,
-    ) -> bool {
-        let realized = realized_ingress(observation);
-        let mut changed = self
-            .record_realized_ingress(
-                environment,
-                environment.public_endpoint.as_deref(),
-                &realized,
-            )
-            .await;
-        let mut recorded = realized;
-        if environment.public_ingress_enabled == recorded.is_some() {
-            return changed;
-        }
-        let enabling = environment.public_ingress_enabled;
-        if !controller.features.ingress {
-            if enabling {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    environment_id = %environment.environment_id,
-                    provider_id = %controller.provider_id,
-                    "the provider no longer offers public ingress; the ingress intent is dropped"
-                );
-                changed |= self.drop_ingress_intent(environment).await;
-            }
-            return changed;
-        }
-        let target = TargetRef {
-            owner: owner.clone(),
-            target_id: observation.target_id.clone(),
-        };
-        let answer = if enabling {
-            controller
-                .client
-                .ensure_ingress(&EnsureIngressParams { target })
-                .await
-        } else {
-            controller
-                .client
-                .remove_ingress(&RemoveIngressParams { target })
-                .await
-        };
-        match answer.map_err(|error| controller.call_error(error)) {
-            Ok(response) => {
-                let answered = realized_ingress(&response.target);
-                changed |= self
-                    .record_realized_ingress(environment, recorded.as_deref(), &answered)
-                    .await;
-                recorded = answered;
-                if environment.public_ingress_enabled != recorded.is_some() {
-                    tracing::debug!(
-                        target: "temporal_runtime",
-                        environment_id = %environment.environment_id,
-                        enabling,
-                        "public ingress change is still in progress at the provider"
-                    );
-                }
-            }
-            Err(error) if enabling && error.disposition() == ControllerDisposition::Refused => {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    environment_id = %environment.environment_id,
-                    %error,
-                    "the provider refused public ingress; the ingress intent is dropped"
-                );
-                changed |= self.drop_ingress_intent(environment).await;
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    environment_id = %environment.environment_id,
-                    %error,
-                    "{}; retried at the next observation",
-                    if enabling {
-                        "enabling public ingress failed"
-                    } else {
-                        "removing public ingress failed"
-                    }
-                );
-            }
-        }
-        changed
+        row: &EnvironmentRecord,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let written = self
+            .environments
+            .finish_close_environment(FinishCloseEnvironment {
+                environment_id: row.environment_id.clone(),
+                at_ms: now_ms,
+            })
+            .await?;
+        self.signals
+            .revoke(self.universe_id, row.environment_id.as_str());
+        Ok(written.state == EnvironmentState::Closed)
     }
 
-    /// Record `realized` as the environment's public endpoint when it
-    /// differs from `recorded`.
-    async fn record_realized_ingress(
+    async fn end(
         &self,
-        environment: &EnvironmentRecord,
-        recorded: Option<&str>,
-        realized: &Option<String>,
-    ) -> bool {
-        if recorded == realized.as_deref() {
-            return false;
-        }
-        let written = EnvironmentStore::record_environment_ingress(
-            self.store.as_ref(),
-            RecordEnvironmentIngress {
-                environment_id: environment.environment_id.clone(),
-                public_endpoint: realized.clone(),
-                observed_at_ms: clock_ms(),
-            },
-        )
-        .await;
-        match written {
-            Ok(_) => true,
-            Err(error) => {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    environment_id = %environment.environment_id,
-                    %error,
-                    "recording the realized public ingress failed"
-                );
-                false
-            }
-        }
-    }
-
-    /// Clear an ingress intent the provider cannot realize.
-    async fn drop_ingress_intent(&self, environment: &EnvironmentRecord) -> bool {
-        let written = EnvironmentStore::set_environment_ingress(
-            self.store.as_ref(),
-            SetEnvironmentIngress {
-                environment_id: environment.environment_id.clone(),
-                enabled: false,
-                updated_at_ms: clock_ms(),
-            },
-        )
-        .await;
-        match written {
-            Ok(_) => true,
-            Err(error) => {
-                tracing::warn!(
-                    target: "temporal_runtime",
-                    environment_id = %environment.environment_id,
-                    %error,
-                    "dropping the public ingress intent failed"
-                );
-                false
-            }
-        }
+        row: &EnvironmentRecord,
+        now_ms: i64,
+    ) -> Result<bool, EnvironmentRegistryError> {
+        let written = self
+            .environments
+            .end_provisioned_environment(EndProvisionedEnvironment {
+                environment_id: row.environment_id.clone(),
+                at_ms: now_ms,
+            })
+            .await?;
+        self.signals
+            .revoke(self.universe_id, row.environment_id.as_str());
+        Ok(written.state == EnvironmentState::Closed)
     }
 }
 
-/// The public endpoint an observation reports realized.
-fn realized_ingress(observation: &TargetObservation) -> Option<String> {
-    observation
-        .ingress
-        .as_ref()
-        .map(|ingress| ingress.endpoint.as_str().to_owned())
+/// The provider work passes in flight, one per universe and provider at a
+/// time, and the rate limit of their failure warnings.
+#[derive(Clone, Default)]
+pub(crate) struct ProviderWork {
+    inner: std::sync::Arc<std::sync::Mutex<ProviderWorkState>>,
+}
+
+#[derive(Default)]
+struct ProviderWorkState {
+    running: std::collections::HashSet<(uuid::Uuid, EnvironmentProviderId)>,
+    failures: std::collections::HashMap<
+        (uuid::Uuid, EnvironmentProviderId),
+        (String, std::time::Instant),
+    >,
+}
+
+impl ProviderWork {
+    /// Claim the provider's next pass in the universe; `None` while one is
+    /// in flight.
+    fn claim(
+        &self,
+        universe_id: uuid::Uuid,
+        provider_id: &EnvironmentProviderId,
+    ) -> Option<ProviderWorkClaim> {
+        let key = (universe_id, provider_id.clone());
+        let mut state = self.inner.lock().expect("provider work poisoned");
+        if !state.running.insert(key.clone()) {
+            return None;
+        }
+        Some(ProviderWorkClaim {
+            work: self.clone(),
+            key,
+        })
+    }
+
+    #[cfg(test)]
+    fn in_flight(&self) -> usize {
+        self.inner
+            .lock()
+            .expect("provider work poisoned")
+            .running
+            .len()
+    }
+}
+
+/// A claimed provider pass; released when dropped, so a pass that panics
+/// still frees its provider.
+struct ProviderWorkClaim {
+    work: ProviderWork,
+    key: (uuid::Uuid, EnvironmentProviderId),
+}
+
+impl ProviderWorkClaim {
+    /// Record the pass's outcome: a failure warns when it is new or its
+    /// last warning is older than [`ReconcileFailureLog::REPEAT_INTERVAL`].
+    fn finish(self, result: Result<usize, AgentApiError>) {
+        let (universe_id, provider_id) = (&self.key.0, &self.key.1);
+        let mut state = self.work.inner.lock().expect("provider work poisoned");
+        match result {
+            Ok(_) => {
+                state.failures.remove(&self.key);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let now = std::time::Instant::now();
+                let repeat = state.failures.get(&self.key).is_some_and(|(last, at)| {
+                    *last == message
+                        && now.duration_since(*at) < ReconcileFailureLog::REPEAT_INTERVAL
+                });
+                if repeat {
+                    tracing::debug!(target: "temporal_runtime", %universe_id, %provider_id, error = %message, "environment provider work pass still failing");
+                } else {
+                    tracing::warn!(target: "temporal_runtime", %universe_id, %provider_id, error = %message, "environment provider work pass failed (repeats suppressed for 60s)");
+                    state.failures.insert(self.key.clone(), (message, now));
+                }
+            }
+        }
+        drop(state);
+    }
+}
+
+impl Drop for ProviderWorkClaim {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.work.inner.lock() {
+            state.running.remove(&self.key);
+        }
+    }
 }
 
 /// Rate-limits repeated reconcile-pass failures per universe so a provider
@@ -1308,12 +1401,14 @@ pub(crate) fn parse_registration_key_id(
     })
 }
 
-pub(crate) fn allocate_environment_id() -> EnvironmentId {
-    EnvironmentId::new(format!("environment_{}", uuid::Uuid::new_v4().simple()))
+fn parse_request_id(value: String) -> Result<EnvironmentProvisionRequestId, AgentApiError> {
+    EnvironmentProvisionRequestId::try_new(value).map_err(|error| {
+        AgentApiError::invalid_request(format!("invalid environment request id: {error}"))
+    })
 }
 
-pub(crate) fn allocate_incarnation_id() -> EnvironmentIncarnationId {
-    EnvironmentIncarnationId::new(format!("incarnation_{}", uuid::Uuid::new_v4().simple()))
+pub(crate) fn allocate_environment_id() -> EnvironmentId {
+    EnvironmentId::new(format!("environment_{}", uuid::Uuid::new_v4().simple()))
 }
 
 /// Caller-supplied environment metadata: the same bounds and reserved-prefix
@@ -1328,210 +1423,400 @@ fn validated_caller_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::environments::fake_controller::{FakeController, FakeControllerOptions};
-    use environment_protocol::{
-        ENVD_PROTOCOL_VERSION, control::target::TargetRef as Ref, metadata::DescriptiveText,
-        routes::DataRouteBase,
+    use crate::environments::{
+        fake_controller::{FAKE_TEMPLATE_ID, FakeController, FakeControllerOptions},
+        provider_controllers::WebSocketProviderControllerConnector,
     };
+    use ::environments::{
+        EnvironmentProviderBindingStore, InMemoryEnvironmentRegistryStore, PowerState,
+        ProviderCredentialChange, PutEnvironmentProvider, PutEnvironmentProviderBinding,
+    };
+    use auth::SecretValue;
+    use environment_protocol::ENVD_PROTOCOL_VERSION;
 
-    fn state(
-        phase: TargetPhase,
-        power: Option<PowerState>,
-        daemon_ready: bool,
-        message: Option<&str>,
-    ) -> TargetState {
-        TargetState {
-            phase,
-            power,
-            daemon_ready,
-            message: message.and_then(DescriptiveText::lossy),
+    #[test]
+    fn backoff_doubles_from_two_seconds_up_to_five_minutes() {
+        assert_eq!(backoff_delay_ms(1), 2_000);
+        assert_eq!(backoff_delay_ms(2), 4_000);
+        assert_eq!(backoff_delay_ms(5), 32_000);
+        assert_eq!(backoff_delay_ms(8), 256_000);
+        assert_eq!(backoff_delay_ms(9), BACKOFF_MAX_MS);
+        assert_eq!(backoff_delay_ms(u32::MAX), BACKOFF_MAX_MS);
+    }
+
+    #[test]
+    fn one_pass_per_universe_and_provider_is_in_flight_and_a_dropped_claim_frees_it() {
+        let work = ProviderWork::default();
+        let universe = uuid::Uuid::from_u128(1);
+        let provider = EnvironmentProviderId::new("incus");
+        let other = EnvironmentProviderId::new("sandbox");
+        let claim = work.claim(universe, &provider).unwrap();
+        assert!(work.claim(universe, &provider).is_none());
+        let elsewhere = work.claim(uuid::Uuid::from_u128(2), &provider).unwrap();
+        let sibling = work.claim(universe, &other).unwrap();
+        assert_eq!(work.in_flight(), 3);
+        claim.finish(Ok(0));
+        drop(elsewhere);
+        drop(sibling);
+        assert_eq!(work.in_flight(), 0);
+        assert!(work.claim(universe, &provider).is_some());
+    }
+
+    struct Fixture {
+        store: InMemoryEnvironmentRegistryStore,
+        signals: EnvironmentSignals,
+        provider_id: EnvironmentProviderId,
+    }
+
+    impl Fixture {
+        async fn new(controller: &FakeController) -> Self {
+            Self::with_endpoint(controller.controller_url(), controller.credential()).await
         }
-    }
 
-    #[test]
-    fn target_states_map_to_lifecycle_verdicts() {
-        use TargetPhase::*;
-        assert_eq!(
-            target_verdict(&state(Provisioning, None, false, None)),
-            TargetVerdict::Status(EnvironmentStatus::Provisioning)
-        );
-        assert_eq!(
-            target_verdict(&state(Active, Some(PowerState::Running), false, None)),
-            TargetVerdict::Status(EnvironmentStatus::Booting)
-        );
-        assert_eq!(
-            target_verdict(&state(Active, Some(PowerState::Running), true, None)),
-            TargetVerdict::DaemonReady
-        );
-        assert_eq!(
-            target_verdict(&state(Active, Some(PowerState::Stopped), false, None)),
-            TargetVerdict::Status(EnvironmentStatus::Offline)
-        );
-        assert_eq!(
-            target_verdict(&state(Failed, None, false, Some("disk full"))),
-            TargetVerdict::Failed("disk full".to_owned())
-        );
-        assert!(matches!(
-            target_verdict(&state(Closed, None, false, None)),
-            TargetVerdict::Failed(_)
-        ));
-        assert!(matches!(
-            target_verdict(&state(Unknown, None, false, None)),
-            TargetVerdict::Unknown(_)
-        ));
-        assert!(matches!(
-            target_verdict(&state(Active, None, false, None)),
-            TargetVerdict::Unknown(_)
-        ));
-    }
-
-    #[test]
-    fn the_provisioning_deadline_counts_from_the_first_error_or_stall() {
-        let error = EnvironmentLifecycleError::record(None, "provider unreachable", 1_000);
-        assert!(!provisioning_deadline_passed(None, i64::MAX));
-        assert!(!provisioning_deadline_passed(
-            Some(&error),
-            1_000 + PROVISIONING_DEADLINE_MS - 1
-        ));
-        let later = EnvironmentLifecycleError::record(Some(&error), "still unreachable", 50_000);
-        assert_eq!(later.first_at_ms, 1_000);
-        assert!(provisioning_deadline_passed(
-            Some(&later),
-            1_000 + PROVISIONING_DEADLINE_MS
-        ));
-    }
-
-    #[test]
-    fn stalled_observations_carry_the_provider_message_into_the_deadline() {
-        let booting = waiting_note(
-            EnvironmentStatus::Booting,
-            &state(
-                TargetPhase::Active,
-                Some(PowerState::Running),
-                false,
-                Some("guest agent not up"),
-            ),
-        );
-        assert_eq!(
-            booting,
-            "waiting for envd to answer on the target: guest agent not up"
-        );
-        let provisioning = waiting_note(
-            EnvironmentStatus::Provisioning,
-            &state(TargetPhase::Provisioning, None, false, None),
-        );
-        assert_eq!(
-            provisioning,
-            "waiting for the provider to provision the target"
-        );
-        // A stalled observation starts the deadline like a transient error:
-        // the run of notes keeps its first instant.
-        let first = EnvironmentLifecycleError::record(None, &booting, 1_000);
-        let repeated = EnvironmentLifecycleError::record(Some(&first), &booting, 900_000);
-        assert!(provisioning_deadline_passed(
-            Some(&repeated),
-            1_000 + PROVISIONING_DEADLINE_MS
-        ));
-    }
-
-    #[test]
-    fn repeated_errors_are_rewritten_only_when_new_or_stale() {
-        let recorded = EnvironmentLifecycleError::record(None, "provider unreachable", 1_000);
-        assert!(lifecycle_error_is_news(None, "provider unreachable", 1_000));
-        assert!(!lifecycle_error_is_news(
-            Some(&recorded),
-            "provider unreachable",
-            2_000
-        ));
-        assert!(lifecycle_error_is_news(
-            Some(&recorded),
-            "provider refused",
-            2_000
-        ));
-        assert!(lifecycle_error_is_news(
-            Some(&recorded),
-            "provider unreachable",
-            1_000 + LIFECYCLE_ERROR_REFRESH_MS
-        ));
-    }
-
-    async fn created_target(controller: &FakeController) -> (TargetOwner, String, SecretValue) {
-        let credential = SecretValue::new(controller.credential());
-        let (client, initialized) = environment_client::ControllerClient::connect_initialized(
-            controller.controller_url(),
-            provider_connect_options(&credential),
-        )
-        .await
-        .expect("controller handshake");
-        let owner = TargetOwner {
-            universe_id: UniverseId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
-            binding_id: BindingId::new("primary").unwrap(),
-            environment_id: environment_protocol::ids::EnvironmentId::new("environment_1").unwrap(),
-            incarnation_id: IncarnationId::new("incarnation_1").unwrap(),
-        };
-        let observation = client
-            .create_target(&CreateTargetParams {
-                owner: owner.clone(),
-                template_id: TemplateId::new(
-                    crate::environments::fake_controller::FAKE_TEMPLATE_ID,
-                )
-                .unwrap(),
-            })
-            .await
-            .expect("create")
-            .target;
-        let target_id = observation.target_id.expect("target id");
-        let base: DataRouteBase = initialized.routes.data;
-        let endpoint = provider_data_route(&base, &owner, &target_id);
-        // Observation is a pure read of the same target.
-        let observed = client
-            .get_target(&GetTargetParams {
-                target: Ref {
-                    owner: owner.clone(),
-                    target_id: Some(target_id.clone()),
-                },
-            })
-            .await
-            .expect("get")
-            .target;
-        assert_eq!(observed.target_id, Some(target_id));
-        let _ = client.close().await;
-        (owner, endpoint, credential)
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn the_ready_transition_handshake_records_the_daemon_build() {
-        let controller = FakeController::start().await.unwrap();
-        let (_, endpoint, credential) = created_target(&controller).await;
-        match probe_daemon(&endpoint, &credential).await {
-            DaemonProbe::Ready(build) => {
-                assert_eq!(build.protocol_version, ENVD_PROTOCOL_VERSION);
-                assert!(build.version.is_some());
+        async fn with_endpoint(endpoint: &str, credential: Option<&str>) -> Self {
+            let store = InMemoryEnvironmentRegistryStore::new();
+            let provider_id = EnvironmentProviderId::new("fake");
+            store
+                .put_provider(PutEnvironmentProvider {
+                    provider_id: provider_id.clone(),
+                    display_name: None,
+                    controller_endpoint: EnvironmentEndpoint::parse(endpoint).unwrap(),
+                    data_route_base: None,
+                    credential: match credential {
+                        Some(credential) => {
+                            ProviderCredentialChange::Set(SecretValue::new(credential))
+                        }
+                        None => ProviderCredentialChange::Keep,
+                    },
+                    updated_at_ms: 1,
+                })
+                .await
+                .unwrap();
+            store
+                .put_provider_binding(PutEnvironmentProviderBinding {
+                    universe_id: store.universe_id(),
+                    provider_id: provider_id.clone(),
+                    enabled: true,
+                    updated_at_ms: 1,
+                })
+                .await
+                .unwrap();
+            Self {
+                store,
+                signals: EnvironmentSignals::default(),
+                provider_id,
             }
-            other => panic!("expected a ready daemon, got {other:?}"),
         }
-        // Without the provider credential the data route is refused.
-        assert!(matches!(
-            probe_daemon(&endpoint, &SecretValue::new("wrong")).await,
-            DaemonProbe::Unreachable(_)
-        ));
+
+        fn reconciler(&self) -> Reconciler<'_> {
+            Reconciler {
+                universe_id: self.store.universe_id(),
+                environments: &self.store,
+                providers: &self.store,
+                connector: &WebSocketProviderControllerConnector,
+                signals: &self.signals,
+            }
+        }
+
+        async fn create(&self, name: &str, created_at_ms: i64) -> EnvironmentId {
+            let environment_id = EnvironmentId::new(name);
+            self.store
+                .create_environment(CreateEnvironment {
+                    request_id: EnvironmentProvisionRequestId::new(format!("request-{name}")),
+                    environment_id: environment_id.clone(),
+                    provider_id: self.provider_id.clone(),
+                    template_id: EnvironmentTemplateId::new(FAKE_TEMPLATE_ID),
+                    idle: None,
+                    display_name: Some("Test environment".to_owned()),
+                    metadata: BTreeMap::new(),
+                    created_at_ms,
+                })
+                .await
+                .unwrap();
+            environment_id
+        }
+
+        async fn read(&self, environment_id: &EnvironmentId) -> EnvironmentRecord {
+            self.store.read_environment(environment_id).await.unwrap()
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_daemon_of_another_protocol_version_is_a_mismatch_naming_both() {
+    async fn a_created_target_opens_after_one_handshake_that_records_the_build() {
+        let controller = FakeController::start().await.unwrap();
+        let fixture = Fixture::new(&controller).await;
+        let environment_id = fixture.create("environment_a", 1_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        let opened = fixture.read(&environment_id).await;
+        assert_eq!(opened.state, EnvironmentState::Open);
+        let source = opened.provisioned().unwrap();
+        assert!(source.provider_target_id.is_some());
+        assert_eq!(source.next_attempt_at_ms, None);
+        assert_eq!(
+            source.observed.as_ref().map(|observed| observed.phase),
+            Some(TargetPhase::Active)
+        );
+        assert_eq!(
+            opened.daemon_build.map(|build| build.protocol_version),
+            Some(ENVD_PROTOCOL_VERSION)
+        );
+        assert_eq!(controller.target_count().await, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_booting_refusal_is_waited_out_at_its_retry_after() {
+        let controller = FakeController::start_with(FakeControllerOptions {
+            booting_dials: 1,
+            ..FakeControllerOptions::default()
+        })
+        .await
+        .unwrap();
+        let fixture = Fixture::new(&controller).await;
+        let environment_id = fixture.create("environment_a", 1_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        let waiting = fixture.read(&environment_id).await;
+        assert_eq!(waiting.state, EnvironmentState::Provisioning);
+        assert_eq!(
+            waiting.state_message.as_deref(),
+            Some("waiting for envd: booting")
+        );
+        let source = waiting.provisioned().unwrap();
+        assert_eq!(source.attempts, 0, "a typed wait is not a failure");
+        assert_eq!(source.next_attempt_at_ms, Some(3_000));
+        // Not due before its Retry-After.
+        fixture.reconciler().run_work(2_500, 2_500).await.unwrap();
+        assert_eq!(
+            fixture.read(&environment_id).await.state,
+            EnvironmentState::Provisioning
+        );
+        fixture.reconciler().run_work(3_000, 3_000).await.unwrap();
+        assert_eq!(
+            fixture.read(&environment_id).await.state,
+            EnvironmentState::Open
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unreachable_provider_backs_off_per_row_until_the_deadline() {
+        let controller = FakeController::start().await.unwrap();
+        controller.set_reachable(false);
+        let fixture = Fixture::new(&controller).await;
+        let environment_id = fixture.create("environment_a", 1_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        let first = fixture.read(&environment_id).await;
+        let source = first.provisioned().unwrap();
+        assert_eq!(first.state, EnvironmentState::Provisioning);
+        assert_eq!(source.attempts, 1);
+        assert_eq!(source.next_attempt_at_ms, Some(4_000));
+        assert!(
+            first
+                .state_message
+                .as_deref()
+                .unwrap()
+                .contains("unreachable")
+        );
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 4_000)
+            .await
+            .unwrap();
+        let second = fixture.read(&environment_id).await;
+        assert_eq!(second.provisioned().unwrap().attempts, 2);
+        assert_eq!(
+            second.provisioned().unwrap().next_attempt_at_ms,
+            Some(8_000)
+        );
+        // Past the deadline the row fails with the last error.
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 1_000 + PROVISIONING_DEADLINE_MS)
+            .await
+            .unwrap();
+        let failed = fixture.read(&environment_id).await;
+        assert_eq!(failed.state, EnvironmentState::Failed);
+        assert!(
+            failed
+                .state_message
+                .as_deref()
+                .unwrap()
+                .starts_with("provisioning did not finish within 30 minutes: ")
+        );
+        // The provider back: a new row opens.
+        controller.set_reachable(true);
+        let next = fixture.create("environment_b", 2_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 3_000)
+            .await
+            .unwrap();
+        assert_eq!(fixture.read(&next).await.state, EnvironmentState::Open);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_daemon_of_another_protocol_version_fails_naming_both() {
         let controller = FakeController::start_with(FakeControllerOptions {
             daemon_protocol_version: ENVD_PROTOCOL_VERSION + 1,
             ..FakeControllerOptions::default()
         })
         .await
         .unwrap();
-        let (_, endpoint, credential) = created_target(&controller).await;
+        let fixture = Fixture::new(&controller).await;
+        let environment_id = fixture.create("environment_a", 1_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        let failed = fixture.read(&environment_id).await;
+        assert_eq!(failed.state, EnvironmentState::Failed);
         assert_eq!(
-            probe_daemon(&endpoint, &credential).await,
-            DaemonProbe::Mismatch {
-                local: ENVD_PROTOCOL_VERSION,
-                remote: ENVD_PROTOCOL_VERSION + 1,
-            }
+            failed.state_message.as_deref(),
+            Some(
+                format!(
+                    "the environment's envd speaks protocol version {}; this runtime requires {ENVD_PROTOCOL_VERSION}",
+                    ENVD_PROTOCOL_VERSION + 1
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(
+            failed.daemon_build.map(|build| build.protocol_version),
+            Some(ENVD_PROTOCOL_VERSION + 1)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unknown_template_is_a_refusal_that_fails_the_row() {
+        let controller = FakeController::start().await.unwrap();
+        let fixture = Fixture::new(&controller).await;
+        let environment_id = EnvironmentId::new("environment_a");
+        fixture
+            .store
+            .create_environment(CreateEnvironment {
+                request_id: EnvironmentProvisionRequestId::new("request"),
+                environment_id: environment_id.clone(),
+                provider_id: fixture.provider_id.clone(),
+                template_id: EnvironmentTemplateId::new("missing-template"),
+                idle: None,
+                display_name: None,
+                metadata: BTreeMap::new(),
+                created_at_ms: 1_000,
+            })
+            .await
+            .unwrap();
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            fixture.read(&environment_id).await.state,
+            EnvironmentState::Failed
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn close_runs_until_the_target_is_gone_and_revokes_routes() {
+        let controller = FakeController::start().await.unwrap();
+        let fixture = Fixture::new(&controller).await;
+        let environment_id = fixture.create("environment_a", 1_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        let mut route = fixture
+            .signals
+            .watch(fixture.store.universe_id(), environment_id.as_str());
+        fixture
+            .store
+            .begin_close_environment(BeginCloseEnvironment {
+                environment_id: environment_id.clone(),
+                reason: EnvironmentCloseReason::Requested,
+                at_ms: 3_000,
+            })
+            .await
+            .unwrap();
+        // While the provider is down the close backs off and stays closing.
+        controller.set_reachable(false);
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 3_000)
+            .await
+            .unwrap();
+        let closing = fixture.read(&environment_id).await;
+        assert_eq!(closing.state, EnvironmentState::Closing);
+        assert_eq!(closing.provisioned().unwrap().attempts, 1);
+        controller.set_reachable(true);
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 5_000)
+            .await
+            .unwrap();
+        let closed = fixture.read(&environment_id).await;
+        assert_eq!(closed.state, EnvironmentState::Closed);
+        assert_eq!(closed.close_reason, Some(EnvironmentCloseReason::Requested));
+        assert_eq!(controller.target_count().await, 0);
+        assert!(route.has_changed().unwrap());
+        route.mark_unchanged();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_display_sweep_records_power_and_ends_a_target_the_provider_removed() {
+        let controller = FakeController::start().await.unwrap();
+        let fixture = Fixture::new(&controller).await;
+        let paused = fixture.create("environment_a", 1_000).await;
+        let ended = fixture.create("environment_b", 1_000).await;
+        fixture
+            .reconciler()
+            .run_work(i64::MAX, 2_000)
+            .await
+            .unwrap();
+        assert!(
+            controller
+                .set_power_out_of_band(paused.as_str(), PowerState::Paused)
+                .await
+        );
+        assert!(controller.end_target(ended.as_str()).await);
+        fixture
+            .reconciler()
+            .run_display_sweep(10_000)
+            .await
+            .unwrap();
+        let observed = fixture.read(&paused).await;
+        assert_eq!(observed.state, EnvironmentState::Open);
+        assert_eq!(
+            observed.display_status(),
+            ::environments::EnvironmentDisplayStatus::Paused
+        );
+        let gone = fixture.read(&ended).await;
+        assert_eq!(gone.state, EnvironmentState::Closed);
+        assert_eq!(
+            gone.close_reason,
+            Some(EnvironmentCloseReason::ProviderEnded)
+        );
+        // The sweep never powers anything: the paused target stays paused.
+        assert_eq!(controller.target_count().await, 1);
+        fixture
+            .reconciler()
+            .run_display_sweep(20_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            fixture.read(&paused).await.display_status(),
+            ::environments::EnvironmentDisplayStatus::Paused
         );
     }
 }

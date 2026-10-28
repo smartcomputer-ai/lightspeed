@@ -81,11 +81,12 @@ impl RuntimeEnvironment {
 /// context for this invocation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActiveEnvironmentBlocker {
-    /// The environment exists and is provisioning or booting; the call must
+    /// The environment exists but cannot serve calls yet (provisioning,
+    /// waking, booting, or a registered daemon reconnecting); the call must
     /// wait rather than fail.
     NotReady {
         environment_id: String,
-        status: environments::EnvironmentStatus,
+        reason: environments::EnvironmentWaitReason,
     },
     /// The environment cannot serve calls (failed, closed, unreachable, or
     /// not allowed); the call fails with this message.
@@ -141,9 +142,8 @@ mod tests {
 
     use environment_protocol::ids::ProviderTargetId;
     use environments::{
-        EnvironmentIncarnationId, EnvironmentIncarnationRecord, EnvironmentProviderBindingId,
-        EnvironmentProviderId, EnvironmentProvisionRequestId, EnvironmentSource, EnvironmentStatus,
-        EnvironmentTemplateId,
+        EnvironmentProviderId, EnvironmentProvisionRequestId, EnvironmentSource, EnvironmentState,
+        EnvironmentTemplateId, ProvisionedSource,
     };
     use harness::storage::InMemoryBlobStore;
     use tools::fs::{FsPath, FsToolContext, InMemoryFileSystem};
@@ -151,35 +151,29 @@ mod tests {
     use super::*;
 
     fn resource() -> EnvironmentRecord {
-        let target_id = ProviderTargetId::new("target-a").unwrap();
         EnvironmentRecord {
             environment_id: harness::EnvironmentId::new("environment-a"),
-            request_id: EnvironmentProvisionRequestId::new("request-a"),
-            source: EnvironmentSource::Provisioned {
+            request_id: Some(EnvironmentProvisionRequestId::new("request-a")),
+            source: EnvironmentSource::Provisioned(ProvisionedSource {
                 provider_id: EnvironmentProviderId::new("provider-a"),
-                binding_id: EnvironmentProviderBindingId::new("binding-a"),
-            },
+                template_id: EnvironmentTemplateId::new("template-a"),
+                idle: None,
+                provider_target_id: Some(ProviderTargetId::new("target-a").unwrap()),
+                observed: None,
+                public_endpoint: None,
+                next_attempt_at_ms: None,
+                attempts: 0,
+            }),
             display_name: None,
-            status: EnvironmentStatus::Offline,
-            desired_power: environments::PowerState::Running,
-            idle_policy: None,
-            incarnation: EnvironmentIncarnationRecord {
-                incarnation_id: EnvironmentIncarnationId::new("incarnation-a"),
-                provision_request_id: Some(EnvironmentProvisionRequestId::new("request-a")),
-                provider_target_id: Some(target_id.clone()),
-                template_id: Some(EnvironmentTemplateId::new("template-a")),
-                adoption_source_target: None,
-                power_states: Vec::new(),
-                created_at_ms: 1,
-                updated_at_ms: 1,
-            },
-            public_ingress_enabled: false,
-            public_endpoint: None,
             metadata: BTreeMap::from([("fsRoot".to_owned(), "/sandbox".to_owned())]),
-            last_seen_at_ms: None,
-            lifecycle_error: None,
+            state: EnvironmentState::Open,
+            state_message: None,
+            close_reason: None,
+            state_changed_at_ms: 1,
+            daemon_build: None,
             created_at_ms: 1,
             updated_at_ms: 1,
+            closed_at_ms: None,
         }
     }
 

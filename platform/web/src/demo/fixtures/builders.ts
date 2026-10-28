@@ -5,6 +5,7 @@
 /// clocks, ids, tool calls as transcripts show them, records with their
 /// defaults, bot event logs, bot state — lives here.
 import type {
+  Environment,
   EnvironmentProviderBinding,
   EnvironmentTemplate,
   ManagedWorkflowTool,
@@ -39,6 +40,10 @@ import type {
   ChatActivation,
   ChatAccess,
   ChatScope,
+  EnvironmentCloseReasonView,
+  EnvironmentIdentityModeView,
+  EnvironmentIdlePolicyView,
+  EnvironmentPowerStateView,
   ModelConfig,
   PollCursorSpec,
   PollCursorState,
@@ -443,25 +448,22 @@ export function workspace(store: DemoStore, universe: UniverseState, init: Works
 export interface ProviderBindingInit {
   /// Defaults to the platform's Incus provider.
   providerId?: string;
-  revision: number;
-  metadata?: Record<string, string>;
   createdAtMs: number;
   updatedAtMs: number;
 }
 
 /// The universe's enabled binding to an operator-registered provider.
 export function providerBinding(init: ProviderBindingInit): EnvironmentProviderBinding {
-  const providerId = init.providerId ?? INCUS_PROVIDER_ID;
   return {
-    bindingId: providerId,
-    providerId,
-    status: "enabled",
-    revision: init.revision,
-    ...(init.metadata === undefined ? {} : { metadata: init.metadata }),
+    providerId: init.providerId ?? INCUS_PROVIDER_ID,
+    enabled: true,
     createdAtMs: init.createdAtMs,
     updatedAtMs: init.updatedAtMs,
   };
 }
+
+/// The Incus provider's power states; it has no suspend.
+export const DEMO_POWER_STATES: EnvironmentPowerStateView[] = ["running", "paused", "stopped"];
 
 export interface TemplateInit {
   /// Defaults to the platform's Incus provider.
@@ -471,21 +473,152 @@ export interface TemplateInit {
   description: string;
   publicIngress: boolean;
   deprecated: boolean;
+  /// The provider's idle policy for targets created without an override.
+  idle?: EnvironmentIdlePolicyView;
   metadata: Record<string, string>;
 }
 
 export function template(init: TemplateInit): EnvironmentTemplate {
-  const providerId = init.providerId ?? INCUS_PROVIDER_ID;
   return {
-    bindingId: providerId,
-    providerId,
+    providerId: init.providerId ?? INCUS_PROVIDER_ID,
     templateId: init.templateId,
     displayName: init.displayName,
     description: init.description,
     publicIngress: init.publicIngress,
     deprecated: init.deprecated,
+    powerStates: DEMO_POWER_STATES,
+    ...(init.idle ? { idle: init.idle } : {}),
     metadata: init.metadata,
   };
+}
+
+/// The display status the core derives from an environment's state and the
+/// provider's or daemon's latest observation.
+export function displayStatus(environment: Omit<Environment, "status">): Environment["status"] {
+  switch (environment.state) {
+    case "provisioning":
+    case "closing":
+    case "closed":
+    case "failed":
+      return environment.state;
+    case "open":
+      break;
+  }
+  const source = environment.source;
+  if (source.type === "external") return "ready";
+  if (source.type === "registered") return source.connected ? "ready" : "away";
+  const observed = source.observed;
+  if (!observed) return "ready";
+  switch (observed.phase) {
+    case "active":
+      return observed.power === "paused" || observed.power === "suspended" || observed.power === "stopped"
+        ? observed.power
+        : "ready";
+    case "provisioning":
+    case "closing":
+      return observed.phase;
+    default:
+      return "unknown";
+  }
+}
+
+const DEMO_DAEMON = { version: "0.1.0", protocolVersion: 4 };
+
+interface EnvironmentInit {
+  environmentId: string;
+  displayName?: string | null;
+  metadata?: Record<string, string>;
+  createdAtMs: number;
+  updatedAtMs: number;
+  /// Closed at this time; open when absent.
+  closedAtMs?: number;
+  closeReason?: EnvironmentCloseReasonView;
+}
+
+function lifecycle(init: EnvironmentInit) {
+  const closed = init.closedAtMs !== undefined;
+  return {
+    environmentId: init.environmentId,
+    displayName: init.displayName ?? null,
+    state: closed ? "closed" as const : "open" as const,
+    ...(closed ? { closeReason: init.closeReason ?? "requested", closedAtMs: init.closedAtMs } : {}),
+    stateChangedAtMs: init.closedAtMs ?? init.createdAtMs,
+    daemon: DEMO_DAEMON,
+    metadata: init.metadata ?? {},
+    createdAtMs: init.createdAtMs,
+    updatedAtMs: init.updatedAtMs,
+  };
+}
+
+export interface ProvisionedEnvironmentInit extends EnvironmentInit {
+  requestId: string;
+  /// Defaults to the platform's Incus provider.
+  providerId?: string;
+  templateId: string;
+  targetId: string;
+  /// What the provider last reported; running when absent.
+  power?: EnvironmentPowerStateView;
+  publicEndpoint?: string;
+  idle?: EnvironmentIdlePolicyView;
+}
+
+export function provisionedEnvironment(init: ProvisionedEnvironmentInit): Environment {
+  const closed = init.closedAtMs !== undefined;
+  const environment: Omit<Environment, "status"> = {
+    ...lifecycle(init),
+    requestId: init.requestId,
+    source: {
+      type: "provisioned",
+      providerId: init.providerId ?? INCUS_PROVIDER_ID,
+      templateId: init.templateId,
+      targetId: init.targetId,
+      ...(init.idle ? { idle: init.idle } : {}),
+      observed: closed
+        ? { phase: "closed", observedAtMs: init.closedAtMs! }
+        : { phase: "active", power: init.power ?? "running", observedAtMs: init.updatedAtMs },
+      ...(init.publicEndpoint && !closed ? { publicEndpoint: init.publicEndpoint } : {}),
+    },
+  };
+  return { ...environment, status: displayStatus(environment) };
+}
+
+export interface ExternalEnvironmentInit extends EnvironmentInit {
+  requestId: string;
+  endpoint: string;
+}
+
+export function externalEnvironment(init: ExternalEnvironmentInit): Environment {
+  const environment: Omit<Environment, "status"> = {
+    ...lifecycle(init),
+    requestId: init.requestId,
+    source: { type: "external", endpoint: init.endpoint },
+  };
+  return { ...environment, status: displayStatus(environment) };
+}
+
+export interface RegisteredEnvironmentInit extends EnvironmentInit {
+  registrationKeyId: string;
+  daemonId: string;
+  identityMode: EnvironmentIdentityModeView;
+  connected: boolean;
+  connectionChangedAtMs: number;
+  lastSeenAtMs: number;
+}
+
+export function registeredEnvironment(init: RegisteredEnvironmentInit): Environment {
+  const environment: Omit<Environment, "status"> = {
+    ...lifecycle(init),
+    source: {
+      type: "registered",
+      registrationKeyId: init.registrationKeyId,
+      daemonId: init.daemonId,
+      identityMode: init.identityMode,
+      connected: init.connected,
+      connectionChangedAtMs: init.connectionChangedAtMs,
+      lastSeenAtMs: init.lastSeenAtMs,
+    },
+  };
+  return { ...environment, status: displayStatus(environment) };
 }
 
 export type McpServerInit = Partial<McpServer> &

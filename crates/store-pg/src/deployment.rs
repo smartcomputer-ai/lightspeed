@@ -150,11 +150,20 @@ pub async fn list_universe_object_keys(
 
 /// Delete the universe row; every universe-scoped table cascades from it,
 /// including its keys. `false` when the universe did not exist.
+///
+/// Deferrable foreign keys between universe-scoped tables (environments to
+/// registration keys, environment credentials to auth objects) are checked
+/// at commit, so the cascade order between their tables does not matter.
 pub async fn delete_universe(pool: &PgPool, universe_id: Uuid) -> Result<bool, PgStoreError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET CONSTRAINTS ALL DEFERRED")
+        .execute(&mut *tx)
+        .await?;
     let result = sqlx::query("DELETE FROM universes WHERE universe_id = $1")
         .bind(universe_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 

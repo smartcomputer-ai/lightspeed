@@ -29,8 +29,11 @@ outbound connections; external daemons and Incus guests are reached over
 private deployment networks.
 
 Run exactly one **environment-gateway** process per deployment. It owns live
-registered-daemon connections, lifecycle reconciliation, and idle power
-management. Worker routes must reach that process. Other runtime roles can
+registered-daemon connections, the worker routes, and the reconciliation
+that creates and closes provisioned machines. At startup it marks every
+registered environment disconnected until its daemon reconnects, which is
+correct only while a single process holds those connections. Worker routes
+must reach that process. Other runtime roles can
 scale independently; distributing this gateway's live connection ownership
 across replicas is not currently supported.
 
@@ -52,15 +55,18 @@ through an HTTPS/WebSocket-capable proxy:
 | `/environment-gateway/data` | Additional outbound data sockets opened when the gateway requests a worker route. |
 
 Use `wss://` for a remote gateway. The daemon accepts plain `ws://` only for
-loopback. For a private certificate authority, configure
+loopback, unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` opts in for a
+trusted private network. For a private certificate authority, configure
 `LIGHTSPEED_ENVD_CA_FILE` with the additional trust anchors.
 
 The daemon derives the data path from its configured connect URL, on the same
 origin and under the same path prefix, so both paths must be published on one
 host. The daemon signs the origin it dialed when it proves its identity, and
-the gateway accepts only the origin of its `LIGHTSPEED_PUBLIC_BASE_URL`.
-Point daemons at that public URL; a daemon that dials the gateway under
-another hostname is refused.
+the gateway accepts the origin of its `LIGHTSPEED_PUBLIC_BASE_URL` plus those
+listed in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, such as a
+cluster-internal service address. A daemon that dials the gateway under any
+other hostname is refused. [Run registered daemons](registered-daemons.md)
+shows the in-cluster setup.
 
 The first connection uses a registration key and the daemon's identity. Later
 connections use the retained identity, and requested data sockets use a
@@ -90,23 +96,26 @@ working directory does not make a publicly reachable process service safe to
 expose.
 
 For a provider, the environment gateway reaches the controller URL registered
-for it and the data routes the controller advertises during its handshake.
-Both require the provider credential as a bearer token. For Incus, those are
-the provider's `/control` and `/routes/...` paths, advertised through its
-`dataRouteBase`. The provider then dials the guest daemon over the private
-guest IPv4 network, normally on port 19091. That guest listener has no
+for it and the provider's data routes. Unless a data route base is
+registered with the provider, the routes live under `/routes` on the
+controller's scheme, host, and port. Both carry the provider credential as a
+bearer token when one is configured. For Incus, those are the provider's
+`/control` and `/routes/...` paths on one listener. Connecting to a data
+route also wakes a paused or stopped VM. The provider then dials the guest
+daemon over the private guest IPv4 network, normally on port 19091. That guest listener has no
 authentication of its own, so keep guest networks private. The provider's
 connection to the Incus API uses HTTPS client credentials and server trust
 separately.
 
-Standalone Incus uses a managed bridge per universe binding. Cluster mode
+Standalone Incus uses a managed bridge per universe. Cluster mode
 uses a managed OVN network over the configured uplink. The provider and its
 application edge must be able to route to the resulting guest addresses; API
 access to Incus alone does not establish guest connectivity.
 
-The provider separates sibling binding networks and applies configured
-`deniedEgressCidrs`. That list defaults to empty. Add the destinations the
-deployment needs to block, and avoid overlapping the binding subnets. These
+The provider separates the networks of different universes and applies
+configured `deniedEgressCidrs`. That list defaults to empty. Add the
+destinations the deployment needs to block, and avoid overlapping the
+universe subnets. These
 specific rules are not a general application-aware egress policy.
 
 Relay connection timeouts and VM idle policies control different resources.
@@ -212,10 +221,10 @@ Public requests do not reset the daemon's idle activity clock, and browser
 access does not wake a sleeping VM. A sleeping target can therefore return
 404 even though ingress remains configured.
 
-A tracked running root process keeps the idle reaper from treating the
-machine as idle. A service left behind by a command that already exited does
-not. Set the VM's power policy according to how the application should remain
-available, and inspect the distinction in [Power and cleanup](power-and-cleanup.md#understand-the-current-staging-limit).
+A running process keeps the machine awake, and so does a service that a
+command started and left running after it exited. Choose a template whose
+idle policy matches how the application should remain available; see
+[Power and cleanup](power-and-cleanup.md#set-an-idle-policy).
 
 Choose **Disable public ingress** to remove the route. This does not stop the
 application process. Stop the tracked server separately when it is no longer
@@ -232,7 +241,10 @@ The API equivalent is `environments/ingress/put`, with params such as:
 }
 ```
 
-See the [API reference](../../../crates/api/contract/api-reference.md) for its
+The call waits for the provider and returns the environment with the
+endpoint the provider reported. It fails when the provider cannot be reached;
+nothing is retried later. See the
+[API reference](../../../crates/api/contract/api-reference.md) for its
 response and the environment's endpoint fields.
 
 ## Locate a connection failure
@@ -243,7 +255,7 @@ response and the environment's endpoint fields.
 | Worker calls fail while the daemon looks healthy | Check the worker's gateway URL/token and private route reachability. |
 | Incus health passes but guest operations fail | Check guest daemon readiness, guest IPv4 routing, and the provider-to-daemon port. |
 | A loopback endpoint works locally but fails in containers | Replace it with the private address reachable from the actual connecting process. |
-| **Enable public ingress** is absent or disabled | Check template permission, provider ingress configuration, and ready status. |
+| **Enable public ingress** is absent or disabled | Check that the template offers public ingress, the provider's ingress configuration, and that the environment is open. |
 | The public endpoint returns 404 | Check the original Host header, enabled route, and whether the target is ready rather than asleep. |
 | The public endpoint returns 502 | Check the edge's Incus lookup and connectivity to the application on the approved guest port. |
 | HTTP works but WebSockets or long responses fail | Check upgrades, streaming, and timeouts at the deployment TLS proxy. |

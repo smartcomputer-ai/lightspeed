@@ -296,8 +296,9 @@ first receives a termination signal and is killed after a grace period unless
 `force` is set; it reports `cancelRequestedAtMs` and stays `running` until it
 ends, so continue reading until terminal.
 
-A standalone call can return `environment_not_ready` during provisioning or
-wake-up. Wait and retry with the same creation identity. Exact types and
+A standalone call can return `environment_not_ready` during provisioning,
+while a powered-down machine wakes, or while a registered daemon
+reconnects. Wait and retry with the same creation identity. Exact types and
 methods are in the [API reference](../../../crates/api/contract/api-reference.md).
 
 ## If execution does not finish as expected

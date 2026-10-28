@@ -7,8 +7,10 @@ create machines from those templates, then attach them to sessions or profiles.
 
 The provider runs as a separate process. It talks to Incus using an HTTPS
 client certificate, exposes a private controller to Lightspeed, and relays
-environment operations to the daemon inside each VM. It does not connect to
-Lightspeed's database or run session workflows.
+environment operations to the daemon inside each VM. It also owns the VMs'
+power: it pauses and stops idle VMs on its own schedule and wakes them when
+Lightspeed connects. It does not connect to Lightspeed's database or run
+session workflows.
 
 This walkthrough uses one standalone Incus server. It builds an image,
 registers the provider, binds a universe, and provisions a test environment.
@@ -27,12 +29,14 @@ Prepare these files for the provider process:
   project, network, image, profile, and VM operations.
 - A trusted server CA file for validating the Incus HTTPS endpoint.
 - A provider credential: a random secret of at least 32 bytes without
-  whitespace, which Lightspeed presents to the provider.
+  whitespace, which Lightspeed presents to the provider. It is optional, but
+  leave it out only when nothing but Lightspeed can reach the provider's
+  listener.
 - A provider configuration file with the endpoint, storage pool, and templates.
 
-The provider must be able to reach Incus and the guest networks. Its
-controller and data routes require the provider credential as a bearer token
-and refuse other callers before the WebSocket upgrade. The guest daemon
+The provider must be able to reach Incus and the guest networks. With a
+credential configured, its controller and data routes require it as a bearer
+token and refuse other callers before the WebSocket upgrade. The guest daemon
 listener inside each VM has no authentication of its own: keep guest networks
 private, and do not expose the provider or its guests as public agent or
 browser endpoints. [Networking and ingress](networking-and-ingress.md)
@@ -115,7 +119,6 @@ This example leaves public application ingress disabled:
 {
   "controllerListen": "127.0.0.1:19090",
   "credentialFile": "/run/secrets/lightspeed-provider-credential",
-  "dataRouteBase": "ws://127.0.0.1:19090/routes",
   "incus": {
     "mode": "single",
     "endpoints": ["https://incus.internal:8443"],
@@ -136,7 +139,11 @@ This example leaves public application ingress disabled:
       "imageFingerprint": "<immutable image fingerprint>",
       "cpu": 2,
       "memory": "4GiB",
-      "disk": "40GiB"
+      "disk": "40GiB",
+      "idle": {
+        "pauseAfterMs": 1800000,
+        "stopAfterMs": 14400000
+      }
     }
   ]
 }
@@ -148,16 +155,26 @@ as `4GiB`; the provider reports them to Lightspeed in bytes. The sample
 controller listens on loopback, which works when the environment gateway can
 reach that same host namespace. For separate hosts or containers, bind an
 appropriate private address and register that reachable address instead.
+Leave out `credentialFile` to run without a credential.
 
-`dataRouteBase` is the URL at which Lightspeed reaches this listener's
-`/routes` path, so it must use the address Lightspeed dials, not necessarily
-the bind address. The provider advertises it during the controller handshake.
-When Lightspeed reaches the controller through TLS, for example behind a
-reverse proxy, `dataRouteBase` must use `wss://` as well.
+The listener serves the controller on `/control` and the data routes under
+`/routes`. Lightspeed derives the data route URL from the controller URL you
+register, so the same address serves both. Only when the environment
+gateway reaches the data routes under another address, for example through
+a separate proxy, register that base with the provider in Lightspeed.
+
+The template's `idle` block is the idle policy its VMs get: pause after 30
+minutes without activity, then stop after four hours. Thresholds are in
+milliseconds and must not decrease in the order `pauseAfterMs`,
+`stopAfterMs`, `closeAfterMs`; `closeAfterMs` deletes the VM. Incus VMs
+cannot be suspended, so a template refuses `suspendAfterMs`. Leave `idle`
+out to keep VMs running until someone changes their power or closes them.
+The provider checks idle VMs every `idleCheckSeconds`, 60 by default; see
+[Let the provider manage power](#let-the-provider-manage-power).
 
 The network block denies the metadata-service address in this example. It
 is an explicit egress rule, not a complete network policy. The provider also
-separates sibling binding networks. Choose additional denied destinations for
+separates the networks of different universes. Choose additional denied destinations for
 your deployment, avoiding overlap with allocated guest network ranges.
 
 Start the process:
@@ -180,8 +197,8 @@ prove that the image can boot or that a guest daemon is reachable; the first
 environment test covers those steps.
 
 The complete [example configuration](../../../crates/environment-provider-incus/config.example.json)
-also includes optional relay settings, an image server, and ingress.
-`relayIdleSeconds` cannot be set below 60, so a quiet long read is never cut
+also includes optional relay and idle-check settings, an image server, and
+ingress. `relayIdleSeconds` cannot be set below 60, so a quiet long read is never cut
 by the relay. The provider config has no provider ID or list of authorized
 universes. Those belong to Lightspeed's registry and bindings.
 
@@ -195,38 +212,43 @@ provider**. Enter:
 | Provider id | `incus-local` |
 | Display name (optional) | `Local Incus` |
 | Controller endpoint | `ws://127.0.0.1:19090/control` |
-| Credential | The contents of the provider credential file |
+| Data route base (optional) | Leave empty: Lightspeed uses `ws://127.0.0.1:19090/routes` |
+| Credential (optional) | The contents of the provider credential file |
 
 Choose **Register**. Lightspeed connects to the controller and checks its
 handshake. A wrong path or credential refuses the registration; a provider
-that is not running yet is accepted and checked again later. The credential
-is write-only: Lightspeed never shows it again, and leaving it empty when
-editing the provider keeps the stored one. The ID is a stable
-deployment-wide identifier used by its universe bindings. For another
-topology, use the private endpoint reachable from the environment gateway
-rather than its own loopback address.
+that is not running yet is accepted and checked again on first use. The
+credential is write-only: Lightspeed never shows it again, leaving it empty
+when editing the provider keeps the stored one, and **Remove the stored
+credential** deletes it. The ID is a stable deployment-wide identifier used
+by its universe bindings. For another topology, use the private endpoint
+reachable from the environment gateway rather than its own loopback address.
+A data route base you enter must use `wss://` when the controller is reached
+over TLS.
 
-Choose **Bind universe**, select the **Universe**, leave **Binding id** at the
-provider-ID default or enter a stable ID, and choose **Bind**. There can be at
-most one binding for each universe/provider pair.
+Choose **Bind universe**, select the **Universe**, and choose **Bind**. There
+can be at most one binding for each universe and provider.
 
-An enabled binding lets that universe list the provider's templates and create
-environments. The provider lazily creates a restricted Incus project, managed
-network, ACL, and profile for the binding. You do not need to add the universe
-to the provider JSON or restart it to add another binding.
+An enabled binding lets that universe list the provider's templates, create
+environments, and reach the ones it created. The provider lazily creates a
+restricted Incus project, managed network, ACL, and profile for the
+universe. You do not need to add the universe to the provider JSON or
+restart it to bind another universe.
 
 ## Provision and verify a VM
 
 In the bound universe, open **Environments → New environment**. Choose
 **Small development VM**, enter a display name such as `Acorn build machine`,
-and choose **Provision**. You can leave the idle policy empty for this initial
-test, then configure it under [Power and cleanup](power-and-cleanup.md).
+and choose **Provision**. The dialog shows the template's idle policy and
+power states; **Custom idle policy** replaces the template's policy for this
+VM. Incus cannot suspend, so only pause, stop and close are offered.
 
-The environment progresses through provisioning and booting toward ready.
-Expand **Details** to inspect the environment ID, provider, template, and
-provider target. Attach it with **Run commands** access and select it in a session
-with **Environments** enabled, then ask the agent to run `pwd` and a harmless
-file check.
+The environment stays provisioning while the VM is created and boots, and
+becomes ready once Lightspeed's first connection to its daemon succeeds.
+Expand **Details** to inspect the environment ID, provider, template,
+provider target, and what the provider last reported. Attach it with **Run
+commands** access and select it in a session with **Environments** enabled,
+then ask the agent to run `pwd` and a harmless file check.
 
 The provider configures the guest daemon during provisioning. The stock setup
 listens privately on port 19091, starts commands in `/workspace`, and keeps
@@ -239,12 +261,33 @@ and execution check. Finish the test by closing the disposable environment
 and waiting for its status to become closed. Closing releases the VM and its
 disk, so save any needed output first.
 
+## Let the provider manage power
+
+The provider owns its VMs' power. Every `idleCheckSeconds` it asks the daemon
+in each running VM how long it has been idle, and applies the most escalated
+stage of the VM's idle policy that is due: pause, then stop, then close. It
+keeps counting while a VM is paused, so a later stage still fires. Running
+processes, running jobs, and services a command left running keep a VM
+awake, and the provider never powers a VM down while Lightspeed has a
+connection open to it. After a provider restart, the idle time of a VM that
+was already powered down starts again from zero.
+
+A VM keeps the idle policy it was created with. A template's `idle` is the
+default; `environments/create` can pass another policy for one VM.
+
+A tool call wakes a paused or stopped VM: its connection to the VM's data
+route makes the provider unfreeze or start it, and the call waits until the
+daemon answers. The **Pause**, **Resume**, and **Stop** buttons ask the
+provider directly; its idle policy still applies afterwards. A VM the idle
+policy closed is gone, and its environment shows **Ended by the provider**.
+
 ## Update offerings and manage access
 
 Publish a changed image under a new fingerprint and a new template ID. Set
 `deprecated: true` on the old template when it should stop appearing for new
 environments. Deprecation affects only new environments: existing ones keep
-waking, powering, and closing normally. Edit the provider's `templates`
+waking, powering, and closing normally. A changed `idle` block applies to
+VMs created afterwards. Edit the provider's `templates`
 configuration and restart its service: configuration is loaded at startup,
 with no hot reload.
 
@@ -256,11 +299,13 @@ another environment protocol version than the runtime fails when it becomes
 ready, with an error naming both versions; recreate it from a current
 template.
 
-Disabling a universe binding prevents new provisioning. It does not close
-environments already created through it. Binding deletion is refused while
-nonclosed environments reference it, and provider deletion is refused while
-bindings reference it. Removing registry records does not automatically remove
-all provider-side projects or network infrastructure.
+Disabling a universe binding prevents new provisioning and makes the
+universe's environments from that provider unreachable until it is enabled
+again. It does not close them. Binding deletion is refused while the universe
+has nonclosed environments from the provider, and provider deletion is
+refused while bindings or nonclosed environments reference it. Removing
+registry records does not automatically remove all provider-side projects or
+network infrastructure.
 
 ## Use an existing Incus cluster
 
@@ -287,8 +332,9 @@ before adopting that topology.
 | The provider cannot start or its health check fails | Check configuration, Incus HTTPS trust, client permissions, topology mode, and endpoint reachability. |
 | The universe has no templates | Check provider registration, the universe's enabled binding, and template deprecation. |
 | Incus cannot find the configured image | Use the immutable fingerprint, make it available on the target, or configure a trusted image server. |
-| Registering the provider is refused | Check the controller URL path, the credential, and that `dataRouteBase` uses `wss://` when the controller is reached over TLS. |
-| A VM boots but its environment is not ready | Check the guest daemon service, matching binary architecture, provider-to-guest routes, private daemon port, and that `dataRouteBase` reaches the provider from the environment gateway. |
+| Registering the provider is refused | Check the controller URL path, the credential, and that a data route base you entered uses `wss://` when the controller is reached over TLS. |
+| A VM boots but its environment is not ready | Read the environment's state message. Check the guest daemon service, matching binary architecture, provider-to-guest routes, private daemon port, and that the data route base, derived or entered, reaches the provider from the environment gateway. |
+| A VM never pauses | Check the template's `idle` block, running processes and jobs, services a command left running, and open sessions using the VM. |
 | The environment fails naming two protocol versions | The image's daemon does not match the runtime release. Rebuild the image and recreate the environment. |
 | A command cannot write outside the workspace | Inspect the stock service's systemd restrictions and daemon-user permissions. Customize the image deliberately if the task needs more access. |
-| Adding a binding fails during network setup | Check Incus permissions, subnet availability, denied-CIDR overlap, and cluster uplink configuration if applicable. |
+| A universe's first provisioning fails during network setup | Check Incus permissions, subnet availability, denied-CIDR overlap, and cluster uplink configuration if applicable. |

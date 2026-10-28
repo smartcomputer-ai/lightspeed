@@ -109,8 +109,16 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!("unexpected migrated status: {status:?}"));
     }
 
+    // The environment baseline is folded into one migration; the ledger
+    // ends at revision 11.
+    if REQUIRED_SCHEMA_REVISION != 11 {
+        return Err(format!(
+            "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
+        ));
+    }
+
     // The public schema can have these same names. Every newly migrated schema
-    // must still receive its own foreign keys, including the deferred cycle.
+    // must still receive its own foreign keys.
     let foreign_keys: Vec<(String, bool, bool, bool)> = sqlx::query_as(
         "SELECT constraint_row.conname::text, constraint_row.condeferrable,
                 constraint_row.condeferred,
@@ -120,7 +128,6 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
          JOIN pg_class AS target ON target.oid = constraint_row.confrelid
          WHERE source.relnamespace = current_schema()::regnamespace
            AND constraint_row.conname IN (
-               'environments_current_incarnation_fk',
                'environments_registration_key_fk',
                'mcp_servers_auth_grant_fk'
            )
@@ -131,15 +138,12 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     if foreign_keys
         != vec![
-            (
-                "environments_current_incarnation_fk".to_owned(),
-                true,
-                true,
-                true,
-            ),
+            // Deferrable but checked immediately, so only a universe delete
+            // (which defers its constraints) can remove keys and
+            // environments in either cascade order.
             (
                 "environments_registration_key_fk".to_owned(),
-                false,
+                true,
                 false,
                 true,
             ),
@@ -149,6 +153,99 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!(
             "missing or incorrect local foreign keys: {foreign_keys:?}"
         ));
+    }
+
+    // The environment baseline's named constraints and indexes.
+    let mut expected_constraints = vec![
+        "environment_providers_controller_endpoint_format",
+        "environment_providers_credential_all_or_none",
+        "environment_providers_data_route_base_format",
+        "environment_providers_display_name_not_empty",
+        "environment_providers_provider_id_format",
+        "environment_providers_times_valid",
+        "environment_provider_bindings_times_valid",
+        "environment_registration_keys_display_name_bounded",
+        "environment_registration_keys_id_format",
+        "environment_registration_keys_identity_mode_known",
+        "environment_registration_keys_limits_positive",
+        "environment_registration_keys_offline_close_persistent",
+        "environment_registration_keys_times_valid",
+        "environment_registration_key_secrets_hash_format",
+        "environment_registration_key_secrets_prefix_not_empty",
+        "environment_registration_key_secrets_times_valid",
+        "environments_close_reason",
+        "environments_closed_at",
+        "environments_daemon_build",
+        "environments_ids_format",
+        "environments_json_objects",
+        "environments_observation",
+        "environments_registration_key_fk",
+        "environments_source_fields",
+        "environments_source_known",
+        "environments_state_known",
+        "environments_state_message_bounded",
+        "environments_state_per_kind",
+        "environments_times_valid",
+        "environments_work_schedule",
+    ];
+    expected_constraints.sort_unstable();
+    let constraints: Vec<String> = sqlx::query_scalar(
+        "SELECT constraint_row.conname::text
+         FROM pg_constraint AS constraint_row
+         JOIN pg_class AS source ON source.oid = constraint_row.conrelid
+         WHERE source.relnamespace = current_schema()::regnamespace
+           AND source.relname IN (
+               'environment_providers', 'environment_provider_bindings',
+               'environment_registration_keys', 'environment_registration_key_secrets',
+               'environments'
+           )
+           AND constraint_row.contype IN ('c', 'f')
+           AND constraint_row.conname = ANY($1::text[])
+         ORDER BY constraint_row.conname",
+    )
+    .bind(&expected_constraints)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut constraints: Vec<&str> = constraints.iter().map(String::as_str).collect();
+    constraints.sort_unstable();
+    if constraints != expected_constraints {
+        return Err(format!(
+            "environment baseline constraints differ: {constraints:?}"
+        ));
+    }
+    let mut expected_indexes = vec![
+        "environment_registration_key_secrets_live_idx",
+        "environments_daemon_public_key_idx",
+        "environments_metadata_idx",
+        "environments_provider_state_idx",
+        "environments_provider_target_idx",
+        "environments_provisioned_open_idx",
+        "environments_registered_open_idx",
+        "environments_registration_key_state_idx",
+        "environments_request_id_idx",
+        "environments_work_idx",
+    ];
+    expected_indexes.sort_unstable();
+    let mut indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname::text FROM pg_indexes
+         WHERE schemaname = current_schema() AND indexname = ANY($1::text[])",
+    )
+    .bind(&expected_indexes)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    indexes.sort_unstable();
+    if indexes != expected_indexes {
+        return Err(format!("environment baseline indexes differ: {indexes:?}"));
+    }
+    let incarnations: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('environment_incarnations')::text")
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    if incarnations.is_some() {
+        return Err("the environment baseline must not create incarnations".to_owned());
     }
 
     let rows: Vec<(i64, String, String)> =

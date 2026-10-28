@@ -47,7 +47,8 @@ beforeEach(() => {
     if (path.endsWith("/profiles/shared")) return { profileId: "shared", revision: 1, config: { features: { environments: { environments: [{ environmentId: "env", default: true }] } } } };
     if (path.endsWith("/triggers")) return { triggers: [] };
     if (path.endsWith("/channel-accounts")) return { accounts: [] };
-    if (path.endsWith("/environments")) return [{ environmentId: "env", displayName: "Shared environment", status: "ready", desiredPower: "running", source: { type: "provisioned" }, incarnation: { powerStates: ["running", "paused"] } }];
+    if (path.includes("/environments?")) return { environments: [{ environmentId: "env", displayName: "Shared environment", state: "open", status: "ready", source: { type: "provisioned", providerId: "incus", templateId: "small", observed: { phase: "active", power: "running", observedAtMs: 0 } } }], nextAfter: null };
+    if (path.endsWith("/environment-templates")) return [{ providerId: "incus", templateId: "small", displayName: "Small", powerStates: ["running", "paused"], publicIngress: false, deprecated: false }];
     throw new Error(`Unexpected request: ${method} ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -122,7 +123,6 @@ it("does not turn bot management into profile or environment administration", as
   expect(container.querySelector('[aria-label="Profile configuration"]')).not.toBeNull();
   expect(container.textContent).toContain("Shared environment");
   expect(button("Pause")).toBeUndefined();
-  expect(button("Idle policy…")).toBeUndefined();
   // Configuring the environment is an operator's.
   mocks.role = "operator";
   await act(async () => root.render(
@@ -130,7 +130,6 @@ it("does not turn bot management into profile or environment administration", as
   ));
   await settle();
   expect(button("Pause")).toBeDefined();
-  expect(button("Idle policy…")).toBeDefined();
 });
 
 it.each(["viewer", "contributor", "operator"])("offers conversation compaction according to the %s role", async (role) => {

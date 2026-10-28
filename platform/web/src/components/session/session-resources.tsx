@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, type Environment } from "@/api";
+import { api } from "@/api";
+import { openEnvironmentsQuery } from "@/lib/environments";
 import type { McpServerOption, WorkspaceOption } from "@/components/session/session-config-editor";
 import { Clock3, Code2, FolderOpen, Globe2, Network, Server, Settings2, Wrench, type LucideIcon } from "lucide-react";
 import { sessionResources, type ResourceTone, type SessionResources } from "@/lib/sessions/session-resources";
@@ -23,7 +24,8 @@ const ENV_STATUS: Record<string, string> = {
   suspended: "Suspended · wakes on use",
   stopped: "Stopped · wakes on use",
   provisioning: "Provisioning",
-  booting: "Booting",
+  unknown: "Status unknown",
+  away: "Daemon disconnected",
   closing: "Closing",
   closed: "Closed",
   failed: "Failed",
@@ -39,8 +41,7 @@ const MCP_STATUS: Record<string, string> = {
 /// machine waking or failing shows without a reload.
 export function useSessionResources(universeId: string, config: unknown, activeEnvironmentId: string | null | undefined, enabled: boolean) {
   const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
+    ...openEnvironmentsQuery(universeId),
     enabled,
     refetchInterval: enabled ? 30_000 : false,
   });
@@ -95,7 +96,7 @@ export function SessionResourceChips({ resources, slug, onConfigure }: {
             : environments.items.map((item) => (
               <Row key={item.key} tone={item.tone}
                 primary={item.label}
-                secondary={[item.status ? ENV_STATUS[item.status] ?? item.status : "Not in this universe's list", item.access && `${item.access} access`].filter(Boolean).join(" · ")}
+                secondary={[item.status ? ENV_STATUS[item.status] ?? item.status : "Closed or not in this universe's list", item.access && `${item.access} access`].filter(Boolean).join(" · ")}
                 badges={[item.active && "Active", item.isDefault && "Default"]} />
             ))}
           {(environments.instructions || environments.skills) && (

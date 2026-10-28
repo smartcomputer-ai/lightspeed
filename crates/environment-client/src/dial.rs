@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use environment_protocol::limits::MAX_MESSAGE_BYTES;
+use environment_protocol::{
+    limits::MAX_MESSAGE_BYTES,
+    routes::{DataRouteRefusal, parse_retry_after_ms},
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::UnixStream,
@@ -15,8 +18,8 @@ use tokio_tungstenite::{
         client::IntoClientRequest,
         handshake::client::Request,
         http::{
-            HeaderName, HeaderValue,
-            header::{AUTHORIZATION, USER_AGENT},
+            HeaderMap, HeaderName, HeaderValue,
+            header::{AUTHORIZATION, RETRY_AFTER, USER_AGENT},
         },
         protocol::WebSocketConfig,
     },
@@ -97,15 +100,30 @@ fn upgrade_request(
 
 fn dial_error(endpoint: &str, error: tungstenite::Error) -> ClientError {
     match error {
-        tungstenite::Error::Http(response) => ClientError::UpgradeRejected {
-            status: response.status().as_u16(),
-        },
+        tungstenite::Error::Http(response) => {
+            let status = response.status().as_u16();
+            let retry_after_ms = retry_after_ms(response.headers());
+            let refusal = DataRouteRefusal::from_refused_upgrade(
+                status,
+                response.body().as_deref(),
+                retry_after_ms,
+            );
+            ClientError::UpgradeRejected {
+                status,
+                refusal,
+                retry_after_ms,
+            }
+        }
         tungstenite::Error::Url(error) => configuration(endpoint, error.to_string()),
         error => ClientError::Connect {
             endpoint: endpoint.to_owned(),
             message: error.to_string(),
         },
     }
+}
+
+fn retry_after_ms(headers: &HeaderMap) -> Option<u64> {
+    parse_retry_after_ms(headers.get(RETRY_AFTER)?.to_str().ok()?)
 }
 
 async fn bounded<T>(
@@ -183,7 +201,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use environment_protocol::handshake::ImplementationInfo;
+    use environment_protocol::{handshake::ImplementationInfo, limits::RETRY_AFTER_MAX_SECS};
 
     use super::*;
 
@@ -215,6 +233,104 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn retry_after_is_whole_seconds_clamped_to_the_maximum() {
+        let header = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(RETRY_AFTER, HeaderValue::from_str(value).unwrap());
+            retry_after_ms(&headers)
+        };
+        assert_eq!(header("3"), Some(3_000));
+        assert_eq!(header("3600"), Some(RETRY_AFTER_MAX_SECS * 1_000));
+        assert_eq!(header("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(retry_after_ms(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn rejected_upgrades_decode_a_refusal_body() {
+        let response = tungstenite::http::Response::builder()
+            .status(503)
+            .header(RETRY_AFTER, "2")
+            .body(Some(br#"{"state":"booting"}"#.to_vec()))
+            .unwrap();
+        let error = dial_error("ws://h/", tungstenite::Error::Http(Box::new(response)));
+        assert!(
+            matches!(
+                &error,
+                ClientError::UpgradeRejected {
+                    status: 503,
+                    refusal: Some(DataRouteRefusal::Booting {}),
+                    retry_after_ms: Some(2_000),
+                }
+            ),
+            "{error:?}"
+        );
+        let garbled = tungstenite::http::Response::builder()
+            .status(503)
+            .body(Some(b"<html>busy</html>".to_vec()))
+            .unwrap();
+        assert!(matches!(
+            dial_error("ws://h/", tungstenite::Error::Http(Box::new(garbled))),
+            ClientError::UpgradeRejected {
+                status: 503,
+                refusal: None,
+                retry_after_ms: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn a_refusal_whose_body_was_not_read_falls_back_on_its_status() {
+        let refused = |status: u16, retry_after: Option<&str>, body: Option<Vec<u8>>| {
+            let mut response = tungstenite::http::Response::builder().status(status);
+            if let Some(retry_after) = retry_after {
+                response = response.header(RETRY_AFTER, retry_after);
+            }
+            match dial_error(
+                "ws://h/",
+                tungstenite::Error::Http(Box::new(response.body(body).unwrap())),
+            ) {
+                ClientError::UpgradeRejected {
+                    refusal,
+                    retry_after_ms,
+                    ..
+                } => (refusal, retry_after_ms),
+                error => panic!("expected a refused upgrade, got {error:?}"),
+            }
+        };
+        // The tail read with the headers is empty, or there is none.
+        assert_eq!(
+            refused(410, None, Some(Vec::new())),
+            (Some(DataRouteRefusal::Gone {}), None)
+        );
+        assert_eq!(
+            refused(410, None, None),
+            (Some(DataRouteRefusal::Gone {}), None)
+        );
+        assert!(matches!(
+            refused(409, None, Some(Vec::new())),
+            (Some(DataRouteRefusal::Failed { .. }), None)
+        ));
+        assert_eq!(
+            refused(503, Some("4"), Some(Vec::new())),
+            (Some(DataRouteRefusal::Booting {}), Some(4_000))
+        );
+        // A partial body does not decode either.
+        assert_eq!(
+            refused(503, Some("4"), Some(br#"{"state":"wak"#.to_vec())),
+            (Some(DataRouteRefusal::Booting {}), Some(4_000))
+        );
+        // A decoded body wins over the status.
+        assert_eq!(
+            refused(503, Some("4"), Some(br#"{"state":"waking"}"#.to_vec())),
+            (Some(DataRouteRefusal::Waking {}), Some(4_000))
+        );
+        // Statuses that name no refusal.
+        assert_eq!(refused(503, None, Some(Vec::new())), (None, None));
+        assert_eq!(refused(401, None, None), (None, None));
+        assert_eq!(refused(404, Some("4"), None), (None, Some(4_000)));
     }
 
     #[test]

@@ -1,13 +1,12 @@
 import { useActionPermissions } from "@/lib/permissions";
 import { ReadError } from "@/components/read-error";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Check, ChevronDown, Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Boxes, Check, ChevronDown, Copy, KeyRound, Pencil, Plus, RotateCw, Trash2 } from "lucide-react";
 import {
   api,
   type Environment,
   type EnvironmentCredential,
-  type EnvironmentCredentialSource,
   type EnvironmentProviderBinding,
   type EnvironmentRegistrationKey,
   type EnvironmentRegistrationKeyCreated,
@@ -49,30 +48,32 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { EmptyState, LoadingNote, PageHeader, ShowHiddenToggle, UniverseNotFound } from "@/components/page";
-import { EnvironmentIdlePolicyDialog } from "@/components/environment/idle-policy-dialog";
-import {
-  IdlePolicyFields,
-  idlePolicyIsMonotone,
-  type IdlePolicy,
-} from "@/components/environment/idle-policy-fields";
-import {
-  EnvironmentPowerControls,
-  describeIdlePolicy,
-  observedPower,
-  powerDiverges,
-} from "@/components/environment/power-controls";
+import type { EnvironmentIdlePolicyView } from "@lightspeed-ai/sdk";
+import { EnvironmentPowerControls } from "@/components/environment/power-controls";
+import { IdlePolicyFields, idlePolicyProblem, idleStagesFor } from "@/components/environment/idle-policy-fields";
+import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import {
   environmentCredentialAvailable,
   environmentCredentialOptions,
   environmentCredentialSourceFromValue,
   environmentCredentialSourceLabel,
-  environmentCredentialSourceValue,
 } from "@/lib/environment-credentials";
+import {
+  describeIdlePolicy,
+  environmentName,
+  environmentPagePath,
+  environmentTemplate,
+  environmentTemplatesQuery,
+  formatDuration,
+  lifecycleMessage,
+  type EnvironmentPage,
+} from "@/lib/environments";
 import { useActiveUniverse } from "@/lib/universes";
 
-/// Universe environments are provisioned through operator-enabled bindings and
-/// immutable provider templates. Physical provider registration stays admin-only.
+/// Universe environments are provisioned from the templates offered by the
+/// universe's enabled providers. Physical provider registration stays admin-only.
 export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
   const permissions = useActionPermissions(universe?.id);
@@ -84,13 +85,14 @@ export function EnvironmentsPage({ admin: _admin }: { admin: boolean }) {
     return <UniverseNotFound slug={slug} />;
   }
 
-  return <ProviderList universeId={universe.id} />;
+  return <EnvironmentList universeId={universe.id} />;
 }
 
 const REFRESH_MS = 10_000;
 
-function ProviderList({ universeId }: { universeId: string }) {
+function EnvironmentList({ universeId }: { universeId: string }) {
   const writable = useActionPermissions(universeId).can("configure_resource");
+  const [showClosed, setShowClosed] = useState(false);
   const bindings = useQuery({
     queryKey: ["environment-provider-bindings", universeId],
     queryFn: () =>
@@ -99,26 +101,21 @@ function ProviderList({ universeId }: { universeId: string }) {
         `/api/v1/universes/${universeId}/environment-provider-bindings`,
       ),
   });
-  const templates = useQuery({
-    queryKey: ["environment-templates", universeId],
-    queryFn: () =>
-      api<EnvironmentTemplate[]>(
-        "GET",
-        `/api/v1/universes/${universeId}/environment-templates`,
-      ),
-  });
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () =>
-      api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-    refetchInterval: (query) => {
-      const rows = query.state.data as Environment[] | undefined;
-      return rows?.some((environment) =>
-        ["provisioning", "booting", "closing", "unknown"].includes(environment.status)
-          || powerDiverges(environment)
-          || ingressDiverges(environment)
-      ) ? REFRESH_MS : false;
-    },
+  const templates = useQuery(environmentTemplatesQuery(universeId));
+  // Pages of `environments/list`; closed rows only when asked for. Only the
+  // lifecycle Lightspeed drives (create until accepted, close until gone)
+  // changes without a user action, so polling is limited to those rows.
+  const environments = useInfiniteQuery({
+    queryKey: ["environments", universeId, "pages", showClosed],
+    queryFn: ({ pageParam }) =>
+      api<EnvironmentPage>("GET", environmentPagePath(universeId, { includeClosed: showClosed, after: pageParam })),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextAfter ?? undefined,
+    refetchInterval: (query) =>
+      query.state.data?.pages.some((page) =>
+        page.environments.some((environment) => ["provisioning", "closing"].includes(environment.state)))
+        ? REFRESH_MS
+        : false,
   });
   const secrets = useQuery({
     queryKey: ["secrets", universeId],
@@ -150,22 +147,18 @@ function ProviderList({ universeId }: { universeId: string }) {
   const templateRows = (templates.data ?? [])
     .slice()
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  const [showClosed, setShowClosed] = useState(false);
-  const allEnvironmentRows = (environments.data ?? [])
+  const loadedRows = environments.data?.pages.flatMap((page) => page.environments) ?? [];
+  const environmentRows = loadedRows
     .slice()
     .sort((a, b) => environmentName(a).localeCompare(environmentName(b)));
-  const closedCount = allEnvironmentRows.filter((environment) => environment.status === "closed").length;
-  const environmentRows = showClosed
-    ? allEnvironmentRows
-    : allEnvironmentRows.filter((environment) => environment.status !== "closed");
   // One lookup for every card: configuring an environment is decided per
   // environment, not from the universe role alone.
   const decisions = useActionPermissions(universeId);
-  const enabledBindings = new Set(
-    bindingRows.filter((binding) => binding.status === "enabled").map((binding) => binding.bindingId),
+  const enabledProviders = new Set(
+    bindingRows.filter((binding) => binding.enabled).map((binding) => binding.providerId),
   );
   const creatableTemplates = templateRows.filter(
-    (template) => enabledBindings.has(template.bindingId) && !template.deprecated,
+    (template) => enabledProviders.has(template.providerId) && !template.deprecated,
   );
   const keyRows = (registrationKeys.data ?? [])
     .slice()
@@ -185,6 +178,18 @@ function ProviderList({ universeId }: { universeId: string }) {
     environment.source.type === "registered"
     && !keysById.has(environment.source.registrationKeyId));
   const ungroupedRows = environmentRows.filter((environment) => environment.source.type !== "registered");
+  const card = (environment: Environment, registrationKey: EnvironmentRegistrationKey | undefined) => (
+    <EnvironmentCard
+      key={environment.environmentId}
+      universeId={universeId}
+      environment={environment}
+      configurable={decisions.can("configure_resource")}
+      operator={writable}
+      template={environmentTemplate(environment, templateRows)}
+      registrationKey={registrationKey}
+      secrets={secrets.data}
+    />
+  );
 
   return (
     <>
@@ -196,7 +201,7 @@ function ProviderList({ universeId }: { universeId: string }) {
             <RegisterExternalEnvironmentDialog
               universeId={universeId}
               suggestedEndpoint={hints.data?.devEnvdEndpoint ?? null}
-              alreadyRegistered={(environments.data ?? []).some(
+              alreadyRegistered={loadedRows.some(
                 (environment) =>
                   environment.source.type === "external"
                   && hints.data?.devEnvdEndpoint
@@ -226,8 +231,8 @@ function ProviderList({ universeId }: { universeId: string }) {
       {registrationKeys.error && (
         <ReadError error={registrationKeys.error} loading={!registrationKeys.data} prefix="Registration keys unavailable" />
       )}
-      {bindings.data && environments.data && allEnvironmentRows.length === 0 && (
-        <EmptyState icon={Boxes} title="No environments yet">
+      {bindings.data && environments.data && environmentRows.length === 0 && (
+        <EmptyState icon={Boxes} title={showClosed ? "No environments" : "No open environments"}>
           Machines agents run commands on: created from a provider template, or registered by
           running <span className="font-mono">lightspeed-envd</span> on a machine of your own.
         </EmptyState>
@@ -243,47 +248,27 @@ function ProviderList({ universeId }: { universeId: string }) {
               {group.key.maxActiveEnvironments ? ` · limit ${group.key.maxActiveEnvironments}` : ""}
             </span>
           </div>
-          {group.environments.map((environment) => (
-            <EnvironmentCard
-              key={environment.environmentId}
-              universeId={universeId}
-              environment={environment}
-              configurable={decisions.can("configure_resource")}
-              operator={writable}
-              template={undefined}
-              registrationKey={group.key}
-              secrets={secrets.data}
-            />
-          ))}
+          {group.environments.map((environment) => card(environment, group.key))}
         </section>
       ))}
       <div className="grid gap-3">
-        {[...ungroupedRows, ...orphanRegistered].map((environment) => (
-          <EnvironmentCard
-            key={environment.environmentId}
-            universeId={universeId}
-            environment={environment}
-            configurable={decisions.can("configure_resource")}
-            operator={writable}
-            template={templateRows.find((candidate) =>
-              candidate.bindingId === provisionedBindingId(environment)
-              && candidate.templateId === environment.incarnation.templateId
-            )}
-            registrationKey={undefined}
-            secrets={secrets.data}
-          />
-        ))}
+        {[...ungroupedRows, ...orphanRegistered].map((environment) => card(environment, undefined))}
       </div>
-      {environments.data && allEnvironmentRows.length > 0 && environmentRows.length === 0 && (
-        <p className="text-sm text-muted-foreground">Every environment here is closed.</p>
-      )}
-      <div className="mt-3">
-        <ShowHiddenToggle
-          label="Show closed environments"
-          count={closedCount}
-          checked={showClosed}
-          onCheckedChange={setShowClosed}
-        />
+      <div className="mt-3 flex flex-wrap items-center gap-4">
+        {environments.hasNextPage && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={environments.isFetchingNextPage}
+            onClick={() => void environments.fetchNextPage()}
+          >
+            {environments.isFetchingNextPage ? "Loading…" : "Load more"}
+          </Button>
+        )}
+        <label className="flex w-fit cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+          <Switch checked={showClosed} onCheckedChange={setShowClosed} />
+          Show closed environments
+        </label>
       </div>
       {writable && keyRows.length > 0 && <RegistrationKeys universeId={universeId} keys={keyRows} />}
       {bindingRows.length > 0 && <ProviderBindings bindings={bindingRows} />}
@@ -302,7 +287,7 @@ function EnvironmentCard({
 }: {
   universeId: string;
   environment: Environment;
-  /** Configuring this environment: power, idle policy, ingress, close. */
+  /** Configuring this environment: rename, power, ingress, close. */
   configurable: boolean;
   /** Universe-wide configuration; publishing secrets into a machine also needs it. */
   operator: boolean;
@@ -311,10 +296,10 @@ function EnvironmentCard({
   secrets: SecretsInventory | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [policyOpen, setPolicyOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const source = environment.source;
-  const gone = ["closing", "closed", "failed"].includes(environment.status);
-  const registered = source.type === "registered";
+  const closed = environment.state === "closed";
+  const message = lifecycleMessage(environment);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -324,18 +309,25 @@ function EnvironmentCard({
             <h2 className="truncate text-sm font-semibold">{environmentName(environment)}</h2>
             <p className="mt-1 truncate text-sm text-muted-foreground">
               {source.type === "provisioned"
-                ? template?.displayName ?? environment.incarnation.templateId ?? "Provisioned environment"
+                ? template?.displayName ?? source.templateId
                 : source.type === "registered"
                   ? `Registered daemon · ${registrationKey?.displayName ?? source.registrationKeyId}`
                   : "External environment"}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {registered
-                ? environment.lastSeenAtMs
-                  ? `Last seen ${relativeTime(environment.lastSeenAtMs)}`
-                  : "Never seen"
-                : environment.publicEndpoint ?? "Private environment"}
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {source.type === "registered"
+                ? source.connected
+                  ? `Connected · last seen ${relativeTime(source.lastSeenAtMs)}`
+                  : `Disconnected ${relativeTime(source.connectionChangedAtMs)}`
+                : source.type === "external"
+                  ? source.endpoint
+                  : source.publicEndpoint ?? "Private environment"}
             </p>
+            {message && (
+              <p className={`mt-1 text-xs ${environment.state === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
+                {message}
+              </p>
+            )}
           </div>
           <EnvironmentStatusBadge environment={environment} />
           <CollapsibleTrigger className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
@@ -351,37 +343,52 @@ function EnvironmentCard({
                 label="Source"
                 value={source.type === "provisioned" ? "Provisioned" : source.type === "registered" ? "Registered" : "External"}
               />
+              <Detail label="State" value={`${environment.state} · since ${relativeTime(environment.stateChangedAtMs)}`} />
               {source.type === "registered" && (
-                <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
+                <>
+                  <Detail label="Registration key" value={registrationKey?.displayName ?? source.registrationKeyId} />
+                  <Detail label="Daemon" value={source.daemonId} mono />
+                  <Detail
+                    label="Identity"
+                    value={source.identityMode === "ephemeral"
+                      ? "Ephemeral · closes after its key's disconnect grace"
+                      : "Persistent · waits for its daemon to reconnect"}
+                  />
+                  <Detail
+                    label="Connection"
+                    value={`${source.connected ? "Connected" : "Disconnected"} since ${relativeTime(source.connectionChangedAtMs)}`}
+                  />
+                  <Detail label="Last seen" value={relativeTime(source.lastSeenAtMs)} />
+                </>
               )}
-              {source.type === "registered" && <Detail label="Daemon" value={source.daemonId} mono />}
-              {source.type === "registered" && (
+              {source.type === "external" && <Detail label="Endpoint" value={source.endpoint} mono />}
+              {source.type === "provisioned" && (
+                <>
+                  <Detail label="Provider" value={source.providerId} mono />
+                  <Detail label="Template" value={source.templateId} mono />
+                  {source.targetId && <Detail label="Target" value={source.targetId} mono />}
+                  <Detail
+                    label="Provider reports"
+                    value={source.observed
+                      ? `${source.observed.phase}${source.observed.power ? ` · ${source.observed.power}` : ""} · ${relativeTime(source.observed.observedAtMs)}`
+                      : "nothing yet"}
+                  />
+                  <Detail label="Idle policy" value={describeIdlePolicy(source.idle ?? template?.idle)} />
+                </>
+              )}
+              {environment.daemon && (
                 <Detail
-                  label="Identity"
-                  value={source.identityMode === "ephemeral"
-                    ? "Ephemeral · closes after its key's disconnect grace"
-                    : "Persistent · stays offline until closed"}
+                  label="Daemon build"
+                  value={[
+                    environment.daemon.version,
+                    environment.daemon.gitSha?.slice(0, 12),
+                    `protocol ${environment.daemon.protocolVersion}`,
+                  ].filter(Boolean).join(" · ")}
                 />
               )}
-              {source.type === "registered" && environment.lastSeenAtMs && (
-                <Detail label="Last seen" value={relativeTime(environment.lastSeenAtMs)} />
-              )}
-              {source.type === "provisioned" && <Detail label="Binding" value={source.bindingId} mono />}
-              {source.type === "provisioned" && <Detail label="Provider" value={source.providerId} mono />}
-              {environment.incarnation.templateId && <Detail label="Template" value={environment.incarnation.templateId} mono />}
-              {environment.incarnation.providerTargetId && <Detail label="Target" value={environment.incarnation.providerTargetId} mono />}
-
-              {source.type === "provisioned" && (
-                <Detail
-                  label="Power"
-                  value={powerDiverges(environment)
-                    ? `${observedPower(environment) ?? environment.status} → ${environment.desiredPower}`
-                    : environment.desiredPower}
-                />
-              )}
-              {source.type === "provisioned" && (
-                <Detail label="Idle policy" value={describeIdlePolicy(environment.idlePolicy)} />
-              )}
+              {Object.entries(environment.metadata ?? {}).map(([key, value]) => (
+                <Detail key={key} label={key} value={value} mono />
+              ))}
               <Detail label="Updated" value={relativeTime(environment.updatedAtMs)} />
             </dl>
             <EnvironmentCredentials
@@ -391,35 +398,32 @@ function EnvironmentCard({
               enabled={open}
               writable={configurable && operator}
             />
-            {configurable && source.type === "provisioned" && (
+            {configurable && !closed && (
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-                <EnvironmentPowerControls universeId={universeId} environment={environment} />
-                {!gone && (
-                  <Button variant="outline" size="xs" onClick={() => setPolicyOpen(true)}>
-                    Idle policy…
-                  </Button>
+                <Button variant="outline" size="xs" onClick={() => setEditOpen(true)}>
+                  <Pencil data-icon="inline-start" />
+                  Rename…
+                </Button>
+                {source.type === "provisioned" && (
+                  <EnvironmentPowerControls
+                    universeId={universeId}
+                    environment={environment}
+                    powerStates={template?.powerStates ?? []}
+                  />
                 )}
-                {template?.publicIngress && (
+                {source.type === "provisioned" && template?.publicIngress && environment.state === "open" && (
                   <EnvironmentIngressButton universeId={universeId} environment={environment} />
                 )}
                 <CloseEnvironmentButton universeId={universeId} environment={environment} />
               </div>
             )}
-            {configurable && registered && !gone && (
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-4">
-                <CloseEnvironmentButton universeId={universeId} environment={environment} />
-                <span className="text-xs text-muted-foreground">
-                  Closing spends the daemon identity; the machine itself is untouched.
-                </span>
-              </div>
-            )}
-            {configurable && source.type === "provisioned" && !gone && (
-              <EnvironmentIdlePolicyDialog
-                key={`${environment.environmentId}:${policyOpen ? "open" : "closed"}`}
+            {configurable && !closed && (
+              <EditEnvironmentDialog
+                key={`${environment.environmentId}:${editOpen ? "open" : "closed"}`}
                 universeId={universeId}
                 environment={environment}
-                open={policyOpen}
-                onOpenChange={setPolicyOpen}
+                open={editOpen}
+                onOpenChange={setEditOpen}
               />
             )}
           </div>
@@ -464,7 +468,7 @@ function EnvironmentCredentials({
       }),
   });
   const rows = (credentials.data ?? []).slice().sort((a, b) => a.envName.localeCompare(b.envName));
-  const canAssign = environment.status !== "closed" && environment.status !== "closing";
+  const canAssign = environment.state !== "closed" && environment.state !== "closing";
 
   return (
     <div className="mt-4 border-t pt-4">
@@ -708,25 +712,20 @@ function AssignCredentialDialog({
 }
 
 function EnvironmentStatusBadge({ environment }: { environment: Environment }) {
-  if (environment.status === "ready") {
-    return <Badge variant="secondary">ready</Badge>;
+  switch (environment.status) {
+    case "ready":
+      return <Badge variant="secondary">ready</Badge>;
+    case "failed":
+      return (
+        <Badge variant="outline" className="border-destructive/50 text-destructive">
+          failed
+        </Badge>
+      );
+    case "away":
+      return <Badge variant="outline">disconnected</Badge>;
+    default:
+      return <Badge variant="outline">{environment.status}</Badge>;
   }
-  if (environment.status === "paused" || environment.status === "suspended") {
-    return (
-      <Badge variant="outline">
-        {environment.status}
-        {powerDiverges(environment) ? " · waking" : ""}
-      </Badge>
-    );
-  }
-  if (environment.status === "failed") {
-    return (
-      <Badge variant="outline" className="border-destructive/50 text-destructive">
-        failed
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">{environment.status}</Badge>;
 }
 
 function Detail({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
@@ -748,6 +747,7 @@ function RegistrationKeys({
   keys: EnvironmentRegistrationKey[];
 }) {
   const [showInactive, setShowInactive] = useState(false);
+  const [editing, setEditing] = useState<EnvironmentRegistrationKey | null>(null);
   const inactiveCount = keys.filter((key) => key.status !== "active").length;
   const rows = showInactive ? keys : keys.filter((key) => key.status === "active");
   return (
@@ -755,8 +755,8 @@ function RegistrationKeys({
       <h2 className="text-sm font-semibold">Registration keys</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         A key lets <span className="font-mono">lightspeed-envd</span> daemons dial in and register as
-        environments; each key is the group its environments belong to. Revoking stops new daemons
-        while registered ones keep reconnecting.
+        environments; each key is the group its environments belong to. Revoking or rotating stops
+        new daemons while registered ones keep reconnecting.
       </p>
       <div className="mt-3 grid gap-2">
         {rows.map((key) => (
@@ -772,14 +772,25 @@ function RegistrationKeys({
               {key.activeEnvironmentCount} active / {key.registeredEnvironmentCount} total
               {key.maxActiveEnvironments ? ` · limit ${key.maxActiveEnvironments}` : ""}
               {key.identityMode === "ephemeral"
-                ? ` · grace ${Math.round(key.ephemeralDisconnectGraceMs / 60_000)} min`
-                : ""}
+                ? ` · grace ${formatDuration(key.ephemeralDisconnectGraceMs)}`
+                : key.offlineCloseAfterMs
+                  ? ` · closes offline after ${formatDuration(key.offlineCloseAfterMs)}`
+                  : ""}
               {key.expiresAtMs ? ` · expires ${relativeTime(key.expiresAtMs).replace(" ago", "")}` : ""}
             </span>
             {key.status === "active" ? (
               <Badge variant="secondary">active</Badge>
             ) : (
               <Badge variant="outline">{key.status}</Badge>
+            )}
+            {key.status !== "revoked" && (
+              <Button variant="outline" size="xs" onClick={() => setEditing(key)}>
+                <Pencil data-icon="inline-start" />
+                Edit
+              </Button>
+            )}
+            {key.status === "active" && (
+              <RotateRegistrationKeyButton universeId={universeId} registrationKey={key} />
             )}
             {key.status === "active" && (
               <RevokeRegistrationKeyButton universeId={universeId} registrationKey={key} />
@@ -798,6 +809,12 @@ function RegistrationKeys({
           onCheckedChange={setShowInactive}
         />
       </div>
+      <EditRegistrationKeyDialog
+        key={editing?.registrationKeyId ?? "closed"}
+        universeId={universeId}
+        registrationKey={editing}
+        onOpenChange={(next) => { if (!next) setEditing(null); }}
+      />
     </section>
   );
 }
@@ -859,30 +876,259 @@ function RevokeRegistrationKeyButton({
   );
 }
 
-/// Mint a registration key. The secret is shown once, with the two
-/// variables a daemon needs to dial in.
+/// Retire the key's live secret and show its replacement once. The group,
+/// its policy, and the daemons it already admitted are unaffected.
+function RotateRegistrationKeyButton({
+  universeId,
+  registrationKey,
+}: {
+  universeId: string;
+  registrationKey: EnvironmentRegistrationKey;
+}) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const rotate = useMutation({
+    mutationFn: () =>
+      api<EnvironmentRegistrationKeyCreated>(
+        "POST",
+        `/api/v1/universes/${universeId}/environment-registration-keys/${registrationKey.registrationKeyId}/rotate`,
+      ),
+    onSuccess: async () => {
+      setConfirming(false);
+      await queryClient.invalidateQueries({ queryKey: ["environment-registration-keys", universeId] });
+    },
+  });
+  return (
+    <>
+      <Button variant="outline" size="xs" onClick={() => { rotate.reset(); setConfirming(true); }}>
+        <RotateCw data-icon="inline-start" />
+        Rotate
+      </Button>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rotate “{registrationKey.displayName}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The current secret stops admitting new daemons at once; give the new one to the
+              machines that should still register. Daemons that already registered keep
+              reconnecting by their own identity.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {rotate.error && <p className="text-sm text-destructive">{rotate.error.message}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction onClick={() => rotate.mutate()} disabled={rotate.isPending}>
+              {rotate.isPending ? "Rotating…" : "Rotate key"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog open={rotate.data !== undefined} onOpenChange={(next) => { if (!next) rotate.reset(); }}>
+        <DialogContent showCloseButton={false}>
+          {rotate.data && <RegistrationSecret created={rotate.data} onDone={() => rotate.reset()} />}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/// The engine's grace for an ephemeral key that sets none. The key view only
+/// carries the effective grace, so the edit form leaves the field empty when
+/// it equals this default and an unchanged save keeps following it.
+const DEFAULT_EPHEMERAL_GRACE_MS = 5 * 60_000;
+
+/// The editable policy of a registration key, in the units the form shows.
+type RegistrationKeyForm = {
+  displayName: string;
+  maxActive: string;
+  graceMinutes: string;
+  offlineCloseMinutes: string;
+};
+
+function registrationKeyForm(key: EnvironmentRegistrationKey | null): RegistrationKeyForm {
+  return {
+    displayName: key?.displayName ?? "",
+    maxActive: key?.maxActiveEnvironments ? String(key.maxActiveEnvironments) : "",
+    graceMinutes:
+      key && key.identityMode === "ephemeral" && key.ephemeralDisconnectGraceMs !== DEFAULT_EPHEMERAL_GRACE_MS
+        ? String(key.ephemeralDisconnectGraceMs / 60_000)
+        : "",
+    offlineCloseMinutes: key?.offlineCloseAfterMs ? String(key.offlineCloseAfterMs / 60_000) : "",
+  };
+}
+
+/// Request fields for `registration-keys/create` and `/update`: absent
+/// fields are unset, so an edit sends the complete policy.
+function registrationKeySettings(
+  form: RegistrationKeyForm,
+  identityMode: "persistent" | "ephemeral",
+  expiresAtMs: number | null | undefined,
+) {
+  const minutes = (value: string) => Math.round(Number(value) * 60_000);
+  return {
+    displayName: form.displayName.trim(),
+    ...(form.maxActive.trim() ? { maxActiveEnvironments: Number(form.maxActive) } : {}),
+    ...(identityMode === "ephemeral" && form.graceMinutes.trim()
+      ? { ephemeralDisconnectGraceMs: minutes(form.graceMinutes) }
+      : {}),
+    ...(identityMode === "persistent" && form.offlineCloseMinutes.trim()
+      ? { offlineCloseAfterMs: minutes(form.offlineCloseMinutes) }
+      : {}),
+    ...(expiresAtMs ? { expiresAtMs } : {}),
+  };
+}
+
+function registrationKeyFormError(form: RegistrationKeyForm): string | null {
+  if (!form.displayName.trim()) return "Name the group.";
+  if (form.maxActive.trim() && !(Number.isInteger(Number(form.maxActive)) && Number(form.maxActive) >= 1)) {
+    return "The active environment limit must be a whole number of at least 1.";
+  }
+  for (const value of [form.graceMinutes, form.offlineCloseMinutes]) {
+    if (value.trim() && !(Number(value) > 0)) return "Durations must be positive minutes.";
+  }
+  return null;
+}
+
+function RegistrationKeyFields({
+  form,
+  identityMode,
+  onChange,
+}: {
+  form: RegistrationKeyForm;
+  identityMode: "persistent" | "ephemeral";
+  onChange: (form: RegistrationKeyForm) => void;
+}) {
+  return (
+    <>
+      <Field>
+        <FieldLabel htmlFor="registration-key-name">Group name</FieldLabel>
+        <Input
+          id="registration-key-name"
+          value={form.displayName}
+          onChange={(event) => onChange({ ...form, displayName: event.target.value })}
+          placeholder="CI runners"
+          maxLength={128}
+          autoFocus
+        />
+      </Field>
+      {identityMode === "ephemeral" ? (
+        <Field>
+          <FieldLabel htmlFor="registration-key-grace">Disconnect grace (minutes)</FieldLabel>
+          <Input
+            id="registration-key-grace"
+            value={form.graceMinutes}
+            onChange={(event) => onChange({ ...form, graceMinutes: event.target.value })}
+            placeholder={String(DEFAULT_EPHEMERAL_GRACE_MS / 60_000)}
+            inputMode="decimal"
+          />
+          <FieldDescription>An environment whose daemon stays away this long is closed. Empty uses the default.</FieldDescription>
+        </Field>
+      ) : (
+        <Field>
+          <FieldLabel htmlFor="registration-key-offline">Close when offline for (minutes)</FieldLabel>
+          <Input
+            id="registration-key-offline"
+            value={form.offlineCloseMinutes}
+            onChange={(event) => onChange({ ...form, offlineCloseMinutes: event.target.value })}
+            placeholder="never"
+            inputMode="decimal"
+          />
+          <FieldDescription>
+            Empty keeps a disconnected environment open until it is closed, for machines that
+            come back; set it when scaled-down machines do not.
+          </FieldDescription>
+        </Field>
+      )}
+      <Field>
+        <FieldLabel htmlFor="registration-key-max">Active environment limit</FieldLabel>
+        <Input
+          id="registration-key-max"
+          value={form.maxActive}
+          onChange={(event) => onChange({ ...form, maxActive: event.target.value })}
+          placeholder="unlimited"
+          inputMode="numeric"
+        />
+        <FieldDescription>Bounds what a leaked key can add to this universe.</FieldDescription>
+      </Field>
+    </>
+  );
+}
+
+/// The one-time view of a registration secret, with the two variables a
+/// daemon needs to dial in.
+function RegistrationSecret({
+  created,
+  onDone,
+}: {
+  created: EnvironmentRegistrationKeyCreated;
+  onDone: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const bootstrap = [
+    "LIGHTSPEED_ENVD_GATEWAY_URL=wss://<lightspeed host>/environment-gateway/connect",
+    `LIGHTSPEED_ENVD_REGISTRATION_KEY=${created.secret}`,
+    "lightspeed-envd",
+  ].join("\n");
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Copy the registration key</DialogTitle>
+        <DialogDescription>
+          Shown once. Give it to the machines that should register under
+          “{created.registrationKey.displayName}”; in a sandbox, mount it as a file and delete
+          it after the daemon's receipt appears.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-2">
+        <FieldLabel htmlFor="registration-key-secret">Registration key</FieldLabel>
+        <div className="flex gap-2">
+          <Input
+            id="registration-key-secret"
+            value={created.secret}
+            readOnly
+            className="font-mono text-xs"
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              void navigator.clipboard.writeText(created.secret).then(() => setCopied(true));
+            }}
+          >
+            {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+        <FieldLabel htmlFor="registration-key-bootstrap">Bootstrap</FieldLabel>
+        <textarea
+          id="registration-key-bootstrap"
+          className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none"
+          value={bootstrap}
+          readOnly
+          onFocus={(event) => event.currentTarget.select()}
+        />
+      </div>
+      <DialogFooter>
+        <Button type="button" onClick={onDone}>I saved the key</Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+/// Mint a registration key. The secret is shown once.
 function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [displayName, setDisplayName] = useState("");
+  const [form, setForm] = useState(() => registrationKeyForm(null));
   const [identityMode, setIdentityMode] = useState<"persistent" | "ephemeral">("persistent");
-  const [maxActive, setMaxActive] = useState("");
-  const [graceMinutes, setGraceMinutes] = useState("");
   const [created, setCreated] = useState<EnvironmentRegistrationKeyCreated | null>(null);
-  const [copied, setCopied] = useState(false);
   const create = useMutation({
     mutationFn: () =>
       api<EnvironmentRegistrationKeyCreated>(
         "POST",
         `/api/v1/universes/${universeId}/environment-registration-keys`,
-        {
-          displayName: displayName.trim(),
-          identityMode,
-          ...(maxActive.trim() ? { maxActiveEnvironments: Number(maxActive) } : {}),
-          ...(identityMode === "ephemeral" && graceMinutes.trim()
-            ? { ephemeralDisconnectGraceMs: Math.round(Number(graceMinutes) * 60_000) }
-            : {}),
-        },
+        { identityMode, ...registrationKeySettings(form, identityMode, null) },
       ),
     onSuccess: async (result) => {
       setCreated(result);
@@ -891,21 +1137,12 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
   });
   const reset = () => {
     setOpen(false);
-    setDisplayName("");
+    setForm(registrationKeyForm(null));
     setIdentityMode("persistent");
-    setMaxActive("");
-    setGraceMinutes("");
     setCreated(null);
-    setCopied(false);
     create.reset();
   };
-  const bootstrap = created
-    ? [
-        "LIGHTSPEED_ENVD_GATEWAY_URL=wss://<lightspeed host>/environment-gateway/connect",
-        `LIGHTSPEED_ENVD_REGISTRATION_KEY=${created.secret}`,
-        "lightspeed-envd",
-      ].join("\n")
-    : "";
+  const formError = registrationKeyFormError(form);
 
   return (
     <>
@@ -916,49 +1153,7 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
       <Dialog open={open} onOpenChange={(next) => { if (!next) reset(); }}>
         <DialogContent showCloseButton={!created}>
           {created ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Copy the registration key</DialogTitle>
-                <DialogDescription>
-                  Shown once. Give it to the machines that should register under
-                  “{created.registrationKey.displayName}”; in a sandbox, mount it as a file and delete
-                  it after the daemon's receipt appears.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-2">
-                <FieldLabel htmlFor="registration-key-secret">Registration key</FieldLabel>
-                <div className="flex gap-2">
-                  <Input
-                    id="registration-key-secret"
-                    value={created.secret}
-                    readOnly
-                    className="font-mono text-xs"
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(created.secret).then(() => setCopied(true));
-                    }}
-                  >
-                    {copied ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
-                    {copied ? "Copied" : "Copy"}
-                  </Button>
-                </div>
-                <FieldLabel htmlFor="registration-key-bootstrap">Bootstrap</FieldLabel>
-                <textarea
-                  id="registration-key-bootstrap"
-                  className="min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs outline-none"
-                  value={bootstrap}
-                  readOnly
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-              </div>
-              <DialogFooter>
-                <Button type="button" onClick={reset}>I saved the key</Button>
-              </DialogFooter>
-            </>
+            <RegistrationSecret created={created} onDone={reset} />
           ) : (
             <>
               <DialogHeader>
@@ -970,65 +1165,32 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
               </DialogHeader>
               <div className="grid gap-4">
                 <Field>
-                  <FieldLabel htmlFor="registration-key-name">Group name</FieldLabel>
-                  <Input
-                    id="registration-key-name"
-                    value={displayName}
-                    onChange={(event) => setDisplayName(event.target.value)}
-                    placeholder="CI runners"
-                    maxLength={128}
-                    autoFocus
-                  />
-                </Field>
-                <Field>
                   <FieldLabel>Identity</FieldLabel>
                   <Select value={identityMode} onValueChange={(next) => setIdentityMode(next as "persistent" | "ephemeral")}>
                     <SelectTrigger className="w-full">
                       <SelectValue>
                         {(value: string) => value === "ephemeral"
                           ? "Ephemeral · close after the daemon stays away"
-                          : "Persistent · stay offline until closed"}
+                          : "Persistent · wait for the daemon to reconnect"}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="persistent">Persistent · stay offline until closed</SelectItem>
+                      <SelectItem value="persistent">Persistent · wait for the daemon to reconnect</SelectItem>
                       <SelectItem value="ephemeral">Ephemeral · close after the daemon stays away</SelectItem>
                     </SelectContent>
                   </Select>
                   <FieldDescription>
                     Persistent suits VMs and stateful pods whose daemon state survives restarts.
-                    Ephemeral suits replaceable workers and sandboxes.
+                    Ephemeral suits replaceable workers and sandboxes. It cannot be changed later.
                   </FieldDescription>
                 </Field>
-                {identityMode === "ephemeral" && (
-                  <Field>
-                    <FieldLabel htmlFor="registration-key-grace">Disconnect grace (minutes)</FieldLabel>
-                    <Input
-                      id="registration-key-grace"
-                      value={graceMinutes}
-                      onChange={(event) => setGraceMinutes(event.target.value)}
-                      placeholder="5"
-                      inputMode="decimal"
-                    />
-                  </Field>
-                )}
-                <Field>
-                  <FieldLabel htmlFor="registration-key-max">Active environment limit</FieldLabel>
-                  <Input
-                    id="registration-key-max"
-                    value={maxActive}
-                    onChange={(event) => setMaxActive(event.target.value)}
-                    placeholder="unlimited"
-                    inputMode="numeric"
-                  />
-                  <FieldDescription>Bounds what a leaked key can add to this universe.</FieldDescription>
-                </Field>
+                <RegistrationKeyFields form={form} identityMode={identityMode} onChange={setForm} />
                 {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={reset}>Cancel</Button>
                   <Button
                     type="button"
-                    disabled={create.isPending || !displayName.trim()}
+                    disabled={create.isPending || formError !== null}
                     onClick={() => create.mutate()}
                   >
                     {create.isPending ? "Minting…" : "Mint key"}
@@ -1043,9 +1205,67 @@ function CreateRegistrationKeyDialog({ universeId }: { universeId: string }) {
   );
 }
 
+/// Replace a key's editable policy (`registration-keys/update`). The
+/// identity mode is fixed when the key is minted.
+function EditRegistrationKeyDialog({
+  universeId,
+  registrationKey,
+  onOpenChange,
+}: {
+  universeId: string;
+  registrationKey: EnvironmentRegistrationKey | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState(() => registrationKeyForm(registrationKey));
+  const save = useMutation({
+    mutationFn: (key: EnvironmentRegistrationKey) =>
+      api<EnvironmentRegistrationKey>(
+        "PUT",
+        `/api/v1/universes/${universeId}/environment-registration-keys/${key.registrationKeyId}`,
+        registrationKeySettings(form, key.identityMode, key.expiresAtMs),
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["environment-registration-keys", universeId] });
+      onOpenChange(false);
+    },
+  });
+  const formError = registrationKeyFormError(form);
+  return (
+    <Dialog open={registrationKey !== null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit “{registrationKey?.displayName}”</DialogTitle>
+          <DialogDescription>
+            {registrationKey?.identityMode === "ephemeral" ? "Ephemeral" : "Persistent"} key. The active limit
+            and expiry apply to later admissions; a changed disconnect grace or offline close-after applies to
+            admitted environments whose daemon is away.
+          </DialogDescription>
+        </DialogHeader>
+        {registrationKey && (
+          <div className="grid gap-4">
+            <RegistrationKeyFields form={form} identityMode={registrationKey.identityMode} onChange={setForm} />
+            {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button
+                type="button"
+                disabled={save.isPending || formError !== null}
+                onClick={() => save.mutate(registrationKey)}
+              >
+                {save.isPending ? "Saving…" : "Save"}
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[] }) {
   const [open, setOpen] = useState(false);
-  const enabled = bindings.filter((binding) => binding.status === "enabled").length;
+  const enabled = bindings.filter((binding) => binding.enabled).length;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -1060,19 +1280,22 @@ function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[]
         <CollapsibleContent>
           <div className="divide-y border-t">
             {bindings.map((binding) => (
-              <div key={binding.bindingId} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:px-5">
+              <div key={binding.providerId} className="grid gap-3 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:px-5">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-medium">{humanizeIdentifier(binding.providerId)}</p>
-                    <ProviderStatusBadge status={binding.status} />
+                    {binding.enabled ? (
+                      <Badge variant="secondary">enabled</Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-destructive/50 text-destructive">disabled</Badge>
+                    )}
                   </div>
                   <p className="mt-2 font-mono text-xs text-muted-foreground">
-                    {binding.bindingId}
+                    {binding.providerId}
                   </p>
                 </div>
                 <div className="text-xs text-muted-foreground md:text-right">
-                  <p>Revision {binding.revision}</p>
-                  <p className="mt-1">Updated {relativeTime(binding.updatedAtMs)}</p>
+                  <p>Updated {relativeTime(binding.updatedAtMs)}</p>
                 </div>
               </div>
             ))}
@@ -1083,15 +1306,8 @@ function ProviderBindings({ bindings }: { bindings: EnvironmentProviderBinding[]
   );
 }
 
-function ProviderStatusBadge({ status }: { status: EnvironmentProviderBinding["status"] }) {
-  if (status === "enabled") return <Badge variant="secondary">enabled</Badge>;
-  return (
-    <Badge variant="outline" className="border-destructive/50 text-destructive">
-      {status}
-    </Badge>
-  );
-}
-
+/// One-shot `environments/ingress/put`: the provider adds or removes the
+/// public endpoint during the call, and the page shows what it returned.
 function EnvironmentIngressButton({
   universeId,
   environment,
@@ -1100,6 +1316,7 @@ function EnvironmentIngressButton({
   environment: Environment;
 }) {
   const queryClient = useQueryClient();
+  const publicEndpoint = environment.source.type === "provisioned" ? environment.source.publicEndpoint : null;
   const ingress = useMutation({
     mutationFn: (enabled: boolean) => api<Environment>(
       "PUT",
@@ -1113,40 +1330,26 @@ function EnvironmentIngressButton({
       <Button
         variant="outline"
         size="xs"
-        disabled={ingress.isPending || environment.status !== "ready"}
-        onClick={() => ingress.mutate(!environment.publicIngressEnabled)}
+        disabled={ingress.isPending}
+        onClick={() => ingress.mutate(!publicEndpoint)}
       >
         {ingress.isPending
           ? "Updating ingress…"
-          : environment.publicIngressEnabled ? "Disable public ingress" : "Enable public ingress"}
+          : publicEndpoint ? "Disable public ingress" : "Enable public ingress"}
       </Button>
-      {ingressDiverges(environment) && (
-        <span className="text-xs text-muted-foreground">
-          {environment.publicIngressEnabled ? "Public endpoint pending…" : "Removing public endpoint…"}
-        </span>
-      )}
-      {environment.publicIngressEnabled && environment.publicEndpoint && (
+      {publicEndpoint && (
         <a
           className="break-all text-xs text-primary underline-offset-4 hover:underline"
-          href={environment.publicEndpoint}
+          href={publicEndpoint}
           target="_blank"
           rel="noreferrer"
         >
-          {environment.publicEndpoint}
+          {publicEndpoint}
         </a>
       )}
       {ingress.error && <span className="text-xs text-destructive">{ingress.error.message}</span>}
     </>
   );
-}
-
-/**
- * `environments/ingress/put` records the intent; the reconciler realizes it
- * later, so `publicEndpoint` lags `publicIngressEnabled` until it converges.
- */
-function ingressDiverges(environment: Environment): boolean {
-  if (environment.source.type !== "provisioned") return false;
-  return environment.publicIngressEnabled !== Boolean(environment.publicEndpoint);
 }
 
 function CloseEnvironmentButton({
@@ -1164,12 +1367,11 @@ function CloseEnvironmentButton({
     ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["environments", universeId] }),
   });
-  if (environment.source.type !== "provisioned"
-    || environment.status === "closed"
-    || environment.status === "closing") {
+  if (environment.state === "closed" || environment.state === "closing") {
     return null;
   }
-  const label = environment.displayName ?? environment.environmentId;
+  const source = environment.source;
+  const label = environmentName(environment);
   return (
     <div className="ml-auto flex flex-col items-end gap-1">
       <AlertDialog>
@@ -1185,13 +1387,28 @@ function CloseEnvironmentButton({
           <AlertDialogHeader>
             <AlertDialogTitle>Close {label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently destroys the provider target
-              {environment.incarnation.providerTargetId
-                ? <> <span className="font-mono text-xs">{environment.incarnation.providerTargetId}</span></>
-                : null}
-              {" "}and everything stored on it. A closed environment cannot be
-              reopened; sessions that still select it will see it as
-              unavailable and its public endpoint stops working.
+              {source.type === "provisioned" ? (
+                <>
+                  This permanently destroys the provider target
+                  {source.targetId
+                    ? <> <span className="font-mono text-xs">{source.targetId}</span></>
+                    : null}
+                  {" "}and everything stored on it, and its public endpoint stops working.
+                </>
+              ) : source.type === "registered" ? (
+                <>
+                  The daemon is told to stop registering and its identity is spent; the machine
+                  itself and its files are untouched.
+                </>
+              ) : (
+                <>
+                  Lightspeed stops using the daemon at{" "}
+                  <span className="font-mono text-xs">{source.endpoint}</span>; the daemon itself
+                  keeps running.
+                </>
+              )}
+              {" "}A closed environment cannot be reopened; sessions that still select it will
+              see it as unavailable.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1210,6 +1427,77 @@ function CloseEnvironmentButton({
   );
 }
 
+/// Replace the environment's display name and caller metadata
+/// (`environments/update`).
+function EditEnvironmentDialog({
+  universeId,
+  environment,
+  open,
+  onOpenChange,
+}: {
+  universeId: string;
+  environment: Environment;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [displayName, setDisplayName] = useState(environment.displayName ?? "");
+  const [metadata, setMetadata] = useState<Record<string, string> | undefined>(
+    Object.keys(environment.metadata ?? {}).length ? environment.metadata : undefined,
+  );
+  const save = useMutation({
+    mutationFn: () => api<Environment>(
+      "PATCH",
+      `/api/v1/universes/${universeId}/environments/${encodeURIComponent(environment.environmentId)}`,
+      {
+        displayName: displayName.trim() || null,
+        metadata: metadata ?? {},
+      },
+    ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["environments", universeId] });
+      onOpenChange(false);
+    },
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Rename {environmentName(environment)}</DialogTitle>
+          <DialogDescription>
+            The name shown throughout Lightspeed, and labels for finding the environment.
+            Neither changes how it runs.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <Field>
+            <FieldLabel htmlFor="environment-rename">Display name</FieldLabel>
+            <Input
+              id="environment-rename"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder={environment.environmentId}
+              maxLength={200}
+              autoFocus
+            />
+          </Field>
+          <Field>
+            <FieldLabel>Metadata</FieldLabel>
+            <MetadataMapEditor value={metadata} onChange={setMetadata} />
+          </Field>
+          {save.error && <p className="text-sm text-destructive">{save.error.message}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button disabled={save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CreateEnvironmentDialog({
   universeId,
   templates,
@@ -1221,36 +1509,46 @@ function CreateEnvironmentDialog({
   const [open, setOpen] = useState(false);
   const [templateKey, setTemplateKey] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [idlePolicy, setIdlePolicy] = useState<IdlePolicy | undefined>(undefined);
+  const [customIdle, setCustomIdle] = useState(false);
+  const [idle, setIdle] = useState<EnvironmentIdlePolicyView | undefined>(undefined);
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState<string | null>(null);
-  const selectedTemplate = templates.find((template) =>
-    templateKey === `${template.bindingId}:${template.templateId}`
-  ) ?? templates[0];
+  const selectedTemplate = templates.find((template) => templateKey === templateValue(template)) ?? templates[0];
+  const idleProblem = customIdle ? idlePolicyProblem(idle) : null;
+  /// The override starts from the template's default, limited to the stages
+  /// the template can carry out.
+  const resetIdle = (template: EnvironmentTemplate | undefined) => {
+    const stages = idleStagesFor(template?.powerStates ?? []);
+    const defaults = Object.fromEntries(
+      stages
+        .map((stage) => [stage.key, template?.idle?.[stage.key]] as const)
+        .filter(([, ms]) => typeof ms === "number"),
+    ) as EnvironmentIdlePolicyView;
+    setIdle(Object.keys(defaults).length ? defaults : undefined);
+  };
   const create = useMutation({
     mutationFn: () => {
       if (!selectedTemplate) throw new Error("Choose an environment template.");
       return api<Environment>("POST", `/api/v1/universes/${universeId}/environments`, {
         requestId,
-        bindingId: selectedTemplate.bindingId,
+        providerId: selectedTemplate.providerId,
         templateId: selectedTemplate.templateId,
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
-        ...(idlePolicy ? { idlePolicy } : {}),
+        ...(customIdle && idle ? { idle } : {}),
       });
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["environments", universeId] });
       setOpen(false);
       setDisplayName("");
-      setIdlePolicy(undefined);
+      setCustomIdle(false);
+      setIdle(undefined);
       setRequestId(crypto.randomUUID());
       setError(null);
     },
     onError: (cause) => setError(cause.message),
   });
-  const selectedTemplateKey = selectedTemplate
-    ? `${selectedTemplate.bindingId}:${selectedTemplate.templateId}`
-    : "";
+  const selectedTemplateKey = selectedTemplate ? templateValue(selectedTemplate) : "";
 
   return (
     <>
@@ -1276,20 +1574,31 @@ function CreateEnvironmentDialog({
               <FieldLabel>Template</FieldLabel>
               <Select
                 value={selectedTemplateKey}
-                onValueChange={(value) => setTemplateKey(value as string)}
+                onValueChange={(value) => {
+                  setTemplateKey(value as string);
+                  resetIdle(templates.find((template) => templateValue(template) === value));
+                }}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {templates.map((template) => (
-                    <SelectItem
-                      key={`${template.bindingId}:${template.templateId}`}
-                      value={`${template.bindingId}:${template.templateId}`}
-                    >
+                    <SelectItem key={templateValue(template)} value={templateValue(template)}>
                       {template.displayName}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {selectedTemplate && (
+                <FieldDescription>
+                  {humanizeIdentifier(selectedTemplate.providerId)} · idle policy{" "}
+                  {describeIdlePolicy(selectedTemplate.idle)}
+                  {selectedTemplate.powerStates.length
+                    ? ` · power ${selectedTemplate.powerStates.join(", ")}`
+                    : " · no power control"}
+                  . The provider runs the idle policy; a powered-down environment wakes when a
+                  tool uses it.
+                </FieldDescription>
+              )}
             </Field>
             <Field>
               <FieldLabel htmlFor="environment-display-name">Display name</FieldLabel>
@@ -1305,21 +1614,34 @@ function CreateEnvironmentDialog({
                   "Optional name shown throughout Lightspeed."}
               </FieldDescription>
             </Field>
-            <IdlePolicyFields
-              value={idlePolicy}
-              warning={
-                idlePolicy === undefined
-                  ? "No stages: the environment never sleeps while idle. A box a bot or several sessions share should at least pause. You can change this later from the environment's details."
-                  : undefined
-              }
-              onChange={setIdlePolicy}
-            />
+            {selectedTemplate && (
+              <Field orientation="horizontal">
+                <Switch
+                  id="environment-custom-idle"
+                  checked={customIdle}
+                  onCheckedChange={(checked) => {
+                    setCustomIdle(checked);
+                    if (checked) resetIdle(selectedTemplate);
+                  }}
+                />
+                <FieldLabel htmlFor="environment-custom-idle">
+                  Custom idle policy instead of the template's
+                </FieldLabel>
+              </Field>
+            )}
+            {selectedTemplate && customIdle && (
+              <IdlePolicyFields
+                value={idle}
+                powerStates={selectedTemplate.powerStates}
+                onChange={setIdle}
+              />
+            )}
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
             <Button
-              disabled={!selectedTemplate || create.isPending || !idlePolicyIsMonotone(idlePolicy)}
+              disabled={!selectedTemplate || create.isPending || idleProblem !== null}
               onClick={() => create.mutate()}
             >
               {create.isPending ? "Provisioning…" : "Provision"}
@@ -1331,11 +1653,8 @@ function CreateEnvironmentDialog({
   );
 }
 
-function environmentName(environment: Environment): string {
-  return environment.displayName
-    ?? environment.incarnation.templateId
-    ?? environment.incarnation.providerTargetId
-    ?? humanizeIdentifier(environment.environmentId);
+function templateValue(template: EnvironmentTemplate): string {
+  return JSON.stringify([template.providerId, template.templateId]);
 }
 
 function humanizeIdentifier(value: string): string {
@@ -1349,10 +1668,6 @@ function humanizeIdentifier(value: string): string {
       return `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
     })
     .join(" ");
-}
-
-function provisionedBindingId(environment: Environment): string | null {
-  return environment.source.type === "provisioned" ? environment.source.bindingId : null;
 }
 
 function relativeTime(ms: number): string {

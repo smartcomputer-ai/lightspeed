@@ -14,7 +14,6 @@ import {
   type BotStateView,
   type BotTriggerView,
   type BotView,
-  type Environment,
   type ProfileDocument,
   type ProfileSummary,
 } from "@/api";
@@ -46,6 +45,7 @@ import { MetadataMapEditor } from "@/components/session/metadata-editor";
 import { ProfileRetentionEditor } from "@/components/session/profile-retention-editor";
 import { SessionConfigEditor } from "@/components/session/session-config-editor";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
+import { openEnvironmentsQuery } from "@/lib/environments";
 import {
   hasSessionFeature,
   resourceFeatureDisableReasons,
@@ -397,10 +397,7 @@ function SessionProfileSection({
   const queryClient = useQueryClient();
   const profileUrl = `/api/v1/universes/${universeId}/profiles/${encodeURIComponent(bot.profileId)}`;
   const options = useSessionConfigEditorOptions(universeId, true);
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-  });
+  const environments = useQuery(openEnvironmentsQuery(universeId));
   const bots = useQuery({
     queryKey: ["bots", universeId],
     queryFn: () => api<BotListResponse>("GET", `/api/v1/universes/${universeId}/bots`),

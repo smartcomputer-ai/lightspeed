@@ -1,7 +1,6 @@
 {
   "controllerListen": "127.0.0.1:19090",
   "credentialFile": "/run/secrets/lightspeed-provider-credential",
-  "dataRouteBase": "ws://127.0.0.1:19090/routes",
   "incus": {
     "mode": "single",
     "endpoints": ["https://hz02.example.ts.net:8443"],
@@ -13,6 +12,7 @@
   },
   "relayIdleSeconds": 60,
   "dialTimeoutSeconds": 10,
+  "idleCheckSeconds": 60,
   "envdPort": 19091,
   "ingress": {
     "publicBaseUrl": "https://env.example.com",
@@ -31,7 +31,11 @@
       "memory": "4GiB",
       "disk": "40GiB",
       "publicIngress": true,
-      "ingressPort": 8080
+      "ingressPort": 8080,
+      "idle": {
+        "pauseAfterMs": 1800000,
+        "stopAfterMs": 14400000
+      }
     }
   ]
 }

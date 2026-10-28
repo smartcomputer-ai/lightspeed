@@ -40,7 +40,7 @@ They do not configure the TypeScript Platform backend.
 | --- | --- | --- |
 | `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. |
 | `LIGHTSPEED_PG_UNIVERSE_ID` | **Required in `single` auth mode** | UUID of the sole universe in a single-tenant deployment. Not used to auto-create universes in multi-tenant modes. |
-| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler, and the power reaper), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Run exactly one `environment-gateway` process per deployment. |
+| `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Run exactly one `environment-gateway` process per deployment. |
 | `LIGHTSPEED_TASK_QUEUE` | `lightspeed-sessions` | Sessions task queue shared by the gateway and the `sessions` role. Deployments sharing a Temporal namespace must use distinct queues. |
 | `LIGHTSPEED_TASK_QUEUE_BOTS` | `lightspeed-bots` | Task queue of the `bots` role (bot controllers, trigger fires, bot activities). |
 | `LIGHTSPEED_TASK_QUEUE_CHANNELS` | `lightspeed-channels` | Task queue of the `channels` role (conversation workflows and core channel activities). Connector activities run on the per-account `lightspeed-connector-*` queues served by the connector host. |
@@ -48,8 +48,9 @@ They do not configure the TypeScript Platform backend.
 | `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. Shared with the connector host. |
 | `LIGHTSPEED_GATEWAY_BIND` | `127.0.0.1:18080` | JSON-RPC and environment-gateway listener address. |
 | `LIGHTSPEED_GATEWAY_MAX_REQUEST_BODY_BYTES` | `67108864` | Maximum gateway request body size in bytes. |
-| `LIGHTSPEED_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_GATEWAY_BIND}`; **required** for an `environment-gateway` process on a non-loopback bind | Externally reachable gateway base URL used for OAuth callbacks, bot webhook ingest URLs (`/hooks/bots/…`), and as the environment route base when the process runs the `gateway` role. Its origin is also the one registered daemons must sign: daemons must dial the registration routes on this host, and a daemon that dials another hostname is refused. A process running `environment-gateway` refuses to start without it unless it binds to loopback. Hosted deployments should set it explicitly. |
-| `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles) | Comma-separated exact hosts and CIDRs that outbound requests may reach on private networks: native MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`) and bot URL polls. All other targets retain public-only HTTPS/SSRF policy. |
+| `LIGHTSPEED_PUBLIC_BASE_URL` | `http://{LIGHTSPEED_GATEWAY_BIND}`; an `environment-gateway` process on a non-loopback bind needs it or `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Externally reachable gateway base URL used for OAuth callbacks, bot webhook ingest URLs (`/hooks/bots/…`), and as the environment route base when the process runs the `gateway` role. Its origin is also one registered daemons may sign: daemons dial the registration routes on this host or on a host named in `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`, and a daemon that dials another hostname is refused. A process running `environment-gateway` on a non-loopback bind refuses to start with neither. Hosted deployments should set it explicitly. |
+| `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS` | Unset | Comma-separated further gateway URLs registered daemons may dial and sign (also `--environment-registration-urls`), for example a cluster-internal Service address such as `ws://lightspeed-environment-gateway.lightspeed.svc:18080/environment-gateway/connect`. Only each URL's origin counts; an entry without a WebSocket origin is a startup error. Read only by a process running `environment-gateway`. |
+| `LIGHTSPEED_MCP_PRIVATE_NETWORKS` | Empty (`localhost,127.0.0.1,::1` in `dev.sh` profiles and `scripts/dev/env.sh`) | Comma-separated exact hosts and CIDRs that outbound requests may reach on private networks: native MCP discovery and execution (where the MCP server record must also opt in with `allowPrivateNetwork`) and bot URL polls. All other targets retain public-only HTTPS/SSRF policy. |
 | `LIGHTSPEED_CONFIGURATOR_MCP_INTERNAL_TRUSTED_HEADER_URL` | Unset | Retired; a nonempty value fails startup. Use a scoped API key. |
 | `LIGHTSPEED_MCP_OAUTH_ALLOW_PRIVATE_NETWORKS` | `false` (`true` in `dev.sh` profiles) | Allows MCP OAuth metadata, registration, exchange, and refresh to use HTTP or private endpoints. This does not authorize discovery or tool execution; those use `LIGHTSPEED_MCP_PRIVATE_NETWORKS` plus the record opt-in. |
 | `LIGHTSPEED_AUTH_MODE` | **Required** | `single` (no credential check, ordinary methods use one configured universe; local development only) or `authenticated` (bearer keys with a scope and allowed method groups). There is no default: the process refuses to start without it. Configurator uses the same mode. |
@@ -154,21 +155,29 @@ route automatically. Every other process, including one that runs only the
 
 The `environment-gateway` role serves the worker route above plus the public
 registration routes `/environment-gateway/connect` and
-`/environment-gateway/data` that outbound `lightspeed-envd` daemons dial, and
-it runs the lifecycle reconciler and power reaper. A registered daemon's
-control connection lives in the process that accepted it, and the worker
-route for that environment must reach the same process: **run exactly one
+`/environment-gateway/data` that outbound `lightspeed-envd` daemons dial. It
+also runs the lifecycle reconciler, which creates and closes provisioned
+environments, and every 30 seconds a sweep that marks registered daemons
+disconnected when their connection lapsed and closes registered environments
+under their key's disconnect policy. A registered daemon's control
+connection lives in the process that accepted it, and the worker route for
+that environment must reach the same process: **run exactly one
 `environment-gateway` process per deployment** until multi-replica owner
-routing is implemented. `gateway`-only processes and workers may scale
-freely; they hold no daemon connections and do not answer the registration
-routes at all. Expose the two public routes through TLS on the host named by
-`LIGHTSPEED_PUBLIC_BASE_URL`; the daemon refuses plain `ws://` toward
-anything but loopback and derives the data route from its connect URL.
+routing is implemented. At startup the process marks every registered
+environment disconnected until its daemon reconnects. `gateway`-only
+processes and workers may scale freely; they hold no daemon connections and
+do not answer the registration routes at all. Expose the two public routes
+through TLS on the host named by `LIGHTSPEED_PUBLIC_BASE_URL`; the daemon
+refuses plain `ws://` toward anything but loopback unless
+`LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set, and derives the data route
+from its connect URL.
 
 Provider controllers are not configured through environment variables. Each
-provider's controller endpoint and bearer credential are registered through
-`deployment/environment-providers/put`; the credential is stored sealed with
-`LIGHTSPEED_SECRETS_MASTER_KEY` and never returned.
+provider's controller endpoint, optional data route base, and optional
+bearer credential are registered through
+`deployment/environment-providers/put`; a credential is stored sealed with
+`LIGHTSPEED_SECRETS_MASTER_KEY` and never returned. Without one, Lightspeed
+sends no `Authorization` header to the provider.
 
 ## Rust CLI
 
@@ -208,14 +217,16 @@ from the environment of each process and job the daemon starts.
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
 | `LIGHTSPEED_ENVD_LISTEN` | `127.0.0.1:19091` unless a gateway URL is set | WebSocket listener for the passive transport: `host:port` (or `tcp://host:port`) for TCP, or `unix:///absolute/path` for a Unix socket only the daemon's user can connect to. Set it explicitly to listen while also registering outbound. |
-| `LIGHTSPEED_ENVD_GATEWAY_URL` | Unset | Public connect route to dial, `wss://<host>/environment-gateway/connect`. Plain `ws://` is accepted only toward loopback. |
+| `LIGHTSPEED_ENVD_GATEWAY_URL` | Unset | Public connect route to dial, `wss://<host>/environment-gateway/connect`, or another URL in the gateway's `LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS`. Plain `ws://` is accepted only toward loopback unless `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` is set. |
+| `LIGHTSPEED_ENVD_ALLOW_INSECURE_GATEWAY` | `false` | Accept a plain `ws://` gateway URL toward a non-loopback host, such as a cluster-internal service inside one trusted network (also `--allow-insecure-gateway`). The registration key and every data stream then cross that network in the clear. Refused without a gateway URL. The discovery URL derived from such a gateway is plain `http://` and only named in mismatch reports, so `LIGHTSPEED_ENVD_AUTO_UPGRADE` with an insecure gateway needs an explicit HTTPS `LIGHTSPEED_ENVD_DISCOVERY_URL`. |
+| `LIGHTSPEED_ENVD_ON_CLOSED` | `exit` | What a registered daemon does once its environment is closed (also `--on-closed`): `exit` ends the process with status 4; `park` stops registering and listening, logs once, keeps open data connections until it is stopped, and exits with status 0 on `SIGTERM` or `SIGINT`. Use `park` under a supervisor that restarts on every exit, such as a Kubernetes pod, so a spent identity is not restarted forever. Applies both to a close while connected and to a closed identity's refused registration; a superseded daemon always exits with status 5. Refused without a gateway URL. |
 | `LIGHTSPEED_ENVD_DISCOVERY_URL` | `https://<gateway-host>/.well-known/lightspeed-envd` | Override the deployment discovery document used by `lightspeed-envd upgrade` and automatic protocol-mismatch upgrades. Must use HTTPS, except that HTTP is accepted toward loopback for development. |
-| `LIGHTSPEED_ENVD_AUTO_UPGRADE` | `false` | Opt a registered outbound daemon into installing and re-executing the build in the deployment discovery document when the gateway challenges it with a different protocol number. Accepts boolean values including `1`/`0`; automatic upgrade is attempted once for each protocol version the gateway names. |
+| `LIGHTSPEED_ENVD_AUTO_UPGRADE` | `false` | Opt a registered outbound daemon into installing and re-executing the build in the deployment discovery document when the gateway challenges it with a different protocol number. Accepts boolean values including `1`/`0`; automatic upgrade is attempted once for each protocol version the gateway names. It replaces the executable in place, so leave it off on a read-only root filesystem and in containers, and roll out a new image instead. |
 | `LIGHTSPEED_ENVD_REGISTRATION_KEY` | Unset | Registration key admitting a first-seen daemon identity. Read once and dropped from the process environment, and sent to the gateway only until the first admission; on Linux the initial environment stays readable through `/proc`, so use the file form for untrusted workloads. |
-| `LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE` | Unset | File holding the registration key; mutually exclusive with the direct form. Delete the file once the receipt appears. |
-| `LIGHTSPEED_ENVD_REGISTRATION_NAME` | Unset | Display-name hint recorded on the environment at first registration; ignored on later connections. An out-of-bounds value refuses admission. |
+| `LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE` | Unset | File holding the registration key; mutually exclusive with the direct form. The daemon sends it only until its first admission, so the file can be deleted once the receipt appears, or stay mounted as a Kubernetes Secret. |
+| `LIGHTSPEED_ENVD_REGISTRATION_NAME` | Unset | Display-name hint recorded on the environment at first registration; ignored on later connections, so rename the environment in Lightspeed instead. An out-of-bounds value refuses admission. |
 | `LIGHTSPEED_ENVD_REGISTRATION_METADATA` | Unset | JSON object of string correlation metadata (at most 32 entries; keys up to 64 bytes, values up to 256; the `lightspeed.` prefix is reserved), recorded at first registration only. Descriptive only. |
-| `LIGHTSPEED_ENVD_REGISTRATION_RECEIPT` | Unset | Path the daemon writes `{environmentId, incarnationId, daemonId, controlConnectionId, identityMode, admission}` to once admitted; `identityMode` is `persistent` or `ephemeral`, and `admission` is `created` or `reconnected`. The daemon refuses to start when the path is not writable and exits when writing it fails. |
+| `LIGHTSPEED_ENVD_REGISTRATION_RECEIPT` | Unset | Path the daemon writes `{environmentId, daemonId, controlConnectionId, identityMode, admission}` to once admitted; `identityMode` is `persistent` or `ephemeral`, and `admission` is `created` or `reconnected`. The daemon refuses to start when the path is not writable and exits when writing it fails. |
 | `LIGHTSPEED_ENVD_CA_FILE` | Unset | PEM bundle of additional TLS trust anchors for a gateway behind a private CA. |
 | `LIGHTSPEED_ENVD_CWD` | Current directory | Default working directory of commands, jobs, and relative tool paths. |
 | `LIGHTSPEED_ENVD_FS_ROOT` | Native filesystem root containing the working directory | Filesystem boundary of file, search, scan, and transfer operations and of every command's working directory. Paths stay absolute in the machine's own namespace; the root is not a chroot, and it does not confine what commands can access. |
@@ -233,7 +244,7 @@ generates a new identity on its own, and its exit status says why it stopped:
 | `1` | An unexpected failure. |
 | `2` | Local configuration, state directory, or receipt-file error. |
 | `3` | The gateway refused registration for good, or speaks another protocol version and no automatic upgrade succeeded. |
-| `4` | The environment was closed; the identity is spent. |
+| `4` | The environment was closed; the identity is spent. With `LIGHTSPEED_ENVD_ON_CLOSED=park`, the daemon parks instead and exits with `0` once stopped. |
 | `5` | Another process with the same daemon identity connected and won; the log names the identity. Run one daemon per state directory. |
 
 Disconnects, missed heartbeats, and retryable refusals never end the process:
@@ -435,7 +446,10 @@ independent migration systems contain overlapping table names. The script also
 supplies a fixed local `LIGHTSPEED_SECRETS_MASTER_KEY`; that key is public
 development material and is unsafe for any shared or production deployment.
 The key encodes `lightspeed-local-dev-master-key!`; changing it requires
-resetting local encrypted state.
+resetting local encrypted state. It also exports
+`LIGHTSPEED_MCP_PRIVATE_NETWORKS=localhost,127.0.0.1,::1` unless the variable is
+already set, matching the `dev.sh` profiles, so live tests that call loopback MCP
+servers work from a sourced shell.
 
 ## Tests and evaluations
 

@@ -62,7 +62,7 @@ use crate::{
     bytes::{SecretString, hex_value},
     error::ProtocolError,
     handshake::ImplementationInfo,
-    ids::{ControlConnectionId, DaemonId, EnvironmentId, IncarnationId},
+    ids::{ControlConnectionId, DaemonId, EnvironmentId},
     jsonrpc::decode_params,
     metadata::{
         DescriptiveText, DisplayName, Metadata, validate_caller_metadata, validate_display_name,
@@ -217,7 +217,6 @@ pub struct RegisterResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegistrationReceipt {
     pub environment_id: EnvironmentId,
-    pub incarnation_id: IncarnationId,
     pub daemon_id: DaemonId,
     /// The gateway's id for this control connection.
     pub control_connection_id: ControlConnectionId,
@@ -298,8 +297,8 @@ pub enum GoodbyeReason {
 }
 
 /// `registration/closed` params: the gateway ends the session for good and
-/// closes the socket after this frame. The daemon exits and does not
-/// reconnect.
+/// closes the socket after this frame. The daemon exits or parks, as
+/// configured, and does not reconnect.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -365,12 +364,12 @@ mod tests {
     #[test]
     fn the_challenge_decodes_tolerantly() {
         let params: ChallengeParams = serde_json::from_value(json!({
-            "protocolVersion": 3,
+            "protocolVersion": 4,
             "nonce": "00".repeat(32),
             "addedLater": true,
         }))
         .unwrap();
-        assert_eq!(params.protocol_version, 3);
+        assert_eq!(params.protocol_version, 4);
     }
 
     #[test]
@@ -419,7 +418,7 @@ mod tests {
 
     fn register_params() -> Value {
         json!({
-            "protocolVersion": 3,
+            "protocolVersion": 4,
             "daemonPublicKey": "ab".repeat(32),
             "signature": "cd".repeat(64),
             "implementation": {"name": "lightspeed-envd", "version": "0.5.0"},

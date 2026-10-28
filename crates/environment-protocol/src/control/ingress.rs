@@ -2,8 +2,9 @@
 //! `capabilities.ingress`. `target/close` removes ingress by contract, so
 //! `ingress/remove` exists only to disable ingress on a target that stays.
 //! Both answer [`TargetResponse`](crate::control::target::TargetResponse)
-//! with the realized ingress in the observation; the runtime converges its
-//! recorded intent against that observation.
+//! with the realized ingress in the observation. The runtime calls them
+//! synchronously on a user's request and caches the observed endpoint; it
+//! records no ingress intent and retries nothing.
 
 use serde::{Deserialize, Serialize};
 

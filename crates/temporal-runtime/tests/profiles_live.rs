@@ -13,7 +13,7 @@ use api_projection::model_to_api;
 use harness::SessionId;
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities, final_assistant_text, live_workflow_handle,
-    read_session_view, require_storage_live_env, run_with_live_worker, wait_for_environment_status,
+    read_session_view, require_storage_live_env, run_with_live_worker, wait_for_environment_state,
     wait_for_terminal_run,
 };
 use temporal_runtime::{gateway::GatewayAgentApi, pg_store_from_env};
@@ -42,6 +42,88 @@ async fn temporal_live_profile_selection_leaves_environment_lifecycle_independen
     run_with_live_worker(activities, run_profile_environment_selection_live_client).await
 }
 
+/// Registers the fake controller as a provider bound to this universe,
+/// directly through the store: the deployment API is deployment-scoped and
+/// these tests drive one universe's gateway.
+async fn register_fake_provider(
+    store: &store_pg::PgStore,
+    controller: &temporal_runtime::environments::fake_controller::FakeController,
+    provider_id: &str,
+) -> anyhow::Result<()> {
+    use environments::{
+        EnvironmentEndpoint, EnvironmentProviderBindingStore, EnvironmentProviderId,
+        EnvironmentProviderStore, ProviderCredentialChange, PutEnvironmentProvider,
+        PutEnvironmentProviderBinding,
+    };
+
+    store
+        .put_provider(PutEnvironmentProvider {
+            provider_id: EnvironmentProviderId::new(provider_id),
+            display_name: Some("Live fake provider".to_owned()),
+            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
+            data_route_base: None,
+            credential: match controller.credential() {
+                Some(credential) => {
+                    ProviderCredentialChange::Set(auth::SecretValue::new(credential))
+                }
+                None => ProviderCredentialChange::Keep,
+            },
+            updated_at_ms: 1,
+        })
+        .await?;
+    store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id: store.config().universe_id,
+            provider_id: EnvironmentProviderId::new(provider_id),
+            enabled: true,
+            updated_at_ms: 1,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn delete_fake_provider(store: &store_pg::PgStore, provider_id: &str) -> anyhow::Result<()> {
+    use environments::{
+        EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
+    };
+
+    let provider_id = EnvironmentProviderId::new(provider_id);
+    store
+        .delete_provider_binding(store.config().universe_id, &provider_id)
+        .await?;
+    store.delete_provider(&provider_id).await?;
+    Ok(())
+}
+
+fn profile_with_environments(
+    profile_id: &ProfileId,
+    model: &harness::ModelSelection,
+    environments: Vec<api::EnvironmentAttachment>,
+) -> AgentProfileInput {
+    AgentProfileInput {
+        profile_id: profile_id.clone(),
+        display_name: None,
+        description: None,
+        document: ProfileDocument {
+            config: Some(SessionConfig {
+                model: Some(model_to_api(model)),
+                features: Some(api::FeaturesConfig {
+                    environments: Some(api::EnvironmentsFeature {
+                        version: api::CURRENT_FEATURE_VERSION,
+                        selection: false,
+                        prompts: None,
+                        skills: None,
+                        environments,
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    }
+}
+
 /// Closing and deleting a session never closes its selected environment.
 async fn run_profile_environment_selection_live_client(
     client: Client,
@@ -50,11 +132,6 @@ async fn run_profile_environment_selection_live_client(
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
-    use environments::{
-        EnvironmentEndpoint, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
-        EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
-        PutEnvironmentProvider, PutEnvironmentProviderBinding,
-    };
     use temporal_runtime::environments::fake_controller::{FAKE_TEMPLATE_ID, FakeController};
 
     let store = pg_store_from_env().await?;
@@ -65,77 +142,36 @@ async fn run_profile_environment_selection_live_client(
         .build();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let provider_id = format!("fake-profile-{suffix}");
-    let binding_id = format!("binding-profile-{suffix}");
     let profile_id = ProfileId::new(format!("live_selection_{suffix}"));
 
-    // Serve a fake controller on loopback, register it and bind it to this
-    // universe directly through the store: the deployment API is
-    // deployment-scoped and this test drives one universe's gateway.
     let controller = FakeController::start().await?;
-    store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: EnvironmentProviderId::new(provider_id.clone()),
-            display_name: Some("Live fake provider".to_owned()),
-            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
-            metadata: BTreeMap::new(),
-            credential: Some(auth::SecretValue::new(controller.credential())),
-            updated_at_ms: 1,
-        })
-        .await?;
-    store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id: store.config().universe_id,
-            binding_id: EnvironmentProviderBindingId::new(binding_id.clone()),
-            provider_id: EnvironmentProviderId::new(provider_id.clone()),
-            status: EnvironmentProviderBindingStatus::Enabled,
-            expected_revision: None,
-            metadata: BTreeMap::new(),
-            updated_at_ms: 1,
-        })
-        .await?;
+    register_fake_provider(&store, &controller, &provider_id).await?;
 
     let environment = api
         .create_environment(api::EnvironmentCreateParams {
             request_id: format!("independent-{suffix}"),
-            binding_id: binding_id.clone(),
+            provider_id: provider_id.clone(),
             template_id: FAKE_TEMPLATE_ID.into(),
             display_name: None,
             metadata: BTreeMap::new(),
-            idle_policy: None,
+            idle: None,
         })
         .await?
         .result
         .environment;
     let environment_id = environment.environment_id.clone();
     api.create_profile(ProfileCreateParams {
-        profile: AgentProfileInput {
-            profile_id: profile_id.clone(),
-            display_name: None,
-            description: None,
-            document: ProfileDocument {
-                config: Some(SessionConfig {
-                    model: Some(model_to_api(&model)),
-                    features: Some(api::FeaturesConfig {
-                        environments: Some(api::EnvironmentsFeature {
-                            version: api::CURRENT_FEATURE_VERSION,
-                            selection: false,
-                            prompts: None,
-                            skills: None,
-                            environments: vec![api::EnvironmentAttachment {
-                                environment_id: Some(environment_id.clone()),
-                                inherit: false,
-                                default: true,
-                                access: api::EnvironmentAccess::Read,
-                                working_directory: None,
-                            }],
-                        }),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-        },
+        profile: profile_with_environments(
+            &profile_id,
+            &model,
+            vec![api::EnvironmentAttachment {
+                environment_id: Some(environment_id.clone()),
+                inherit: false,
+                default: true,
+                access: api::EnvironmentAccess::Read,
+                working_directory: None,
+            }],
+        ),
     })
     .await?;
     let start = || {
@@ -171,12 +207,7 @@ async fn run_profile_environment_selection_live_client(
         })
         .await?;
     assert!(!applied.result.applied.active_environment_changed);
-    wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Ready,
-    )
-    .await?;
+    wait_for_environment_state(&api, &environment_id, api::EnvironmentStateView::Open).await?;
     api.close_session(api::SessionCloseParams {
         session_id: session_id.to_string(),
         force: false,
@@ -184,14 +215,8 @@ async fn run_profile_environment_selection_live_client(
     .await?;
     api.reconcile_environments_once().await?;
     assert_eq!(
-        api.read_environment(api::EnvironmentReadParams {
-            environment_id: environment_id.clone()
-        })
-        .await?
-        .result
-        .environment
-        .status,
-        api::EnvironmentLifecycleStatusView::Ready
+        read_environment_view(&api, &environment_id).await?.state,
+        api::EnvironmentStateView::Open
     );
     api.delete_session(api::SessionDeleteParams {
         shared_only: false,
@@ -202,37 +227,30 @@ async fn run_profile_environment_selection_live_client(
     .await?;
     api.reconcile_environments_once().await?;
     assert_eq!(
-        api.read_environment(api::EnvironmentReadParams {
-            environment_id: environment_id.clone()
-        })
-        .await?
-        .result
-        .environment
-        .status,
-        api::EnvironmentLifecycleStatusView::Ready
+        read_environment_view(&api, &environment_id).await?.state,
+        api::EnvironmentStateView::Open
     );
     api.close_environment(api::EnvironmentCloseParams {
         environment_id: environment_id.clone(),
     })
     .await?;
-    wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Closed,
-    )
-    .await?;
+    wait_for_environment_state(&api, &environment_id, api::EnvironmentStateView::Closed).await?;
     api.delete_profile(ProfileDeleteParams { profile_id })
         .await?;
-    store
-        .delete_provider_binding(
-            store.config().universe_id,
-            &EnvironmentProviderBindingId::new(binding_id),
-        )
-        .await?;
-    store
-        .delete_provider(&EnvironmentProviderId::new(provider_id))
-        .await?;
-    Ok(())
+    delete_fake_provider(&store, &provider_id).await
+}
+
+async fn read_environment_view(
+    api: &GatewayAgentApi,
+    environment_id: &str,
+) -> anyhow::Result<api::EnvironmentView> {
+    Ok(api
+        .read_environment(api::EnvironmentReadParams {
+            environment_id: environment_id.to_owned(),
+        })
+        .await?
+        .result
+        .environment)
 }
 
 async fn run_profiles_live_client(

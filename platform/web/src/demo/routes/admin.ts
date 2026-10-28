@@ -10,18 +10,20 @@ import type {
   MethodGroup,
 } from "@lightspeed-ai/sdk";
 import { groupsFor } from "@/lib/method-groups";
+import { DEMO_POWER_STATES } from "../fixtures/builders";
 import type { DemoStore, UniverseState } from "../store";
 import { badRequest, conflict, notFound, readBody } from "./common";
 
 /// What a fresh binding provisions from when no other universe already
 /// lists this provider's templates.
-const DEFAULT_TEMPLATES: Array<Omit<EnvironmentTemplate, "providerId" | "bindingId">> = [
+const DEFAULT_TEMPLATES: Array<Omit<EnvironmentTemplate, "providerId">> = [
   {
     templateId: "dev-small-v1",
     displayName: "Development VM (small)",
     description: "2 vCPU / 4 GiB, Git, Docker, common toolchains, envd.",
     publicIngress: true,
     deprecated: false,
+    powerStates: DEMO_POWER_STATES,
     metadata: { cpu: "2", memory: "4GiB", disk: "40GiB" },
   },
   {
@@ -30,29 +32,24 @@ const DEFAULT_TEMPLATES: Array<Omit<EnvironmentTemplate, "providerId" | "binding
     description: "8 vCPU / 16 GiB, same image as small.",
     publicIngress: true,
     deprecated: false,
+    powerStates: DEMO_POWER_STATES,
     metadata: { cpu: "8", memory: "16GiB", disk: "120GiB" },
   },
 ];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function stringMetadata(value: unknown): Record<string, string> {
-  const metadata: Record<string, string> = {};
-  if (!isRecord(value)) return metadata;
-  for (const [key, entry] of Object.entries(value)) {
-    if (typeof entry === "string") metadata[key] = entry;
-  }
-  return metadata;
-}
-
 /// The controller URL schemes the engine accepts.
 const CONTROLLER_ENDPOINT = /^(wss?:\/\/|unix:\/\/\/)[^\s]+$/;
+const DATA_ROUTE_BASE = /^wss?:\/\/[^\s]+$/;
+
+/// The base the core derives from a ws:// or wss:// controller endpoint.
+function derivedDataRouteBase(controllerEndpoint: string): string | null {
+  const match = /^(wss?:\/\/[^/\s]+)/.exec(controllerEndpoint);
+  return match ? `${match[1]}/routes` : null;
+}
 
 /// The admin page addresses universes by their engine id; the platform id
 /// resolves too so either spelling works.
@@ -69,17 +66,13 @@ function universeByAnyId(store: DemoStore, id: string): UniverseState | null {
 /// what the provider offers elsewhere (or the default set) so a newly bound
 /// universe can provision right away.
 function seedTemplates(store: DemoStore, universe: UniverseState, binding: EnvironmentProviderBinding): void {
-  let source: Array<Omit<EnvironmentTemplate, "providerId" | "bindingId">> = [];
+  let source: Array<Omit<EnvironmentTemplate, "providerId">> = [];
   for (const other of store.universes.values()) {
     source = other.environmentTemplates.filter((template) => template.providerId === binding.providerId);
     if (source.length > 0) break;
   }
   for (const template of source.length > 0 ? source : DEFAULT_TEMPLATES) {
-    universe.environmentTemplates.push({
-      ...template,
-      providerId: binding.providerId,
-      bindingId: binding.bindingId,
-    });
+    universe.environmentTemplates.push({ ...template, providerId: binding.providerId });
   }
 }
 
@@ -149,32 +142,36 @@ export function adminRoutes(store: DemoStore): Hono {
     if (!providerId) return badRequest(c, "providerId is required");
     const body = await readBody<{
       displayName?: unknown;
-      metadata?: unknown;
       controllerEndpoint?: unknown;
+      dataRouteBase?: unknown;
       credential?: unknown;
+      clearCredential?: unknown;
     }>(c);
     const controllerEndpoint = optionalString(body.controllerEndpoint);
     if (!controllerEndpoint || !CONTROLLER_ENDPOINT.test(controllerEndpoint)) {
       return badRequest(c, "controllerEndpoint must be a ws://, wss:// or unix:// URL");
     }
-    const existing = store.environmentProviders.get(providerId);
-    if (!existing && !optionalString(body.credential)) {
-      return badRequest(c, "credential is required for a new provider");
+    const dataRouteBase = optionalString(body.dataRouteBase);
+    if (dataRouteBase && !DATA_ROUTE_BASE.test(dataRouteBase)) {
+      return badRequest(c, "dataRouteBase must be a ws:// or wss:// URL");
     }
+    if (!dataRouteBase && controllerEndpoint.startsWith("unix://")) {
+      return badRequest(c, "a unix:// controller needs a dataRouteBase");
+    }
+    const credential = optionalString(body.credential);
+    if (credential && body.clearCredential === true) {
+      return badRequest(c, "credential and clearCredential are mutually exclusive");
+    }
+    const existing = store.environmentProviders.get(providerId);
     const now = Date.now();
+    const effectiveDataRouteBase = dataRouteBase ?? derivedDataRouteBase(controllerEndpoint);
     const provider: DeploymentEnvironmentProviderView = {
       providerId,
       ...(optionalString(body.displayName) ? { displayName: optionalString(body.displayName) } : {}),
       controllerEndpoint,
-      // The demo has no controller to reach, so a changed endpoint has
-      // not advertised anything yet.
-      ...(existing && existing.controllerEndpoint === controllerEndpoint
-        ? {
-          controllerFeatures: existing.controllerFeatures ?? null,
-          dataRouteBase: existing.dataRouteBase ?? null,
-        }
-        : {}),
-      metadata: stringMetadata(body.metadata),
+      ...(dataRouteBase ? { dataRouteBase } : {}),
+      ...(effectiveDataRouteBase ? { effectiveDataRouteBase } : {}),
+      hasCredential: credential ? true : body.clearCredential === true ? false : existing?.hasCredential ?? false,
       createdAtMs: existing?.createdAtMs ?? now,
       updatedAtMs: now,
     };
@@ -209,36 +206,21 @@ export function adminRoutes(store: DemoStore): Hono {
     ),
   );
 
-  app.put("/admin/universes/:universeId/environment-provider-bindings/:bindingId", async (c) => {
+  app.put("/admin/universes/:universeId/environment-provider-bindings/:providerId", async (c) => {
     const universe = universeByAnyId(store, c.req.param("universeId"));
     if (!universe) return notFound(c);
-    const body = await readBody<{
-      providerId?: unknown;
-      status?: unknown;
-      expectedRevision?: unknown;
-      metadata?: unknown;
-    }>(c);
-    const providerId = optionalString(body.providerId);
-    if (!providerId) return badRequest(c, "providerId is required");
-    if (body.status !== "enabled" && body.status !== "disabled") {
-      return badRequest(c, "status must be enabled or disabled");
-    }
+    const body = await readBody<{ enabled?: unknown }>(c);
+    if (typeof body.enabled !== "boolean") return badRequest(c, "enabled must be a boolean");
+    const providerId = c.req.param("providerId");
     if (!store.environmentProviders.has(providerId)) {
       return notFound(c, `environment provider not found: ${providerId}`);
     }
-    const bindingId = c.req.param("bindingId");
-    const index = universe.providerBindings.findIndex((binding) => binding.bindingId === bindingId);
+    const index = universe.providerBindings.findIndex((binding) => binding.providerId === providerId);
     const existing = universe.providerBindings[index];
-    if (existing && typeof body.expectedRevision === "number" && existing.revision !== body.expectedRevision) {
-      return conflict(c, "binding revision conflict");
-    }
     const now = Date.now();
     const binding: EnvironmentProviderBinding = {
-      bindingId,
       providerId,
-      status: body.status,
-      revision: (existing?.revision ?? 0) + 1,
-      metadata: stringMetadata(body.metadata),
+      enabled: body.enabled,
       createdAtMs: existing?.createdAtMs ?? now,
       updatedAtMs: now,
     };
@@ -251,15 +233,20 @@ export function adminRoutes(store: DemoStore): Hono {
     return c.json(binding);
   });
 
-  app.delete("/admin/universes/:universeId/environment-provider-bindings/:bindingId", (c) => {
+  app.delete("/admin/universes/:universeId/environment-provider-bindings/:providerId", (c) => {
     const universe = universeByAnyId(store, c.req.param("universeId"));
     if (!universe) return notFound(c);
-    const bindingId = c.req.param("bindingId");
-    const index = universe.providerBindings.findIndex((binding) => binding.bindingId === bindingId);
+    const providerId = c.req.param("providerId");
+    const index = universe.providerBindings.findIndex((binding) => binding.providerId === providerId);
     if (index < 0) return notFound(c);
+    const open = [...universe.environments.values()].some((environment) =>
+      environment.source.type === "provisioned"
+      && environment.source.providerId === providerId
+      && environment.state !== "closed");
+    if (open) return conflict(c, "the universe still has open environments of this provider");
     const [binding] = universe.providerBindings.splice(index, 1);
     universe.environmentTemplates = universe.environmentTemplates.filter(
-      (template) => template.bindingId !== bindingId,
+      (template) => template.providerId !== providerId,
     );
     return c.json(binding);
   });

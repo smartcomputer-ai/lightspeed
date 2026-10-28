@@ -40,8 +40,8 @@ pub const MAX_PATH_BYTES: u32 = 4096;
 /// `registration/closed` message.
 pub const MAX_DESCRIPTIVE_TEXT_BYTES: u32 = 1024;
 
-/// Longest URL a peer advertises or reports (`routes.data`, an ingress
-/// `endpoint`), in bytes.
+/// Longest URL a peer reports or is configured with (a data route base,
+/// an ingress `endpoint`), in bytes.
 pub const MAX_URL_BYTES: u32 = 2048;
 
 /// Longest error `message` in bytes. [`ProtocolError::new`] cuts longer
@@ -49,6 +49,16 @@ pub const MAX_URL_BYTES: u32 = 2048;
 ///
 /// [`ProtocolError::new`]: crate::error::ProtocolError::new
 pub const MAX_ERROR_MESSAGE_BYTES: u32 = 4096;
+
+/// Longest a provider data route holds a dial before it upgrades or
+/// answers a [`DataRouteRefusal`](crate::routes::DataRouteRefusal), in
+/// milliseconds: long enough to resume a paused target, short enough that
+/// the caller's own wait stays in charge.
+pub const MAX_DATA_ROUTE_HOLD_MS: u64 = 5_000;
+
+/// Largest `Retry-After` a data route refusal names, in whole seconds.
+/// Receivers clamp a larger value to it.
+pub const RETRY_AFTER_MAX_SECS: u64 = 60;
 
 /// Most chunks plus gaps in one `process/read` page, and across all entries
 /// of one `job/read` response. A page that reaches it ends early and loses

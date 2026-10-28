@@ -1,11 +1,20 @@
 //! Key-based outbound registration, end to end against the real gateway:
 //! an in-process `lightspeed-envd` dials the environment gateway with a
-//! registration key, becomes a `Ready` registered environment, serves a
-//! worker route through a reverse-dialed stream socket, goes `Offline` when
-//! its control connection drops, reconnects by identity alone, loses to a
-//! newer process with the same identity, keeps reconnecting after its key
-//! is revoked, closes its ephemeral environment at once when it says
-//! goodbye, and is told to exit for good once its environment is closed.
+//! registration key and becomes an open, connected registered environment
+//! that serves worker routes through reverse-dialed stream sockets. Its
+//! connection is written on transitions only: a dropped control connection
+//! marks the row disconnected, and the worker route then refuses with a
+//! typed refusal (`away` at once for an ephemeral key, a bounded
+//! `disconnected` wait for a persistent one). The daemon reconnects by
+//! identity alone, loses to a newer process with the same identity, keeps
+//! reconnecting after its key is revoked, closes its ephemeral environment
+//! at once when it says goodbye (`departed`), and is told the environment
+//! closed by an in-process close at once and by a close made elsewhere at
+//! the next revocation sweep. The registered sweep closes ephemeral rows
+//! after their grace and persistent rows after the key's offline bound; a
+//! parked daemon waits for its stop signal instead of exiting. Rotation
+//! keeps the key's group, startup repair marks connected rows disconnected,
+//! and a configured registration URL is an accepted signature origin.
 
 mod support;
 
@@ -13,15 +22,16 @@ use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use api::{
     AgentApiService, DeploymentApiService, DeploymentUniverseCreateParams, EnvironmentCloseParams,
-    EnvironmentIdentityModeView, EnvironmentLifecycleStatusView, EnvironmentListParams,
+    EnvironmentCloseReasonView, EnvironmentIdentityModeView, EnvironmentListParams,
     EnvironmentReadParams, EnvironmentRegistrationKeyCreateParams,
     EnvironmentRegistrationKeyReadParams, EnvironmentRegistrationKeyRevokeParams,
-    EnvironmentSourceView, EnvironmentView,
+    EnvironmentRegistrationKeyRotateParams, EnvironmentRegistrationKeyUpdateParams,
+    EnvironmentSourceView, EnvironmentStateView, EnvironmentStatusView, EnvironmentView,
 };
-use environment_client::DataClient;
+use environment_client::{ClientError, DataClient};
 use environment_daemon::{
     DaemonRuntime,
-    config::{DaemonConfig, RegistrationConfig},
+    config::{DaemonConfig, OnClosed, RegistrationConfig},
     server::DaemonExit,
 };
 use environment_protocol::{
@@ -43,14 +53,20 @@ use environment_protocol::{
     ids::ProcessId,
     metadata::{DisplayName, Metadata},
     paths::EnvironmentPath,
+    routes::{DataRouteRefusal, canonical_origin},
 };
-use environments::EnvironmentStore as _;
+use environments::{
+    BeginCloseEnvironment, EnvironmentCloseReason, EnvironmentGoneReason, EnvironmentStore as _,
+    EnvironmentUse, EnvironmentWaitReason, REGISTERED_LIVENESS_STAMP_MS,
+    REGISTERED_RECONNECT_WAIT_MS, StampRegisteredSeen,
+};
 use support::live::{LIVE_TEST_LOCK, require_storage_live_env};
 use temporal_runtime::{
     DeploymentStores, GatewayAuthMode, UniverseRuntime,
+    environments::gateway::{EnvironmentGatewayClientConfig, RouteKey},
     gateway::{
         DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayAgentApi, GatewayDeploymentApi, GatewayRoutes,
-        GatewayState, gateway_router,
+        GatewayState, gateway_router, registration,
         request_context::{RequestContext, with_request_context as calling},
     },
 };
@@ -66,6 +82,8 @@ use uuid::Uuid;
 
 const POLL: Duration = Duration::from_millis(200);
 const SETTLE: Duration = Duration::from_secs(30);
+/// An in-process close reaches the daemon without any polling interval.
+const IN_PROCESS_NOTIFY: Duration = Duration::from_secs(3);
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
@@ -85,10 +103,14 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     let universe_id = Uuid::new_v4();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let base_url = format!("http://{}", listener.local_addr()?);
-    let connect_url = format!(
-        "ws://{}/environment-gateway/connect",
-        listener.local_addr()?
+    let address = listener.local_addr()?;
+    let base_url = format!("http://{address}");
+    let connect_url = format!("ws://{address}/environment-gateway/connect");
+    // A second name for the same listener: accepted only because it is a
+    // configured registration URL.
+    let alias_connect_url = format!(
+        "ws://localhost:{}/environment-gateway/connect",
+        address.port()
     );
     let runtime = Arc::new(UniverseRuntime::new(
         client,
@@ -107,11 +129,26 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
     )
     .await?;
     let caller = RequestContext::local(api::AccessScope::Universe { universe_id });
-    let state = Arc::new(GatewayState::multi(
-        GatewayAuthMode::Single { universe_id },
-        runtime.clone(),
-        base_url.clone(),
-    ));
+    let origins = temporal_runtime::gateway::http::registration_origins(
+        Some(&base_url),
+        std::slice::from_ref(&alias_connect_url),
+        address,
+    )?;
+    assert_eq!(
+        origins,
+        [
+            canonical_origin(&base_url)?,
+            canonical_origin(&alias_connect_url)?
+        ]
+    );
+    let state = Arc::new(
+        GatewayState::multi(
+            GatewayAuthMode::Single { universe_id },
+            runtime.clone(),
+            base_url.clone(),
+        )
+        .with_registration_origins(origins),
+    );
     let gateway = tokio::spawn(async move {
         axum::serve(
             listener,
@@ -172,41 +209,67 @@ async fn registered_envd_dials_out_serves_routes_reconnects_and_is_spent_on_clos
         "the environment-gateway process serves the connect route"
     );
     api_only.abort();
-    let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
     let api = runtime.state_for(universe_id, false).await?.api.clone();
     let sandbox = tempfile::tempdir()?;
 
+    let urls = Urls {
+        base: &base_url,
+        connect: &connect_url,
+        alias_connect: &alias_connect_url,
+    };
     let result = calling(
         caller,
-        scenario(
-            &runtime,
-            &api,
-            universe_id,
-            &base_url,
-            &connect_url,
-            sandbox.path(),
-        ),
+        scenario(&runtime, &api, universe_id, &urls, sandbox.path()),
     )
     .await;
-    reconciler.abort();
     gateway.abort();
     result
+}
+
+struct Urls<'a> {
+    base: &'a str,
+    connect: &'a str,
+    alias_connect: &'a str,
 }
 
 async fn scenario(
     runtime: &Arc<UniverseRuntime>,
     api: &Arc<GatewayAgentApi>,
     universe_id: Uuid,
-    base_url: &str,
-    connect_url: &str,
+    urls: &Urls<'_>,
     sandbox: &Path,
 ) -> anyhow::Result<()> {
+    // Workers reach this test's gateway, not whatever the sourced dev
+    // environment points LIGHTSPEED_ENVIRONMENT_GATEWAY_URL at; the route
+    // bearer is the deployment token the gateway state checks.
+    let gateway = EnvironmentGatewayClientConfig::new(
+        urls.base,
+        runtime.environment_gateway().deployment_token(),
+    );
+    ephemeral_scenario(runtime, api, universe_id, &gateway, urls, sandbox).await?;
+    persistent_scenario(runtime, api, universe_id, &gateway, urls, sandbox).await?;
+    ephemeral_grace_scenario(runtime, api, universe_id, urls, sandbox).await
+}
+
+/// An ephemeral key: admission, the data path, the coarse stamp, immediate
+/// `away` while disconnected, reconnect, supersede, revocation, departure
+/// and the in-process close notify.
+async fn ephemeral_scenario(
+    runtime: &Arc<UniverseRuntime>,
+    api: &Arc<GatewayAgentApi>,
+    universe_id: Uuid,
+    gateway: &EnvironmentGatewayClientConfig,
+    urls: &Urls<'_>,
+    sandbox: &Path,
+) -> anyhow::Result<()> {
+    let store = runtime.state_for(universe_id, false).await?.store.clone();
     let minted = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
             display_name: "registration live pool".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Ephemeral,
             max_active_environments: Some(2),
             ephemeral_disconnect_grace_ms: None,
+            offline_close_after_ms: None,
             expires_at_ms: None,
         })
         .await?
@@ -216,55 +279,58 @@ async fn scenario(
     assert!(secret.starts_with("lsrk_"));
     assert_eq!(minted.registration_key.active_environment_count, 0);
 
-    // First daemon: a fresh identity admitted by the key.
+    // First daemon: a fresh identity admitted by the key, open and
+    // connected, with both connection stamps written at admission.
     let root_a = workspace(sandbox, "a")?;
     let receipt_a = sandbox.join("receipt-a.json");
     let daemon_a = spawn_daemon(daemon_config(
         &root_a,
         &sandbox.join("state-a"),
-        connect_url,
+        urls.connect,
         Some(&secret),
         Some(&receipt_a),
+        OnClosed::Exit,
     )?)?;
-    let environment_a =
-        wait_for_registered(api, &key_id, 1, EnvironmentLifecycleStatusView::Ready).await?;
-    let EnvironmentSourceView::Registered {
-        registration_key_id,
-        daemon_id,
-        identity_mode,
-    } = &environment_a.source
-    else {
-        anyhow::bail!(
-            "expected a registered source, got {:?}",
-            environment_a.source
-        )
-    };
-    assert_eq!(registration_key_id, &key_id);
-    assert_eq!(*identity_mode, EnvironmentIdentityModeView::Ephemeral);
-    assert!(daemon_id.starts_with("daemon_"));
-    assert!(environment_a.last_seen_at_ms.is_some());
-    let metadata = &environment_a.metadata;
+    let environment_a = wait_for_registered(api, &key_id, 1, is_connected).await?;
+    let registered = registered_source(&environment_a)?;
+    assert_eq!(registered.registration_key_id, key_id);
     assert_eq!(
-        metadata.get("harbor.trialId").map(String::as_str),
+        registered.identity_mode,
+        EnvironmentIdentityModeView::Ephemeral
+    );
+    assert!(registered.daemon_id.starts_with("daemon_"));
+    assert_eq!(
+        registered.connection_changed_at_ms,
+        registered.last_seen_at_ms
+    );
+    assert_eq!(environment_a.state, EnvironmentStateView::Open);
+    assert_eq!(environment_a.status, EnvironmentStatusView::Ready);
+    assert_eq!(environment_a.request_id, None);
+    assert_eq!(
+        environment_a
+            .metadata
+            .get("harbor.trialId")
+            .map(String::as_str),
         Some("trial-1")
     );
-    assert_eq!(
-        metadata.get("lightspeed.envd.version").map(String::as_str),
-        Some(release_info::VERSION)
+    assert!(
+        environment_a
+            .metadata
+            .keys()
+            .all(|key| !key.starts_with("lightspeed.")),
+        "build facts are not metadata: {:?}",
+        environment_a.metadata
     );
-    assert_eq!(
-        metadata.get("lightspeed.envd.gitSha").map(String::as_str),
-        Some(release_info::GIT_SHA)
-    );
-    assert_eq!(
-        metadata.get("lightspeed.envd.protocolVersion"),
-        Some(&ENVD_PROTOCOL_VERSION.to_string())
-    );
+    let daemon = environment_a.daemon.as_ref().expect("daemon build");
+    assert_eq!(daemon.version.as_deref(), Some(release_info::VERSION));
+    assert_eq!(daemon.git_sha.as_deref(), Some(release_info::GIT_SHA));
+    assert_eq!(daemon.protocol_version, ENVD_PROTOCOL_VERSION);
     let receipt = read_receipt(&receipt_a)?;
     assert_eq!(receipt["environmentId"], environment_a.environment_id);
-    assert_eq!(receipt["daemonId"], daemon_id.as_str());
+    assert_eq!(receipt["daemonId"], registered.daemon_id.as_str());
     assert_eq!(receipt["identityMode"], "ephemeral");
     assert_eq!(receipt["admission"], "created");
+    assert!(receipt.get("incarnationId").is_none());
     assert!(
         receipt["controlConnectionId"]
             .as_str()
@@ -275,24 +341,39 @@ async fn scenario(
     assert_eq!(key_view.active_environment_count, 1);
     assert_eq!(key_view.registered_environment_count, 1);
 
+    // The liveness stamp is coarse: a stamp within the interval of the
+    // last one writes nothing, one a full interval later writes.
+    let environment_id_a = environments::EnvironmentId::new(environment_a.environment_id.clone());
+    assert!(
+        !store
+            .stamp_registered_seen(StampRegisteredSeen {
+                environment_id: environment_id_a.clone(),
+                at_ms: registered.last_seen_at_ms + 1_000,
+            })
+            .await?
+    );
+    assert!(
+        store
+            .stamp_registered_seen(StampRegisteredSeen {
+                environment_id: environment_id_a.clone(),
+                at_ms: registered.last_seen_at_ms + REGISTERED_LIVENESS_STAMP_MS,
+            })
+            .await?
+    );
+
     // The worker route reaches the daemon through a reverse-dialed stream
     // socket; concurrent routes each get their own socket.
-    let record = runtime
-        .state_for(universe_id, false)
-        .await?
-        .store
-        .read_environment(&environments::EnvironmentId::new(
-            environment_a.environment_id.clone(),
-        ))
-        .await?;
-    // Workers reach this test's gateway, not whatever the sourced dev
-    // environment points LIGHTSPEED_ENVIRONMENT_GATEWAY_URL at; the route
-    // bearer is the deployment token the gateway state checks.
-    let gateway = temporal_runtime::environments::gateway::EnvironmentGatewayClientConfig::new(
-        base_url,
-        runtime.environment_gateway().deployment_token(),
+    let key = RouteKey {
+        universe_id,
+        environment_id: environment_a.environment_id.clone(),
+    };
+    assert_eq!(
+        gateway.route_key(
+            universe_id,
+            &store.read_environment(&environment_id_a).await?
+        ),
+        key
     );
-    let key = gateway.route_key(universe_id, &record);
     let options = || gateway.connect_options("registration-live");
     let (first, initialized) = gateway.connect(&key, options()).await?;
     let (second, _) = gateway.connect(&key, options()).await?;
@@ -335,27 +416,42 @@ async fn scenario(
     first.close().await?;
     second.close().await?;
 
-    // Dropping the control connection makes the environment Offline; the
-    // same identity, now without any key, reconnects the same environment.
+    // Dropping the control connection marks the environment disconnected.
+    // An ephemeral daemon is away at once: the gate refuses the route for
+    // good instead of waiting.
     daemon_a.exit.abort();
-    wait_for_status(
-        api,
-        &environment_a.environment_id,
-        EnvironmentLifecycleStatusView::Offline,
-    )
+    let away = wait_for_environment(api, &environment_a.environment_id, "disconnected", |view| {
+        is_connected(view) == Some(false)
+    })
     .await?;
+    assert_eq!(away.state, EnvironmentStateView::Open);
+    assert_eq!(away.status, EnvironmentStatusView::Away);
+    assert!(
+        registered_source(&away)?.connection_changed_at_ms >= registered.connection_changed_at_ms
+    );
+    let refused = expect_route_refusal(gateway, &key).await?;
+    assert!(matches!(
+        refused,
+        ClientError::UpgradeRejected {
+            status: 410,
+            refusal: Some(DataRouteRefusal::Away {}),
+            retry_after_ms: None,
+        }
+    ));
+
+    // The same identity, now without any key, reconnects the same
+    // environment.
     let daemon_a = spawn_daemon(daemon_config(
         &root_a,
         &sandbox.join("state-a"),
-        connect_url,
+        urls.connect,
         None,
         Some(&receipt_a),
+        OnClosed::Exit,
     )?)?;
-    wait_for_status(
-        api,
-        &environment_a.environment_id,
-        EnvironmentLifecycleStatusView::Ready,
-    )
+    wait_for_environment(api, &environment_a.environment_id, "reconnected", |view| {
+        is_connected(view) == Some(true)
+    })
     .await?;
     wait_for_receipt_admission(&receipt_a, "reconnected").await?;
     assert_eq!(
@@ -363,7 +459,7 @@ async fn scenario(
         environment_a.environment_id
     );
     assert_eq!(
-        wait_for_registered(api, &key_id, 1, EnvironmentLifecycleStatusView::Ready)
+        wait_for_registered(api, &key_id, 1, is_connected)
             .await?
             .environment_id,
         environment_a.environment_id,
@@ -372,7 +468,7 @@ async fn scenario(
 
     // A second process with the same identity (a cloned state directory)
     // wins; the older one is told it was superseded and exits instead of
-    // fighting for the identity.
+    // fighting for the identity. The row stays connected throughout.
     let twin_state = sandbox.join("state-a-twin");
     std::fs::create_dir_all(&twin_state)?;
     std::fs::copy(
@@ -384,9 +480,10 @@ async fn scenario(
     let twin_a = spawn_daemon(daemon_config(
         &root_a,
         &twin_state,
-        connect_url,
+        urls.connect,
         None,
         None,
+        OnClosed::Exit,
     )?)?;
     let superseded = tokio::time::timeout(SETTLE, daemon_a.exit).await??;
     assert!(
@@ -394,10 +491,11 @@ async fn scenario(
         "unexpected exit: {superseded:?}"
     );
     assert_eq!(superseded.status(), 5);
-    wait_for_status(
+    wait_for_environment(
         api,
         &environment_a.environment_id,
-        EnvironmentLifecycleStatusView::Ready,
+        "connected twin",
+        |view| is_connected(view) == Some(true),
     )
     .await?;
     let (after_supersede, _) = gateway.connect(&key, options()).await?;
@@ -409,9 +507,10 @@ async fn scenario(
     let daemon_b = spawn_daemon(daemon_config(
         &root_b,
         &sandbox.join("state-b"),
-        connect_url,
+        urls.connect,
         Some(&secret),
         None,
+        OnClosed::Exit,
     )?)?;
     let environments = wait_for_registered_count(api, &key_id, 2).await?;
     let environment_b = environments
@@ -419,7 +518,7 @@ async fn scenario(
         .find(|environment| environment.environment_id != environment_a.environment_id)
         .cloned()
         .expect("second environment");
-    assert_eq!(environment_b.status, EnvironmentLifecycleStatusView::Ready);
+    assert_eq!(is_connected(&environment_b), Some(true));
 
     // Revocation without cascade stops new identities but not reconnects.
     api.revoke_environment_registration_key(EnvironmentRegistrationKeyRevokeParams {
@@ -431,9 +530,10 @@ async fn scenario(
     let daemon_c = spawn_daemon(daemon_config(
         &root_c,
         &sandbox.join("state-c"),
-        connect_url,
+        urls.connect,
         Some(&secret),
         None,
+        OnClosed::Exit,
     )?)?;
     let refused = tokio::time::timeout(SETTLE, daemon_c.exit).await??;
     assert!(
@@ -444,7 +544,7 @@ async fn scenario(
 
     // A deliberate stop says goodbye and the daemon exits cleanly. The
     // sandbox is finished, so its ephemeral environment closes at once
-    // instead of sitting Offline for the key's disconnect grace.
+    // (`departed`) instead of waiting out the key's disconnect grace.
     daemon_b.runtime.shutdown().cancel();
     let stopped = tokio::time::timeout(SETTLE, daemon_b.exit).await??;
     assert!(
@@ -452,19 +552,25 @@ async fn scenario(
         "unexpected exit: {stopped:?}"
     );
     assert_eq!(stopped.status(), 0);
-    wait_for_status(
+    let departed = wait_for_state(
         api,
         &environment_b.environment_id,
-        EnvironmentLifecycleStatusView::Closed,
+        EnvironmentStateView::Closed,
     )
     .await?;
+    assert_eq!(
+        departed.close_reason,
+        Some(EnvironmentCloseReasonView::Departed)
+    );
+    assert!(departed.closed_at_ms.is_some());
     // The departed identity is spent: a restart is refused at register.
     let restarted_b = spawn_daemon(daemon_config(
         &root_b,
         &sandbox.join("state-b"),
-        connect_url,
+        urls.connect,
         None,
         None,
+        OnClosed::Exit,
     )?)?;
     let refused_b = tokio::time::timeout(SETTLE, restarted_b.exit).await??;
     assert!(
@@ -473,24 +579,43 @@ async fn scenario(
     );
     assert_eq!(refused_b.status(), 4);
 
-    // Closing the environment spends the identity: the daemon is told the
-    // environment closed and exits for good.
+    // Closing the environment in this process notifies its control
+    // connection at once: the daemon is told the environment closed and
+    // exits for good, and its routes end.
     api.close_environment(EnvironmentCloseParams {
         environment_id: environment_a.environment_id.clone(),
     })
     .await?;
-    let spent = tokio::time::timeout(SETTLE, twin_a.exit).await??;
+    let spent = tokio::time::timeout(IN_PROCESS_NOTIFY, twin_a.exit).await??;
     assert!(
         matches!(spent, DaemonExit::EnvironmentClosed),
         "a closed environment ends its daemon: {spent:?}"
     );
     assert_eq!(spent.status(), 4);
-    wait_for_status(
+    let closed = wait_for_state(
         api,
         &environment_a.environment_id,
-        EnvironmentLifecycleStatusView::Closed,
+        EnvironmentStateView::Closed,
     )
     .await?;
+    assert_eq!(
+        closed.close_reason,
+        Some(EnvironmentCloseReasonView::Requested)
+    );
+    let refused = expect_route_refusal(gateway, &key).await?;
+    assert!(matches!(
+        refused,
+        ClientError::UpgradeRejected {
+            status: 410,
+            refusal: Some(DataRouteRefusal::Gone {}),
+            ..
+        }
+    ));
+    assert!(
+        list_by_key(api, &key_id, false).await?.is_empty(),
+        "closed environments are hidden by default"
+    );
+    assert_eq!(list_by_key(api, &key_id, true).await?.len(), 2);
     let key_view = read_key(api, &key_id).await?;
     assert_eq!(key_view.registered_environment_count, 2);
     assert_eq!(key_view.active_environment_count, 0);
@@ -498,15 +623,297 @@ async fn scenario(
         key_view.status,
         api::EnvironmentRegistrationKeyStatusView::Revoked
     );
+    Ok(())
+}
 
-    // Ephemeral grace: a key with a short grace closes an environment whose
-    // daemon stays away, through the lifecycle reconciler alone.
+/// A persistent key, dialed under the configured registration URL: the
+/// bounded reconnect wait, startup repair, rotation, the cross-process
+/// close at the revocation sweep, and the offline bound with a parked
+/// daemon.
+async fn persistent_scenario(
+    runtime: &Arc<UniverseRuntime>,
+    api: &Arc<GatewayAgentApi>,
+    universe_id: Uuid,
+    gateway: &EnvironmentGatewayClientConfig,
+    urls: &Urls<'_>,
+    sandbox: &Path,
+) -> anyhow::Result<()> {
+    let store = runtime.state_for(universe_id, false).await?.store.clone();
+    let minted = api
+        .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
+            display_name: "registration live fleet".to_owned(),
+            identity_mode: EnvironmentIdentityModeView::Persistent,
+            max_active_environments: Some(3),
+            ephemeral_disconnect_grace_ms: None,
+            offline_close_after_ms: None,
+            expires_at_ms: None,
+        })
+        .await?
+        .result;
+    let key_id = minted.registration_key.registration_key_id.clone();
+    let first_secret = minted.secret.0.clone();
+
+    // The daemon signs the alias origin; the gateway accepts it because
+    // the alias is a configured registration URL.
+    let root_p = workspace(sandbox, "p")?;
+    let state_p = sandbox.join("state-p");
+    let receipt_p = sandbox.join("receipt-p.json");
+    let spawn_p = |key: Option<&str>| {
+        spawn_daemon(daemon_config(
+            &root_p,
+            &state_p,
+            urls.alias_connect,
+            key,
+            Some(&receipt_p),
+            OnClosed::Exit,
+        )?)
+    };
+    let daemon_p = spawn_p(Some(&first_secret))?;
+    let environment_p = wait_for_registered(api, &key_id, 1, is_connected).await?;
+    assert_eq!(read_receipt(&receipt_p)?["identityMode"], "persistent");
+    let key = RouteKey {
+        universe_id,
+        environment_id: environment_p.environment_id.clone(),
+    };
+    let environment_id_p = environments::EnvironmentId::new(environment_p.environment_id.clone());
+    let (client, _) = gateway
+        .connect(&key, gateway.connect_options("registration-live"))
+        .await?;
+    client.get_idle(&GetIdleParams {}).await?;
+    client.close().await?;
+
+    // A persistent daemon that drops is waited for, within a bound: the
+    // route refuses `disconnected` with a retry hint, and the gate turns
+    // into `away` once the bound passes.
+    daemon_p.exit.abort();
+    let away = wait_for_environment(api, &environment_p.environment_id, "disconnected", |view| {
+        is_connected(view) == Some(false)
+    })
+    .await?;
+    assert_eq!(away.status, EnvironmentStatusView::Away);
+    let refused = expect_route_refusal(gateway, &key).await?;
+    assert!(matches!(
+        refused,
+        ClientError::UpgradeRejected {
+            status: 503,
+            refusal: Some(DataRouteRefusal::Disconnected {}),
+            retry_after_ms: Some(_),
+        }
+    ));
+    let record = store.read_environment(&environment_id_p).await?;
+    let since = record
+        .registered()
+        .expect("registered")
+        .connection_changed_at_ms;
+    assert_eq!(
+        record.use_gate(since + 1_000),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Disconnected,
+            retry_after_ms: environments::WAIT_RETRY_AFTER_MS,
+            until_ms: Some(since + REGISTERED_RECONNECT_WAIT_MS),
+        }
+    );
+    assert!(matches!(
+        record.use_gate(since + REGISTERED_RECONNECT_WAIT_MS),
+        EnvironmentUse::Gone {
+            reason: EnvironmentGoneReason::Away,
+            ..
+        }
+    ));
+
+    // Back by identity alone.
+    let daemon_p = spawn_p(None)?;
+    wait_for_environment(api, &environment_p.environment_id, "reconnected", |view| {
+        is_connected(view) == Some(true)
+    })
+    .await?;
+    wait_for_receipt_admission(&receipt_p, "reconnected").await?;
+
+    // Startup repair (here for this universe only): a gateway that
+    // restarted held none of the connections its rows still call
+    // connected. The disconnect counts from now, so persistent rows get
+    // their full reconnect wait.
+    let before_repair = now_ms();
+    assert!(store.repair_registered_connections(before_repair).await? >= 1);
+    let repaired = store.read_environment(&environment_id_p).await?;
+    let source = repaired.registered().expect("registered");
+    assert!(!source.connected);
+    assert_eq!(source.connection_changed_at_ms, before_repair);
+    assert!(matches!(
+        repaired.use_gate(before_repair + 1_000),
+        EnvironmentUse::Wait {
+            reason: EnvironmentWaitReason::Disconnected,
+            ..
+        }
+    ));
+    // The daemon's next connection records it again.
+    daemon_p.exit.abort();
+    let daemon_p = spawn_p(None)?;
+    wait_for_environment(
+        api,
+        &environment_p.environment_id,
+        "reconnected after repair",
+        |view| is_connected(view) == Some(true),
+    )
+    .await?;
+
+    // Rotation retires the live secret at once and keeps the key: its
+    // group, identity mode and environments. Admitted daemons are
+    // unaffected; a new daemon needs the new secret.
+    let rotated = api
+        .rotate_environment_registration_key(EnvironmentRegistrationKeyRotateParams {
+            registration_key_id: key_id.clone(),
+        })
+        .await?
+        .result;
+    assert_eq!(rotated.registration_key.registration_key_id, key_id);
+    assert_eq!(
+        rotated.registration_key.identity_mode,
+        EnvironmentIdentityModeView::Persistent
+    );
+    assert_ne!(
+        rotated.registration_key.key_prefix,
+        minted.registration_key.key_prefix
+    );
+    assert_ne!(rotated.secret.0, first_secret);
+    let root_r = workspace(sandbox, "r")?;
+    let stale = spawn_daemon(daemon_config(
+        &root_r,
+        &sandbox.join("state-r"),
+        urls.connect,
+        Some(&first_secret),
+        None,
+        OnClosed::Exit,
+    )?)?;
+    let stale_exit = tokio::time::timeout(SETTLE, stale.exit).await??;
+    assert!(
+        matches!(stale_exit, DaemonExit::Refused(_)),
+        "a retired secret admits nobody: {stale_exit:?}"
+    );
+    let root_s = workspace(sandbox, "s")?;
+    let state_s = sandbox.join("state-s");
+    let daemon_s = spawn_daemon(daemon_config(
+        &root_s,
+        &state_s,
+        urls.connect,
+        Some(&rotated.secret.0),
+        None,
+        OnClosed::Exit,
+    )?)?;
+    let environments = wait_for_registered_count(api, &key_id, 2).await?;
+    let environment_s = environments
+        .iter()
+        .find(|environment| environment.environment_id != environment_p.environment_id)
+        .cloned()
+        .expect("environment admitted by the rotated secret");
+    assert_eq!(
+        registered_source(&environment_s)?.registration_key_id,
+        key_id
+    );
+    assert_eq!(
+        read_key(api, &key_id).await?.registered_environment_count,
+        2
+    );
+
+    // A close made outside this process (here written to the store
+    // directly) reaches the daemon at the next revocation sweep.
+    store
+        .begin_close_environment(BeginCloseEnvironment {
+            environment_id: environment_id_p.clone(),
+            reason: EnvironmentCloseReason::Requested,
+            at_ms: now_ms(),
+        })
+        .await?;
+    assert!(registration::revoke_ended_routes(runtime).await? >= 1);
+    let spent = tokio::time::timeout(SETTLE, daemon_p.exit).await??;
+    assert!(
+        matches!(spent, DaemonExit::EnvironmentClosed),
+        "the revocation sweep ends the daemon of an environment closed elsewhere: {spent:?}"
+    );
+
+    // The key's offline bound closes a persistent environment whose daemon
+    // stays away (`offline_timeout`). The daemon, configured to park,
+    // then waits for its stop signal instead of exiting or crash-looping.
+    let updated = api
+        .update_environment_registration_key(EnvironmentRegistrationKeyUpdateParams {
+            registration_key_id: key_id.clone(),
+            display_name: "registration live fleet (offline bound)".to_owned(),
+            max_active_environments: Some(3),
+            ephemeral_disconnect_grace_ms: None,
+            offline_close_after_ms: Some(1_000),
+            expires_at_ms: None,
+        })
+        .await?
+        .result;
+    assert_eq!(updated.registration_key.offline_close_after_ms, Some(1_000));
+    assert_eq!(
+        updated.registration_key.display_name,
+        "registration live fleet (offline bound)"
+    );
+    daemon_s.exit.abort();
+    wait_for_environment(api, &environment_s.environment_id, "disconnected", |view| {
+        is_connected(view) == Some(false)
+    })
+    .await?;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let sweep = registration::sweep_registered_universe(runtime, universe_id, now_ms()).await?;
+    assert!(
+        sweep
+            .closed
+            .iter()
+            .any(|(id, reason)| id.as_str() == environment_s.environment_id
+                && *reason == EnvironmentCloseReason::OfflineTimeout),
+        "{sweep:?}"
+    );
+    let closed = wait_for_state(
+        api,
+        &environment_s.environment_id,
+        EnvironmentStateView::Closed,
+    )
+    .await?;
+    assert_eq!(
+        closed.close_reason,
+        Some(EnvironmentCloseReasonView::OfflineTimeout)
+    );
+    let parked = spawn_daemon(daemon_config(
+        &root_s,
+        &state_s,
+        urls.connect,
+        None,
+        None,
+        OnClosed::Park,
+    )?)?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        !parked.exit.is_finished(),
+        "a parked daemon waits for its stop signal"
+    );
+    parked.runtime.shutdown().cancel();
+    let stopped = tokio::time::timeout(SETTLE, parked.exit).await??;
+    assert!(
+        matches!(stopped, DaemonExit::Shutdown),
+        "a parked daemon exits cleanly when stopped: {stopped:?}"
+    );
+    assert_eq!(stopped.status(), 0);
+    Ok(())
+}
+
+/// Ephemeral grace: the registered sweep closes an environment whose
+/// ephemeral daemon stays away longer than its key's grace.
+async fn ephemeral_grace_scenario(
+    runtime: &Arc<UniverseRuntime>,
+    api: &Arc<GatewayAgentApi>,
+    universe_id: Uuid,
+    urls: &Urls<'_>,
+    sandbox: &Path,
+) -> anyhow::Result<()> {
     let short = api
         .create_environment_registration_key(EnvironmentRegistrationKeyCreateParams {
             display_name: "registration live short grace".to_owned(),
             identity_mode: EnvironmentIdentityModeView::Ephemeral,
             max_active_environments: None,
             ephemeral_disconnect_grace_ms: Some(1_500),
+            offline_close_after_ms: None,
             expires_at_ms: None,
         })
         .await?
@@ -516,19 +923,45 @@ async fn scenario(
     let daemon_d = spawn_daemon(daemon_config(
         &root_d,
         &sandbox.join("state-d"),
-        connect_url,
+        urls.connect,
         Some(&short.secret.0),
         None,
+        OnClosed::Exit,
     )?)?;
-    let environment_d =
-        wait_for_registered(api, &short_key_id, 1, EnvironmentLifecycleStatusView::Ready).await?;
+    let environment_d = wait_for_registered(api, &short_key_id, 1, is_connected).await?;
     daemon_d.exit.abort();
-    wait_for_status(
+    wait_for_environment(api, &environment_d.environment_id, "disconnected", |view| {
+        is_connected(view) == Some(false)
+    })
+    .await?;
+    let early = registration::sweep_registered_universe(runtime, universe_id, now_ms()).await?;
+    assert!(
+        early
+            .closed
+            .iter()
+            .all(|(id, _)| id.as_str() != environment_d.environment_id),
+        "the grace has not passed yet: {early:?}"
+    );
+    tokio::time::sleep(Duration::from_millis(2_000)).await;
+    let sweep = registration::sweep_registered_universe(runtime, universe_id, now_ms()).await?;
+    assert!(
+        sweep
+            .closed
+            .iter()
+            .any(|(id, reason)| id.as_str() == environment_d.environment_id
+                && *reason == EnvironmentCloseReason::EphemeralGrace),
+        "{sweep:?}"
+    );
+    let closed = wait_for_state(
         api,
         &environment_d.environment_id,
-        EnvironmentLifecycleStatusView::Closed,
+        EnvironmentStateView::Closed,
     )
     .await?;
+    assert_eq!(
+        closed.close_reason,
+        Some(EnvironmentCloseReasonView::EphemeralGrace)
+    );
     let short_view = read_key(api, &short_key_id).await?;
     assert_eq!(short_view.active_environment_count, 0);
     assert_eq!(short_view.registered_environment_count, 1);
@@ -890,6 +1323,7 @@ fn daemon_config(
     connect_url: &str,
     key: Option<&str>,
     receipt: Option<&Path>,
+    on_closed: OnClosed,
 ) -> anyhow::Result<DaemonConfig> {
     let mut metadata = BTreeMap::new();
     metadata.insert("harbor.trialId".to_owned(), "trial-1".to_owned());
@@ -901,6 +1335,7 @@ fn daemon_config(
     registration.display_name = Some(DisplayName::new("registration live daemon")?);
     registration.metadata = Metadata::new(metadata)?;
     registration.receipt_path = receipt.map(Path::to_path_buf);
+    registration.on_closed = on_closed;
     Ok(DaemonConfig {
         listen: None,
         cwd: root.to_path_buf(),
@@ -925,6 +1360,72 @@ fn spawn_daemon(config: DaemonConfig) -> anyhow::Result<Daemon> {
     Ok(Daemon { exit, runtime })
 }
 
+fn now_ms() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after the epoch")
+            .as_millis(),
+    )
+    .expect("millisecond clock fits i64")
+}
+
+/// The registered facts of an environment view.
+struct RegisteredFacts {
+    registration_key_id: String,
+    daemon_id: String,
+    identity_mode: EnvironmentIdentityModeView,
+    connection_changed_at_ms: i64,
+    last_seen_at_ms: i64,
+}
+
+fn registered_source(view: &EnvironmentView) -> anyhow::Result<RegisteredFacts> {
+    let EnvironmentSourceView::Registered {
+        registration_key_id,
+        daemon_id,
+        identity_mode,
+        connection_changed_at_ms,
+        last_seen_at_ms,
+        ..
+    } = &view.source
+    else {
+        anyhow::bail!("expected a registered source, got {:?}", view.source)
+    };
+    Ok(RegisteredFacts {
+        registration_key_id: registration_key_id.clone(),
+        daemon_id: daemon_id.clone(),
+        identity_mode: *identity_mode,
+        connection_changed_at_ms: *connection_changed_at_ms,
+        last_seen_at_ms: *last_seen_at_ms,
+    })
+}
+
+/// Whether a registered environment's daemon is connected; `None` for
+/// other kinds.
+fn is_connected(view: &EnvironmentView) -> Option<bool> {
+    match &view.source {
+        EnvironmentSourceView::Registered { connected, .. } => Some(*connected),
+        _ => None,
+    }
+}
+
+/// Dial the worker route and expect the gateway to refuse the upgrade.
+async fn expect_route_refusal(
+    gateway: &EnvironmentGatewayClientConfig,
+    key: &RouteKey,
+) -> anyhow::Result<ClientError> {
+    match gateway
+        .connect(key, gateway.connect_options("registration-live"))
+        .await
+    {
+        Ok((client, _)) => {
+            client.close().await?;
+            anyhow::bail!("the worker route upgraded for {}", key.environment_id)
+        }
+        Err(error) => Ok(error),
+    }
+}
+
 async fn read_key(
     api: &GatewayAgentApi,
     key_id: &str,
@@ -938,31 +1439,35 @@ async fn read_key(
         .registration_key)
 }
 
+/// Wait until exactly `count` open environments are listed under the key
+/// and one of them is connected.
 async fn wait_for_registered(
     api: &GatewayAgentApi,
     key_id: &str,
     count: usize,
-    status: EnvironmentLifecycleStatusView,
+    connected: fn(&EnvironmentView) -> Option<bool>,
 ) -> anyhow::Result<EnvironmentView> {
     let deadline = tokio::time::Instant::now() + SETTLE;
     loop {
-        let environments = list_by_key(api, key_id).await?;
+        let environments = list_by_key(api, key_id, false).await?;
         if environments.len() == count
             && let Some(environment) = environments
                 .iter()
-                .find(|environment| environment.status == status)
+                .find(|environment| connected(environment) == Some(true))
         {
             return Ok(environment.clone());
         }
         if tokio::time::Instant::now() > deadline {
             anyhow::bail!(
-                "timed out waiting for {count} environment(s) under {key_id} with one {status:?}: {environments:?}"
+                "timed out waiting for {count} environment(s) under {key_id} with one connected: {environments:?}"
             );
         }
         tokio::time::sleep(POLL).await;
     }
 }
 
+/// Wait until exactly `count` open environments are listed under the key,
+/// all connected.
 async fn wait_for_registered_count(
     api: &GatewayAgentApi,
     key_id: &str,
@@ -970,26 +1475,30 @@ async fn wait_for_registered_count(
 ) -> anyhow::Result<Vec<EnvironmentView>> {
     let deadline = tokio::time::Instant::now() + SETTLE;
     loop {
-        let environments = list_by_key(api, key_id).await?;
+        let environments = list_by_key(api, key_id, false).await?;
         if environments.len() == count
             && environments
                 .iter()
-                .all(|environment| environment.status == EnvironmentLifecycleStatusView::Ready)
+                .all(|environment| is_connected(environment) == Some(true))
         {
             return Ok(environments);
         }
         if tokio::time::Instant::now() > deadline {
-            anyhow::bail!("timed out waiting for {count} ready environments: {environments:?}");
+            anyhow::bail!("timed out waiting for {count} connected environments: {environments:?}");
         }
         tokio::time::sleep(POLL).await;
     }
 }
 
-async fn list_by_key(api: &GatewayAgentApi, key_id: &str) -> anyhow::Result<Vec<EnvironmentView>> {
+async fn list_by_key(
+    api: &GatewayAgentApi,
+    key_id: &str,
+    include_closed: bool,
+) -> anyhow::Result<Vec<EnvironmentView>> {
     Ok(api
         .list_environments(EnvironmentListParams {
-            metadata: Default::default(),
             registration_key_id: Some(key_id.to_owned()),
+            include_closed,
             ..EnvironmentListParams::default()
         })
         .await?
@@ -997,11 +1506,12 @@ async fn list_by_key(api: &GatewayAgentApi, key_id: &str) -> anyhow::Result<Vec<
         .environments)
 }
 
-async fn wait_for_status(
+async fn wait_for_environment(
     api: &GatewayAgentApi,
     environment_id: &str,
-    status: EnvironmentLifecycleStatusView,
-) -> anyhow::Result<()> {
+    what: &str,
+    ready: impl Fn(&EnvironmentView) -> bool,
+) -> anyhow::Result<EnvironmentView> {
     let deadline = tokio::time::Instant::now() + SETTLE;
     loop {
         let environment = api
@@ -1011,15 +1521,25 @@ async fn wait_for_status(
             .await?
             .result
             .environment;
-        if environment.status == status {
-            return Ok(());
+        if ready(&environment) {
+            return Ok(environment);
         }
         if tokio::time::Instant::now() > deadline {
             anyhow::bail!(
-                "timed out waiting for {environment_id} to be {status:?}; last {:?}",
-                environment.status
+                "timed out waiting for {environment_id} to be {what}; last {environment:?}"
             );
         }
         tokio::time::sleep(POLL).await;
     }
+}
+
+async fn wait_for_state(
+    api: &GatewayAgentApi,
+    environment_id: &str,
+    state: EnvironmentStateView,
+) -> anyhow::Result<EnvironmentView> {
+    wait_for_environment(api, environment_id, &format!("{state:?}"), |view| {
+        view.state == state
+    })
+    .await
 }

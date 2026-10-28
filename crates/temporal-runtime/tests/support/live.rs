@@ -472,10 +472,12 @@ pub async fn read_session_view(
         .session)
 }
 
-pub async fn wait_for_environment_status(
+/// Drive the reconciler of `api`'s universe until the environment reaches
+/// `expected`.
+pub async fn wait_for_environment_state(
     api: &temporal_runtime::gateway::GatewayAgentApi,
     environment_id: &str,
-    expected: api::EnvironmentLifecycleStatusView,
+    expected: api::EnvironmentStateView,
 ) -> anyhow::Result<api::EnvironmentView> {
     let started = Instant::now();
     loop {
@@ -487,13 +489,14 @@ pub async fn wait_for_environment_status(
             .await?
             .result
             .environment;
-        if environment.status == expected {
+        if environment.state == expected {
             return Ok(environment);
         }
         if started.elapsed() > Duration::from_secs(20) {
             anyhow::bail!(
-                "timed out waiting for environment {environment_id} to reach {expected:?}; current status is {:?}",
-                environment.status
+                "timed out waiting for environment {environment_id} to reach {expected:?}; current state is {:?} ({:?})",
+                environment.state,
+                environment.state_message
             );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

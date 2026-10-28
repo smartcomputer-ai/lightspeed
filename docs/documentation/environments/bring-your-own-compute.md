@@ -7,7 +7,9 @@ inbound daemon port.
 
 This walkthrough connects a machine, selects it for a session, and runs `pwd`
 to verify the connection. It uses persistent registration so that restarting
-the daemon brings back the same environment.
+the daemon brings back the same environment. To run daemons as services, in
+Kubernetes or under systemd, continue with
+[Run registered daemons](registered-daemons.md) afterwards.
 
 ## Prepare the machine
 
@@ -96,9 +98,12 @@ For the local quickstart, run:
 
 For a remote installation, replace the gateway URL with its public endpoint,
 for example `wss://lightspeed.example.com/environment-gateway/connect`. Use
-the host of the deployment's public base URL: the daemon signs the origin it
-dials, and the gateway refuses any other. Plain `ws://` is accepted only for
-loopback connections. Leave the daemon running in this terminal.
+the host of the deployment's public base URL, or another registration URL
+the operator configured: the daemon signs the origin it dials, and the
+gateway refuses any other. Plain `ws://` is accepted only for loopback
+connections unless the daemon is started with `--allow-insecure-gateway`,
+which is meant for a trusted private network. Leave the daemon running in
+this terminal.
 
 The daemon opens an outbound control connection. When a worker needs a data
 connection, the daemon opens another outbound connection for that route.
@@ -106,9 +111,9 @@ This command does not start a passive listener on the machine.
 
 Wait for `receipt.json` to appear, then reload the **Environments** page and
 confirm **My workstation** is ready. The receipt records the assigned
-environment, incarnation, and daemon identifiers, the control connection, the
-identity mode, and whether this admission created the environment or
-reconnected to it. It never contains the registration secret. Keep the state
+environment and daemon identifiers, the control connection, the identity
+mode, and whether this admission created the environment or reconnected to
+it. It never contains the registration secret. Keep the state
 directory: it contains the daemon's private identity key.
 
 The daemon sends the registration key only until its first admission. After
@@ -153,8 +158,9 @@ the directory printed by `pwd`.
 
 Press Ctrl+C in the daemon terminal. The daemon tells the gateway it is
 stopping and exits with status 0. With persistent registration, the
-environment becomes offline and remains in the universe; reload
-**Environments** to inspect its status. To reconnect, use the same state
+environment stays open and shows as disconnected; reload **Environments** to
+inspect it. A tool call that needs it meanwhile waits up to two minutes for
+the daemon to return, then fails. To reconnect, use the same state
 directory and omit the deleted registration-key file:
 
 ```bash
@@ -171,10 +177,13 @@ environment returns under its existing identity. Reload **Environments** and
 repeat the `pwd` request to verify access.
 
 For short-lived machines, a registration key can instead use an ephemeral
-identity mode. Those environments close after their disconnect grace period.
-Once an environment is closed, its daemon identity cannot register again: a
-running daemon is told so and exits with status 4, and a replacement needs a
-fresh state directory and a valid registration key.
+identity mode. Those environments close as soon as their daemon stops, or
+after the key's disconnect grace period when the connection is lost, and
+tools never wait for them to return. Once an environment is closed, its
+daemon identity cannot register again: a running daemon is told so and exits
+with status 4, or parks until it is stopped when started with
+`--on-closed=park`. A replacement needs a fresh state directory and a valid
+registration key.
 
 Run one daemon per state directory. When a second process connects with the
 same identity, the newer connection wins and the older daemon exits with
@@ -190,6 +199,15 @@ Revoke the registration key when you no longer need it to admit machines.
 Revoking a key alone blocks new identities. Already admitted environments
 can continue reconnecting until you close them. Closing a registered
 environment does not shut down or delete the underlying computer.
+
+A key's **Edit** dialog changes its group name, active environment limit,
+disconnect grace, **Close when offline for** setting, and expiry; its
+identity mode is fixed. **Rotate** replaces a leaked or expiring secret: the
+old secret stops working at once, the new one is shown once, and the key
+keeps its group, policy, and admitted environments. Daemons already
+registered are unaffected because they never present the key again. Use
+**Rename…** on an environment to change the display name its daemon first
+reported.
 
 ## Direct attachment for local development
 
@@ -220,7 +238,8 @@ the runtime and daemon run on the same host; in a container deployment,
 | Restart fails after deleting the key file | Remove `--registration-key-file` from the command and retain the original `--state-dir`. |
 | The daemon reports incompatible protocol versions | Use daemon and runtime builds from the same release, or run `lightspeed-envd upgrade`. `lightspeed-envd --print-build` reports daemon build and protocol information. |
 | The daemon exits with status 3 | The gateway refused registration for good, for example an invalid, revoked, or expired key, or a protocol version the daemon cannot upgrade to. The log names the reason. |
-| Registration is refused because the signature does not verify | The daemon dialed a different host than the gateway's public base URL, such as `localhost` instead of `127.0.0.1`. Use the exact public host. |
+| Registration is refused because the signature does not verify | The daemon dialed a different host than the gateway's public base URL and its configured registration URLs, such as `localhost` instead of `127.0.0.1`. Use one of those exact hosts. |
+| The daemon refuses a `ws://` gateway URL | Plain `ws://` is accepted only toward loopback. Use `wss://`, or `--allow-insecure-gateway` on a trusted private network. |
 | The daemon exits with status 5 | Another process uses the same state directory and identity. Give each daemon its own state directory. |
 | The agent has no process tool | Enable **Environments**, select the active environment, and apply the setup to the actual session. |
 | A command cannot start or find a program | Check the daemon user's permissions, installed programs, Bash, and working directory on the machine. |

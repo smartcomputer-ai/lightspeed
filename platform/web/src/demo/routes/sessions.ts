@@ -579,13 +579,13 @@ function resolveEnvironment(
   return { environmentId };
 }
 
-/// Provisioning and booting are valid activation targets; a terminal or
-/// terminating environment is not.
+/// Provisioning, powered-down and disconnected environments are valid
+/// activation targets; a terminal or terminating one is not.
 function usable(environment: Environment): boolean {
   return (
-    environment.status !== "closed" &&
-    environment.status !== "closing" &&
-    environment.status !== "failed"
+    environment.state !== "closed" &&
+    environment.state !== "closing" &&
+    environment.state !== "failed"
   );
 }
 

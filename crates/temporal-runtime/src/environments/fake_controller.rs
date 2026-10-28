@@ -1,22 +1,29 @@
 //! An in-memory provider controller for tests.
 //!
 //! It serves the controller plane on `/control` and a minimal data plane on
-//! `/routes/{universeId}/{bindingId}/{environmentId}/{incarnationId}/{targetId}`
-//! over a loopback WebSocket listener, and checks the provider credential
-//! as a bearer token on both, exactly as a real provider must. Nothing
-//! registers it: a test starts one and registers its controller URL and
-//! credential like any provider's.
+//! `/routes/{universeId}/{environmentId}/{targetId}` over a loopback
+//! WebSocket listener, so Lightspeed's derived data route base
+//! (`{controller origin}/routes`) reaches it. When started with a
+//! credential it checks it as a bearer token on both, exactly as a real
+//! provider must; without one it checks nothing. Nothing registers it: a
+//! test starts one and registers its controller URL (and credential, if
+//! any) like any provider's.
 //!
 //! Targets come up at once: `target/create` answers an `active`, `running`
-//! target whose daemon is ready, and power changes and closes complete
-//! before they answer. The data route answers `initialize` only, as an envd
-//! with no capability families, which is enough for the runtime's
-//! data-plane handshake at the Ready transition.
+//! target, and power changes and closes complete before they answer. A data
+//! route dial wakes a powered-down target and refuses `waking` once, and a
+//! new target may refuse `booting` for a configured number of dials; after
+//! that the route answers `initialize` only, as an envd with no capability
+//! families, which is enough for the runtime's open handshake. Tests change
+//! targets out of band the way a provider's own idle policy or TTL would.
 
 use std::{
     collections::BTreeMap,
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use axum::{
@@ -34,13 +41,12 @@ use environment_protocol::{
     control::{
         handshake::{
             ControllerCapabilities, ControllerInitializeParams, ControllerInitializeResponse,
-            ControllerRoutes,
         },
         ingress::{EnsureIngressParams, RemoveIngressParams},
         target::{
-            AdoptTargetParams, CloseTargetParams, CreateTargetParams, GetTargetParams,
-            IngressObservation, PowerState, SetTargetPowerParams, TargetObservation, TargetOwner,
-            TargetPhase, TargetRef, TargetResponse, TargetState,
+            CloseTargetParams, CreateTargetParams, GetTargetParams, IngressObservation, PowerState,
+            SetTargetPowerParams, TargetObservation, TargetOwner, TargetPhase, TargetRef,
+            TargetResponse,
         },
         template::{EnvironmentTemplate, ListTemplatesResponse, TemplateResources},
     },
@@ -51,19 +57,16 @@ use environment_protocol::{
     },
     error::{Capability, PreconditionReason, ProtocolError, ProtocolErrorKind},
     handshake::{ImplementationInfo, Plane},
-    ids::{
-        BindingId, DaemonInstanceId, EnvironmentId, IncarnationId, ProviderTargetId, TemplateId,
-        UniverseId,
-    },
+    ids::{DaemonInstanceId, EnvironmentId, ProviderTargetId, TemplateId, UniverseId},
     jsonrpc::{self, Request, Response as RpcResponse},
     limits::{MAX_MESSAGE_BYTES, MIN_CONCURRENT_REQUESTS},
     manifest::{
-        ControllerInitialize, IngressEnsure, IngressRemove, RequestMethod, TargetAdopt,
-        TargetClose, TargetCreate, TargetGet, TargetSetPower, TemplateList,
+        ControllerInitialize, IngressEnsure, IngressRemove, RequestMethod, TargetClose,
+        TargetCreate, TargetGet, TargetSetPower, TemplateList,
     },
     metadata::{DescriptiveText, DisplayName, Metadata},
     paths::EnvironmentPath,
-    routes::{DataRouteBase, PublicUrl},
+    routes::{DataRouteRefusal, PublicUrl},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Serialize, de::DeserializeOwned};
@@ -76,8 +79,8 @@ pub const FAKE_TEMPLATE_ID: &str = "rust-v1";
 /// Public endpoint the fake controller reports for enabled ingress.
 pub const FAKE_INGRESS_ENDPOINT: &str = "https://fake.env.test";
 
-/// Power states the fake controller supports. Suspended is included so the
-/// suspend path has coverage.
+/// Power states the fake controller supports when it offers power control.
+/// Suspended is included so the suspend path has coverage.
 pub const FAKE_POWER_STATES: [PowerState; 4] = [
     PowerState::Running,
     PowerState::Paused,
@@ -85,13 +88,21 @@ pub const FAKE_POWER_STATES: [PowerState; 4] = [
     PowerState::Stopped,
 ];
 
-/// What the fake controller advertises.
+/// `Retry-After` of the fake data route's 503 refusals, in seconds.
+pub const FAKE_RETRY_AFTER_SECS: u64 = 1;
+
+/// What the fake controller advertises and how its data routes behave.
 #[derive(Clone, Debug)]
 pub struct FakeControllerOptions {
-    /// `capabilities.adoptTarget`.
-    pub adopt_target: bool,
+    /// `capabilities.power`.
+    pub power: bool,
     /// `capabilities.ingress`.
     pub ingress: bool,
+    /// Require a bearer credential on the controller and its data routes.
+    pub credential: bool,
+    /// Data route dials of a new target that are refused `booting` before
+    /// its envd answers.
+    pub booting_dials: u32,
     /// The protocol version the fake envd behind every data route speaks.
     pub daemon_protocol_version: u32,
 }
@@ -99,8 +110,10 @@ pub struct FakeControllerOptions {
 impl Default for FakeControllerOptions {
     fn default() -> Self {
         Self {
-            adopt_target: true,
+            power: true,
             ingress: true,
+            credential: true,
+            booting_dials: 0,
             daemon_protocol_version: ENVD_PROTOCOL_VERSION,
         }
     }
@@ -109,7 +122,8 @@ impl Default for FakeControllerOptions {
 /// A running fake controller. Dropping it stops the listener.
 pub struct FakeController {
     controller_url: String,
-    credential: String,
+    credential: Option<String>,
+    app: Arc<App>,
     task: JoinHandle<()>,
 }
 
@@ -122,38 +136,39 @@ impl FakeController {
     pub async fn start_with(options: FakeControllerOptions) -> std::io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
-        let credential = format!("fake-credential-{}", uuid::Uuid::new_v4().simple());
-        let data = DataRouteBase::new(format!("ws://{address}/routes"))
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let credential = options
+            .credential
+            .then(|| format!("fake-credential-{}", uuid::Uuid::new_v4().simple()));
         let initialize = ControllerInitializeResponse {
             protocol_version: CONTROLLER_PROTOCOL_VERSION,
             plane: Plane::Controller,
             server_info: implementation("lightspeed-fake-controller"),
             capabilities: ControllerCapabilities {
-                adopt_target: options.adopt_target,
+                power: options.power,
                 ingress: options.ingress,
             },
-            routes: ControllerRoutes { data },
         };
         let app = Arc::new(App {
             credential: credential.clone(),
             options,
             initialize,
+            reachable: AtomicBool::new(true),
             targets: Mutex::new(Targets::default()),
         });
         let router = Router::new()
             .route("/control", get(control_upgrade))
             .route(
-                "/routes/{universe}/{binding}/{environment}/{incarnation}/{target}",
+                "/routes/{universe}/{environment}/{target}",
                 get(data_upgrade),
             )
-            .with_state(app);
+            .with_state(app.clone());
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, router).await;
         });
         Ok(Self {
             controller_url: format!("ws://{address}/control"),
             credential,
+            app,
             task,
         })
     }
@@ -163,9 +178,48 @@ impl FakeController {
         &self.controller_url
     }
 
-    /// The provider credential the controller and its data routes accept.
-    pub fn credential(&self) -> &str {
-        &self.credential
+    /// The provider credential the controller and its data routes accept;
+    /// `None` when they check none.
+    pub fn credential(&self) -> Option<&str> {
+        self.credential.as_deref()
+    }
+
+    /// While `false`, the controller and every data route answer 503
+    /// without upgrading, as a provider that is down would.
+    pub fn set_reachable(&self, reachable: bool) {
+        self.app.reachable.store(reachable, Ordering::SeqCst);
+    }
+
+    /// Move the environment's target to `power` out of band, as the
+    /// provider's own idle policy would. False when it holds no target.
+    pub async fn set_power_out_of_band(&self, environment_id: &str, power: PowerState) -> bool {
+        let mut targets = self.app.targets.lock().await;
+        match targets.find_mut(environment_id) {
+            Some(target) => {
+                target.power = power;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove the environment's target out of band, as a provider TTL
+    /// would. False when it holds no target.
+    pub async fn end_target(&self, environment_id: &str) -> bool {
+        let mut targets = self.app.targets.lock().await;
+        let Some(target_id) = targets
+            .find_mut(environment_id)
+            .map(|target| target.target_id.clone())
+        else {
+            return false;
+        };
+        targets.remove(&target_id);
+        true
+    }
+
+    /// How many targets the controller holds.
+    pub async fn target_count(&self) -> usize {
+        self.app.targets.lock().await.by_id.len()
     }
 }
 
@@ -176,9 +230,10 @@ impl Drop for FakeController {
 }
 
 struct App {
-    credential: String,
+    credential: Option<String>,
     options: FakeControllerOptions,
     initialize: ControllerInitializeResponse,
+    reachable: AtomicBool,
     targets: Mutex<Targets>,
 }
 
@@ -194,7 +249,7 @@ struct FakeTarget {
     owner: TargetOwner,
     power: PowerState,
     ingress: bool,
-    metadata: Metadata,
+    booting_dials: u32,
 }
 
 impl FakeTarget {
@@ -202,18 +257,12 @@ impl FakeTarget {
         TargetObservation {
             target_id: Some(self.target_id.clone()),
             owner: self.owner.clone(),
-            display_name: DisplayName::new(self.owner.environment_id.as_str()).ok(),
-            state: TargetState {
-                phase: TargetPhase::Active,
-                power: Some(self.power),
-                daemon_ready: self.power == PowerState::Running,
-                message: None,
-            },
-            supported_power_states: FAKE_POWER_STATES.to_vec(),
+            phase: TargetPhase::Active,
+            power: Some(self.power),
+            message: None,
             ingress: self.ingress.then(|| IngressObservation {
                 endpoint: PublicUrl::new(FAKE_INGRESS_ENDPOINT).expect("valid fake endpoint"),
             }),
-            metadata: self.metadata.clone(),
         }
     }
 }
@@ -225,11 +274,14 @@ fn implementation(name: &str) -> ImplementationInfo {
 }
 
 fn authorized(app: &App, headers: &HeaderMap) -> bool {
+    let Some(credential) = &app.credential else {
+        return true;
+    };
     headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|token| constant_time_eq(token.as_bytes(), app.credential.as_bytes()))
+        .is_some_and(|token| constant_time_eq(token.as_bytes(), credential.as_bytes()))
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -243,12 +295,45 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
             == 0
 }
 
-fn unauthorized() -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, "Bearer")],
+/// The answer before any upgrade: 503 while unreachable, 401 without the
+/// credential.
+fn gate(app: &App, headers: &HeaderMap) -> Option<Response> {
+    if !app.reachable.load(Ordering::SeqCst) {
+        return Some(StatusCode::SERVICE_UNAVAILABLE.into_response());
+    }
+    if !authorized(app, headers) {
+        return Some(
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+            )
+                .into_response(),
+        );
+    }
+    None
+}
+
+/// A typed data route refusal: its status, a JSON body and, for a 503,
+/// `Retry-After`.
+fn refuse(refusal: DataRouteRefusal) -> Response {
+    let status = StatusCode::from_u16(refusal.status()).expect("refusal statuses are valid");
+    let body = serde_json::to_string(&refusal).expect("refusals encode");
+    let mut response = (
+        status,
+        [(header::CONTENT_TYPE, "application/json".to_owned())],
+        body,
     )
-        .into_response()
+        .into_response();
+    if refusal.is_retryable() {
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            FAKE_RETRY_AFTER_SECS
+                .to_string()
+                .parse()
+                .expect("valid header"),
+        );
+    }
+    response
 }
 
 fn with_limits(upgrade: WebSocketUpgrade) -> WebSocketUpgrade {
@@ -262,8 +347,8 @@ async fn control_upgrade(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&app, &headers) {
-        return unauthorized();
+    if let Some(refused) = gate(&app, &headers) {
+        return refused;
     }
     with_limits(upgrade)
         .on_upgrade(move |socket| serve(socket, Plane::Controller, app))
@@ -272,41 +357,41 @@ async fn control_upgrade(
 
 async fn data_upgrade(
     State(app): State<Arc<App>>,
-    Path((universe, binding, environment, incarnation, target_id)): Path<(
-        String,
-        String,
-        String,
-        String,
-        String,
-    )>,
+    Path((universe, environment, target_id)): Path<(String, String, String)>,
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !authorized(&app, &headers) {
-        return unauthorized();
+    if let Some(refused) = gate(&app, &headers) {
+        return refused;
     }
-    let (Ok(universe_id), Ok(binding_id), Ok(environment_id), Ok(incarnation_id), Ok(target_id)) = (
+    let (Ok(universe_id), Ok(environment_id), Ok(target_id)) = (
         UniverseId::new(universe),
-        BindingId::new(binding),
         EnvironmentId::new(environment),
-        IncarnationId::new(incarnation),
         ProviderTargetId::new(target_id),
     ) else {
-        return StatusCode::NOT_FOUND.into_response();
+        return refuse(DataRouteRefusal::Gone {});
     };
     let owner = TargetOwner {
         universe_id,
-        binding_id,
         environment_id,
-        incarnation_id,
     };
-    match app.targets.lock().await.by_id.get(&target_id) {
-        Some(target) if target.owner != owner => return StatusCode::NOT_FOUND.into_response(),
-        Some(target) if target.power != PowerState::Running => {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    {
+        let mut targets = app.targets.lock().await;
+        let Some(target) = targets.by_id.get_mut(&target_id) else {
+            return refuse(DataRouteRefusal::Gone {});
+        };
+        if target.owner != owner {
+            return refuse(DataRouteRefusal::Gone {});
         }
-        Some(_) => {}
-        None => return StatusCode::NOT_FOUND.into_response(),
+        // The dial is the wake signal.
+        if target.power != PowerState::Running {
+            target.power = PowerState::Running;
+            return refuse(DataRouteRefusal::Waking {});
+        }
+        if target.booting_dials > 0 {
+            target.booting_dials -= 1;
+            return refuse(DataRouteRefusal::Booting {});
+        }
     }
     with_limits(upgrade)
         .on_upgrade(move |socket| serve(socket, Plane::Data, app))
@@ -492,7 +577,7 @@ async fn controller_call(app: &App, request: &Request) -> Result<Value, Protocol
     let method = request.method.as_str();
     if method == TemplateList::NAME {
         params::<TemplateList>(request)?;
-        return encode(&list_templates());
+        return encode(&list_templates(&app.options));
     }
     if (method == IngressEnsure::NAME || method == IngressRemove::NAME) && !app.options.ingress {
         return Err(ProtocolError::capability_unavailable(
@@ -500,16 +585,17 @@ async fn controller_call(app: &App, request: &Request) -> Result<Value, Protocol
             "the fake controller was started without ingress",
         ));
     }
-    if method == TargetAdopt::NAME && !app.options.adopt_target {
+    if method == TargetSetPower::NAME && !app.options.power {
         return Err(ProtocolError::capability_unavailable(
-            Capability::AdoptTarget,
-            "the fake controller was started without adoption",
+            Capability::Power,
+            "the fake controller was started without power control",
         ));
     }
     let mut targets = app.targets.lock().await;
     let observation = match method {
-        TargetCreate::NAME => targets.create(params::<TargetCreate>(request)?)?,
-        TargetAdopt::NAME => targets.adopt(params::<TargetAdopt>(request)?)?,
+        TargetCreate::NAME => {
+            targets.create(params::<TargetCreate>(request)?, app.options.booting_dials)?
+        }
         TargetGet::NAME => {
             let GetTargetParams { target } = params::<TargetGet>(request)?;
             targets.resolve(&target)?.observation()
@@ -531,13 +617,19 @@ async fn controller_call(app: &App, request: &Request) -> Result<Value, Protocol
     })
 }
 
-fn list_templates() -> ListTemplatesResponse {
+fn list_templates(options: &FakeControllerOptions) -> ListTemplatesResponse {
     ListTemplatesResponse {
         templates: vec![EnvironmentTemplate {
             template_id: TemplateId::new(FAKE_TEMPLATE_ID).expect("valid template id"),
             display_name: DisplayName::new("Rust development").expect("valid display name"),
             description: DescriptiveText::new("Deterministic fake provider template").ok(),
-            public_ingress: true,
+            power_states: if options.power {
+                FAKE_POWER_STATES.to_vec()
+            } else {
+                Vec::new()
+            },
+            public_ingress: options.ingress,
+            idle: None,
             deprecated: false,
             resources: Some(TemplateResources {
                 vcpus: Some(2),
@@ -576,25 +668,27 @@ impl Targets {
         Ok(found)
     }
 
-    fn insert(&mut self, owner: TargetOwner, metadata: Metadata) -> TargetObservation {
-        let mut identity = DefaultHasher::new();
-        owner.hash(&mut identity);
-        let target_id = ProviderTargetId::new(format!("fake-{:016x}", identity.finish()))
-            .expect("valid fake target id");
-        let target = FakeTarget {
-            target_id: target_id.clone(),
-            owner: owner.clone(),
-            power: PowerState::Running,
-            ingress: false,
-            metadata,
-        };
-        let observation = target.observation();
-        self.by_owner.insert(owner, target_id.clone());
-        self.by_id.insert(target_id, target);
-        observation
+    fn find_mut(&mut self, environment_id: &str) -> Option<&mut FakeTarget> {
+        self.by_id
+            .values_mut()
+            .find(|target| target.owner.environment_id.as_str() == environment_id)
     }
 
-    fn create(&mut self, params: CreateTargetParams) -> Result<TargetObservation, ProtocolError> {
+    fn remove(&mut self, target_id: &ProviderTargetId) {
+        if let Some(target) = self.by_id.remove(target_id) {
+            self.by_owner.remove(&target.owner);
+        }
+    }
+
+    fn create(
+        &mut self,
+        params: CreateTargetParams,
+        booting_dials: u32,
+    ) -> Result<TargetObservation, ProtocolError> {
+        if let Some(idle) = &params.idle {
+            idle.validate()
+                .map_err(|error| ProtocolError::invalid_field("idle", error.to_string()))?;
+        }
         if let Some(target_id) = self.by_owner.get(&params.owner) {
             return Ok(self.by_id[target_id].observation());
         }
@@ -604,37 +698,21 @@ impl Targets {
                 params.template_id
             )));
         }
-        let metadata = Metadata::new(BTreeMap::from([(
-            "imageFingerprint".to_owned(),
-            format!("fake:{}", params.template_id),
-        )]))
-        .expect("valid fake metadata");
-        Ok(self.insert(params.owner, metadata))
-    }
-
-    fn adopt(&mut self, params: AdoptTargetParams) -> Result<TargetObservation, ProtocolError> {
-        let fingerprint = format!("fake:adopted:{}", params.source_target);
-        if let Some(target_id) = self.by_owner.get(&params.owner) {
-            let target = &self.by_id[target_id];
-            return if target.metadata.get("imageFingerprint") == Some(fingerprint.as_str()) {
-                Ok(target.observation())
-            } else {
-                Err(owner_mismatch())
-            };
-        }
-        if self
-            .by_id
-            .values()
-            .any(|target| target.metadata.get("imageFingerprint") == Some(fingerprint.as_str()))
-        {
-            return Err(owner_mismatch());
-        }
-        let metadata = Metadata::new(BTreeMap::from([(
-            "imageFingerprint".to_owned(),
-            fingerprint,
-        )]))
-        .map_err(|error| ProtocolError::invalid_params(error.to_string()))?;
-        Ok(self.insert(params.owner, metadata))
+        let mut identity = DefaultHasher::new();
+        params.owner.hash(&mut identity);
+        let target_id = ProviderTargetId::new(format!("fake-{:016x}", identity.finish()))
+            .expect("valid fake target id");
+        let target = FakeTarget {
+            target_id: target_id.clone(),
+            owner: params.owner.clone(),
+            power: PowerState::Running,
+            ingress: false,
+            booting_dials,
+        };
+        let observation = target.observation();
+        self.by_owner.insert(params.owner, target_id.clone());
+        self.by_id.insert(target_id, target);
+        Ok(observation)
     }
 
     fn set_power(
@@ -657,27 +735,19 @@ impl Targets {
         let closed = |target_id| TargetObservation {
             target_id,
             owner: params.target.owner.clone(),
-            display_name: None,
-            state: TargetState {
-                phase: TargetPhase::Closed,
-                power: None,
-                daemon_ready: false,
-                message: None,
-            },
-            supported_power_states: Vec::new(),
+            phase: TargetPhase::Closed,
+            power: None,
+            message: None,
             ingress: None,
-            metadata: Metadata::default(),
         };
         let target_id = match self.resolve(&params.target) {
             Ok(target) => target.target_id.clone(),
             Err(error) if error.kind() == ProtocolErrorKind::NotFound => {
-                return Ok(closed(None));
+                return Ok(closed(params.target.target_id.clone()));
             }
             Err(error) => return Err(error),
         };
-        if let Some(target) = self.by_id.remove(&target_id) {
-            self.by_owner.remove(&target.owner);
-        }
+        self.remove(&target_id);
         Ok(closed(Some(target_id)))
     }
 
@@ -698,9 +768,13 @@ mod tests {
     use super::*;
     use crate::environments::gateway::runtime_client_info;
     use environment_client::{
-        ConnectOptions,
-        conformance::controller::{ControllerConformance, run},
+        ConnectOptions, ControllerClient, DataClient,
+        conformance::{
+            controller::{ControllerConformance, run},
+            data_route::expect_refusal,
+        },
     };
+    use environment_protocol::routes::{DataRouteBase, provider_data_route};
     use std::{
         sync::atomic::{AtomicU64, Ordering},
         time::Duration,
@@ -713,24 +787,32 @@ mod tests {
             let n = next.fetch_add(1, Ordering::SeqCst);
             TargetOwner {
                 universe_id: UniverseId::new(universe.clone()).unwrap(),
-                binding_id: BindingId::new("conformance").unwrap(),
                 environment_id: EnvironmentId::new(format!("environment_{n}")).unwrap(),
-                incarnation_id: IncarnationId::new(format!("incarnation_{n}")).unwrap(),
             }
         })
     }
 
-    async fn conformance(options: FakeControllerOptions) {
-        let controller = FakeController::start_with(options).await.unwrap();
+    fn options(controller: &FakeController) -> ConnectOptions {
+        let options = ConnectOptions::new(runtime_client_info());
+        match controller.credential() {
+            Some(credential) => options.with_bearer_token(credential),
+            None => options,
+        }
+    }
+
+    async fn conformance(options_for: FakeControllerOptions) {
+        let controller = FakeController::start_with(options_for).await.unwrap();
         let mut suite = ControllerConformance::new(
             controller.controller_url(),
-            ConnectOptions::new(runtime_client_info()).with_bearer_token(controller.credential()),
+            options(&controller),
             TemplateId::new(FAKE_TEMPLATE_ID).unwrap(),
             owner_factory(),
         );
         suite.prompt_bound = Duration::from_secs(5);
         suite.settle_timeout = Duration::from_secs(10);
         suite.poll_interval = Duration::from_millis(50);
+        suite.data_route_base =
+            Some(DataRouteBase::derived_from_controller(controller.controller_url()).unwrap());
         run(&suite)
             .await
             .into_result()
@@ -743,12 +825,108 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn the_fake_controller_without_optional_features_conforms() {
+    async fn the_fake_controller_without_optional_capabilities_conforms() {
         conformance(FakeControllerOptions {
-            adopt_target: false,
+            power: false,
             ingress: false,
             ..FakeControllerOptions::default()
         })
         .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_fake_controller_without_a_credential_conforms() {
+        conformance(FakeControllerOptions {
+            credential: false,
+            ..FakeControllerOptions::default()
+        })
+        .await;
+    }
+
+    /// A target created through the controller, and its data route under
+    /// the base Lightspeed derives from the controller URL.
+    async fn created(controller: &FakeController) -> (TargetOwner, String) {
+        let (client, _) =
+            ControllerClient::connect_initialized(controller.controller_url(), options(controller))
+                .await
+                .expect("controller handshake");
+        let owner = owner_factory()();
+        let target_id = client
+            .create_target(&CreateTargetParams {
+                owner: owner.clone(),
+                template_id: TemplateId::new(FAKE_TEMPLATE_ID).unwrap(),
+                display_name: None,
+                idle: None,
+            })
+            .await
+            .expect("create")
+            .target
+            .target_id
+            .expect("target id");
+        let _ = client.close().await;
+        let base = DataRouteBase::derived_from_controller(controller.controller_url()).unwrap();
+        let route = provider_data_route(&base, &owner, &target_id);
+        (owner, route)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_dial_wakes_a_powered_down_target_and_refuses_waking_once() {
+        let controller = FakeController::start().await.unwrap();
+        let (owner, route) = created(&controller).await;
+        assert!(
+            controller
+                .set_power_out_of_band(owner.environment_id.as_str(), PowerState::Paused)
+                .await
+        );
+        let refusal = expect_refusal(&route, options(&controller))
+            .await
+            .expect("a conforming refusal");
+        assert_eq!(refusal, DataRouteRefusal::Waking {});
+        let (client, _) = DataClient::connect_initialized(&route, options(&controller))
+            .await
+            .expect("the woken target upgrades");
+        let _ = client.close().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_new_target_refuses_booting_for_its_configured_dials() {
+        let controller = FakeController::start_with(FakeControllerOptions {
+            booting_dials: 1,
+            ..FakeControllerOptions::default()
+        })
+        .await
+        .unwrap();
+        let (_, route) = created(&controller).await;
+        assert_eq!(
+            expect_refusal(&route, options(&controller)).await.unwrap(),
+            DataRouteRefusal::Booting {}
+        );
+        let (client, _) = DataClient::connect_initialized(&route, options(&controller))
+            .await
+            .expect("envd answers after its booting dials");
+        let _ = client.close().await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_ended_target_refuses_gone_and_an_unreachable_controller_refuses_all() {
+        let controller = FakeController::start().await.unwrap();
+        let (owner, route) = created(&controller).await;
+        assert!(controller.end_target(owner.environment_id.as_str()).await);
+        assert_eq!(controller.target_count().await, 0);
+        assert_eq!(
+            expect_refusal(&route, options(&controller)).await.unwrap(),
+            DataRouteRefusal::Gone {}
+        );
+        controller.set_reachable(false);
+        let error = ControllerClient::connect_initialized(
+            controller.controller_url(),
+            options(&controller),
+        )
+        .await
+        .expect_err("an unreachable controller refuses the upgrade");
+        assert!(matches!(
+            error,
+            environment_client::ClientError::UpgradeRejected { status: 503, .. }
+        ));
     }
 }

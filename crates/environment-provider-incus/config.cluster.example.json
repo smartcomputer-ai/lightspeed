@@ -1,7 +1,6 @@
 {
   "controllerListen": "127.0.0.1:19090",
   "credentialFile": "/run/secrets/lightspeed-provider-credential",
-  "dataRouteBase": "ws://127.0.0.1:19090/routes",
   "incus": {
     "mode": "cluster",
     "endpoints": [
@@ -18,6 +17,7 @@
   },
   "relayIdleSeconds": 60,
   "dialTimeoutSeconds": 10,
+  "idleCheckSeconds": 60,
   "envdPort": 19091,
   "ingress": {
     "publicBaseUrl": "https://env.example.com",
@@ -37,7 +37,11 @@
       "disk": "40GiB",
       "clusterGroup": "x86-production",
       "publicIngress": true,
-      "ingressPort": 8080
+      "ingressPort": 8080,
+      "idle": {
+        "pauseAfterMs": 1800000,
+        "stopAfterMs": 14400000
+      }
     }
   ]
 }

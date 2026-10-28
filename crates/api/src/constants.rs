@@ -98,12 +98,12 @@ pub const METHOD_MCP_SERVERS_DELETE: &str = "mcp/servers/delete";
 
 pub const METHOD_ENVIRONMENTS_CREATE: &str = "environments/create";
 pub const METHOD_ENVIRONMENTS_READ: &str = "environments/read";
+pub const METHOD_ENVIRONMENTS_UPDATE: &str = "environments/update";
 pub const METHOD_ENVIRONMENTS_LIST: &str = "environments/list";
 pub const METHOD_ENVIRONMENTS_CLOSE: &str = "environments/close";
 pub const METHOD_ENVIRONMENTS_EXTERNAL_CREATE: &str = "environments/external/create";
 pub const METHOD_ENVIRONMENTS_INGRESS_PUT: &str = "environments/ingress/put";
 pub const METHOD_ENVIRONMENTS_POWER_PUT: &str = "environments/power/put";
-pub const METHOD_ENVIRONMENTS_IDLE_POLICY_PUT: &str = "environments/idle-policy/put";
 pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_LIST: &str = "environments/provider-bindings/list";
 pub const METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ: &str = "environments/provider-bindings/read";
 pub const METHOD_ENVIRONMENTS_TEMPLATES_LIST: &str = "environments/templates/list";
@@ -115,6 +115,10 @@ pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_CREATE: &str =
     "environments/registration-keys/create";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_READ: &str = "environments/registration-keys/read";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_LIST: &str = "environments/registration-keys/list";
+pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE: &str =
+    "environments/registration-keys/update";
+pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_ROTATE: &str =
+    "environments/registration-keys/rotate";
 pub const METHOD_ENVIRONMENTS_REGISTRATION_KEYS_REVOKE: &str =
     "environments/registration-keys/revoke";
 

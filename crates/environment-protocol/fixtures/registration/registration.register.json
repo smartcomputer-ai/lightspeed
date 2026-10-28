@@ -1,6 +1,6 @@
 {
   "params": {
-    "protocolVersion": 3,
+    "protocolVersion": 4,
     "registrationKey": "lsrk_0123456789abcdef",
     "daemonPublicKey": "3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b",
     "signature": "9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c9c",
@@ -18,7 +18,6 @@
   "response": {
     "receipt": {
       "environmentId": "env_1",
-      "incarnationId": "inc_1",
       "daemonId": "daemon_3b3b",
       "controlConnectionId": "connection_7",
       "identityMode": "ephemeral",

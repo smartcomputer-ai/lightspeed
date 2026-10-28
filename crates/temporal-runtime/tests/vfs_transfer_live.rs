@@ -130,6 +130,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                     identity_mode: api::EnvironmentIdentityModeView::Ephemeral,
                     max_active_environments: Some(1),
                     ephemeral_disconnect_grace_ms: None,
+                    offline_close_after_ms: None,
                     expires_at_ms: None,
                 })
                 .await?
@@ -161,7 +162,7 @@ async fn temporal_live_vfs_transfers_follow_profile_grants_and_publish_large_fil
                         .environments;
                     if let Some(environment) = environments
                         .into_iter()
-                        .find(|e| e.status == api::EnvironmentLifecycleStatusView::Ready)
+                        .find(|e| e.state == api::EnvironmentStateView::Open)
                     {
                         return anyhow::Ok(environment);
                     }

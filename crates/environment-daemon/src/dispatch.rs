@@ -273,6 +273,6 @@ pub(crate) fn has_capability(
             .as_ref()
             .is_some_and(|process| process.pty),
         Capability::Job => capabilities.job.is_some(),
-        Capability::AdoptTarget | Capability::Ingress => false,
+        Capability::Power | Capability::Ingress => false,
     }
 }

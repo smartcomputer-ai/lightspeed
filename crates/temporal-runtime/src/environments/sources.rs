@@ -54,7 +54,7 @@ pub(crate) struct SourceConnection {
     pub client: DataClient,
     pub initialized: InitializeResponse,
     pub cwd: EnvironmentPath,
-    // Includes universe and incarnation so cached observations cannot cross routes.
+    // Includes the universe so cached observations cannot cross routes.
     pub identity: String,
 }
 
@@ -190,23 +190,30 @@ async fn connect(
         let _timer = PhaseTimer::new("registry");
         resolver.read(id).await.map_err(|e| e.to_string())?
     };
-    if environment.status != environments::EnvironmentStatus::Ready
-        || environment.desired_power != environments::PowerState::Running
+    // A data route dial wakes a powered-down target, and discovery must
+    // never do that. A usable row whose last observation shows it powered
+    // down (or otherwise not ready) is skipped. The observation can be
+    // stale (providers power targets down on their own clock, and a dial
+    // wakes them without a write), so the dial also asks the gateway to
+    // check the provider first.
+    let now_ms = crate::environments::lifecycle::clock_ms();
+    if environment.use_gate(now_ms) != environments::EnvironmentUse::Use
+        || environment.display_status() != environments::EnvironmentDisplayStatus::Ready
     {
         return Err("environment is not accessible; discovery does not wake it".into());
     }
     let endpoint = gateway.endpoint_for(resolver.universe_id(), &environment);
-    let identity = serde_json::to_string(&(
-        resolver.universe_id(),
-        environment.environment_id.as_str(),
-        environment.incarnation.incarnation_id.as_str(),
-    ))
-    .map_err(|e| e.to_string())?;
+    let identity =
+        serde_json::to_string(&(resolver.universe_id(), environment.environment_id.as_str()))
+            .map_err(|e| e.to_string())?;
     let (client, initialized) = {
         let _timer = PhaseTimer::new("connect");
-        DataClient::connect_initialized(&endpoint, gateway.connect_options(SOURCE_DISCOVERY_CLIENT))
-            .await
-            .map_err(|e| e.to_string())?
+        DataClient::connect_initialized(
+            &endpoint,
+            gateway.no_wake_connect_options(SOURCE_DISCOVERY_CLIENT),
+        )
+        .await
+        .map_err(|e| e.to_string())?
     };
     if initialized.capabilities.filesystem.is_none() {
         let _ = client.close().await;

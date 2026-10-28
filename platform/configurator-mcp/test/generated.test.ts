@@ -14,6 +14,8 @@ describe("generated universe tools", () => {
       "environments/registration-keys/read",
       "environments/registration-keys/list",
       "environments/registration-keys/revoke",
+      "environments/registration-keys/update",
+      "environments/registration-keys/rotate",
     ]);
     const expectedMethods = Object.entries(METHOD_INFO)
       .filter(([method, info]) => info.scope === "universe" && !excluded.has(method))

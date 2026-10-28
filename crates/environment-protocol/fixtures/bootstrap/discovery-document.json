@@ -2,7 +2,7 @@
   "version": "0.5.0",
   "gitSha": "86f6adf3",
   "channel": "stable",
-  "protocolVersion": 3,
+  "protocolVersion": 4,
   "builtAtMs": 1761400000000,
   "artifacts": {
     "x86_64-unknown-linux-musl": {

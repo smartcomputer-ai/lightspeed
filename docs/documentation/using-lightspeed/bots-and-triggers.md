@@ -242,8 +242,9 @@ its ID available again. Closed conversation history remains retained and follows
 the separate [session deletion lifecycle](sessions-and-runs.md#close-and-retain-a-session).
 
 Profiles and environments remain independent resources. Closing or deleting a
-bot or any of its sessions leaves its environments intact. Manage machine
-cleanup through environment operations and idle policies.
+bot or any of its sessions leaves the environments its profile attaches
+intact; manage their cleanup through environment operations and their
+templates' idle policies.
 
 ## If an event does not produce the expected work
 

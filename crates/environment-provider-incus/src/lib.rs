@@ -1,5 +1,6 @@
 pub mod config;
 pub mod edge;
+mod idle;
 pub mod incus;
 pub mod ingress;
 pub mod policy;

@@ -779,7 +779,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+      "description": "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.",
       "group": "environments",
       "method": "environments/create",
       "params": {
@@ -804,7 +804,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
+      "description": "Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.",
       "group": "environments",
       "method": "environments/read",
       "params": {
@@ -826,10 +826,35 @@
     },
     {
       "access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "description": "Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.",
+      "group": "environments",
+      "method": "environments/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentUpdateParams"
+        },
+        "type": "EnvironmentUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentUpdateResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentUpdateResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Update an environment",
+      "target": null
+    },
+    {
+      "access": {
         "action": "read",
         "kind": "universe"
       },
-      "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
+      "description": "Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.",
       "group": "environments",
       "method": "environments/list",
       "params": {
@@ -854,7 +879,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
+      "description": "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.",
       "group": "environments",
       "method": "environments/close",
       "params": {
@@ -879,7 +904,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
+      "description": "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
       "group": "environments",
       "method": "environments/external/create",
       "params": {
@@ -904,7 +929,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.",
+      "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
       "group": "environments",
       "method": "environments/ingress/put",
       "params": {
@@ -929,7 +954,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
+      "description": "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
       "group": "environments",
       "method": "environments/power/put",
       "params": {
@@ -946,32 +971,7 @@
       },
       "role": "operator",
       "scope": "universe",
-      "summary": "Set environment power intent",
-      "target": null
-    },
-    {
-      "access": {
-        "action": "configure_resource",
-        "kind": "universe"
-      },
-      "description": "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
-      "group": "environments",
-      "method": "environments/idle-policy/put",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/EnvironmentIdlePolicyPutParams"
-        },
-        "type": "EnvironmentIdlePolicyPutParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentIdlePolicyPutResponse"
-        },
-        "type": "AgentApiOutcome<EnvironmentIdlePolicyPutResponse>"
-      },
-      "role": "operator",
-      "scope": "universe",
-      "summary": "Set environment idle policy",
+      "summary": "Set environment power",
       "target": null
     },
     {
@@ -979,7 +979,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
+      "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
       "group": "environments",
       "method": "environments/provider-bindings/list",
       "params": {
@@ -1004,7 +1004,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
+      "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
       "group": "environments",
       "method": "environments/provider-bindings/read",
       "params": {
@@ -1029,7 +1029,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Reads immutable templates directly from the selected bound provider controller.",
+      "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
       "group": "environments",
       "method": "environments/templates/list",
       "params": {
@@ -1054,7 +1054,7 @@
         "action": "read",
         "kind": "universe"
       },
-      "description": "Returns one immutable template version from the selected bound provider controller.",
+      "description": "Returns one template, read live from a bound provider's controller.",
       "group": "environments",
       "method": "environments/templates/read",
       "params": {
@@ -1079,7 +1079,7 @@
         "action": "use_resource",
         "kind": "universe"
       },
-      "description": "Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.",
+      "description": "Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.",
       "group": "environments",
       "method": "environments/jobs/create",
       "params": {
@@ -1154,7 +1154,7 @@
         "action": "configure_resource",
         "kind": "universe"
       },
-      "description": "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
+      "description": "Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.",
       "group": "environments",
       "method": "environments/registration-keys/create",
       "params": {
@@ -1222,6 +1222,56 @@
       "role": "operator",
       "scope": "universe",
       "summary": "List environment registration keys",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "description": "Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.",
+      "group": "environments",
+      "method": "environments/registration-keys/update",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyUpdateParams"
+        },
+        "type": "EnvironmentRegistrationKeyUpdateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Update an environment registration key",
+      "target": null
+    },
+    {
+      "access": {
+        "action": "configure_resource",
+        "kind": "universe"
+      },
+      "description": "Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.",
+      "group": "environments",
+      "method": "environments/registration-keys/rotate",
+      "params": {
+        "schema": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyRotateParams"
+        },
+        "type": "EnvironmentRegistrationKeyRotateParams"
+      },
+      "result": {
+        "schema": {
+          "$ref": "#/definitions/AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse"
+        },
+        "type": "AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>"
+      },
+      "role": "operator",
+      "scope": "universe",
+      "summary": "Rotate an environment registration key",
       "target": null
     },
     {
@@ -3289,7 +3339,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.",
+      "description": "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/put",
       "params": {
@@ -3313,7 +3363,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
+      "description": "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/list",
       "params": {
@@ -3337,7 +3387,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.",
+      "description": "Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/read",
       "params": {
@@ -3361,7 +3411,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Deletes a deployment provider only when no universe binding references it.",
+      "description": "Deletes a deployment provider only when no universe binding and no non-closed environment references it.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/delete",
       "params": {
@@ -3385,7 +3435,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.",
+      "description": "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/bindings/put",
       "params": {
@@ -3409,7 +3459,7 @@
       "access": {
         "kind": "deployment"
       },
-      "description": "Deletes a universe provider binding only after every referencing environment has reached Closed.",
+      "description": "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.",
       "group": "deployment/environment-providers",
       "method": "deployment/environment-providers/bindings/delete",
       "params": {
@@ -3427,30 +3477,6 @@
       "role": null,
       "scope": "deployment",
       "summary": "Delete an environment provider binding",
-      "target": null
-    },
-    {
-      "access": {
-        "kind": "deployment"
-      },
-      "description": "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.",
-      "group": "deployment/environment-providers",
-      "method": "deployment/environments/adopt",
-      "params": {
-        "schema": {
-          "$ref": "#/definitions/DeploymentEnvironmentAdoptParams"
-        },
-        "type": "DeploymentEnvironmentAdoptParams"
-      },
-      "result": {
-        "schema": {
-          "$ref": "#/definitions/AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse"
-        },
-        "type": "AgentApiOutcome<DeploymentEnvironmentAdoptResponse>"
-      },
-      "role": null,
-      "scope": "deployment",
-      "summary": "Adopt a provider environment",
       "target": null
     },
     {

@@ -6,6 +6,10 @@
 //!   by-name params, the manifest facts as `x-lightspeed-*` members, and the
 //!   error kinds.
 //!
+//! The controller plane also names two types no method carries as a whole:
+//! `x-lightspeed-data-route` (the data route refusal body and its bounds)
+//! and `x-lightspeed-idle-policy` (the policy providers run).
+//!
 //! The committed copies under `crates/environment-protocol/contract/` are
 //! checked by the `contract` integration test; regenerate them with
 //! `cargo run -p environment-protocol --features schema --bin export-contract`.
@@ -20,8 +24,10 @@ use crate::{
     bootstrap::{BuildFacts, DiscoveryDocument},
     error::{ProtocolError, ProtocolErrorKind},
     handshake::Plane,
-    limits::MAX_MESSAGE_BYTES,
+    idle::IdlePolicy,
+    limits::{MAX_DATA_ROUTE_HOLD_MS, MAX_MESSAGE_BYTES, RETRY_AFTER_MAX_SECS},
     manifest::{MessageKind, plane_methods},
+    routes::DataRouteRefusal,
 };
 
 /// The exported documents of one plane.
@@ -56,6 +62,16 @@ fn export_plane(plane: Plane) -> PlaneContract {
             "discoveryDocument": to_value(generator.subschema_for::<DiscoveryDocument>()),
             "buildFacts": to_value(generator.subschema_for::<BuildFacts>()),
         })
+    });
+    let controller_types = (plane == Plane::Controller).then(|| {
+        (
+            json!({
+                "refusal": to_value(generator.subschema_for::<DataRouteRefusal>()),
+                "maxHoldMs": MAX_DATA_ROUTE_HOLD_MS,
+                "retryAfterMaxSecs": RETRY_AFTER_MAX_SECS,
+            }),
+            to_value(generator.subschema_for::<IdlePolicy>()),
+        )
     });
     let mut entries = Vec::new();
     for spec in plane_methods(plane) {
@@ -137,6 +153,10 @@ fn export_plane(plane: Plane) -> PlaneContract {
     if let Some(bootstrap) = &bootstrap {
         schema_bundle["x-lightspeed-bootstrap"] = bootstrap.clone();
     }
+    if let Some((data_route, idle_policy)) = &controller_types {
+        schema_bundle["x-lightspeed-data-route"] = data_route.clone();
+        schema_bundle["x-lightspeed-idle-policy"] = idle_policy.clone();
+    }
 
     let mut openrpc = json!({
         "openrpc": "1.3.2",
@@ -159,6 +179,10 @@ fn export_plane(plane: Plane) -> PlaneContract {
     });
     if let Some(bootstrap) = bootstrap {
         openrpc["x-lightspeed-bootstrap"] = bootstrap;
+    }
+    if let Some((data_route, idle_policy)) = controller_types {
+        openrpc["x-lightspeed-data-route"] = data_route;
+        openrpc["x-lightspeed-idle-policy"] = idle_policy;
     }
     rewrite_refs(&mut openrpc, "#/definitions/", "#/components/schemas/");
 

@@ -632,7 +632,7 @@ describe("demo router", () => {
   it("session start, close, and deletion leave environments independently managed", async () => {
     const { call, store } = await boot();
     const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
-    const before = (await call("GET", `${base}/environments`)).json as Environment[];
+    const before = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: unknown };
     const existing = before.find((environment) => environment.environmentId === defaultEnvironmentAttachment(profile.config)?.environmentId)!;
     expect(existing).toBeDefined();
@@ -641,7 +641,7 @@ describe("demo router", () => {
     });
     expect(created.status).toBe(200);
     const session = created.json as SessionView;
-    expect(((await call("GET", `${base}/environments`)).json as Environment[]).map((env) => env.environmentId))
+    expect((((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments).map((env) => env.environmentId))
       .toEqual(before.map((env) => env.environmentId));
     expect((await call("POST", `${base}/sessions/${session.id}/close`, { force: true })).status).toBe(200);
     expect(store.auditEvents.filter((event) => event.targetId === session.id)).toEqual([]);
@@ -656,7 +656,7 @@ describe("demo router", () => {
     expect(store.deletedSessions.size).toBe(0);
     const audit = (await call("GET", "/api/v1/admin/audit")).json as { action: string; targetId: string }[];
     expect(audit.filter((event) => event.targetId === session.id).map((event) => event.action)).toEqual(["session.purge"]);
-    const after = (await call("GET", `${base}/environments`)).json as Environment[];
+    const after = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     expect(after.find((env) => env.environmentId === existing.environmentId)).toEqual(existing);
   });
 
@@ -665,7 +665,7 @@ describe("demo router", () => {
     const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
     const profile = (await call("GET", `${base}/profiles/implementer`)).json as { config: Record<string, unknown> };
     const defaultId = defaultEnvironmentAttachment(profile.config)!.environmentId!;
-    const environments = (await call("GET", `${base}/environments`)).json as Environment[];
+    const environments = ((await call("GET", `${base}/environments`)).json as { environments: Environment[] }).environments;
     const other = environments.find((environment) => environment.environmentId !== defaultId && environment.status === "ready")!;
     expect(other).toBeDefined();
     const created = (await call("POST", `${base}/sessions`, { profile: { kind: "named", profileId: "implementer" } })).json as SessionView;

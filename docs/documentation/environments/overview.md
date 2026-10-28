@@ -46,10 +46,12 @@ not need its own inbound daemon address. A registration key admits machines
 into a particular universe. Each admitted daemon then uses its own persistent
 identity to reconnect.
 
-A provider adds machine lifecycle management. The included Incus provider
-offers operator-configured templates and controls VM creation and power. A
-Platform admin registers the provider and enables a binding for the universe;
-Operators and Admins can then create environments from its available templates.
+A provider adds machine lifecycle management. Lightspeed asks it to create a
+machine and, later, to close it; the provider runs everything in between,
+including power, idle policy, and wake-up. The included Incus provider offers
+operator-configured templates and runs VMs. A Platform admin registers the
+provider and enables a binding for the universe; Operators and Admins can
+then create environments from its available templates.
 
 ## Select an environment for a session
 
@@ -65,10 +67,12 @@ fills an empty selection when that profile is applied. Contributors can use
 existing environments in sessions they control; Operators and Admins manage
 the machines and profiles. See [People and roles](../access-and-security/people-and-roles.md).
 
-A profile attaches existing environments and, for sub-agents, can inherit the
-parent's active machine. For a provisioned environment, the runtime can wait
-for readiness before executing an environment-dependent tool call. The
-session does not need to guess how long provisioning takes.
+A profile attaches existing environments, can give every session a new
+machine of its own from a provider template, and, for sub-agents, can
+inherit the parent's active machine. For a provisioned environment, the
+runtime waits for readiness before executing an environment-dependent tool
+call. The session does not need to guess how long provisioning or a wake-up
+takes.
 
 **Environment selection tools** lets the agent switch among its attachments.
 The agent keeps the same tools across switches, but each call must be allowed
@@ -97,27 +101,28 @@ the work it is running.
 
 ## Power, disconnection, and cleanup
 
-Provisioned environments can expose power controls. The states available
-depend on the provider: Incus supports running, paused, and stopped states.
-An idle policy can lower power or close the environment after configured
-periods of inactivity. Tracked running processes and jobs prevent the idle
-reaper from treating the machine as idle. Processes left behind after a
-command finishes do not keep the environment awake. Later policy stages do
-not automatically escalate after the machine has paused or stopped; see
-[Power and cleanup](power-and-cleanup.md#understand-the-current-staging-limit).
-Using a supported paused or stopped environment requests a wake-up, and the
-runtime waits for it to become ready.
+The provider owns a provisioned environment's power. Its template lists the
+power states the machine supports (Incus offers running, paused, and
+stopped) and a default idle policy, which lowers power or closes the machine
+after periods of inactivity. A machine can be created with another policy.
+Running processes, running jobs, and services a command left running keep
+the machine awake. Using a paused or stopped environment wakes it, and the
+runtime waits for it to become ready. Power buttons pass a one-off change to
+the provider; see [Power and cleanup](power-and-cleanup.md).
 
 Registered and external machines remain under your control. Connecting a
 workstation does not give Lightspeed a way to power it on after shutdown.
-A persistent registered environment becomes offline while its daemon is away
-and reconnects under the same identity. Ephemeral registration closes the
-environment after its configured disconnect grace period.
+A persistent registered environment stays open while its daemon is away, and
+the daemon reconnects under the same identity; a tool call waits up to two
+minutes for it. An ephemeral registered environment closes when its daemon
+stops, or after its key's disconnect grace period when the connection is
+lost.
 
-Closing or deleting a session leaves its environment available. Environments
-are created, credentialed, powered, and closed independently. Profiles attach
-existing environments or, for sub-agents, inherit a parent's selection; they
-do not provision machines or attach cleanup to a session's lifetime.
+Environments you create, register, or attach directly have their own
+lifetime: they are credentialed, powered, and closed independently, and
+closing or deleting a session leaves them available. A profile's **New per
+session** attachment is the exception. It creates a machine for each session
+and closes it when that session closes.
 
 Closing a registered or external environment removes its availability in
 Lightspeed; it does not delete or shut down your computer. Closing a provisioned
@@ -146,7 +151,9 @@ the injected credentials, so their permissions remain part of the environment's
 trust boundary.
 
 Start with [Bring your own compute](bring-your-own-compute.md) to connect a
-machine or [Incus VMs](incus-vms.md) to configure operator-managed provisioning.
+machine, [Run registered daemons](registered-daemons.md) to run a fleet of
+them as services, or [Incus VMs](incus-vms.md) to configure operator-managed
+provisioning.
 Then continue through the task guides:
 
 - [Using environments](using-environments.md): create machines and select them
@@ -158,7 +165,8 @@ Then continue through the task guides:
 - [Environment credentials](credentials.md): assign secrets to commands and
   understand their resolution and lifetime.
 - [Power and cleanup](power-and-cleanup.md): pause, wake, retain, and close
-  environments according to their source and ownership.
+  environments according to their source and ownership, and read their
+  state and status.
 - [Networking and ingress](networking-and-ingress.md): connect daemons and
   publish applications through the supported provider edge.
 

@@ -419,7 +419,7 @@ Removes one variable-to-credential mapping without deleting the underlying grant
 
 **Create an environment**
 
-Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.
+Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -432,7 +432,7 @@ Records an idempotent provisioning intent against an enabled universe binding, a
 
 **Read an environment**
 
-Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.
+Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -441,11 +441,24 @@ Returns the durable universe resource, source binding, logical lifecycle state, 
 - Params: `EnvironmentReadParams`
 - Result: `AgentApiOutcome<EnvironmentReadResponse>`
 
+### `environments/update`
+
+**Update an environment**
+
+Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.
+
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentUpdateParams`
+- Result: `AgentApiOutcome<EnvironmentUpdateResponse>`
+
 ### `environments/list`
 
 **List environments**
 
-Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.
+Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -458,7 +471,7 @@ Lists the universe environments, optionally filtered by provider, binding, or lo
 
 **Close an environment**
 
-Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.
+Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -471,7 +484,7 @@ Records an asynchronous idempotent close intent. Provider cleanup is resumed by 
 
 **Register an external environment**
 
-Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.
+Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -484,7 +497,7 @@ Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint,
 
 **Configure environment public ingress**
 
-Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.
+Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -495,9 +508,9 @@ Records the public ingress intent of a provisioned environment; the lifecycle re
 
 ### `environments/power/put`
 
-**Set environment power intent**
+**Set environment power**
 
-Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.
+Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -506,24 +519,11 @@ Records the desired power state (running, paused, suspended, or stopped) of a pr
 - Params: `EnvironmentPowerPutParams`
 - Result: `AgentApiOutcome<EnvironmentPowerPutResponse>`
 
-### `environments/idle-policy/put`
-
-**Set environment idle policy**
-
-Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.
-
-- Access: `{"kind":"universe","action":"configure_resource"}`
-- Group: `environments`
-- Role: `operator`
-- Target: `none`
-- Params: `EnvironmentIdlePolicyPutParams`
-- Result: `AgentApiOutcome<EnvironmentIdlePolicyPutResponse>`
-
 ### `environments/provider-bindings/list`
 
 **List environment provider bindings**
 
-Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.
+Lists this universe's bindings to deployment providers and whether each is enabled.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -536,7 +536,7 @@ Lists this universe's revisioned routing and admission bindings to deployment-sc
 
 **Read an environment provider binding**
 
-Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.
+Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -549,7 +549,7 @@ Returns one universe routing and admission binding. Provider-wide templates and 
 
 **List environment templates**
 
-Reads immutable templates directly from the selected bound provider controller.
+Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -562,7 +562,7 @@ Reads immutable templates directly from the selected bound provider controller.
 
 **Read an environment template**
 
-Returns one immutable template version from the selected bound provider controller.
+Returns one template, read live from a bound provider's controller.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `environments`
@@ -575,7 +575,7 @@ Returns one immutable template version from the selected bound provider controll
 
 **Create environment jobs**
 
-Starts a dependency-aware job group on one environment instance, injecting the environment's configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance rather than a session. A powered-down environment is woken on use: the call fails with environment_not_ready while the wake is in progress; retry with backoff.
+Starts a dependency-aware job group on one environment instance, injecting its configured credentials at provider start. requestId is the retry identity; jobs are owned by the instance, not a session. A powered-down environment wakes on its data route; the call fails with environment_not_ready while it wakes or reconnects; retry with backoff.
 
 - Access: `{"kind":"universe","action":"use_resource"}`
 - Group: `environments`
@@ -614,7 +614,7 @@ Requests cancellation for selected jobs, optionally including dependents. Force 
 
 **Mint an environment registration key**
 
-Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode, active limit, disconnect grace, and expiry are the key's policy. Treat the secret like a cluster-join credential.
+Creates a reusable universe-scoped key that lets outbound envd daemons register as environments. The plaintext secret is returned exactly once; only its hash is stored. Identity mode (immutable), active limit, disconnect grace, offline close-after, and expiry are the key's policy. Treat the secret like a cluster-join credential.
 
 - Access: `{"kind":"universe","action":"configure_resource"}`
 - Group: `environments`
@@ -648,6 +648,32 @@ Lists this universe's registration keys with policy, status, and derived counts.
 - Target: `none`
 - Params: `EnvironmentRegistrationKeyListParams`
 - Result: `AgentApiOutcome<EnvironmentRegistrationKeyListResponse>`
+
+### `environments/registration-keys/update`
+
+**Update an environment registration key**
+
+Replaces a key's editable policy: display name, active limit, disconnect grace, offline close-after, and expiry; an omitted field is unset. The identity mode is immutable. The active limit and expiry apply to later admissions; a changed disconnect grace or offline close-after applies at the next sweep to environments whose daemon is away.
+
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegistrationKeyUpdateParams`
+- Result: `AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>`
+
+### `environments/registration-keys/rotate`
+
+**Rotate an environment registration key**
+
+Replaces the key's secret and display prefix and retires the old secret at once. The key keeps its id, group, policy, and the environments it admitted; daemons already registered are unaffected because they never present the key again. Returns the new secret once. Refused for a revoked key.
+
+- Access: `{"kind":"universe","action":"configure_resource"}`
+- Group: `environments`
+- Role: `operator`
+- Target: `none`
+- Params: `EnvironmentRegistrationKeyRotateParams`
+- Result: `AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>`
 
 ### `environments/registration-keys/revoke`
 
@@ -1747,7 +1773,7 @@ Revokes the key with this display prefix; revoking a revoked key keeps its first
 
 **Put an environment provider**
 
-Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed.
+Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1760,7 +1786,7 @@ Registers or replaces one deployment provider: its controller endpoint URL and t
 
 **List environment providers**
 
-Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
+Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1773,7 +1799,7 @@ Returns every deployment-registered provider with its controller endpoint and th
 
 **Read an environment provider**
 
-Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised.
+Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1786,7 +1812,7 @@ Returns one deployment-registered provider with its controller endpoint and the 
 
 **Delete an environment provider**
 
-Deletes a deployment provider only when no universe binding references it.
+Deletes a deployment provider only when no universe binding and no non-closed environment references it.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1799,7 +1825,7 @@ Deletes a deployment provider only when no universe binding references it.
 
 **Put an environment provider binding**
 
-Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe.
+Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1812,7 +1838,7 @@ Creates or replaces one universe's complete revisioned routing and admission bin
 
 **Delete an environment provider binding**
 
-Deletes a universe provider binding only after every referencing environment has reached Closed.
+Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider.
 
 - Access: `{"kind":"deployment"}`
 - Group: `deployment/environment-providers`
@@ -1820,19 +1846,6 @@ Deletes a universe provider binding only after every referencing environment has
 - Target: `none`
 - Params: `DeploymentProviderBindingDeleteParams`
 - Result: `AgentApiOutcome<DeploymentProviderBindingDeleteResponse>`
-
-### `deployment/environments/adopt`
-
-**Adopt a provider environment**
-
-Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer.
-
-- Access: `{"kind":"deployment"}`
-- Group: `deployment/environment-providers`
-- Role: `none`
-- Target: `none`
-- Params: `DeploymentEnvironmentAdoptParams`
-- Result: `AgentApiOutcome<DeploymentEnvironmentAdoptResponse>`
 
 ### `deployment/channels/accounts/list`
 

@@ -1,9 +1,6 @@
 {
   "params": {
-    "binding": {
-      "universeId": "u1",
-      "bindingId": "primary"
-    }
+    "universeId": "u1"
   },
   "response": {
     "templates": [
@@ -11,7 +8,16 @@
         "templateId": "ubuntu-24.04-small",
         "displayName": "Ubuntu 24.04 (small)",
         "description": "2 vCPU, 4 GiB",
+        "powerStates": [
+          "running",
+          "paused",
+          "stopped"
+        ],
         "publicIngress": true,
+        "idle": {
+          "pauseAfterMs": 900000,
+          "stopAfterMs": 7200000
+        },
         "deprecated": true,
         "resources": {
           "vcpus": 2,

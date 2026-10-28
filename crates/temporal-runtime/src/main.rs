@@ -9,7 +9,7 @@ use temporal_runtime::{
     gateway::{
         DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, DEFAULT_TEMPORAL_NAMESPACE,
         DEFAULT_TEMPORAL_TARGET, GatewayRoutes, GatewayState, gateway_router,
-        prewarm_single_universe,
+        prewarm_single_universe, registration,
     },
     roles::{Role, RoleSet},
     universe::UniverseRuntime,
@@ -177,9 +177,20 @@ struct RunArgs {
     max_request_body_bytes: usize,
 
     /// Externally reachable base URL of the gateway (OAuth callbacks,
-    /// webhook ingest URLs). Defaults to http://{bind}.
+    /// webhook ingest URLs, and the origin registered daemons sign).
+    /// Defaults to http://{bind}.
     #[arg(long, env = "LIGHTSPEED_PUBLIC_BASE_URL")]
     public_base_url: Option<String>,
+
+    /// Further gateway URLs registered daemons may dial and sign, comma
+    /// separated: for example a cluster-internal Service address. Only
+    /// their origins count.
+    #[arg(
+        long,
+        env = "LIGHTSPEED_ENVIRONMENT_REGISTRATION_URLS",
+        value_delimiter = ','
+    )]
+    environment_registration_urls: Vec<String>,
 }
 
 impl RunArgs {
@@ -554,14 +565,17 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
         .await?
         .with_blob_cache(temporal_runtime::config::blob_cache_from_env()?);
     let reaper_stores = stores.clone();
-    if roles.has(Role::EnvironmentGateway) {
-        // Daemons sign the gateway origin they dial; refuse to serve
-        // registration under an origin the gateway cannot name.
-        temporal_runtime::gateway::http::registration_origin(
+    // Daemons sign the gateway origin they dial; refuse to serve
+    // registration under an origin the gateway cannot name.
+    let registration_origins = if roles.has(Role::EnvironmentGateway) {
+        temporal_runtime::gateway::http::registration_origins(
             args.public_base_url.as_deref(),
+            &args.environment_registration_urls,
             args.bind,
-        )?;
-    }
+        )?
+    } else {
+        Vec::new()
+    };
     let public_base_url = args
         .public_base_url
         .clone()
@@ -594,8 +608,18 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
     let mut workers: Vec<(Role, temporalio_sdk::Worker)> = Vec::new();
 
     if roles.has(Role::EnvironmentGateway) {
+        // Before the listener accepts connections: this process held every
+        // registered connection the rows still call connected.
+        let repaired = registration::repair_registered_connections(&universes).await?;
+        tracing::info!(
+            target: "temporal_runtime",
+            repaired,
+            "registered environments marked disconnected until their daemons reconnect"
+        );
         background.push(tokio::spawn(universes.clone().run_environment_reconciler()));
-        background.push(tokio::spawn(universes.clone().run_power_reaper()));
+        background.push(tokio::spawn(registration::run_registered_sweep(
+            universes.clone(),
+        )));
     }
     if roles.has(Role::Sessions) {
         let activities = WorkerActivities::with_runtime(universes.clone());
@@ -684,7 +708,10 @@ async fn run_roles(args: RunArgs) -> anyhow::Result<()> {
                 api: roles.has(Role::Gateway),
                 environment: roles.has(Role::EnvironmentGateway),
             };
-            let gateway_state = Arc::new(GatewayState::multi(mode, universes, public_base_url));
+            let gateway_state = Arc::new(
+                GatewayState::multi(mode, universes, public_base_url)
+                    .with_registration_origins(registration_origins),
+            );
             let app = gateway_router(gateway_state, args.max_request_body_bytes, routes);
             let listener = tokio::net::TcpListener::bind(args.bind).await?;
             tracing::info!(
@@ -799,6 +826,20 @@ mod tests {
         let error = Cli::try_parse_from(["lightspeed-runtime", "--task-types", "workflows"])
             .expect_err("removed polling override must be rejected");
         assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn registration_urls_are_a_comma_separated_list() {
+        let cli = Cli::try_parse_from([
+            "lightspeed-runtime",
+            "--environment-registration-urls",
+            "ws://gateway.internal:18080,wss://gateway.example",
+        ])
+        .expect("parse registration URLs");
+        assert_eq!(
+            cli.run.environment_registration_urls,
+            ["ws://gateway.internal:18080", "wss://gateway.example"]
+        );
     }
 
     #[test]

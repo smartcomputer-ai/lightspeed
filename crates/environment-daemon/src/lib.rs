@@ -187,19 +187,22 @@ impl DaemonRuntime {
     }
 
     /// `env/getIdle`: zero idle time while any process or job is still
-    /// executing, otherwise the time since the last `use` request. Live
-    /// work keeps the clock fresh so a long-running job that finishes
-    /// starts the idle countdown from its end, not its start. Leftover
-    /// process groups are counted but are not work: a server waiting for
-    /// requests must not keep the environment awake.
+    /// executing or any leftover process group has live members, otherwise
+    /// the time since the last `use` request. Live work keeps the clock
+    /// fresh so a long-running job that finishes starts the idle countdown
+    /// from its end, not its start. A leftover group is a service a command
+    /// started and left running, such as a dev server, so it holds the
+    /// environment awake like running work.
     pub async fn idle_report(&self) -> GetIdleResponse {
         let running_process_count = self.inner.processes.running_count().await;
         let running_job_count = self.inner.jobs.running_count().await;
         let leftover_process_group_count = self.inner.processes.leftover_group_count();
-        if running_process_count > 0 || running_job_count > 0 {
+        let working =
+            running_process_count > 0 || running_job_count > 0 || leftover_process_group_count > 0;
+        if working {
             self.inner.activity.touch();
         }
-        let idle_for_ms = if running_process_count > 0 || running_job_count > 0 {
+        let idle_for_ms = if working {
             0
         } else {
             u64::try_from(self.inner.activity.idle_for().as_millis()).unwrap_or(u64::MAX)
@@ -376,7 +379,7 @@ fn capability_name(capability: Capability) -> &'static str {
         Capability::Process => "the process family",
         Capability::ProcessPty => "process PTYs",
         Capability::Job => "the job family",
-        Capability::AdoptTarget => "target adoption",
+        Capability::Power => "power control",
         Capability::Ingress => "ingress",
     }
 }
@@ -600,6 +603,65 @@ mod tests {
         let after = runtime.idle_report().await;
         assert_eq!(after.running_process_count, 0);
         assert!(after.idle_for_ms < 5_000);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_leftover_process_group_holds_the_idle_clock_like_running_work() {
+        let (_temp, runtime) = runtime();
+        call(
+            &runtime,
+            ProcessStart::NAME,
+            json!({
+                "processId": "service",
+                "command": {
+                    "argv": ["/bin/sh", "-c", "nohup sleep 30 >/dev/null 2>&1 & echo $! > leftover.pid; exit 0"],
+                    "timeoutMs": 60000,
+                },
+            }),
+        )
+        .await;
+        let mut held = runtime.idle_report().await;
+        for _ in 0..250 {
+            if held.running_process_count == 0 && held.leftover_process_group_count == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            held = runtime.idle_report().await;
+        }
+        assert_eq!(held.running_process_count, 0, "the root exited");
+        assert_eq!(held.leftover_process_group_count, 1);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            runtime.idle_report().await.idle_for_ms,
+            0,
+            "a leftover service keeps the environment awake"
+        );
+
+        let pid: i32 = std::fs::read_to_string(runtime.config().cwd.join("leftover.pid"))
+            .expect("pid file")
+            .trim()
+            .parse()
+            .expect("pid");
+        let _ = rustix::process::kill_process(
+            rustix::process::Pid::from_raw(pid).expect("pid"),
+            rustix::process::Signal::KILL,
+        );
+        let mut released = runtime.idle_report().await;
+        for _ in 0..250 {
+            if released.leftover_process_group_count == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            released = runtime.idle_report().await;
+        }
+        assert_eq!(released.leftover_process_group_count, 0);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let idle = runtime.idle_report().await.idle_for_ms;
+        assert!(
+            (30..5_000).contains(&idle),
+            "the clock restarts when the last leftover ends: idle_for_ms={idle}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

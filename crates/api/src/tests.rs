@@ -910,9 +910,9 @@ async fn dispatch_json_rpc_routes_environments_create() {
             method: METHOD_ENVIRONMENTS_CREATE.to_owned(),
             params: Some(json!({
                 "requestId": "request-1",
-                "bindingId": "primary",
+                "providerId": "bridge-local",
                 "templateId": "rust-v1",
-                "resources": { "cpu": 2, "memoryBytes": 2147483648_u64, "diskBytes": 10737418240_u64 }
+                "idle": { "pauseAfterMs": 60000 }
             })),
         },
     )
@@ -926,7 +926,7 @@ async fn dispatch_json_rpc_routes_environments_create() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn dispatch_json_rpc_routes_environment_power_and_idle_policy_put() {
+async fn dispatch_json_rpc_routes_environment_power_put() {
     let response = dispatch_json_rpc(
         &TestService,
         JsonRpcRequest {
@@ -941,30 +941,77 @@ async fn dispatch_json_rpc_routes_environment_power_and_idle_policy_put() {
     .await;
     assert!(response.error.is_none(), "{:?}", response.error);
     let environment = &response.result.expect("result")["result"]["environment"];
-    assert_eq!(environment["desiredPower"], json!("paused"));
+    assert_eq!(environment["status"], json!("paused"));
     assert_eq!(
-        environment["incarnation"]["powerStates"],
-        json!(["running", "paused"])
+        environment["source"]["observed"],
+        json!({"phase": "active", "power": "paused", "observedAtMs": 20})
     );
+    assert!(environment.get("desiredPower").is_none());
+}
 
+#[tokio::test(flavor = "current_thread")]
+async fn environment_create_rejects_unknown_idle_fields() {
     let response = dispatch_json_rpc(
         &TestService,
         JsonRpcRequest {
-            id: RequestId::Number(2),
-            method: METHOD_ENVIRONMENTS_IDLE_POLICY_PUT.to_owned(),
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_CREATE.to_owned(),
+            params: Some(json!({
+                "requestId": "request-1",
+                "providerId": "bridge-local",
+                "templateId": "rust-v1",
+                "idle": { "hibernateAfterMs": 60000 }
+            })),
+        },
+    )
+    .await;
+    assert_eq!(
+        response.error.expect("invalid params").code,
+        JsonRpcError::invalid_params("").code
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_environment_update() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_UPDATE.to_owned(),
             params: Some(json!({
                 "environmentId": "evi_test",
-                "idlePolicy": {"pauseAfterMs": 60000, "closeAfterMs": 3600000}
+                "displayName": "Renamed",
+                "metadata": {"team": "build"}
             })),
         },
     )
     .await;
     assert!(response.error.is_none(), "{:?}", response.error);
     let environment = &response.result.expect("result")["result"]["environment"];
-    assert_eq!(
-        environment["idlePolicy"],
-        json!({"pauseAfterMs": 60000, "closeAfterMs": 3600000})
-    );
+    assert_eq!(environment["displayName"], json!("Renamed"));
+    assert_eq!(environment["metadata"], json!({"team": "build"}));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_environment_list_pages() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_LIST.to_owned(),
+            params: Some(json!({
+                "state": "open",
+                "includeClosed": true,
+                "limit": 1,
+                "after": "evi_a"
+            })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = &response.result.expect("result")["result"];
+    assert_eq!(result["environments"][0]["state"], json!("open"));
+    assert_eq!(result["nextAfter"], json!("evi_test"));
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -984,9 +1031,9 @@ async fn dispatch_json_rpc_routes_environment_ingress_put() {
 
     assert!(response.error.is_none());
     let environment = &response.result.expect("result")["result"]["environment"];
-    assert_eq!(environment["publicIngressEnabled"], json!(true));
+    assert!(environment.get("publicIngressEnabled").is_none());
     assert_eq!(
-        environment["publicEndpoint"],
+        environment["source"]["publicEndpoint"],
         json!("https://opaque.env.example")
     );
 }
@@ -2233,7 +2280,14 @@ impl AgentApiService for TestService {
         &self,
         params: EnvironmentCreateParams,
     ) -> Result<AgentApiOutcome<EnvironmentCreateResponse>, AgentApiError> {
-        assert_eq!(params.binding_id, "primary");
+        assert_eq!(params.provider_id, "bridge-local");
+        assert_eq!(
+            params.idle,
+            Some(EnvironmentIdlePolicyView {
+                pause_after_ms: Some(60_000),
+                ..EnvironmentIdlePolicyView::default()
+            })
+        );
         Ok(AgentApiOutcome::new(EnvironmentCreateResponse {
             environment: test_environment_instance(),
         }))
@@ -2248,12 +2302,29 @@ impl AgentApiService for TestService {
         }))
     }
 
+    async fn update_environment(
+        &self,
+        params: EnvironmentUpdateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentUpdateResponse>, AgentApiError> {
+        let mut environment = test_environment_instance();
+        environment.display_name = params.display_name;
+        environment.metadata = params.metadata;
+        Ok(AgentApiOutcome::new(EnvironmentUpdateResponse {
+            environment,
+        }))
+    }
+
     async fn list_environments(
         &self,
-        _params: EnvironmentListParams,
+        params: EnvironmentListParams,
     ) -> Result<AgentApiOutcome<EnvironmentListResponse>, AgentApiError> {
+        let next_after = params
+            .limit
+            .is_some()
+            .then(|| test_environment_instance().environment_id);
         Ok(AgentApiOutcome::new(EnvironmentListResponse {
             environments: vec![test_environment_instance()],
+            next_after,
         }))
     }
 
@@ -2280,10 +2351,14 @@ impl AgentApiService for TestService {
         params: EnvironmentIngressPutParams,
     ) -> Result<AgentApiOutcome<EnvironmentIngressPutResponse>, AgentApiError> {
         let mut environment = test_environment_instance();
-        environment.public_ingress_enabled = params.enabled;
-        environment.public_endpoint = params
-            .enabled
-            .then(|| "https://opaque.env.example".to_owned());
+        if let EnvironmentSourceView::Provisioned {
+            public_endpoint, ..
+        } = &mut environment.source
+        {
+            *public_endpoint = params
+                .enabled
+                .then(|| "https://opaque.env.example".to_owned());
+        }
         Ok(AgentApiOutcome::new(EnvironmentIngressPutResponse {
             environment,
         }))
@@ -2293,20 +2368,18 @@ impl AgentApiService for TestService {
         &self,
         params: EnvironmentPowerPutParams,
     ) -> Result<AgentApiOutcome<EnvironmentPowerPutResponse>, AgentApiError> {
+        assert_eq!(params.power, EnvironmentPowerStateView::Paused);
         let mut environment = test_environment_instance();
-        environment.desired_power = params.power;
+        environment.status = EnvironmentStatusView::Paused;
+        if let EnvironmentSourceView::Provisioned { observed, .. } = &mut environment.source {
+            *observed = Some(EnvironmentObservedTargetView {
+                phase: EnvironmentTargetPhaseView::Active,
+                power: Some(params.power),
+                message: None,
+                observed_at_ms: 20,
+            });
+        }
         Ok(AgentApiOutcome::new(EnvironmentPowerPutResponse {
-            environment,
-        }))
-    }
-
-    async fn put_environment_idle_policy(
-        &self,
-        params: EnvironmentIdlePolicyPutParams,
-    ) -> Result<AgentApiOutcome<EnvironmentIdlePolicyPutResponse>, AgentApiError> {
-        let mut environment = test_environment_instance();
-        environment.idle_policy = params.idle_policy;
-        Ok(AgentApiOutcome::new(EnvironmentIdlePolicyPutResponse {
             environment,
         }))
     }
@@ -2435,6 +2508,36 @@ impl AgentApiService for TestService {
         Ok(AgentApiOutcome::new(
             EnvironmentRegistrationKeyListResponse {
                 registration_keys: vec![test_registration_key()],
+            },
+        ))
+    }
+
+    async fn update_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyUpdateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyUpdateResponse>, AgentApiError> {
+        let mut key = test_registration_key();
+        key.display_name = params.display_name;
+        key.max_active_environments = params.max_active_environments;
+        key.offline_close_after_ms = params.offline_close_after_ms;
+        Ok(AgentApiOutcome::new(
+            EnvironmentRegistrationKeyUpdateResponse {
+                registration_key: key,
+            },
+        ))
+    }
+
+    async fn rotate_environment_registration_key(
+        &self,
+        params: EnvironmentRegistrationKeyRotateParams,
+    ) -> Result<AgentApiOutcome<EnvironmentRegistrationKeyRotateResponse>, AgentApiError> {
+        assert_eq!(params.registration_key_id, "rk_harbor");
+        let mut key = test_registration_key();
+        key.key_prefix = "lsrk_rotated".to_owned();
+        Ok(AgentApiOutcome::new(
+            EnvironmentRegistrationKeyRotateResponse {
+                registration_key: key,
+                secret: EnvironmentRegistrationSecretView("lsrk_rotated-secret".to_owned()),
             },
         ))
     }
@@ -3253,34 +3356,30 @@ fn test_environment_credential(
 fn test_environment_instance() -> EnvironmentView {
     EnvironmentView {
         environment_id: "evi_test".to_owned(),
-        request_id: "request-1".to_owned(),
+        request_id: Some("request-1".to_owned()),
         source: EnvironmentSourceView::Provisioned {
             provider_id: "bridge-local".to_owned(),
-            binding_id: "primary".to_owned(),
+            template_id: "rust-v1".to_owned(),
+            target_id: Some("local".to_owned()),
+            idle: None,
+            observed: None,
+            public_endpoint: None,
         },
         display_name: Some("Local".to_owned()),
-        status: EnvironmentLifecycleStatusView::Ready,
-        desired_power: EnvironmentPowerStateView::Running,
-        idle_policy: None,
-        incarnation: EnvironmentIncarnationView {
-            incarnation_id: "incarnation-1".to_owned(),
-            provision_request_id: Some("request-1".to_owned()),
-            provider_target_id: Some("local".to_owned()),
-            template_id: Some("rust-v1".to_owned()),
-            power_states: vec![
-                EnvironmentPowerStateView::Running,
-                EnvironmentPowerStateView::Paused,
-            ],
-            created_at_ms: 10,
-            updated_at_ms: 10,
-        },
-        public_ingress_enabled: false,
-        public_endpoint: None,
+        state: EnvironmentStateView::Open,
+        status: EnvironmentStatusView::Ready,
+        state_message: None,
+        close_reason: None,
+        state_changed_at_ms: 10,
+        daemon: Some(EnvironmentDaemonView {
+            version: Some("0.1.0".to_owned()),
+            git_sha: None,
+            protocol_version: 4,
+        }),
         metadata: BTreeMap::new(),
-        last_seen_at_ms: None,
-        lifecycle_error: None,
         created_at_ms: 10,
         updated_at_ms: 10,
+        closed_at_ms: None,
     }
 }
 
@@ -3292,14 +3391,55 @@ fn test_registration_key() -> EnvironmentRegistrationKeyView {
         identity_mode: EnvironmentIdentityModeView::Ephemeral,
         max_active_environments: Some(8),
         ephemeral_disconnect_grace_ms: 300_000,
+        offline_close_after_ms: None,
         expires_at_ms: None,
         status: EnvironmentRegistrationKeyStatusView::Active,
         registered_environment_count: 1,
         active_environment_count: 1,
         last_registered_at_ms: Some(10),
         created_at_ms: 5,
+        updated_at_ms: 5,
         revoked_at_ms: None,
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dispatch_json_rpc_routes_registration_key_update_and_rotate() {
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(1),
+            method: METHOD_ENVIRONMENTS_REGISTRATION_KEYS_UPDATE.to_owned(),
+            params: Some(json!({
+                "registrationKeyId": "rk_harbor",
+                "displayName": "harbor-fleet",
+                "offlineCloseAfterMs": 86400000
+            })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let key = &response.result.expect("result")["result"]["registrationKey"];
+    assert_eq!(key["displayName"], json!("harbor-fleet"));
+    assert_eq!(key["offlineCloseAfterMs"], json!(86_400_000));
+    assert!(key.get("maxActiveEnvironments").is_none());
+
+    let response = dispatch_json_rpc(
+        &TestService,
+        JsonRpcRequest {
+            id: RequestId::Number(2),
+            method: METHOD_ENVIRONMENTS_REGISTRATION_KEYS_ROTATE.to_owned(),
+            params: Some(json!({ "registrationKeyId": "rk_harbor" })),
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{:?}", response.error);
+    let result = &response.result.expect("result")["result"];
+    assert_eq!(
+        result["registrationKey"]["keyPrefix"],
+        json!("lsrk_rotated")
+    );
+    assert_eq!(result["secret"], json!("lsrk_rotated-secret"));
 }
 
 #[test]
@@ -3318,30 +3458,21 @@ fn registration_secret_views_redact_debug_output() {
 fn test_external_environment() -> EnvironmentView {
     EnvironmentView {
         environment_id: "evi_enrolled".to_owned(),
-        request_id: "request-enrolled".to_owned(),
+        request_id: Some("request-enrolled".to_owned()),
         source: EnvironmentSourceView::External {
             endpoint: "ws://envd.test:19091".to_owned(),
         },
         display_name: Some("External".to_owned()),
-        status: EnvironmentLifecycleStatusView::Ready,
-        desired_power: EnvironmentPowerStateView::Running,
-        idle_policy: None,
-        incarnation: EnvironmentIncarnationView {
-            incarnation_id: "incarnation-enrolled".to_owned(),
-            provision_request_id: None,
-            provider_target_id: None,
-            template_id: None,
-            power_states: Vec::new(),
-            created_at_ms: 10,
-            updated_at_ms: 10,
-        },
-        public_ingress_enabled: false,
-        public_endpoint: None,
+        state: EnvironmentStateView::Open,
+        status: EnvironmentStatusView::Ready,
+        state_message: None,
+        close_reason: None,
+        state_changed_at_ms: 10,
+        daemon: None,
         metadata: BTreeMap::new(),
-        last_seen_at_ms: None,
-        lifecycle_error: None,
         created_at_ms: 10,
         updated_at_ms: 10,
+        closed_at_ms: None,
     }
 }
 
@@ -3419,12 +3550,9 @@ fn test_deployment_environment_provider(provider_id: &str) -> DeploymentEnvironm
         provider_id: provider_id.to_owned(),
         display_name: Some("Local Incus".to_owned()),
         controller_endpoint: "ws://127.0.0.1:19090/control".to_owned(),
-        metadata: BTreeMap::new(),
-        controller_features: Some(DeploymentEnvironmentProviderFeaturesView {
-            adopt_target: true,
-            ingress: true,
-        }),
-        data_route_base: Some("ws://127.0.0.1:19090/data".to_owned()),
+        data_route_base: None,
+        effective_data_route_base: Some("ws://127.0.0.1:19090/routes".to_owned()),
+        has_credential: false,
         created_at_ms: 10,
         updated_at_ms: 20,
     }
@@ -3567,22 +3695,40 @@ impl DeploymentApiService for TestDeploymentService {
         ))
     }
 
-    async fn adopt_environment(
+    async fn put_environment_provider_binding(
         &self,
-        params: DeploymentEnvironmentAdoptParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentAdoptResponse>, AgentApiError> {
-        let mut environment = test_environment_instance();
-        environment.request_id = params.request_id;
-        environment.display_name = params.display_name;
-        environment.incarnation.template_id = None;
-        Ok(AgentApiOutcome::new(DeploymentEnvironmentAdoptResponse {
-            environment,
+        params: DeploymentProviderBindingPutParams,
+    ) -> Result<AgentApiOutcome<DeploymentProviderBindingPutResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(DeploymentProviderBindingPutResponse {
+            binding: EnvironmentProviderBindingView {
+                provider_id: params.provider_id,
+                enabled: params.enabled,
+                created_at_ms: 10,
+                updated_at_ms: 20,
+            },
         }))
+    }
+
+    async fn delete_environment_provider_binding(
+        &self,
+        params: DeploymentProviderBindingDeleteParams,
+    ) -> Result<AgentApiOutcome<DeploymentProviderBindingDeleteResponse>, AgentApiError> {
+        Ok(AgentApiOutcome::new(
+            DeploymentProviderBindingDeleteResponse {
+                binding: EnvironmentProviderBindingView {
+                    provider_id: params.provider_id,
+                    enabled: false,
+                    created_at_ms: 10,
+                    updated_at_ms: 20,
+                },
+            },
+        ))
     }
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn deployment_environment_provider_methods_dispatch() {
+    let universe_id = "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f";
     let requests = [
         (
             METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT,
@@ -3591,18 +3737,45 @@ async fn deployment_environment_provider_methods_dispatch() {
                 "displayName": "Local Incus",
                 "controllerEndpoint": "ws://127.0.0.1:19090/control"
             }),
+            "provider",
         ),
-        (METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST, json!({})),
+        (
+            METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT,
+            json!({
+                "providerId": "incus-local",
+                "controllerEndpoint": "unix:///run/incus-provider.sock",
+                "dataRouteBase": "ws://127.0.0.1:19090/routes",
+                "clearCredential": true
+            }),
+            "provider",
+        ),
+        (
+            METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST,
+            json!({}),
+            "providers",
+        ),
         (
             METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ,
             json!({ "providerId": "incus-local" }),
+            "provider",
         ),
         (
             METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE,
             json!({ "providerId": "incus-local" }),
+            "provider",
+        ),
+        (
+            METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
+            json!({ "universeId": universe_id, "providerId": "incus-local", "enabled": true }),
+            "binding",
+        ),
+        (
+            METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
+            json!({ "universeId": universe_id, "providerId": "incus-local" }),
+            "binding",
         ),
     ];
-    for (index, (method, params)) in requests.into_iter().enumerate() {
+    for (index, (method, params, field)) in requests.into_iter().enumerate() {
         let response = dispatch_deployment_json_rpc(
             &TestDeploymentService,
             JsonRpcRequest {
@@ -3615,40 +3788,33 @@ async fn deployment_environment_provider_methods_dispatch() {
         assert!(response.error.is_none(), "{method}: {:?}", response.error);
         assert!(
             response.result.expect("result")["result"]
-                .get(if method.ends_with("/list") {
-                    "providers"
-                } else {
-                    "provider"
-                })
+                .get(field)
                 .is_some(),
             "{method}"
         );
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn deployment_environment_adoption_dispatches_explicit_ownership_transfer() {
-    let response = dispatch_deployment_json_rpc(
-        &TestDeploymentService,
-        JsonRpcRequest {
-            id: RequestId::Number(1),
-            method: METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT.to_owned(),
-            params: Some(json!({
-                "universeId": "6f3a1a52-58c1-4f0e-9c2d-1a2b3c4d5e6f",
-                "requestId": "adopt-1",
-                "bindingId": "primary",
-                "sourceTarget": "legacy/hand-built-vm",
-                "takeOwnership": true,
-                "displayName": "Imported VM"
-            })),
-        },
-    )
-    .await;
-    assert!(response.error.is_none(), "{:?}", response.error);
-    let environment = &response.result.expect("result")["result"]["environment"];
-    assert_eq!(environment["requestId"], "adopt-1");
-    assert_eq!(environment["displayName"], "Imported VM");
-    assert!(environment["incarnation"].get("templateId").is_none());
+#[test]
+fn environment_provider_put_params_redact_credential_and_view_omits_it() {
+    let params: DeploymentEnvironmentProviderPutParams = serde_json::from_value(json!({
+        "providerId": "incus-local",
+        "controllerEndpoint": "wss://provider.example/control",
+        "credential": "provider-bearer-secret"
+    }))
+    .expect("put params");
+    assert!(!params.clear_credential);
+    assert!(params.data_route_base.is_none());
+    assert!(!format!("{params:?}").contains("provider-bearer-secret"));
+    let view = serde_json::to_value(test_deployment_environment_provider("incus-local"))
+        .expect("serialize view");
+    assert_eq!(view["hasCredential"], json!(false));
+    assert!(view.get("credential").is_none());
+    assert!(view.get("dataRouteBase").is_none());
+    assert_eq!(
+        view["effectiveDataRouteBase"],
+        json!("ws://127.0.0.1:19090/routes")
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

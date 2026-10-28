@@ -12,12 +12,11 @@ pub use crate::config::pg_store_from_env;
 pub use deployment::GatewayDeploymentApi;
 pub use http::{
     ACTOR_HEADER, DEFAULT_GATEWAY_BIND, DEFAULT_MAX_REQUEST_BODY_BYTES, GatewayRoutes,
-    GatewayServerConfig, GatewayState, UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
-    public_base_url_or_default, serve_gateway,
+    GatewayState, UNIVERSE_HEADER, gateway_router, prewarm_single_universe,
 };
 pub use service::{
     DEFAULT_PUBLIC_BASE_URL, GatewayAgentApi, GatewayAgentApiBuilder, OAuthCallbackOutcome,
-    PowerReaperStats, ReconcileFailureLog,
+    ReconcileFailureLog,
 };
 pub use temporal_workflow::{
     AgentAdmission, AgentAdmissionFailure, AgentAdmissionFailureKind, AgentCompletedRunSummary,

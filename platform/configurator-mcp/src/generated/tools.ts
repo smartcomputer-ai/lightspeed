@@ -5062,22 +5062,19 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/create",
     "group": "environments",
     "summary": "Create an environment",
-    "description": "Records an idempotent provisioning intent against an enabled universe binding, attributed to the caller. The provider validates its provider-wide template and provisions through its backend asynchronously.",
+    "description": "Creates a provisioned environment, attributed to the caller, from a template of a provider enabled for the universe. Idempotent per requestId: same inputs, same environment; others conflict. Provisioning until the target's first envd handshake, then open; idle overrides the template default.",
     "paramsType": "EnvironmentCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentCreateResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "bindingId": {
-          "type": "string"
-        },
         "displayName": {
           "type": [
             "string",
             "null"
           ]
         },
-        "idlePolicy": {
+        "idle": {
           "anyOf": [
             {
               "$ref": "#/definitions/EnvironmentIdlePolicyView"
@@ -5086,7 +5083,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "type": "null"
             }
           ],
-          "description": "Optional staged idle policy applied by the power reaper."
+          "description": "Idle policy passed to the provider in place of the template's `idle`.\nThe provider runs the idle clock; it cannot be changed after create."
         },
         "metadata": {
           "additionalProperties": {
@@ -5094,24 +5091,31 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           },
           "type": "object"
         },
+        "providerId": {
+          "description": "The provider to create the environment with; the universe needs an\nenabled binding to it.",
+          "type": "string"
+        },
         "requestId": {
-          "description": "Stable caller-generated retry identity, unique inside the universe.",
+          "description": "Stable caller-generated retry identity, unique inside the universe.\nRetrying with identical inputs returns the same environment.",
           "type": "string"
         },
         "templateId": {
-          "description": "Immutable provider template-version identity.",
+          "description": "The provider template to create the environment from.",
           "type": "string"
         }
       },
       "required": [
         "requestId",
-        "bindingId",
+        "providerId",
         "templateId"
       ],
       "type": "object",
       "definitions": {
         "EnvironmentIdlePolicyView": {
-          "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
+          "additionalProperties": {
+            "not": {}
+          },
+          "description": "Staged idle policy the provider applies. Thresholds are milliseconds of\nenvd-reported idle time (running processes, jobs and leftover process\ngroups hold it at zero) and must be non-decreasing in the order pause,\nsuspend, stop, close. Stages whose power state the template does not\nsupport are skipped.",
           "properties": {
             "closeAfterMs": {
               "format": "uint64",
@@ -5156,7 +5160,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/read",
     "group": "environments",
     "summary": "Read an environment",
-    "description": "Returns the durable universe resource, source binding, logical lifecycle state, and minimal current-incarnation identity.",
+    "description": "Returns one environment: its source, lifecycle state, derived display status, state message, close reason, daemon build, and the latest provider observation.",
     "paramsType": "EnvironmentReadParams",
     "resultType": "AgentApiOutcome<EnvironmentReadResponse>",
     "inputSchema": {
@@ -5173,19 +5177,70 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
+    "name": "lightspeed_environments_update",
+    "method": "environments/update",
+    "group": "environments",
+    "summary": "Update an environment",
+    "description": "Replaces the display name and caller metadata of an environment of any kind. Refused for a closed environment.",
+    "paramsType": "EnvironmentUpdateParams",
+    "resultType": "AgentApiOutcome<EnvironmentUpdateResponse>",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "description": "Replace an environment's display name and caller metadata.",
+      "properties": {
+        "displayName": {
+          "description": "The new display name; omit to clear it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The complete new caller metadata; omit or `{}` to clear it.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "environmentId"
+      ],
+      "type": "object"
+    }
+  },
+  {
     "name": "lightspeed_environments_list",
     "method": "environments/list",
     "group": "environments",
     "summary": "List environments",
-    "description": "Lists the universe environments, optionally filtered by provider, binding, or logical lifecycle state.",
+    "description": "Lists the universe environments in id order, one page at a time, optionally filtered by provider, registration key, state, or metadata. Closed environments are omitted unless includeClosed is set or state is closed. Continue from nextAfter.",
     "paramsType": "EnvironmentListParams",
     "resultType": "AgentApiOutcome<EnvironmentListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "bindingId": {
+        "after": {
+          "description": "Exclusive environment id cursor: a previous page's `nextAfter`.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "includeClosed": {
+          "description": "Also list closed environments; they are omitted by default.",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Most environments per page; omit for 100.",
+          "format": "uint32",
+          "maximum": 500,
+          "minimum": 1,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -5197,6 +5252,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "object"
         },
         "providerId": {
+          "description": "Only provisioned environments of this provider.",
           "type": [
             "string",
             "null"
@@ -5209,46 +5265,43 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             "null"
           ]
         },
-        "status": {
+        "state": {
           "anyOf": [
             {
-              "$ref": "#/definitions/EnvironmentLifecycleStatusView"
+              "$ref": "#/definitions/EnvironmentStateView"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Only environments in this lifecycle state. `closed` lists closed\nenvironments without `includeClosed`."
         }
       },
       "type": "object",
       "definitions": {
-        "EnvironmentLifecycleStatusView": {
+        "EnvironmentStateView": {
+          "description": "The lifecycle Lightspeed owns. External and registered environments are\nonly ever `open` or `closed`.",
           "oneOf": [
             {
               "enum": [
-                "provisioning",
-                "booting",
-                "ready",
-                "closing",
-                "closed",
-                "failed",
-                "unknown"
+                "open",
+                "closed"
               ],
               "type": "string"
             },
             {
-              "const": "paused",
-              "description": "Execution frozen; wakes on next use.",
+              "const": "provisioning",
+              "description": "The provider is creating the target; the environment opens after\nLightspeed's first handshake with its envd.",
               "type": "string"
             },
             {
-              "const": "suspended",
-              "description": "Execution state saved to disk; wakes on next use.",
+              "const": "closing",
+              "description": "The provider is removing the target.",
               "type": "string"
             },
             {
-              "const": "offline",
-              "description": "Powered off; provisioned environments wake on next use when the\nprovider supports power control.",
+              "const": "failed",
+              "description": "Provisioning or the provider failed; `stateMessage` says why.",
               "type": "string"
             }
           ]
@@ -5261,7 +5314,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/close",
     "group": "environments",
     "summary": "Close an environment",
-    "description": "Records an asynchronous idempotent close intent. Provider cleanup is resumed by lifecycle reconciliation; quota is released only after Closed.",
+    "description": "Closes an environment; idempotent. A provisioned environment moves to closing while Lightspeed asks its provider to remove the target, retrying until it is gone, then closed. External and registered environments close at once, and a connected registered daemon is told its environment closed.",
     "paramsType": "EnvironmentCloseParams",
     "resultType": "AgentApiOutcome<EnvironmentCloseResponse>",
     "inputSchema": {
@@ -5282,7 +5335,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/external/create",
     "group": "environments",
     "summary": "Register an external environment",
-    "description": "Creates an environment backed by a Lightspeed-reachable envd WebSocket endpoint, attributed to the caller. Reachability is checked on demand.",
+    "description": "Creates an open environment backed by a Lightspeed-reachable envd endpoint, attributed to the caller. Idempotent per requestId. Reachability is checked on use.",
     "paramsType": "EnvironmentExternalCreateParams",
     "resultType": "AgentApiOutcome<EnvironmentExternalCreateResponse>",
     "inputSchema": {
@@ -5305,6 +5358,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "type": "object"
         },
         "requestId": {
+          "description": "Stable caller-generated retry identity, unique inside the universe.",
           "type": "string"
         }
       },
@@ -5320,13 +5374,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/ingress/put",
     "group": "environments",
     "summary": "Configure environment public ingress",
-    "description": "Records the public ingress intent of a provisioned environment; the lifecycle reconciler converges it while the environment is ready, and `publicEndpoint` shows the realized endpoint. Rejected when the provider does not offer ingress. The provider owns hostname, guest port, routing, TLS, and health; an intent its template refuses is dropped.",
+    "description": "Synchronously ensures or removes public ingress of an open provisioned environment through its provider; source.publicEndpoint carries the reported endpoint. Rejected when the provider offers no ingress; an internal error, safe to retry, when the provider is unreachable or times out. The provider owns hostname, guest port, routing, TLS, and health.",
     "paramsType": "EnvironmentIngressPutParams",
     "resultType": "AgentApiOutcome<EnvironmentIngressPutResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "enabled": {
+          "description": "Ensure (`true`) or remove (`false`) the provider's public ingress.",
           "type": "boolean"
         },
         "environmentId": {
@@ -5344,8 +5399,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "name": "lightspeed_environments_power_put",
     "method": "environments/power/put",
     "group": "environments",
-    "summary": "Set environment power intent",
-    "description": "Records the desired power state (running, paused, suspended, or stopped) of a provisioned environment; the lifecycle reconciler converges the provider target asynchronously. Powered-down environments wake transparently on their next use. Rejected when the provider does not support the state.",
+    "summary": "Set environment power",
+    "description": "Synchronously moves an open provisioned environment's target to running, paused, suspended, or stopped via its provider and records the observation; the provider may also change power on idle. Rejected without provider power control or when the template lacks the state; an internal error, safe to retry, when the provider is unreachable or times out.",
     "paramsType": "EnvironmentPowerPutParams",
     "resultType": "AgentApiOutcome<EnvironmentPowerPutResponse>",
     "inputSchema": {
@@ -5360,7 +5415,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
               "$ref": "#/definitions/EnvironmentPowerStateView"
             }
           ],
-          "description": "Desired steady power state. Must be one of the provider-reported\n`incarnation.powerStates`."
+          "description": "Power state to move the target to; one of its template's\n`powerStates`."
         }
       },
       "required": [
@@ -5370,7 +5425,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "type": "object",
       "definitions": {
         "EnvironmentPowerStateView": {
-          "description": "Steady power state of a provisioned environment.",
+          "description": "Power state of a provisioned environment's target.",
           "oneOf": [
             {
               "enum": [
@@ -5399,83 +5454,11 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     }
   },
   {
-    "name": "lightspeed_environments_idle-policy_put",
-    "method": "environments/idle-policy/put",
-    "group": "environments",
-    "summary": "Set environment idle policy",
-    "description": "Replaces or clears the staged idle policy of a provisioned environment. The power reaper measures the daemon's idle duration against the pause/suspend/stop/close thresholds and escalates through the stages the provider supports.",
-    "paramsType": "EnvironmentIdlePolicyPutParams",
-    "resultType": "AgentApiOutcome<EnvironmentIdlePolicyPutResponse>",
-    "inputSchema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "properties": {
-        "environmentId": {
-          "type": "string"
-        },
-        "idlePolicy": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentIdlePolicyView"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The complete new policy; omit to clear it."
-        }
-      },
-      "required": [
-        "environmentId"
-      ],
-      "type": "object",
-      "definitions": {
-        "EnvironmentIdlePolicyView": {
-          "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
-          "properties": {
-            "closeAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "pauseAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "stopAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "suspendAfterMs": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            }
-          },
-          "type": "object"
-        }
-      }
-    }
-  },
-  {
     "name": "lightspeed_environments_provider-bindings_list",
     "method": "environments/provider-bindings/list",
     "group": "environments",
     "summary": "List environment provider bindings",
-    "description": "Lists this universe's revisioned routing and admission bindings to deployment-scoped physical providers.",
+    "description": "Lists this universe's bindings to deployment providers and whether each is enabled.",
     "paramsType": "EnvironmentProviderBindingListParams",
     "resultType": "AgentApiOutcome<EnvironmentProviderBindingListResponse>",
     "inputSchema": {
@@ -5488,18 +5471,18 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/provider-bindings/read",
     "group": "environments",
     "summary": "Read an environment provider binding",
-    "description": "Returns one universe routing and admission binding. Provider-wide templates and physical resource, network, and ingress policy remain provider-owned.",
+    "description": "Returns this universe's binding to one provider. Templates and physical resource, network, and ingress policy remain provider-owned.",
     "paramsType": "EnvironmentProviderBindingReadParams",
     "resultType": "AgentApiOutcome<EnvironmentProviderBindingReadResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "bindingId": {
+        "providerId": {
           "type": "string"
         }
       },
       "required": [
-        "bindingId"
+        "providerId"
       ],
       "type": "object"
     }
@@ -5509,13 +5492,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/templates/list",
     "group": "environments",
     "summary": "List environment templates",
-    "description": "Reads immutable templates directly from the selected bound provider controller.",
+    "description": "Reads templates live from the controllers of the universe's enabled provider bindings, or of one provider: compute, power states, public ingress, and default idle policy.",
     "paramsType": "EnvironmentTemplateListParams",
     "resultType": "AgentApiOutcome<EnvironmentTemplateListResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "bindingId": {
+        "providerId": {
+          "description": "Only this provider's templates; omit for every enabled binding.",
           "type": [
             "string",
             "null"
@@ -5530,13 +5514,13 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "environments/templates/read",
     "group": "environments",
     "summary": "Read an environment template",
-    "description": "Returns one immutable template version from the selected bound provider controller.",
+    "description": "Returns one template, read live from a bound provider's controller.",
     "paramsType": "EnvironmentTemplateReadParams",
     "resultType": "AgentApiOutcome<EnvironmentTemplateReadResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "bindingId": {
+        "providerId": {
           "type": "string"
         },
         "templateId": {
@@ -5544,7 +5528,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         }
       },
       "required": [
-        "bindingId",
+        "providerId",
         "templateId"
       ],
       "type": "object"

@@ -1,7 +1,7 @@
 import { ReadError } from "@/components/read-error";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import type {
   EnvironmentProviderBindingView,
   DeploymentEnvironmentProviderView,
@@ -37,8 +37,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
-  IdText,
   Table,
   TableActionsCell,
   TableBody,
@@ -67,11 +67,13 @@ type UniverseBindings = {
 
 /// Deployment-scoped environment provider administration: physical
 /// providers are registered once by a platform admin and shared with
-/// universes through revisioned bindings. Universe owners consume enabled
-/// bindings from their Environments page; only admins mutate them here.
+/// universes through bindings, one per universe and provider. Universe
+/// owners consume enabled bindings from their Environments page; only admins
+/// mutate them here.
 export function AdminEnvironmentProvidersPage() {
   const queryClient = useQueryClient();
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [editing, setEditing] = useState<Provider | null>(null);
   const [bindingFor, setBindingFor] = useState<Provider | null>(null);
 
   const providers = useQuery({
@@ -121,9 +123,16 @@ export function AdminEnvironmentProvidersPage() {
           </Button>
         }
       />
-      <RegisterProviderDialog
-        open={registerOpen}
-        onOpenChange={setRegisterOpen}
+      <ProviderDialog
+        key={editing?.providerId ?? (registerOpen ? "new" : "closed")}
+        provider={editing}
+        open={registerOpen || editing !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRegisterOpen(false);
+            setEditing(null);
+          }
+        }}
         onSaved={refresh}
       />
       <BindUniverseDialog
@@ -163,15 +172,26 @@ export function AdminEnvironmentProvidersPage() {
                     <span className="font-mono text-xs text-muted-foreground">
                       {provider.providerId}
                     </span>
-                    {providerFeatureLabels(provider).map((label) => (
-                      <Badge key={label} variant="outline">{label}</Badge>
-                    ))}
+                    <Badge variant="outline">
+                      {provider.hasCredential ? "credential" : "no credential"}
+                    </Badge>
                   </div>
                   <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
                     {provider.controllerEndpoint}
                   </p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    Data routes{" "}
+                    <span className="font-mono">
+                      {provider.effectiveDataRouteBase ?? "cannot be derived"}
+                    </span>
+                    {provider.dataRouteBase ? "" : " (derived)"}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setEditing(provider)}>
+                    <Pencil data-icon="inline-start" />
+                    Edit
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => setBindingFor(provider)}>
                     <Plus data-icon="inline-start" />
                     Bind universe
@@ -196,9 +216,10 @@ export function AdminEnvironmentProvidersPage() {
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                           Removes the registration from this deployment. The engine
-                          rejects the delete while any universe binding still
-                          references it; delete those bindings first. Provider-side
-                          machines are not touched.
+                          refuses the delete while any universe binding or any
+                          non-closed environment of this provider exists; delete
+                          those bindings and close those environments first.
+                          Provider-side machines are not touched.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
@@ -215,16 +236,6 @@ export function AdminEnvironmentProvidersPage() {
                 </div>
               </div>
               <div className="px-4 py-3 md:px-5">
-                {Object.keys(provider.metadata ?? {}).length > 0 && (
-                  <dl className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
-                    {Object.entries(provider.metadata ?? {}).map(([key, value]) => (
-                      <div key={key}>
-                        <dt className="inline font-medium">{key}: </dt>
-                        <dd className="inline font-mono">{value}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                )}
                 {providerBindings.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No universe is bound to this provider yet.
@@ -235,16 +246,14 @@ export function AdminEnvironmentProvidersPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Universe</TableHead>
-                          <TableHead>Binding</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Revision</TableHead>
+                          <TableHead>Enabled</TableHead>
                           <TableHead className="w-0" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {providerBindings.map(({ universe, binding }) => (
                           <BindingRow
-                            key={`${universe.universeId}:${binding.bindingId}`}
+                            key={`${universe.universeId}:${binding.providerId}`}
                             universe={universe}
                             binding={binding}
                             onChanged={refresh}
@@ -272,17 +281,6 @@ export function AdminEnvironmentProvidersPage() {
   );
 }
 
-/// What the controller advertised at its last successful handshake, or
-/// that Lightspeed has not reached it at this endpoint yet.
-function providerFeatureLabels(provider: Provider): string[] {
-  const features = provider.controllerFeatures;
-  if (!features) return ["not reached yet"];
-  return [
-    ...(features.adoptTarget ? ["adoption"] : []),
-    ...(features.ingress ? ["ingress"] : []),
-  ];
-}
-
 function BindingRow({
   universe,
   binding,
@@ -292,50 +290,29 @@ function BindingRow({
   binding: EnvironmentProviderBindingView;
   onChanged: () => void;
 }) {
-  const setStatus = useMutation({
-    mutationFn: (status: "enabled" | "disabled") =>
-      api<EnvironmentProviderBindingView>(
-        "PUT",
-        `/api/v1/admin/universes/${universe.lightspeedUniverseId}/environment-provider-bindings/${encodeURIComponent(binding.bindingId)}`,
-        {
-          providerId: binding.providerId,
-          status,
-          expectedRevision: binding.revision,
-          ...(binding.metadata && Object.keys(binding.metadata).length > 0 ? { metadata: binding.metadata } : {}),
-        },
-      ),
+  const path = `/api/v1/admin/universes/${universe.lightspeedUniverseId}/environment-provider-bindings/${encodeURIComponent(binding.providerId)}`;
+  const setEnabled = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api<EnvironmentProviderBindingView>("PUT", path, { enabled }),
     onSuccess: onChanged,
   });
   const remove = useMutation({
-    mutationFn: () =>
-      api<EnvironmentProviderBindingView>(
-        "DELETE",
-        `/api/v1/admin/universes/${universe.lightspeedUniverseId}/environment-provider-bindings/${encodeURIComponent(binding.bindingId)}`,
-      ),
+    mutationFn: () => api<EnvironmentProviderBindingView>("DELETE", path),
     onSuccess: onChanged,
   });
-  const error = setStatus.error ?? remove.error;
+  const error = setEnabled.error ?? remove.error;
   return (
     <TableRow>
       <TableTitleCell title={universe.name} subtitle={universe.lightspeedUniverseId} />
-      <TableCell className="max-w-48">
-        <IdText>{binding.bindingId}</IdText>
-      </TableCell>
       <TableCell>
-        <Badge variant={binding.status === "enabled" ? "secondary" : "outline"}>
-          {binding.status}
-        </Badge>
+        <Switch
+          aria-label={`Enable ${binding.providerId} for ${universe.name}`}
+          checked={binding.enabled}
+          disabled={setEnabled.isPending}
+          onCheckedChange={(enabled) => setEnabled.mutate(enabled)}
+        />
       </TableCell>
-      <TableCell className="text-muted-foreground">{binding.revision}</TableCell>
       <TableActionsCell>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={setStatus.isPending}
-          onClick={() => setStatus.mutate(binding.status === "enabled" ? "disabled" : "enabled")}
-        >
-          {binding.status === "enabled" ? "Disable" : "Enable"}
-        </Button>
         <AlertDialog>
           <AlertDialogTrigger
             render={<Button variant="ghost" size="sm" className="text-destructive" disabled={remove.isPending} />}
@@ -344,12 +321,12 @@ function BindingRow({
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete binding {binding.bindingId}?</AlertDialogTitle>
+              <AlertDialogTitle>Unbind {universe.name}?</AlertDialogTitle>
               <AlertDialogDescription>
                 {universe.name} will no longer be able to provision from{" "}
                 <span className="font-mono text-xs">{binding.providerId}</span>. The engine
-                rejects the delete while a non-closed environment still references this
-                binding; disable it instead to stop new provisioning.
+                rejects the delete while a non-closed environment of this provider is still
+                open in the universe; disable the binding instead to stop new provisioning.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -369,39 +346,39 @@ function BindingRow({
   );
 }
 
-function RegisterProviderDialog({
+/// Register a provider, or edit one when `provider` is set. The credential
+/// is write-only and optional: empty keeps the stored one.
+function ProviderDialog({
+  provider,
   open,
   onOpenChange,
   onSaved,
 }: {
+  provider: Provider | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
-  const [providerId, setProviderId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [endpoint, setEndpoint] = useState("");
+  const [providerId, setProviderId] = useState(provider?.providerId ?? "");
+  const [displayName, setDisplayName] = useState(provider?.displayName ?? "");
+  const [endpoint, setEndpoint] = useState(provider?.controllerEndpoint ?? "");
+  const [dataRouteBase, setDataRouteBase] = useState(provider?.dataRouteBase ?? "");
   const [credential, setCredential] = useState("");
+  const [clearCredential, setClearCredential] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const reset = () => {
-    setProviderId("");
-    setDisplayName("");
-    setEndpoint("");
-    setCredential("");
-    setError(null);
-  };
+  const editing = provider !== null;
 
   const save = useMutation({
     mutationFn: () =>
       api<Provider>("PUT", `/api/v1/admin/environment-providers/${encodeURIComponent(providerId.trim())}`, {
         ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
         controllerEndpoint: endpoint.trim(),
-        credential,
+        ...(dataRouteBase.trim() ? { dataRouteBase: dataRouteBase.trim() } : {}),
+        ...(credential ? { credential } : {}),
+        ...(clearCredential ? { clearCredential: true } : {}),
       }),
     onSuccess: () => {
       onOpenChange(false);
-      reset();
       onSaved();
     },
     onError: (err) => setError(err.message),
@@ -414,18 +391,25 @@ function RegisterProviderDialog({
     if (!/^(wss?:\/\/|unix:\/\/\/)\S+$/.test(endpoint.trim())) {
       return setError("the controller endpoint must be a ws://, wss:// or unix:// URL");
     }
-    if (!credential) return setError("the provider credential is required");
+    if (dataRouteBase.trim() && !/^wss?:\/\/\S+$/.test(dataRouteBase.trim())) {
+      return setError("the data route base must be a ws:// or wss:// URL");
+    }
+    if (endpoint.trim().startsWith("unix://") && !dataRouteBase.trim()) {
+      return setError("a unix:// controller needs a data route base");
+    }
     save.mutate();
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) reset(); }}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Register environment provider</DialogTitle>
+          <DialogTitle>
+            {editing ? `Edit ${provider.displayName ?? provider.providerId}` : "Register environment provider"}
+          </DialogTitle>
           <DialogDescription>
-            Records how Lightspeed reaches the provider's controller endpoint and
-            the credential it presents there. The provider never self-registers.
+            Records how Lightspeed reaches the provider's controller and data routes, and the
+            optional bearer credential it presents there. The provider never self-registers.
             Universes get access through bindings.
           </DialogDescription>
         </DialogHeader>
@@ -437,7 +421,8 @@ function RegisterProviderDialog({
               value={providerId}
               onChange={(e) => setProviderId(e.target.value)}
               placeholder="incus-hz02"
-              autoFocus
+              disabled={editing}
+              autoFocus={!editing}
             />
             <FieldDescription className="text-xs">
               Stable deployment-wide identifier; profiles reference providers by this id.
@@ -462,18 +447,49 @@ function RegisterProviderDialog({
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="provider-credential">Credential</FieldLabel>
+            <FieldLabel htmlFor="provider-data-route-base">Data route base (optional)</FieldLabel>
+            <Input
+              id="provider-data-route-base"
+              value={dataRouteBase}
+              onChange={(e) => setDataRouteBase(e.target.value)}
+              placeholder={derivedDataRouteBase(endpoint) ?? "wss://provider.internal:19090/routes"}
+            />
+            <FieldDescription className="text-xs">
+              {editing && provider.effectiveDataRouteBase
+                ? <>Lightspeed dials <span className="font-mono">{provider.effectiveDataRouteBase}</span>. </>
+                : null}
+              Empty derives it from the controller endpoint's origin plus{" "}
+              <span className="font-mono">/routes</span>; a unix:// controller needs one.
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="provider-credential">Credential (optional)</FieldLabel>
             <Input
               id="provider-credential"
               type="password"
               autoComplete="off"
               value={credential}
+              disabled={clearCredential}
               onChange={(e) => setCredential(e.target.value)}
+              placeholder={editing && provider.hasCredential ? "Unchanged" : "None"}
             />
             <FieldDescription className="text-xs">
-              The bearer secret the provider is configured with. Write-only: it is
-              never shown again.
+              The bearer secret the provider is configured with. Write-only: it is never shown
+              again. Without one, Lightspeed sends no Authorization header.
             </FieldDescription>
+            {editing && provider.hasCredential && (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={clearCredential}
+                  onChange={(event) => {
+                    setClearCredential(event.target.checked);
+                    if (event.target.checked) setCredential("");
+                  }}
+                />
+                Remove the stored credential
+              </label>
+            )}
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
@@ -481,13 +497,19 @@ function RegisterProviderDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={save.isPending}>
-              {save.isPending ? "Saving…" : "Register"}
+              {save.isPending ? "Saving…" : editing ? "Save" : "Register"}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   );
+}
+
+/// The base Lightspeed derives from a ws:// or wss:// controller endpoint.
+function derivedDataRouteBase(endpoint: string): string | null {
+  const match = /^(wss?:\/\/[^/\s]+)/.exec(endpoint.trim());
+  return match ? `${match[1]}/routes` : null;
 }
 
 function BindUniverseDialog({
@@ -502,7 +524,6 @@ function BindUniverseDialog({
   onSaved: () => void;
 }) {
   const [universeId, setUniverseId] = useState("");
-  const [bindingId, setBindingId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const candidates = universes.filter(
     (universe) =>
@@ -511,11 +532,9 @@ function BindUniverseDialog({
       && !universe.bindings.some((binding) => binding.providerId === provider?.providerId),
   );
   const selected = universes.find((universe) => universe.lightspeedUniverseId === universeId);
-  const effectiveBindingId = bindingId.trim() || provider?.providerId || "";
 
   const reset = () => {
     setUniverseId("");
-    setBindingId("");
     setError(null);
   };
 
@@ -523,8 +542,8 @@ function BindUniverseDialog({
     mutationFn: () =>
       api<EnvironmentProviderBindingView>(
         "PUT",
-        `/api/v1/admin/universes/${universeId}/environment-provider-bindings/${encodeURIComponent(effectiveBindingId)}`,
-        { providerId: provider!.providerId, status: "enabled" },
+        `/api/v1/admin/universes/${universeId}/environment-provider-bindings/${encodeURIComponent(provider!.providerId)}`,
+        { enabled: true },
       ),
     onSuccess: () => {
       onOpenChange(false);
@@ -537,7 +556,6 @@ function BindUniverseDialog({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!universeId) return setError("choose a universe");
-    if (!effectiveBindingId) return setError("a binding id is required");
     save.mutate();
   };
 
@@ -582,18 +600,6 @@ function BindUniverseDialog({
                 : selected
                   ? <span className="font-mono">{selected.lightspeedUniverseId}</span>
                   : "Only active universes without an existing binding are listed."}
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="binding-id">Binding id</FieldLabel>
-            <Input
-              id="binding-id"
-              value={bindingId}
-              onChange={(e) => setBindingId(e.target.value)}
-              placeholder={provider?.providerId ?? ""}
-            />
-            <FieldDescription className="text-xs">
-              Universe-scoped identifier; defaults to the provider id.
             </FieldDescription>
           </Field>
           {error && <p className="text-sm text-destructive">{error}</p>}

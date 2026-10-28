@@ -240,18 +240,8 @@ protocol_id!(
     general
 );
 protocol_id!(
-    /// `bindingId` of a provider binding within a universe.
-    BindingId,
-    general
-);
-protocol_id!(
     /// `environmentId` of a Lightspeed environment.
     EnvironmentId,
-    general
-);
-protocol_id!(
-    /// `incarnationId` of one incarnation of an environment.
-    IncarnationId,
     general
 );
 protocol_id!(
@@ -272,12 +262,6 @@ protocol_id!(
 protocol_id!(
     /// `templateId`: the provider's own id for a template.
     TemplateId,
-    opaque
-);
-protocol_id!(
-    /// `sourceTarget` of `target/adopt`: a provider-native reference to an
-    /// existing target, in a format the provider defines.
-    ProviderNativeRef,
     opaque
 );
 protocol_id!(

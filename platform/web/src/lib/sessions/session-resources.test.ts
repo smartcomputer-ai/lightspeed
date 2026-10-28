@@ -79,5 +79,5 @@ it("includes code mode as a resource only when its feature grant is present", ()
 });
 
 it("treats sleeping machines as idle because tools wake them", () => {
-  expect(["ready", "paused", "booting", "failed"].map(environmentTone)).toEqual(["ok", "idle", "busy", "problem"]);
+  expect(["ready", "paused", "provisioning", "away", "failed"].map(environmentTone)).toEqual(["ok", "idle", "busy", "busy", "problem"]);
 });

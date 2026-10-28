@@ -26,11 +26,12 @@ use environment_protocol::{
     },
     error::{ProtocolError, ProtocolErrorKind},
     handshake::{ImplementationInfo, Plane},
-    ids::{BindingId, EnvironmentId, IncarnationId, ProcessId, TemplateId, UniverseId},
+    ids::{EnvironmentId, ProcessId, TemplateId, UniverseId},
     jsonrpc::{self, CancelRequestParams, Id, Message as RpcMessage, Request, Response},
-    limits::MAX_MESSAGE_BYTES,
+    limits::{MAX_MESSAGE_BYTES, RETRY_AFTER_MAX_SECS},
     manifest::{CancelRequest, EnvGetIdle},
     paths::EnvironmentPath,
+    routes::DataRouteRefusal,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -555,10 +556,116 @@ async fn an_upgrade_refusal_reports_its_status() {
         .await
         .expect_err("refused");
     assert!(
-        matches!(error, ClientError::UpgradeRejected { status: 401 }),
+        matches!(
+            error,
+            ClientError::UpgradeRejected {
+                status: 401,
+                refusal: None,
+                retry_after_ms: None,
+            }
+        ),
         "{error:?}"
     );
     assert!(!error.is_retryable());
+}
+
+/// Serve one data route refusal: `status`, `Retry-After` when given, and a
+/// JSON body.
+#[allow(clippy::result_large_err)]
+async fn refusing_route(
+    status: StatusCode,
+    retry_after: Option<&'static str>,
+    body: Value,
+) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("ws://{}", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let _ = accept_hdr_async(stream, move |_: &UpgradeRequest, _: UpgradeResponse| {
+            let mut response = ErrorResponse::new(Some(body.to_string()));
+            *response.status_mut() = status;
+            let headers = response.headers_mut();
+            headers.insert("content-type", "application/json".parse().unwrap());
+            if let Some(retry_after) = retry_after {
+                headers.insert("retry-after", retry_after.parse().unwrap());
+            }
+            Err(response)
+        })
+        .await;
+    });
+    url
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_data_route_refusal_is_typed_with_its_retry_after() {
+    let url = refusing_route(
+        StatusCode::SERVICE_UNAVAILABLE,
+        Some("3"),
+        json!({"state": "waking"}),
+    )
+    .await;
+    let error = DataClient::connect_initialized(&url, options())
+        .await
+        .expect_err("refused");
+    assert!(
+        matches!(
+            &error,
+            ClientError::UpgradeRejected {
+                status: 503,
+                refusal: Some(DataRouteRefusal::Waking {}),
+                retry_after_ms: Some(3_000),
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(error.is_retryable());
+    assert_eq!(error.to_string(), "upgrade refused with HTTP 503: waking");
+
+    let url = refusing_route(
+        StatusCode::SERVICE_UNAVAILABLE,
+        Some("86400"),
+        json!({"state": "booting"}),
+    )
+    .await;
+    let error = DataClient::connect_initialized(&url, options())
+        .await
+        .expect_err("refused");
+    assert_eq!(error.retry_after_ms(), Some(RETRY_AFTER_MAX_SECS * 1_000));
+
+    let url = refusing_route(StatusCode::GONE, None, json!({"state": "gone"})).await;
+    let error = DataClient::connect_initialized(&url, options())
+        .await
+        .expect_err("refused");
+    assert_eq!(error.data_route_refusal(), Some(&DataRouteRefusal::Gone {}));
+    assert!(!error.is_retryable());
+    assert_eq!(
+        environment_client::conformance::data_route::check_refusal(&error),
+        Ok(&DataRouteRefusal::Gone {})
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_undecodable_refusal_body_keeps_the_status() {
+    let url = refusing_route(
+        StatusCode::SERVICE_UNAVAILABLE,
+        None,
+        json!({"state": "sleeping"}),
+    )
+    .await;
+    let error = DataClient::connect_initialized(&url, options())
+        .await
+        .expect_err("refused");
+    assert!(
+        matches!(
+            error,
+            ClientError::UpgradeRejected {
+                status: 503,
+                refusal: None,
+                retry_after_ms: None,
+            }
+        ),
+        "{error:?}"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -626,9 +733,7 @@ async fn conformance_reports_an_unreachable_controller() {
     drop(listener);
     let owner = Arc::new(|| TargetOwner {
         universe_id: UniverseId::new("u1").unwrap(),
-        binding_id: BindingId::new("b1").unwrap(),
         environment_id: EnvironmentId::new("e1").unwrap(),
-        incarnation_id: IncarnationId::new("i1").unwrap(),
     });
     let report = run(&ControllerConformance::new(
         url,

@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     DaemonRuntime,
-    config::ListenAddr,
+    config::{ListenAddr, OnClosed},
     dispatch::{self, ConnectionInfo, RequestContext, WrittenHook},
 };
 
@@ -48,14 +48,16 @@ use crate::{
 /// identity.
 #[derive(Debug)]
 pub enum DaemonExit {
-    /// `SIGTERM` or `SIGINT`; a registered daemon said goodbye first.
+    /// `SIGTERM` or `SIGINT`; a registered daemon said goodbye first, and
+    /// a parked one had already stopped registering.
     Shutdown,
     /// Local configuration, state or receipt-file error.
     Configuration(anyhow::Error),
     /// The gateway refused registration for good, or it speaks another
     /// protocol and no automatic upgrade succeeded.
     Refused(String),
-    /// The gateway closed the identity's environment.
+    /// The gateway closed the identity's environment, and the daemon is
+    /// configured to exit rather than park.
     EnvironmentClosed,
     /// Another process with this daemon identity connected and won.
     Superseded { daemon_public_key: String },
@@ -104,8 +106,30 @@ pub(crate) fn websocket_config() -> WebSocketConfig {
 
 /// Serve the daemon until it stops: the passive listener when one is
 /// configured, the outbound registration loop when a gateway URL is
-/// configured, or both.
+/// configured, or both. A daemon configured to park once its environment
+/// is closed stops both and waits for a deliberate stop instead of exiting.
 pub async fn run(runtime: DaemonRuntime) -> DaemonExit {
+    let shutdown = runtime.shutdown().clone();
+    let on_closed = runtime
+        .config()
+        .registration
+        .as_ref()
+        .map_or(OnClosed::Exit, |registration| registration.on_closed);
+    match (serve(runtime).await, on_closed) {
+        (DaemonExit::EnvironmentClosed, OnClosed::Park) => park(&shutdown).await,
+        (exit, _) => exit,
+    }
+}
+
+/// Wait for `SIGTERM` or `SIGINT` after the registration loop and the
+/// listener have ended. Data connections already open run until then.
+async fn park(shutdown: &CancellationToken) -> DaemonExit {
+    tracing_line("the environment was closed; parked until SIGTERM or SIGINT");
+    shutdown.cancelled().await;
+    DaemonExit::Shutdown
+}
+
+async fn serve(runtime: DaemonRuntime) -> DaemonExit {
     let listen = runtime.config().listen.clone();
     let registration = runtime.config().registration.clone();
     match (listen, registration) {
@@ -693,7 +717,7 @@ mod tests {
 
         send(
             &mut client,
-            json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": 4, "clientInfo": {"name": "x"}, "fromTheFuture": true}}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": ENVD_PROTOCOL_VERSION + 1, "clientInfo": {"name": "x"}, "fromTheFuture": true}}),
         )
         .await;
         let mismatch: ProtocolError =
@@ -702,7 +726,7 @@ mod tests {
             mismatch.data,
             ErrorData::VersionMismatch {
                 expected: ENVD_PROTOCOL_VERSION,
-                received: 4
+                received: ENVD_PROTOCOL_VERSION + 1
             }
         );
 

@@ -58,12 +58,13 @@ function text(value: unknown): string | undefined {
 }
 
 /// Ready is running; paused, suspended, and stopped machines wake when a tool
-/// uses them, so they are idle rather than broken.
+/// uses them, so they are idle rather than broken. A registered daemon that is
+/// away may reconnect.
 export function environmentTone(status: string | undefined): ResourceTone {
   switch (status) {
     case "ready": return "ok";
-    case "paused": case "suspended": case "stopped": return "idle";
-    case "provisioning": case "booting": return "busy";
+    case "paused": case "suspended": case "stopped": case "unknown": return "idle";
+    case "provisioning": case "away": return "busy";
     case "closing": case "closed": case "failed": return "problem";
     default: return "idle";
   }

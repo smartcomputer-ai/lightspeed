@@ -139,7 +139,7 @@
         },
         {
           "const": "environment_not_ready",
-          "description": "The environment exists but is not reachable yet: it is still\nprovisioning/booting, or it was powered down and a wake (desired\npower `running`) has been initiated by this request. Distinct from\n`Rejected` so clients retry with backoff instead of failing —\npolling and automation callers lean on this for wake-on-use.",
+          "description": "The environment exists but is not reachable yet: it is still\nprovisioning, its provider is waking or booting it after a data\nroute dial, or its registered daemon is reconnecting. Distinct from\n`Rejected` so clients retry with backoff instead of failing —\npolling and automation callers lean on this for wake-on-use.",
           "type": "string"
         },
         {
@@ -1084,23 +1084,6 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfDeploymentEnvironmentAdoptResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/DeploymentEnvironmentAdoptResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfDeploymentEnvironmentProviderDeleteResponse": {
       "properties": {
         "notifications": {
@@ -1390,23 +1373,6 @@
       ],
       "type": "object"
     },
-    "AgentApiOutcomeOfEnvironmentIdlePolicyPutResponse": {
-      "properties": {
-        "notifications": {
-          "items": {
-            "$ref": "#/definitions/AgentNotification"
-          },
-          "type": "array"
-        },
-        "result": {
-          "$ref": "#/definitions/EnvironmentIdlePolicyPutResponse"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "type": "object"
-    },
     "AgentApiOutcomeOfEnvironmentIngressPutResponse": {
       "properties": {
         "notifications": {
@@ -1628,6 +1594,40 @@
       ],
       "type": "object"
     },
+    "AgentApiOutcomeOfEnvironmentRegistrationKeyRotateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyRotateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentRegistrationKeyUpdateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyUpdateResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
     "AgentApiOutcomeOfEnvironmentTemplateListResponse": {
       "properties": {
         "notifications": {
@@ -1655,6 +1655,23 @@
         },
         "result": {
           "$ref": "#/definitions/EnvironmentTemplateReadResponse"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "AgentApiOutcomeOfEnvironmentUpdateResponse": {
+      "properties": {
+        "notifications": {
+          "items": {
+            "$ref": "#/definitions/AgentNotification"
+          },
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/definitions/EnvironmentUpdateResponse"
         }
       },
       "required": [
@@ -8710,59 +8727,6 @@
       ],
       "type": "object"
     },
-    "DeploymentEnvironmentAdoptParams": {
-      "properties": {
-        "bindingId": {
-          "type": "string"
-        },
-        "displayName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "requestId": {
-          "description": "Stable caller-generated retry identity inside the destination universe.",
-          "type": "string"
-        },
-        "sourceTarget": {
-          "description": "Provider-native source reference. The Incus provider accepts\n`<project>/<instance>` or an instance name in the `default` project.",
-          "type": "string"
-        },
-        "takeOwnership": {
-          "description": "Required acknowledgement that Lightspeed will move, reconfigure, and\ndelete the target as part of its ordinary managed lifecycle.",
-          "type": "boolean"
-        },
-        "universeId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "universeId",
-        "requestId",
-        "bindingId",
-        "sourceTarget",
-        "takeOwnership"
-      ],
-      "type": "object"
-    },
-    "DeploymentEnvironmentAdoptResponse": {
-      "properties": {
-        "environment": {
-          "$ref": "#/definitions/EnvironmentView"
-        }
-      },
-      "required": [
-        "environment"
-      ],
-      "type": "object"
-    },
     "DeploymentEnvironmentProviderDeleteParams": {
       "properties": {
         "providerId": {
@@ -8785,24 +8749,6 @@
       ],
       "type": "object"
     },
-    "DeploymentEnvironmentProviderFeaturesView": {
-      "description": "Optional controller methods the provider's controller advertised.",
-      "properties": {
-        "adoptTarget": {
-          "description": "Existing targets can be adopted (`environment/adopt`).",
-          "type": "boolean"
-        },
-        "ingress": {
-          "description": "Public ingress can be enabled on environments.",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "adoptTarget",
-        "ingress"
-      ],
-      "type": "object"
-    },
     "DeploymentEnvironmentProviderListParams": {
       "type": "object"
     },
@@ -8821,14 +8767,25 @@
       "type": "object"
     },
     "DeploymentEnvironmentProviderPutParams": {
-      "description": "Register or replace a provider. `credential` is the bearer token\nLightspeed presents to the provider's controller and data routes: it is\nsealed on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
+      "description": "Register or replace a provider. `credential` is the optional bearer\ntoken Lightspeed presents to the provider's controller and data routes:\nit is sealed on receipt and never returned by any method. `Debug` output\nredacts it; request logging must never echo these params.",
       "properties": {
+        "clearCredential": {
+          "description": "Remove the stored credential. Excludes `credential`.",
+          "type": "boolean"
+        },
         "controllerEndpoint": {
           "description": "`ws://`, `wss://` or `unix://` URL of the provider controller.",
           "type": "string"
         },
         "credential": {
-          "description": "Required when the provider is new; omit to keep the stored one.",
+          "description": "A new bearer credential; omit to keep the stored one. A provider needs\nnone. Excludes `clearCredential`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dataRouteBase": {
+          "description": "`ws://` or `wss://` base of the provider's data routes; omit to derive\nit from the controller endpoint. Required for a `unix://` controller,\nand must not be `ws://` for a `wss://` controller.",
           "type": [
             "string",
             "null"
@@ -8839,12 +8796,6 @@
             "string",
             "null"
           ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
         },
         "providerId": {
           "type": "string"
@@ -8895,23 +8846,12 @@
           "description": "`ws://`, `wss://` or `unix://` URL of the provider controller.",
           "type": "string"
         },
-        "controllerFeatures": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/DeploymentEnvironmentProviderFeaturesView"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "What the controller advertised at its last successful handshake;\nabsent until Lightspeed first reached it at this endpoint."
-        },
         "createdAtMs": {
           "format": "int64",
           "type": "integer"
         },
         "dataRouteBase": {
-          "description": "Base URL of the provider's data routes, as its controller advertised\nit; absent until then.",
+          "description": "Operator-configured `ws://` or `wss://` base of the provider's data\nroutes; absent derives it from the controller endpoint.",
           "type": [
             "string",
             "null"
@@ -8923,11 +8863,16 @@
             "null"
           ]
         },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
+        "effectiveDataRouteBase": {
+          "description": "The data route base Lightspeed dials: `dataRouteBase`, or the\ncontroller endpoint's origin followed by `/routes`. Absent only when it\ncannot be derived.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hasCredential": {
+          "description": "A bearer credential is stored and presented to the controller and\ndata routes; without one no `Authorization` header is sent.",
+          "type": "boolean"
         },
         "providerId": {
           "type": "string"
@@ -8940,6 +8885,7 @@
       "required": [
         "providerId",
         "controllerEndpoint",
+        "hasCredential",
         "createdAtMs",
         "updatedAtMs"
       ],
@@ -8947,7 +8893,7 @@
     },
     "DeploymentProviderBindingDeleteParams": {
       "properties": {
-        "bindingId": {
+        "providerId": {
           "type": "string"
         },
         "universeId": {
@@ -8956,7 +8902,7 @@
       },
       "required": [
         "universeId",
-        "bindingId"
+        "providerId"
       ],
       "type": "object"
     },
@@ -8972,29 +8918,14 @@
       "type": "object"
     },
     "DeploymentProviderBindingPutParams": {
+      "description": "Create or replace a universe's binding to a deployment provider.",
       "properties": {
-        "bindingId": {
-          "type": "string"
-        },
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
+        "enabled": {
+          "description": "Admits creates, template listing and data routes for the universe.",
+          "type": "boolean"
         },
         "providerId": {
           "type": "string"
-        },
-        "status": {
-          "$ref": "#/definitions/EnvironmentProviderBindingStatusView"
         },
         "universeId": {
           "type": "string"
@@ -9002,9 +8933,8 @@
       },
       "required": [
         "universeId",
-        "bindingId",
         "providerId",
-        "status"
+        "enabled"
       ],
       "type": "object"
     },
@@ -9291,6 +9221,41 @@
       ],
       "type": "object"
     },
+    "EnvironmentCloseReasonView": {
+      "description": "Why an environment is closing or closed.",
+      "oneOf": [
+        {
+          "const": "requested",
+          "description": "`environments/close`.",
+          "type": "string"
+        },
+        {
+          "const": "keyRevoked",
+          "description": "Its registration key was revoked with `closeEnvironments`.",
+          "type": "string"
+        },
+        {
+          "const": "ephemeralGrace",
+          "description": "Its ephemeral daemon stayed away longer than the key's disconnect\ngrace.",
+          "type": "string"
+        },
+        {
+          "const": "departed",
+          "description": "Its ephemeral daemon said goodbye.",
+          "type": "string"
+        },
+        {
+          "const": "offlineTimeout",
+          "description": "Its persistent daemon stayed away longer than the key's\n`offlineCloseAfterMs`.",
+          "type": "string"
+        },
+        {
+          "const": "providerEnded",
+          "description": "The provider reported the target closed or gone.",
+          "type": "string"
+        }
+      ]
+    },
     "EnvironmentCloseResponse": {
       "properties": {
         "environment": {
@@ -9304,16 +9269,13 @@
     },
     "EnvironmentCreateParams": {
       "properties": {
-        "bindingId": {
-          "type": "string"
-        },
         "displayName": {
           "type": [
             "string",
             "null"
           ]
         },
-        "idlePolicy": {
+        "idle": {
           "anyOf": [
             {
               "$ref": "#/definitions/EnvironmentIdlePolicyView"
@@ -9322,7 +9284,7 @@
               "type": "null"
             }
           ],
-          "description": "Optional staged idle policy applied by the power reaper."
+          "description": "Idle policy passed to the provider in place of the template's `idle`.\nThe provider runs the idle clock; it cannot be changed after create."
         },
         "metadata": {
           "additionalProperties": {
@@ -9330,18 +9292,22 @@
           },
           "type": "object"
         },
+        "providerId": {
+          "description": "The provider to create the environment with; the universe needs an\nenabled binding to it.",
+          "type": "string"
+        },
         "requestId": {
-          "description": "Stable caller-generated retry identity, unique inside the universe.",
+          "description": "Stable caller-generated retry identity, unique inside the universe.\nRetrying with identical inputs returns the same environment.",
           "type": "string"
         },
         "templateId": {
-          "description": "Immutable provider template-version identity.",
+          "description": "The provider template to create the environment from.",
           "type": "string"
         }
       },
       "required": [
         "requestId",
-        "bindingId",
+        "providerId",
         "templateId"
       ],
       "type": "object"
@@ -9548,6 +9514,32 @@
       ],
       "type": "object"
     },
+    "EnvironmentDaemonView": {
+      "description": "The envd build serving an environment, from its registration or\nLightspeed's open handshake.",
+      "properties": {
+        "gitSha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "protocolVersion": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "protocolVersion"
+      ],
+      "type": "object"
+    },
     "EnvironmentExternalCreateParams": {
       "properties": {
         "displayName": {
@@ -9567,6 +9559,7 @@
           "type": "object"
         },
         "requestId": {
+          "description": "Stable caller-generated retry identity, unique inside the universe.",
           "type": "string"
         }
       },
@@ -9588,55 +9581,23 @@
       "type": "object"
     },
     "EnvironmentIdentityModeView": {
-      "description": "What Lightspeed does with a registered environment while its daemon is\ndisconnected. Registration-key policy, copied onto each environment.",
+      "description": "What happens to a registered environment while its daemon is\ndisconnected. Policy of the registration key that admitted it.",
       "oneOf": [
         {
           "const": "persistent",
-          "description": "Stays offline until explicitly closed.",
+          "description": "Stays open: tools wait up to two minutes for the daemon to reconnect.\nClosed explicitly, or after the key's `offlineCloseAfterMs`.",
           "type": "string"
         },
         {
           "const": "ephemeral",
-          "description": "Closed once the daemon has been away longer than the key's\ndisconnect grace.",
+          "description": "Unusable while disconnected; closed once the daemon has been away\nlonger than the key's disconnect grace, or at once when it says\ngoodbye.",
           "type": "string"
         }
       ]
     },
-    "EnvironmentIdlePolicyPutParams": {
-      "properties": {
-        "environmentId": {
-          "type": "string"
-        },
-        "idlePolicy": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentIdlePolicyView"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The complete new policy; omit to clear it."
-        }
-      },
-      "required": [
-        "environmentId"
-      ],
-      "type": "object"
-    },
-    "EnvironmentIdlePolicyPutResponse": {
-      "properties": {
-        "environment": {
-          "$ref": "#/definitions/EnvironmentView"
-        }
-      },
-      "required": [
-        "environment"
-      ],
-      "type": "object"
-    },
     "EnvironmentIdlePolicyView": {
-      "description": "Staged idle policy. Thresholds are milliseconds of daemon-reported idle\ntime and must be non-decreasing in the order pause, suspend, stop, close.\nStages whose power state the provider does not support are skipped.",
+      "additionalProperties": false,
+      "description": "Staged idle policy the provider applies. Thresholds are milliseconds of\nenvd-reported idle time (running processes, jobs and leftover process\ngroups hold it at zero) and must be non-decreasing in the order pause,\nsuspend, stop, close. Stages whose power state the template does not\nsupport are skipped.",
       "properties": {
         "closeAfterMs": {
           "format": "uint64",
@@ -9673,55 +9634,10 @@
       },
       "type": "object"
     },
-    "EnvironmentIncarnationView": {
-      "properties": {
-        "createdAtMs": {
-          "format": "int64",
-          "type": "integer"
-        },
-        "incarnationId": {
-          "type": "string"
-        },
-        "powerStates": {
-          "description": "Power states the provider reported for this target; empty until\nobserved or when the provider offers no power control.",
-          "items": {
-            "$ref": "#/definitions/EnvironmentPowerStateView"
-          },
-          "type": "array"
-        },
-        "providerTargetId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "provisionRequestId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "templateId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "updatedAtMs": {
-          "format": "int64",
-          "type": "integer"
-        }
-      },
-      "required": [
-        "incarnationId",
-        "createdAtMs",
-        "updatedAtMs"
-      ],
-      "type": "object"
-    },
     "EnvironmentIngressPutParams": {
       "properties": {
         "enabled": {
+          "description": "Ensure (`true`) or remove (`false`) the provider's public ingress.",
           "type": "boolean"
         },
         "environmentId": {
@@ -9880,65 +9796,26 @@
       },
       "type": "object"
     },
-    "EnvironmentLifecycleErrorView": {
-      "properties": {
-        "firstAtMs": {
-          "description": "When the current run of errors began.",
-          "format": "int64",
-          "type": "integer"
-        },
-        "lastAtMs": {
-          "description": "When `message` was recorded.",
-          "format": "int64",
-          "type": "integer"
-        },
-        "message": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "message",
-        "firstAtMs",
-        "lastAtMs"
-      ],
-      "type": "object"
-    },
-    "EnvironmentLifecycleStatusView": {
-      "oneOf": [
-        {
-          "enum": [
-            "provisioning",
-            "booting",
-            "ready",
-            "closing",
-            "closed",
-            "failed",
-            "unknown"
-          ],
-          "type": "string"
-        },
-        {
-          "const": "paused",
-          "description": "Execution frozen; wakes on next use.",
-          "type": "string"
-        },
-        {
-          "const": "suspended",
-          "description": "Execution state saved to disk; wakes on next use.",
-          "type": "string"
-        },
-        {
-          "const": "offline",
-          "description": "Powered off; provisioned environments wake on next use when the\nprovider supports power control.",
-          "type": "string"
-        }
-      ]
-    },
     "EnvironmentListParams": {
       "properties": {
-        "bindingId": {
+        "after": {
+          "description": "Exclusive environment id cursor: a previous page's `nextAfter`.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "includeClosed": {
+          "description": "Also list closed environments; they are omitted by default.",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Most environments per page; omit for 100.",
+          "format": "uint32",
+          "maximum": 500,
+          "minimum": 1,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -9950,6 +9827,7 @@
           "type": "object"
         },
         "providerId": {
+          "description": "Only provisioned environments of this provider.",
           "type": [
             "string",
             "null"
@@ -9962,15 +9840,16 @@
             "null"
           ]
         },
-        "status": {
+        "state": {
           "anyOf": [
             {
-              "$ref": "#/definitions/EnvironmentLifecycleStatusView"
+              "$ref": "#/definitions/EnvironmentStateView"
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Only environments in this lifecycle state. `closed` lists closed\nenvironments without `includeClosed`."
         }
       },
       "type": "object"
@@ -9979,12 +9858,54 @@
       "properties": {
         "environments": {
           "default": [],
+          "description": "Environments in environment id order.",
           "items": {
             "$ref": "#/definitions/EnvironmentView"
           },
           "type": "array"
+        },
+        "nextAfter": {
+          "description": "Pass as `after` to read the next page; absent on the last page.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
+      "type": "object"
+    },
+    "EnvironmentObservedTargetView": {
+      "description": "What the provider last reported about a provisioned environment's\ntarget. Display only: Lightspeed never converges it, and it may be up to\na few minutes old.",
+      "properties": {
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "observedAtMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "phase": {
+          "$ref": "#/definitions/EnvironmentTargetPhaseView"
+        },
+        "power": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentPowerStateView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present only while `phase` is `active`."
+        }
+      },
+      "required": [
+        "phase",
+        "observedAtMs"
+      ],
       "type": "object"
     },
     "EnvironmentPowerPutParams": {
@@ -9998,7 +9919,7 @@
               "$ref": "#/definitions/EnvironmentPowerStateView"
             }
           ],
-          "description": "Desired steady power state. Must be one of the provider-reported\n`incarnation.powerStates`."
+          "description": "Power state to move the target to; one of its template's\n`powerStates`."
         }
       },
       "required": [
@@ -10019,7 +9940,7 @@
       "type": "object"
     },
     "EnvironmentPowerStateView": {
-      "description": "Steady power state of a provisioned environment.",
+      "description": "Power state of a provisioned environment's target.",
       "oneOf": [
         {
           "enum": [
@@ -10081,12 +10002,12 @@
     },
     "EnvironmentProviderBindingReadParams": {
       "properties": {
-        "bindingId": {
+        "providerId": {
           "type": "string"
         }
       },
       "required": [
-        "bindingId"
+        "providerId"
       ],
       "type": "object"
     },
@@ -10101,38 +10022,18 @@
       ],
       "type": "object"
     },
-    "EnvironmentProviderBindingStatusView": {
-      "enum": [
-        "enabled",
-        "disabled"
-      ],
-      "type": "string"
-    },
     "EnvironmentProviderBindingView": {
+      "description": "A universe's binding to a deployment provider. Creates, templates and\ndata routes of the provider need it enabled.",
       "properties": {
-        "bindingId": {
-          "type": "string"
-        },
         "createdAtMs": {
           "format": "int64",
           "type": "integer"
         },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
+        "enabled": {
+          "type": "boolean"
         },
         "providerId": {
           "type": "string"
-        },
-        "revision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "status": {
-          "$ref": "#/definitions/EnvironmentProviderBindingStatusView"
         },
         "updatedAtMs": {
           "format": "int64",
@@ -10140,10 +10041,8 @@
         }
       },
       "required": [
-        "bindingId",
         "providerId",
-        "status",
-        "revision",
+        "enabled",
         "createdAtMs",
         "updatedAtMs"
       ],
@@ -10194,11 +10093,25 @@
           ]
         },
         "identityMode": {
-          "$ref": "#/definitions/EnvironmentIdentityModeView"
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentIdentityModeView"
+            }
+          ],
+          "description": "Immutable once the key exists."
         },
         "maxActiveEnvironments": {
           "description": "Non-closed environments the key may have at once; omit for unlimited.",
           "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offlineCloseAfterMs": {
+          "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
+          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -10303,6 +10216,37 @@
       ],
       "type": "object"
     },
+    "EnvironmentRegistrationKeyRotateParams": {
+      "properties": {
+        "registrationKeyId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "registrationKeyId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegistrationKeyRotateResponse": {
+      "properties": {
+        "registrationKey": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyView"
+        },
+        "secret": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EnvironmentRegistrationSecretView"
+            }
+          ],
+          "description": "The new plaintext secret, returned only here."
+        }
+      },
+      "required": [
+        "registrationKey",
+        "secret"
+      ],
+      "type": "object"
+    },
     "EnvironmentRegistrationKeyStatusView": {
       "enum": [
         "active",
@@ -10310,6 +10254,68 @@
         "expired"
       ],
       "type": "string"
+    },
+    "EnvironmentRegistrationKeyUpdateParams": {
+      "description": "The complete editable policy of a registration key; an absent field is\nunset. The identity mode is immutable.",
+      "properties": {
+        "displayName": {
+          "description": "Group name for the environments this key admits.",
+          "type": "string"
+        },
+        "ephemeralDisconnectGraceMs": {
+          "description": "Disconnect grace for ephemeral environments; omit for the default.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "expiresAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxActiveEnvironments": {
+          "description": "Non-closed environments the key may have at once; omit for unlimited.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offlineCloseAfterMs": {
+          "description": "Persistent keys only: close environments whose daemon has been away\nlonger than this; omit to keep them open.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "registrationKeyId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "registrationKeyId",
+        "displayName"
+      ],
+      "type": "object"
+    },
+    "EnvironmentRegistrationKeyUpdateResponse": {
+      "properties": {
+        "registrationKey": {
+          "$ref": "#/definitions/EnvironmentRegistrationKeyView"
+        }
+      },
+      "required": [
+        "registrationKey"
+      ],
+      "type": "object"
     },
     "EnvironmentRegistrationKeyView": {
       "properties": {
@@ -10344,7 +10350,7 @@
           "$ref": "#/definitions/EnvironmentIdentityModeView"
         },
         "keyPrefix": {
-          "description": "First characters of the secret, for identification only.",
+          "description": "First characters of the key's live secret, for identification only.",
           "type": "string"
         },
         "lastRegisteredAtMs": {
@@ -10356,6 +10362,15 @@
         },
         "maxActiveEnvironments": {
           "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offlineCloseAfterMs": {
+          "description": "Persistent keys only: environments whose daemon has been away longer\nthan this are closed; absent keeps them open.",
+          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -10380,6 +10395,10 @@
         },
         "status": {
           "$ref": "#/definitions/EnvironmentRegistrationKeyStatusView"
+        },
+        "updatedAtMs": {
+          "format": "int64",
+          "type": "integer"
         }
       },
       "required": [
@@ -10391,7 +10410,8 @@
         "status",
         "registeredEnvironmentCount",
         "activeEnvironmentCount",
-        "createdAtMs"
+        "createdAtMs",
+        "updatedAtMs"
       ],
       "type": "object"
     },
@@ -10420,11 +10440,48 @@
     "EnvironmentSourceView": {
       "oneOf": [
         {
+          "description": "A target a deployment provider created from a template. The provider\nowns its power, idle policy and ingress.",
           "properties": {
-            "bindingId": {
-              "type": "string"
+            "idle": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentIdlePolicyView"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The create-time idle policy, when one replaced the template's."
+            },
+            "observed": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentObservedTargetView"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Absent until the provider first reported the target."
             },
             "providerId": {
+              "type": "string"
+            },
+            "publicEndpoint": {
+              "description": "The public endpoint the provider last reported.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "targetId": {
+              "description": "The provider's handle for the target; absent until the provider\naccepted the create.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "templateId": {
               "type": "string"
             },
             "type": {
@@ -10435,7 +10492,7 @@
           "required": [
             "type",
             "providerId",
-            "bindingId"
+            "templateId"
           ],
           "type": "object"
         },
@@ -10459,11 +10516,30 @@
         {
           "description": "An envd that dialed the gateway outbound and was admitted by a\nregistration key. The key is the environment's group; the daemon id\nis derived from the daemon's public key and is its identity.",
           "properties": {
+            "connected": {
+              "description": "The daemon's control connection is up.",
+              "type": "boolean"
+            },
+            "connectionChangedAtMs": {
+              "description": "When the daemon last connected or disconnected.",
+              "format": "int64",
+              "type": "integer"
+            },
             "daemonId": {
               "type": "string"
             },
             "identityMode": {
-              "$ref": "#/definitions/EnvironmentIdentityModeView"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/EnvironmentIdentityModeView"
+                }
+              ],
+              "description": "The admitting key's identity mode."
+            },
+            "lastSeenAtMs": {
+              "description": "When the gateway last recorded the daemon's control connection:\nat connect, at disconnect, and at most every five minutes while\nconnected.",
+              "format": "int64",
+              "type": "integer"
             },
             "registrationKeyId": {
               "type": "string"
@@ -10477,15 +10553,98 @@
             "type",
             "registrationKeyId",
             "daemonId",
-            "identityMode"
+            "identityMode",
+            "connected",
+            "connectionChangedAtMs",
+            "lastSeenAtMs"
           ],
           "type": "object"
         }
       ]
     },
+    "EnvironmentStateView": {
+      "description": "The lifecycle Lightspeed owns. External and registered environments are\nonly ever `open` or `closed`.",
+      "oneOf": [
+        {
+          "enum": [
+            "open",
+            "closed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "provisioning",
+          "description": "The provider is creating the target; the environment opens after\nLightspeed's first handshake with its envd.",
+          "type": "string"
+        },
+        {
+          "const": "closing",
+          "description": "The provider is removing the target.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Provisioning or the provider failed; `stateMessage` says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "EnvironmentStatusView": {
+      "description": "Display status derived from `state` and the latest observation; never\nstored. Tools that use a paused, suspended or stopped environment wake\nit.",
+      "oneOf": [
+        {
+          "enum": [
+            "provisioning",
+            "ready",
+            "closing",
+            "closed",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "paused",
+          "description": "Execution frozen with RAM resident.",
+          "type": "string"
+        },
+        {
+          "const": "suspended",
+          "description": "Execution state saved to disk.",
+          "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "Powered off with disk retained.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Open, but the provider's latest observation is inconclusive.",
+          "type": "string"
+        },
+        {
+          "const": "away",
+          "description": "Registered, open, and its daemon is not connected.",
+          "type": "string"
+        }
+      ]
+    },
+    "EnvironmentTargetPhaseView": {
+      "description": "Lifecycle phase of a provider target, as the provider reports it.",
+      "enum": [
+        "provisioning",
+        "active",
+        "closing",
+        "closed",
+        "failed",
+        "unknown"
+      ],
+      "type": "string"
+    },
     "EnvironmentTemplateListParams": {
       "properties": {
-        "bindingId": {
+        "providerId": {
+          "description": "Only this provider's templates; omit for every enabled binding.",
           "type": [
             "string",
             "null"
@@ -10510,7 +10669,7 @@
     },
     "EnvironmentTemplateReadParams": {
       "properties": {
-        "bindingId": {
+        "providerId": {
           "type": "string"
         },
         "templateId": {
@@ -10518,7 +10677,7 @@
         }
       },
       "required": [
-        "bindingId",
+        "providerId",
         "templateId"
       ],
       "type": "object"
@@ -10566,9 +10725,6 @@
     },
     "EnvironmentTemplateView": {
       "properties": {
-        "bindingId": {
-          "type": "string"
-        },
         "deprecated": {
           "type": "boolean"
         },
@@ -10581,16 +10737,35 @@
         "displayName": {
           "type": "string"
         },
+        "idle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentIdlePolicyView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Idle policy targets get when `environments/create` names none."
+        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
           },
           "type": "object"
         },
+        "powerStates": {
+          "description": "Power states `environments/power/put` can move targets of this\ntemplate to; empty without power control.",
+          "items": {
+            "$ref": "#/definitions/EnvironmentPowerStateView"
+          },
+          "type": "array"
+        },
         "providerId": {
           "type": "string"
         },
         "publicIngress": {
+          "description": "`environments/ingress/put` can enable public ingress on targets of\nthis template.",
           "type": "boolean"
         },
         "resources": {
@@ -10611,26 +10786,84 @@
       "required": [
         "templateId",
         "providerId",
-        "bindingId",
         "displayName",
         "publicIngress",
-        "deprecated"
+        "deprecated",
+        "powerStates"
+      ],
+      "type": "object"
+    },
+    "EnvironmentUpdateParams": {
+      "description": "Replace an environment's display name and caller metadata.",
+      "properties": {
+        "displayName": {
+          "description": "The new display name; omit to clear it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "environmentId": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The complete new caller metadata; omit or `{}` to clear it.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "environmentId"
+      ],
+      "type": "object"
+    },
+    "EnvironmentUpdateResponse": {
+      "properties": {
+        "environment": {
+          "$ref": "#/definitions/EnvironmentView"
+        }
+      },
+      "required": [
+        "environment"
       ],
       "type": "object"
     },
     "EnvironmentView": {
       "properties": {
+        "closeReason": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/EnvironmentCloseReasonView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present exactly while `state` is `closing` or `closed`."
+        },
+        "closedAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "createdAtMs": {
           "format": "int64",
           "type": "integer"
         },
-        "desiredPower": {
-          "allOf": [
+        "daemon": {
+          "anyOf": [
             {
-              "$ref": "#/definitions/EnvironmentPowerStateView"
+              "$ref": "#/definitions/EnvironmentDaemonView"
+            },
+            {
+              "type": "null"
             }
           ],
-          "description": "Lightspeed-owned power intent; `status` is the observed state."
+          "description": "The envd build serving the environment; absent until known."
         },
         "displayName": {
           "type": [
@@ -10641,63 +10874,40 @@
         "environmentId": {
           "type": "string"
         },
-        "idlePolicy": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentIdlePolicyView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "incarnation": {
-          "$ref": "#/definitions/EnvironmentIncarnationView"
-        },
-        "lastSeenAtMs": {
-          "description": "Registered environments only: when the gateway last saw the daemon's\ncontrol connection.",
-          "format": "int64",
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "lifecycleError": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/EnvironmentLifecycleErrorView"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Why the environment failed, or the latest error (or what the\nprovider reports it is waiting on) while its lifecycle converges;\nabsent once it reaches a steady state."
-        },
         "metadata": {
           "additionalProperties": {
             "type": "string"
           },
+          "description": "Caller metadata.",
           "type": "object"
         },
-        "publicEndpoint": {
-          "description": "The public endpoint the provider last reported. It lags\n`publicIngressEnabled` while the lifecycle reconciler converges.",
+        "requestId": {
+          "description": "The caller's retry identity; absent for registered environments.",
           "type": [
             "string",
             "null"
           ]
         },
-        "publicIngressEnabled": {
-          "description": "Lightspeed-owned public ingress intent; `publicEndpoint` is what the\nprovider realized.",
-          "type": "boolean"
-        },
-        "requestId": {
-          "type": "string"
-        },
         "source": {
           "$ref": "#/definitions/EnvironmentSourceView"
         },
+        "state": {
+          "$ref": "#/definitions/EnvironmentStateView"
+        },
+        "stateChangedAtMs": {
+          "description": "When `state` last changed.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "stateMessage": {
+          "description": "Why the environment failed, or what provisioning or closing is\nwaiting on.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "status": {
-          "$ref": "#/definitions/EnvironmentLifecycleStatusView"
+          "$ref": "#/definitions/EnvironmentStatusView"
         },
         "updatedAtMs": {
           "format": "int64",
@@ -10706,12 +10916,10 @@
       },
       "required": [
         "environmentId",
-        "requestId",
         "source",
+        "state",
         "status",
-        "desiredPower",
-        "incarnation",
-        "publicIngressEnabled",
+        "stateChangedAtMs",
         "createdAtMs",
         "updatedAtMs"
       ],
@@ -12282,7 +12490,7 @@
         },
         {
           "const": "deployment/environment-providers",
-          "description": "Environment providers, their bindings and adoption.",
+          "description": "Environment providers and their universe bindings.",
           "type": "string"
         },
         {

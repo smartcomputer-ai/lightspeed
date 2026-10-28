@@ -10,26 +10,32 @@ import { isPlatformAdmin } from "../context.js";
 import { parseBody } from "../http.js";
 import { deploymentClientFor, withGateway } from "./gateway.js";
 
-const metadataSchema = z.record(z.string(), z.string()).optional();
 const providerPutSchema = z.object({
   displayName: z.string().trim().min(1).max(200).optional(),
-  metadata: metadataSchema,
   controllerEndpoint: z
     .string()
     .trim()
     .max(2048)
     .regex(/^(wss?:\/\/|unix:\/\/\/)[^\s]+$/, "controller endpoint must be a ws://, wss:// or unix:// URL"),
-  // Write-only: required for a new provider, omitted to keep the stored one.
+  // Absent derives the data route base from a ws:// or wss:// controller.
+  dataRouteBase: z
+    .string()
+    .trim()
+    .max(2048)
+    .regex(/^wss?:\/\/[^\s]+$/, "data route base must be a ws:// or wss:// URL")
+    .optional(),
+  // Write-only and optional: omitted keeps the stored credential.
   credential: z.string().min(1).max(4096).optional(),
-});
+  clearCredential: z.boolean().optional(),
+}).refine(
+  (value) => !(value.credential && value.clearCredential),
+  "credential and clearCredential are mutually exclusive",
+);
 const bindingPutSchema = z.object({
-  providerId: z.string().trim().min(1).max(200),
-  status: z.enum(["enabled", "disabled"]),
-  expectedRevision: z.number().int().min(1).optional(),
-  metadata: metadataSchema,
+  enabled: z.boolean(),
 });
 
-/// Deployment/deployment environment administration. Universe owners consume
+/// Deployment environment administration. Universe owners consume
 /// enabled bindings elsewhere; only platform admins may mutate physical
 /// provider registrations or universe admission bindings here.
 export function environmentDeploymentRoutes(ctx: AppContext) {
@@ -84,12 +90,13 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
     const body = await parseBody(c, providerPutSchema);
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
+      const params: DeploymentEnvironmentProviderPutParams = {
+        providerId: c.req.param("providerId"),
+        ...body.data,
+      };
       const response = await deploymentClientFor(ctx).call(
         "deployment/environment-providers/put",
-        {
-          providerId: c.req.param("providerId"),
-          ...body.data,
-        } as DeploymentEnvironmentProviderPutParams,
+        params,
       );
       return c.json(response.result.provider);
     });
@@ -103,29 +110,30 @@ export function environmentDeploymentRoutes(ctx: AppContext) {
     return c.json(response.result.provider);
   }));
 
-  app.put("/universes/:universeId/environment-provider-bindings/:bindingId", async (c) => {
+  app.put("/universes/:universeId/environment-provider-bindings/:providerId", async (c) => {
     const body = await parseBody(c, bindingPutSchema);
     if (!body.ok) return body.response;
     return withGateway(c, async () => {
+      const params: DeploymentProviderBindingPutParams = {
+        universeId: c.req.param("universeId"),
+        providerId: c.req.param("providerId"),
+        enabled: body.data.enabled,
+      };
       const response = await deploymentClientFor(ctx).call(
         "deployment/environment-providers/bindings/put",
-        {
-          universeId: c.req.param("universeId"),
-          bindingId: c.req.param("bindingId"),
-          ...body.data,
-        } as DeploymentProviderBindingPutParams,
+        params,
       );
       return c.json(response.result.binding);
     });
   });
 
-  app.delete("/universes/:universeId/environment-provider-bindings/:bindingId", (c) =>
+  app.delete("/universes/:universeId/environment-provider-bindings/:providerId", (c) =>
     withGateway(c, async () => {
       const response = await deploymentClientFor(ctx).call(
         "deployment/environment-providers/bindings/delete",
         {
           universeId: c.req.param("universeId"),
-          bindingId: c.req.param("bindingId"),
+          providerId: c.req.param("providerId"),
         },
       );
       return c.json(response.result.binding);

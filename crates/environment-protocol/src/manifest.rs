@@ -20,8 +20,8 @@ use crate::{
         handshake::{ControllerInitializeParams, ControllerInitializeResponse},
         ingress::{EnsureIngressParams, RemoveIngressParams},
         target::{
-            AdoptTargetParams, CloseTargetParams, CreateTargetParams, GetTargetParams,
-            SetTargetPowerParams, TargetResponse,
+            CloseTargetParams, CreateTargetParams, GetTargetParams, SetTargetPowerParams,
+            TargetResponse,
         },
         template::{ListTemplatesParams, ListTemplatesResponse},
     },
@@ -512,25 +512,19 @@ requests! {
         plane: Controller, direction: ClientToServer, family: Handshake, activity: None,
         capability: None, abortable: false,
         params: ControllerInitializeParams, response: ControllerInitializeResponse,
-        summary: "Check the protocol version and read the controller's capabilities and routes.",
+        summary: "Check the protocol version and read the controller's capabilities.",
     }
     TemplateList = "template/list" {
         plane: Controller, direction: ClientToServer, family: Template, activity: None,
         capability: None, abortable: false,
         params: ListTemplatesParams, response: ListTemplatesResponse,
-        summary: "List the templates a binding may create targets from.",
+        summary: "List the templates a universe may create targets from.",
     }
     TargetCreate = "target/create" {
         plane: Controller, direction: ClientToServer, family: Target, activity: None,
         capability: None, abortable: false,
         params: CreateTargetParams, response: TargetResponse,
         summary: "Create the owner's target, or observe the one it has.",
-    }
-    TargetAdopt = "target/adopt" {
-        plane: Controller, direction: ClientToServer, family: Target, activity: None,
-        capability: Some(Capability::AdoptTarget), abortable: false,
-        params: AdoptTargetParams, response: TargetResponse,
-        summary: "Take ownership of an existing provider target.",
     }
     TargetGet = "target/get" {
         plane: Controller, direction: ClientToServer, family: Target, activity: None,
@@ -540,9 +534,9 @@ requests! {
     }
     TargetSetPower = "target/setPower" {
         plane: Controller, direction: ClientToServer, family: Target, activity: None,
-        capability: None, abortable: false,
+        capability: Some(Capability::Power), abortable: false,
         params: SetTargetPowerParams, response: TargetResponse,
-        summary: "Converge a target toward a power state.",
+        summary: "Move a target to a power state.",
     }
     TargetClose = "target/close" {
         plane: Controller, direction: ClientToServer, family: Target, activity: None,

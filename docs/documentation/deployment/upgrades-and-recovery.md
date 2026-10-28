@@ -236,9 +236,11 @@ An outbound daemon and its gateway must agree on the environment protocol.
 The release metadata records that protocol, and the gateway reports a mismatch
 when an incompatible daemon connects. Provider controllers have their own
 protocol number: redeploy every provider together with a runtime release that
-changes it. A provisioned machine whose baked-in daemon speaks another version
-fails when it becomes ready, with an error naming both versions, so recreate
-such machines from an updated image.
+changes it. A provider that runs idle policy also reads its daemons' idle
+reports, so it moves with the daemon protocol as well. A provisioned machine
+whose baked-in daemon speaks another version fails when it becomes ready,
+with an error naming both versions, so recreate such machines from an
+updated image.
 
 `lightspeed-envd upgrade` installs the build named by the deployment's discovery
 document. It verifies the archive checksum and checks the candidate's version,
@@ -258,7 +260,11 @@ daemon replaces its executable and re-executes with its arguments, working
 directory, state directory, and identity retained. The daemon attempts one
 upgrade per protocol version the gateway names, so a stale discovery document
 cannot cause an upgrade loop. Network failures while fetching the document or
-archive are retried; a checksum or build-fact mismatch stops the daemon. See the
+archive are retried; a checksum or build-fact mismatch stops the daemon. Keep
+automatic upgrade off for daemons in containers and on read-only root
+filesystems, and roll out a new image instead; see
+[Run registered daemons](../environments/registered-daemons.md#provide-the-daemon-binary).
+See the
 [daemon reference](../reference/environment-variables.md#environment-daemon)
 for discovery URL and private-CA settings.
 

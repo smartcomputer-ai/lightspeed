@@ -1,45 +1,49 @@
-//! Minimal live environment control-plane acceptance test.
+//! Live environment provider acceptance tests.
 //!
-//! This deliberately uses the fake controller, served on loopback and
-//! registered like any provider, with real Postgres and the real deployment
-//! reconciler. It covers the durable provider and ingress seams without
-//! requiring an Incus installation; the separate Incus live smoke test owns
-//! backend connectivity and topology.
+//! These use the fake controller, served on loopback and registered like
+//! any provider, with real Postgres and the real reconciler. They cover the
+//! provider seams without requiring an Incus installation: create until
+//! accepted and opened by one handshake, close until gone, the
+//! synchronous power and ingress pass-throughs, wake on a data route dial,
+//! the display sweep's provider-ended close, and per-row backoff while a
+//! provider is down. The separate Incus live smoke test owns backend
+//! connectivity and topology.
 
 mod support;
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use api::{
-    AgentApiService, DeploymentApiService, DeploymentEnvironmentAdoptParams,
-    DeploymentEnvironmentProviderDeleteParams, DeploymentEnvironmentProviderPutParams,
+    AgentApiService, DeploymentApiService, DeploymentEnvironmentProviderDeleteParams,
+    DeploymentEnvironmentProviderPutParams, DeploymentProviderBindingDeleteParams,
     DeploymentProviderBindingPutParams, DeploymentUniverseCreateParams, EnvironmentCloseParams,
-    EnvironmentCreateParams, EnvironmentIngressPutParams, EnvironmentLifecycleStatusView,
-    EnvironmentListParams, EnvironmentProviderBindingStatusView, EnvironmentTemplateListParams,
-    SessionConfig, SessionStartParams,
+    EnvironmentCloseReasonView, EnvironmentCreateParams, EnvironmentIngressPutParams,
+    EnvironmentListParams, EnvironmentPowerPutParams, EnvironmentPowerStateView,
+    EnvironmentSourceView, EnvironmentStateView, EnvironmentStatusView,
+    EnvironmentTemplateListParams, EnvironmentView,
 };
-use api_projection::model_to_api;
-use harness::SessionId;
-use support::live::{
-    LIVE_TEST_LOCK, fake_worker_activities, read_session_view, require_storage_live_env,
-    run_with_live_worker, wait_for_environment_status,
+use environment_client::conformance::data_route::expect_refusal;
+use environment_protocol::{
+    control::target::TargetOwner,
+    ids::{EnvironmentId as ProtocolEnvironmentId, ProviderTargetId, UniverseId},
+    routes::{DataRouteBase, DataRouteRefusal, provider_data_route},
 };
+use environments::EnvironmentStore;
+use support::live::wait_for_environment_state;
 use temporal_runtime::{
     DeploymentStores, UniverseRuntime,
-    environments::fake_controller::{FAKE_INGRESS_ENDPOINT, FAKE_TEMPLATE_ID, FakeController},
-    gateway::{GatewayAgentApi, GatewayDeploymentApi},
-    pg_store_from_env,
+    environments::fake_controller::{
+        FAKE_INGRESS_ENDPOINT, FAKE_TEMPLATE_ID, FakeController, FakeControllerOptions,
+    },
+    gateway::{
+        GatewayAgentApi, GatewayDeploymentApi,
+        request_context::{RequestContext, with_request_context as calling},
+    },
 };
 use temporal_workflow::{DEFAULT_TEMPORAL_NAMESPACE, DEFAULT_TEMPORAL_TARGET, connect_temporal};
-use temporalio_client::Client;
 use uuid::Uuid;
 
-#[tokio::test(flavor = "current_thread")]
-#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
-async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Result<()> {
-    let _ = dotenvy::dotenv();
-    require_live_env()?;
-
+async fn live_runtime(name: &str) -> anyhow::Result<(Arc<UniverseRuntime>, sqlx::PgPool)> {
     let temporal_target =
         std::env::var("TEMPORAL_ADDRESS").unwrap_or_else(|_| DEFAULT_TEMPORAL_TARGET.to_owned());
     let namespace = std::env::var("TEMPORAL_NAMESPACE")
@@ -47,362 +51,596 @@ async fn environment_provider_lifecycle_and_adoption_round_trip() -> anyhow::Res
     let client = connect_temporal(&temporal_target, &namespace).await?;
     let stores = DeploymentStores::from_env().await?;
     let pool = stores.pool().clone();
-    let suffix = Uuid::new_v4().simple().to_string();
-    let provider_id = format!("fake-live-{suffix}");
-    let universe_a = Uuid::new_v4();
-    let universe_b = Uuid::new_v4();
     let runtime = Arc::new(UniverseRuntime::new(
         client,
-        format!("environment-provider-live-{suffix}"),
+        format!("{name}-{}", Uuid::new_v4().simple()),
         Some("http://127.0.0.1:18080".to_owned()),
         stores,
     )?);
+    Ok((runtime, pool))
+}
+
+fn deployment_caller() -> RequestContext {
+    RequestContext::local(api::AccessScope::Deployment)
+}
+
+fn universe_caller(universe_id: Uuid) -> RequestContext {
+    RequestContext::local(api::AccessScope::Universe { universe_id })
+}
+
+/// Create a universe, register `controller` as `provider_id` and bind it.
+async fn provider_universe(
+    operator: &GatewayDeploymentApi,
+    universe_id: Uuid,
+    provider_id: &str,
+    controller: &FakeController,
+) -> anyhow::Result<()> {
+    calling(
+        deployment_caller(),
+        operator.create_universe(DeploymentUniverseCreateParams {
+            slug: None,
+            universe_id: universe_id.to_string(),
+        }),
+    )
+    .await?;
+    calling(
+        deployment_caller(),
+        operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
+            provider_id: provider_id.to_owned(),
+            display_name: Some("Live fake provider".to_owned()),
+            controller_endpoint: controller.controller_url().to_owned(),
+            data_route_base: None,
+            credential: controller.credential().map(str::to_owned),
+            clear_credential: false,
+        }),
+    )
+    .await?;
+    calling(
+        deployment_caller(),
+        operator.put_environment_provider_binding(DeploymentProviderBindingPutParams {
+            universe_id: universe_id.to_string(),
+            provider_id: provider_id.to_owned(),
+            enabled: true,
+        }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Remove what [`provider_universe`] made, best effort.
+async fn cleanup(
+    runtime: &UniverseRuntime,
+    operator: &GatewayDeploymentApi,
+    pool: &sqlx::PgPool,
+    universe_id: Uuid,
+    provider_id: &str,
+) {
+    let _ = calling(
+        deployment_caller(),
+        operator.delete_environment_provider_binding(DeploymentProviderBindingDeleteParams {
+            universe_id: universe_id.to_string(),
+            provider_id: provider_id.to_owned(),
+        }),
+    )
+    .await;
+    runtime.evict(universe_id).await;
+    let _ = store_pg::delete_universe(pool, universe_id).await;
+    let _ = calling(
+        deployment_caller(),
+        operator.delete_environment_provider(DeploymentEnvironmentProviderDeleteParams {
+            provider_id: provider_id.to_owned(),
+        }),
+    )
+    .await;
+}
+
+fn create_params(request_id: &str, provider_id: &str) -> EnvironmentCreateParams {
+    EnvironmentCreateParams {
+        request_id: request_id.to_owned(),
+        provider_id: provider_id.to_owned(),
+        template_id: FAKE_TEMPLATE_ID.to_owned(),
+        display_name: Some("Provisioned live VM".to_owned()),
+        metadata: BTreeMap::new(),
+        idle: None,
+    }
+}
+
+/// Poll a read until `done` holds, with the background reconciler doing
+/// the work.
+async fn wait_for(
+    api: &GatewayAgentApi,
+    environment_id: &str,
+    what: &str,
+    done: impl Fn(&EnvironmentView) -> bool,
+) -> anyhow::Result<EnvironmentView> {
+    let started = std::time::Instant::now();
+    loop {
+        let environment = api
+            .read_environment(api::EnvironmentReadParams {
+                environment_id: environment_id.to_owned(),
+            })
+            .await?
+            .result
+            .environment;
+        if done(&environment) {
+            return Ok(environment);
+        }
+        if started.elapsed() > Duration::from_secs(15) {
+            anyhow::bail!(
+                "timed out waiting for environment {environment_id} to {what}; it is {:?} ({:?})",
+                environment.state,
+                environment.state_message
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn target_id(environment: &EnvironmentView) -> Option<String> {
+    match &environment.source {
+        EnvironmentSourceView::Provisioned { target_id, .. } => target_id.clone(),
+        _ => None,
+    }
+}
+
+fn public_endpoint(environment: &EnvironmentView) -> Option<String> {
+    match &environment.source {
+        EnvironmentSourceView::Provisioned {
+            public_endpoint, ..
+        } => public_endpoint.clone(),
+        _ => None,
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn environment_provider_lifecycle_round_trip() -> anyhow::Result<()> {
+    let _ = dotenvy::dotenv();
+    require_live_env()?;
+    let (runtime, pool) = live_runtime("environment-provider-live").await?;
     let operator = GatewayDeploymentApi::new(runtime.clone());
-    let controller = FakeController::start().await?;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let guarded_id = format!("fake-live-{suffix}");
+    let open_id = format!("fake-open-{suffix}");
+    let universe_a = Uuid::new_v4();
+    let universe_b = Uuid::new_v4();
+    let guarded = FakeController::start().await?;
+    let open = FakeController::start_with(FakeControllerOptions {
+        credential: false,
+        ..FakeControllerOptions::default()
+    })
+    .await?;
     let reconciler = tokio::spawn(runtime.clone().run_environment_reconciler());
-    // Direct service calls carry an explicit local request context.
-    use temporal_runtime::gateway::request_context::{
-        RequestContext, with_request_context as calling,
-    };
-    let deployment_caller = RequestContext::local(api::AccessScope::Deployment);
 
     let result = async {
-        for universe_id in [universe_a, universe_b] {
+        provider_universe(&operator, universe_a, &guarded_id, &guarded).await?;
+        provider_universe(&operator, universe_b, &open_id, &open).await?;
+
+        // Registration ran the handshake; nothing it advertised is stored,
+        // and the data route base is derived from the controller endpoint.
+        let read = |provider_id: String| {
             calling(
-                deployment_caller.clone(),
-                operator.create_universe(DeploymentUniverseCreateParams {
-                    slug: None,
-                    universe_id: universe_id.to_string(),
+                deployment_caller(),
+                operator.read_environment_provider(api::DeploymentEnvironmentProviderReadParams {
+                    provider_id,
                 }),
             )
-            .await?;
+        };
+        let guarded_view = read(guarded_id.clone()).await?.result.provider;
+        assert!(guarded_view.has_credential);
+        assert_eq!(guarded_view.data_route_base, None);
+        let effective = guarded_view
+            .effective_data_route_base
+            .clone()
+            .expect("a ws:// controller has a derivable data route base");
+        assert!(effective.ends_with("/routes"), "{effective}");
+        assert!(!read(open_id.clone()).await?.result.provider.has_credential);
+        // A controller URL that names no controller is refused outright, and
+        // so is a guarded controller registered without its credential.
+        for (controller_endpoint, credential) in [
+            (
+                guarded.controller_url().replace("/control", "/elsewhere"),
+                guarded.credential().map(str::to_owned),
+            ),
+            (guarded.controller_url().to_owned(), None),
+        ] {
+            let refused = calling(
+                deployment_caller(),
+                operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
+                    provider_id: format!("{guarded_id}-refused"),
+                    display_name: None,
+                    controller_endpoint,
+                    data_route_base: None,
+                    credential,
+                    clear_credential: false,
+                }),
+            )
+            .await
+            .expect_err("a definitive handshake refusal is refused");
+            assert_eq!(refused.kind, api::AgentApiErrorKind::InvalidRequest);
         }
-        calling(
-            deployment_caller.clone(),
+        let exclusive = calling(
+            deployment_caller(),
             operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
-                provider_id: provider_id.clone(),
-                display_name: Some("Live fake provider".to_owned()),
-                controller_endpoint: controller.controller_url().to_owned(),
-                metadata: BTreeMap::new(),
-                credential: Some(controller.credential().to_owned()),
-            }),
-        )
-        .await?;
-        // Registration ran the controller handshake and recorded its facts.
-        let registered = calling(
-            deployment_caller.clone(),
-            operator.read_environment_provider(api::DeploymentEnvironmentProviderReadParams {
-                provider_id: provider_id.clone(),
-            }),
-        )
-        .await?
-        .result
-        .provider;
-        assert_eq!(
-            registered.controller_features,
-            Some(api::DeploymentEnvironmentProviderFeaturesView {
-                adopt_target: true,
-                ingress: true,
-            })
-        );
-        assert!(registered.data_route_base.is_some());
-        // A controller URL that names no controller is refused outright.
-        let mispathed = calling(
-            deployment_caller.clone(),
-            operator.put_environment_provider(DeploymentEnvironmentProviderPutParams {
-                provider_id: format!("{provider_id}-mispathed"),
+                provider_id: guarded_id.clone(),
                 display_name: None,
-                controller_endpoint: controller
-                    .controller_url()
-                    .replace("/control", "/elsewhere"),
-                metadata: BTreeMap::new(),
-                credential: Some(controller.credential().to_owned()),
+                controller_endpoint: guarded.controller_url().to_owned(),
+                data_route_base: None,
+                credential: Some("token".to_owned()),
+                clear_credential: true,
             }),
         )
         .await
-        .expect_err("a mis-pathed controller URL is refused");
-        assert_eq!(mispathed.kind, api::AgentApiErrorKind::InvalidRequest);
-        for (universe_id, binding_id) in [(universe_a, "primary-a"), (universe_b, "primary-b")] {
-            calling(
-                deployment_caller.clone(),
-                operator.put_environment_provider_binding(DeploymentProviderBindingPutParams {
-                    universe_id: universe_id.to_string(),
-                    binding_id: binding_id.to_owned(),
-                    provider_id: provider_id.clone(),
-                    status: EnvironmentProviderBindingStatusView::Enabled,
-                    metadata: BTreeMap::new(),
-                    expected_revision: None,
-                }),
-            )
-            .await?;
-        }
+        .expect_err("credential and clearCredential exclude each other");
+        assert_eq!(exclusive.kind, api::AgentApiErrorKind::InvalidRequest);
 
         let state_a = runtime.state_for(universe_a, false).await?;
         let state_b = runtime.state_for(universe_b, false).await?;
-        let caller_a = RequestContext::local(api::AccessScope::Universe {
-            universe_id: universe_a,
-        });
-        let caller_b = RequestContext::local(api::AccessScope::Universe {
-            universe_id: universe_b,
-        });
+        let caller_a = universe_caller(universe_a);
+        let caller_b = universe_caller(universe_b);
+        let api_a = state_a.api.as_ref();
+        let api_b = state_b.api.as_ref();
+
         let templates = calling(
             caller_a.clone(),
-            state_a
-                .api
-                .list_environment_templates(EnvironmentTemplateListParams {
-                    binding_id: Some("primary-a".to_owned()),
-                }),
+            api_a.list_environment_templates(EnvironmentTemplateListParams {
+                provider_id: Some(guarded_id.clone()),
+            }),
         )
-        .await?;
-        assert_eq!(templates.result.templates.len(), 1);
-        assert_eq!(templates.result.templates[0].template_id, FAKE_TEMPLATE_ID);
-        assert!(templates.result.templates[0].resources.is_some());
+        .await?
+        .result
+        .templates;
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].template_id, FAKE_TEMPLATE_ID);
+        assert_eq!(templates[0].provider_id, guarded_id);
+        assert_eq!(templates[0].power_states.len(), 4);
+        assert!(templates[0].public_ingress);
 
+        // Create until accepted, open after one handshake.
         let created = calling(
             caller_a.clone(),
-            state_a.api.create_environment(EnvironmentCreateParams {
-                request_id: format!("create-{suffix}"),
-                binding_id: "primary-a".to_owned(),
-                template_id: FAKE_TEMPLATE_ID.to_owned(),
-                display_name: Some("Provisioned live VM".to_owned()),
-                metadata: BTreeMap::new(),
-                idle_policy: None,
-            }),
+            api_a.create_environment(create_params(&format!("create-{suffix}"), &guarded_id)),
         )
         .await?
         .result
         .environment;
-        let create_retry = calling(
+        assert_eq!(created.state, EnvironmentStateView::Provisioning);
+        let retried = calling(
             caller_a.clone(),
-            state_a.api.create_environment(EnvironmentCreateParams {
-                request_id: format!("create-{suffix}"),
-                binding_id: "primary-a".to_owned(),
-                template_id: FAKE_TEMPLATE_ID.to_owned(),
-                display_name: None,
-                metadata: BTreeMap::new(),
-                idle_policy: None,
-            }),
+            api_a.create_environment(create_params(&format!("create-{suffix}"), &guarded_id)),
         )
         .await?
         .result
         .environment;
-        assert_eq!(create_retry.environment_id, created.environment_id);
-
-        let adopted = calling(
-            deployment_caller.clone(),
-            operator.adopt_environment(DeploymentEnvironmentAdoptParams {
-                universe_id: universe_b.to_string(),
-                request_id: format!("adopt-{suffix}"),
-                binding_id: "primary-b".to_owned(),
-                source_target: "legacy/hand-built-vm".to_owned(),
-                take_ownership: true,
-                display_name: Some("Adopted live VM".to_owned()),
-                metadata: BTreeMap::new(),
-            }),
-        )
-        .await?
-        .result
-        .environment;
-        assert_eq!(adopted.incarnation.template_id, None);
-        let adopt_retry = calling(
-            deployment_caller.clone(),
-            operator.adopt_environment(DeploymentEnvironmentAdoptParams {
-                universe_id: universe_b.to_string(),
-                request_id: format!("adopt-{suffix}"),
-                binding_id: "primary-b".to_owned(),
-                source_target: "legacy/hand-built-vm".to_owned(),
-                take_ownership: true,
-                display_name: None,
-                metadata: BTreeMap::new(),
-            }),
-        )
-        .await?
-        .result
-        .environment;
-        assert_eq!(adopt_retry.environment_id, adopted.environment_id);
-
-        let created_ready = calling(
+        assert_eq!(retried.environment_id, created.environment_id);
+        let environment_id = created.environment_id.clone();
+        let opened = calling(
             caller_a.clone(),
-            wait_for_status(
-                state_a.api.as_ref(),
-                &created.environment_id,
-                EnvironmentLifecycleStatusView::Ready,
-            ),
+            wait_for(api_a, &environment_id, "open", |environment| {
+                environment.state == EnvironmentStateView::Open
+            }),
         )
         .await?;
-        let adopted_ready = calling(
-            caller_b.clone(),
-            wait_for_status(
-                state_b.api.as_ref(),
-                &adopted.environment_id,
-                EnvironmentLifecycleStatusView::Ready,
-            ),
-        )
-        .await?;
-        assert!(created_ready.incarnation.provider_target_id.is_some());
-        assert!(adopted_ready.incarnation.provider_target_id.is_some());
-        // The Ready transition ran the data-plane handshake and recorded the
-        // daemon's protocol version.
+        assert_eq!(opened.status, EnvironmentStatusView::Ready);
         assert_eq!(
-            created_ready
-                .metadata
-                .get(environments::ENVD_PROTOCOL_VERSION_METADATA_KEY)
-                .map(String::as_str),
-            Some(
-                environment_protocol::ENVD_PROTOCOL_VERSION
-                    .to_string()
-                    .as_str()
-            )
+            opened.daemon.as_ref().map(|daemon| daemon.protocol_version),
+            Some(environment_protocol::ENVD_PROTOCOL_VERSION)
         );
+        let target = target_id(&opened).expect("an open environment has a target");
 
-        let listed_a = calling(
-            caller_a.clone(),
-            state_a
-                .api
-                .list_environments(EnvironmentListParams::default()),
+        // A provider without a credential works the same way.
+        let open_created = calling(
+            caller_b.clone(),
+            api_b.create_environment(create_params(&format!("open-{suffix}"), &open_id)),
+        )
+        .await?
+        .result
+        .environment;
+        calling(
+            caller_b.clone(),
+            wait_for(api_b, &open_created.environment_id, "open", |environment| {
+                environment.state == EnvironmentStateView::Open
+            }),
         )
         .await?;
+
+        // Pages of one; each universe sees only its own environments.
+        let second = calling(
+            caller_a.clone(),
+            api_a.create_environment(create_params(&format!("second-{suffix}"), &guarded_id)),
+        )
+        .await?
+        .result
+        .environment;
+        calling(
+            caller_a.clone(),
+            wait_for(api_a, &second.environment_id, "open", |environment| {
+                environment.state == EnvironmentStateView::Open
+            }),
+        )
+        .await?;
+        let first_page = calling(
+            caller_a.clone(),
+            api_a.list_environments(EnvironmentListParams {
+                limit: Some(1),
+                ..EnvironmentListParams::default()
+            }),
+        )
+        .await?
+        .result;
+        assert_eq!(first_page.environments.len(), 1);
+        assert!(first_page.next_after.is_some());
+        let next_page = calling(
+            caller_a.clone(),
+            api_a.list_environments(EnvironmentListParams {
+                limit: Some(1),
+                after: first_page.next_after.clone(),
+                ..EnvironmentListParams::default()
+            }),
+        )
+        .await?
+        .result;
+        assert_eq!(next_page.environments.len(), 1);
+        assert_ne!(
+            next_page.environments[0].environment_id,
+            first_page.environments[0].environment_id
+        );
+        // The last page carries no cursor.
+        assert_eq!(next_page.next_after, None);
         let listed_b = calling(
             caller_b.clone(),
-            state_b
-                .api
-                .list_environments(EnvironmentListParams::default()),
+            api_b.list_environments(EnvironmentListParams::default()),
         )
-        .await?;
-        assert_eq!(listed_a.result.environments.len(), 1);
-        assert_eq!(listed_b.result.environments.len(), 1);
+        .await?
+        .result;
+        assert_eq!(listed_b.environments.len(), 1);
 
+        // Power is a synchronous pass-through: the answer is recorded.
+        let paused = calling(
+            caller_a.clone(),
+            api_a.put_environment_power(EnvironmentPowerPutParams {
+                environment_id: environment_id.clone(),
+                power: EnvironmentPowerStateView::Paused,
+            }),
+        )
+        .await?
+        .result
+        .environment;
+        assert_eq!(paused.state, EnvironmentStateView::Open);
+        assert_eq!(paused.status, EnvironmentStatusView::Paused);
+        // The data route dial is the wake signal: a paused target refuses
+        // `waking` while it resumes, then upgrades.
+        let route = provider_data_route(
+            &DataRouteBase::new(effective.clone())?,
+            &TargetOwner {
+                universe_id: UniverseId::new(universe_a.to_string())?,
+                environment_id: ProtocolEnvironmentId::new(environment_id.clone())?,
+            },
+            &ProviderTargetId::new(target.clone())?,
+        );
+        let options = || {
+            environment_client::ConnectOptions::new(
+                temporal_runtime::environments::gateway::runtime_client_info(),
+            )
+            .with_bearer_token(guarded.credential().expect("guarded credential"))
+        };
+        assert_eq!(
+            expect_refusal(&route, options())
+                .await
+                .map_err(anyhow::Error::msg)?,
+            DataRouteRefusal::Waking {}
+        );
+        let (client, _) = environment_client::DataClient::connect_initialized(&route, options())
+            .await
+            .expect("the woken target upgrades");
+        let _ = client.close().await;
+
+        // Ingress is a synchronous pass-through too; the endpoint is cached.
         let ingress = calling(
             caller_a.clone(),
-            state_a
-                .api
-                .put_environment_ingress(EnvironmentIngressPutParams {
-                    environment_id: created.environment_id.clone(),
-                    enabled: true,
-                }),
+            api_a.put_environment_ingress(EnvironmentIngressPutParams {
+                environment_id: environment_id.clone(),
+                enabled: true,
+            }),
         )
-        .await?;
-        // The put records the intent; the reconciler realizes it.
-        assert!(ingress.result.environment.public_ingress_enabled);
-        calling(
+        .await?
+        .result
+        .environment;
+        assert_eq!(
+            public_endpoint(&ingress).as_deref(),
+            Some(FAKE_INGRESS_ENDPOINT)
+        );
+        let removed = calling(
             caller_a.clone(),
-            wait_for_public_endpoint(
-                state_a.api.as_ref(),
-                created.environment_id.as_str(),
-                Some(FAKE_INGRESS_ENDPOINT),
-            ),
+            api_a.put_environment_ingress(EnvironmentIngressPutParams {
+                environment_id: environment_id.clone(),
+                enabled: false,
+            }),
         )
-        .await?;
-        calling(
-            caller_a.clone(),
-            state_a
-                .api
-                .put_environment_ingress(EnvironmentIngressPutParams {
-                    environment_id: created.environment_id.clone(),
-                    enabled: false,
-                }),
-        )
-        .await?;
-        calling(
-            caller_a.clone(),
-            wait_for_public_endpoint(state_a.api.as_ref(), created.environment_id.as_str(), None),
-        )
-        .await?;
+        .await?
+        .result
+        .environment;
+        assert_eq!(public_endpoint(&removed), None);
 
+        // External environments have no provider to pass through to.
+        let external = calling(
+            caller_a.clone(),
+            api_a.create_external_environment(api::EnvironmentExternalCreateParams {
+                request_id: format!("external-{suffix}"),
+                endpoint: format!("ws://127.0.0.1:1/{suffix}"),
+                display_name: None,
+                metadata: BTreeMap::new(),
+            }),
+        )
+        .await?
+        .result
+        .environment;
+        let external_power = calling(
+            caller_a.clone(),
+            api_a.put_environment_power(EnvironmentPowerPutParams {
+                environment_id: external.environment_id.clone(),
+                power: EnvironmentPowerStateView::Paused,
+            }),
+        )
+        .await
+        .expect_err("external environments have no power control");
+        assert_eq!(external_power.kind, api::AgentApiErrorKind::Rejected);
+        let closed_external = calling(
+            caller_a.clone(),
+            api_a.close_environment(EnvironmentCloseParams {
+                environment_id: external.environment_id.clone(),
+            }),
+        )
+        .await?
+        .result
+        .environment;
+        assert_eq!(closed_external.state, EnvironmentStateView::Closed);
+
+        // A target the provider removed on its own ends its environment at
+        // the next display sweep.
+        assert!(guarded.end_target(&second.environment_id).await);
+        calling(caller_a.clone(), api_a.reconcile_environments_once()).await?;
+        let ended = calling(
+            caller_a.clone(),
+            wait_for(api_a, &second.environment_id, "end", |environment| {
+                environment.state == EnvironmentStateView::Closed
+            }),
+        )
+        .await?;
+        assert_eq!(
+            ended.close_reason,
+            Some(EnvironmentCloseReasonView::ProviderEnded)
+        );
+
+        // Close until gone.
         for (api, caller, environment_id) in [
-            (
-                state_a.api.as_ref(),
-                &caller_a,
-                created.environment_id.as_str(),
-            ),
-            (
-                state_b.api.as_ref(),
-                &caller_b,
-                adopted.environment_id.as_str(),
-            ),
+            (api_a, &caller_a, environment_id.as_str()),
+            (api_b, &caller_b, open_created.environment_id.as_str()),
         ] {
             calling(caller.clone(), async {
                 api.close_environment(EnvironmentCloseParams {
                     environment_id: environment_id.to_owned(),
                 })
                 .await?;
-                wait_for_status(api, environment_id, EnvironmentLifecycleStatusView::Closed).await
+                let closed = wait_for(api, environment_id, "close", |environment| {
+                    environment.state == EnvironmentStateView::Closed
+                })
+                .await?;
+                assert_eq!(
+                    closed.close_reason,
+                    Some(EnvironmentCloseReasonView::Requested)
+                );
+                anyhow::Ok(())
             })
             .await?;
         }
+        assert_eq!(guarded.target_count().await, 0);
+        assert_eq!(open.target_count().await, 0);
+        let closed_power = calling(
+            caller_a.clone(),
+            api_a.put_environment_power(EnvironmentPowerPutParams {
+                environment_id: environment_id.clone(),
+                power: EnvironmentPowerStateView::Running,
+            }),
+        )
+        .await
+        .expect_err("a closed environment has no power control");
+        assert_eq!(closed_power.kind, api::AgentApiErrorKind::Rejected);
         anyhow::Ok(())
     }
     .await;
 
     reconciler.abort();
     let _ = reconciler.await;
-    drop(controller);
-    runtime.evict(universe_a).await;
-    runtime.evict(universe_b).await;
-    for universe_id in [universe_a, universe_b] {
-        let _ = store_pg::delete_universe(&pool, universe_id).await;
-    }
-    let _ = calling(
-        deployment_caller.clone(),
-        operator
-            .delete_environment_provider(DeploymentEnvironmentProviderDeleteParams { provider_id }),
-    )
-    .await;
+    cleanup(&runtime, &operator, &pool, universe_a, &guarded_id).await;
+    cleanup(&runtime, &operator, &pool, universe_b, &open_id).await;
     result
 }
 
-async fn wait_for_status(
-    api: &temporal_runtime::gateway::GatewayAgentApi,
-    environment_id: &str,
-    expected: EnvironmentLifecycleStatusView,
-) -> anyhow::Result<api::EnvironmentView> {
-    let started = std::time::Instant::now();
-    loop {
-        let environment = api
-            .read_environment(api::EnvironmentReadParams {
-                environment_id: environment_id.to_owned(),
-            })
-            .await?
-            .result
-            .environment;
-        if environment.status == expected {
-            return Ok(environment);
-        }
-        if started.elapsed() > Duration::from_secs(10) {
-            anyhow::bail!(
-                "timed out waiting for environment {environment_id} to reach {expected:?}; current status is {:?}",
-                environment.status
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn environment_provider_outage_backs_off_per_row() -> anyhow::Result<()> {
+    let _ = dotenvy::dotenv();
+    require_live_env()?;
+    let (runtime, pool) = live_runtime("environment-provider-outage-live").await?;
+    let operator = GatewayDeploymentApi::new(runtime.clone());
+    let suffix = Uuid::new_v4().simple().to_string();
+    let provider_id = format!("fake-outage-{suffix}");
+    let universe_id = Uuid::new_v4();
+    let controller = FakeController::start().await?;
 
-async fn wait_for_public_endpoint(
-    api: &temporal_runtime::gateway::GatewayAgentApi,
-    environment_id: &str,
-    expected: Option<&str>,
-) -> anyhow::Result<api::EnvironmentView> {
-    let started = std::time::Instant::now();
-    loop {
-        let environment = api
-            .read_environment(api::EnvironmentReadParams {
-                environment_id: environment_id.to_owned(),
-            })
-            .await?
-            .result
-            .environment;
-        if environment.public_endpoint.as_deref() == expected {
-            return Ok(environment);
-        }
-        if started.elapsed() > Duration::from_secs(10) {
-            anyhow::bail!(
-                "timed out waiting for environment {environment_id} to report public endpoint {expected:?}; it reports {:?}",
-                environment.public_endpoint
+    let result = async {
+        provider_universe(&operator, universe_id, &provider_id, &controller).await?;
+        let state = runtime.state_for(universe_id, false).await?;
+        let caller = universe_caller(universe_id);
+        let api = state.api.as_ref();
+        controller.set_reachable(false);
+        let created = calling(
+            caller.clone(),
+            api.create_environment(create_params(&format!("outage-{suffix}"), &provider_id)),
+        )
+        .await?
+        .result
+        .environment;
+        let environment_id = environments::EnvironmentId::new(created.environment_id.clone());
+        // Each pass that cannot reach the provider counts one attempt and
+        // pushes the row's next attempt out; the row stays provisioning.
+        for expected in 1..=2_u32 {
+            calling(caller.clone(), api.reconcile_environments_once()).await?;
+            let record = state.store.read_environment(&environment_id).await?;
+            assert_eq!(record.state, environments::EnvironmentState::Provisioning);
+            let source = record.provisioned().expect("provisioned");
+            assert_eq!(source.attempts, expected);
+            assert!(
+                source.next_attempt_at_ms.expect("scheduled") > record.updated_at_ms,
+                "the next attempt is backed off"
+            );
+            assert!(
+                record
+                    .state_message
+                    .as_deref()
+                    .is_some_and(|message| message.contains("unreachable")),
+                "{:?}",
+                record.state_message
             );
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        controller.set_reachable(true);
+        calling(
+            caller.clone(),
+            wait_for_environment_state(api, &created.environment_id, EnvironmentStateView::Open),
+        )
+        .await?;
+        let opened = state.store.read_environment(&environment_id).await?;
+        assert_eq!(opened.state_message, None);
+        assert_eq!(opened.provisioned().expect("provisioned").attempts, 0);
+
+        // A close while the provider is down waits for it; nothing is
+        // abandoned.
+        controller.set_reachable(false);
+        calling(
+            caller.clone(),
+            api.close_environment(EnvironmentCloseParams {
+                environment_id: created.environment_id.clone(),
+            }),
+        )
+        .await?;
+        calling(caller.clone(), api.reconcile_environments_once()).await?;
+        let closing = state.store.read_environment(&environment_id).await?;
+        assert_eq!(closing.state, environments::EnvironmentState::Closing);
+        assert_eq!(closing.provisioned().expect("provisioned").attempts, 1);
+        controller.set_reachable(true);
+        calling(
+            caller.clone(),
+            wait_for_environment_state(api, &created.environment_id, EnvironmentStateView::Closed),
+        )
+        .await?;
+        assert_eq!(controller.target_count().await, 0);
+        anyhow::Ok(())
     }
+    .await;
+
+    cleanup(&runtime, &operator, &pool, universe_id, &provider_id).await;
+    result
 }
 
 fn require_live_env() -> anyhow::Result<()> {
@@ -413,405 +651,5 @@ fn require_live_env() -> anyhow::Result<()> {
             "LIGHTSPEED_TEST_POSTGRES_URL or LIGHTSPEED_POSTGRES_URL must be set; run ./dev.sh infra and source scripts/dev/env.sh"
         );
     }
-    Ok(())
-}
-
-#[tokio::test(flavor = "current_thread")]
-#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
-async fn temporal_live_environment_power_intent_converges_and_wakes_on_use() -> anyhow::Result<()> {
-    let _lock = LIVE_TEST_LOCK.lock().await;
-    let _ = dotenvy::dotenv();
-    require_storage_live_env()?;
-
-    let activities = fake_worker_activities().await?;
-    run_with_live_worker(activities, run_environment_power_live_client).await
-}
-
-/// Power intent is recorded through the API, converged by the lifecycle
-/// reconciler against the provider, and a powered-down environment wakes
-/// transparently when a session selects it. Idle policy round-trips and the
-/// power reaper treats an environment without a reachable daemon as
-/// untouchable.
-async fn run_environment_power_live_client(
-    client: Client,
-    task_queue: String,
-    session_id: SessionId,
-) -> anyhow::Result<()> {
-    use std::collections::BTreeMap;
-
-    use environments::{
-        EnvironmentEndpoint, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
-        EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
-        PutEnvironmentProvider, PutEnvironmentProviderBinding,
-    };
-
-    let store = pg_store_from_env().await?;
-    let model = support::live::openai_live_model();
-    support::live::seed_agent_default(&store, &model).await?;
-    let api = GatewayAgentApi::builder(client.clone(), store.clone())
-        .with_task_queue(task_queue)
-        .build();
-    let suffix = uuid::Uuid::new_v4().simple().to_string();
-    let provider_id = format!("fake-power-{suffix}");
-    let binding_id = format!("binding-power-{suffix}");
-    let controller = FakeController::start().await?;
-    store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: EnvironmentProviderId::new(provider_id.clone()),
-            display_name: Some("Live fake provider (power)".to_owned()),
-            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
-            metadata: BTreeMap::new(),
-            credential: Some(auth::SecretValue::new(controller.credential())),
-            updated_at_ms: 1,
-        })
-        .await?;
-    store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id: store.config().universe_id,
-            binding_id: EnvironmentProviderBindingId::new(binding_id.clone()),
-            provider_id: EnvironmentProviderId::new(provider_id.clone()),
-            status: EnvironmentProviderBindingStatus::Enabled,
-            expected_revision: None,
-            metadata: BTreeMap::new(),
-            updated_at_ms: 1,
-        })
-        .await?;
-
-    let policy = api::EnvironmentIdlePolicyView {
-        pause_after_ms: Some(60_000),
-        suspend_after_ms: None,
-        stop_after_ms: Some(3_600_000),
-        close_after_ms: None,
-    };
-    let created = api
-        .create_environment(api::EnvironmentCreateParams {
-            request_id: format!("power-{suffix}"),
-            binding_id: binding_id.clone(),
-            template_id: FAKE_TEMPLATE_ID.to_owned(),
-            display_name: Some("Power VM".to_owned()),
-            metadata: BTreeMap::new(),
-            idle_policy: Some(policy.clone()),
-        })
-        .await?
-        .result
-        .environment;
-    let environment_id = created.environment_id.clone();
-    assert_eq!(
-        created.desired_power,
-        api::EnvironmentPowerStateView::Running
-    );
-    assert_eq!(created.idle_policy.as_ref(), Some(&policy));
-    assert!(created.incarnation.power_states.is_empty());
-
-    // Before the provider reported power support, power changes are refused.
-    let premature = api
-        .put_environment_power(api::EnvironmentPowerPutParams {
-            environment_id: environment_id.clone(),
-            power: api::EnvironmentPowerStateView::Paused,
-        })
-        .await
-        .expect_err("power change before observation is rejected");
-    assert_eq!(premature.kind, api::AgentApiErrorKind::Rejected);
-
-    let ready = wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Ready,
-    )
-    .await?;
-    assert_eq!(
-        ready.incarnation.power_states,
-        vec![
-            api::EnvironmentPowerStateView::Running,
-            api::EnvironmentPowerStateView::Paused,
-            api::EnvironmentPowerStateView::Suspended,
-            api::EnvironmentPowerStateView::Stopped,
-        ]
-    );
-
-    // A malformed idle policy is rejected; a valid replacement and a clear
-    // round-trip.
-    let bad_policy = api
-        .put_environment_idle_policy(api::EnvironmentIdlePolicyPutParams {
-            environment_id: environment_id.clone(),
-            idle_policy: Some(api::EnvironmentIdlePolicyView {
-                pause_after_ms: Some(10),
-                stop_after_ms: Some(5),
-                ..api::EnvironmentIdlePolicyView::default()
-            }),
-        })
-        .await
-        .expect_err("non-monotone idle policy is rejected");
-    assert_eq!(bad_policy.kind, api::AgentApiErrorKind::InvalidRequest);
-    let cleared = api
-        .put_environment_idle_policy(api::EnvironmentIdlePolicyPutParams {
-            environment_id: environment_id.clone(),
-            idle_policy: None,
-        })
-        .await?
-        .result
-        .environment;
-    assert!(cleared.idle_policy.is_none());
-    let restored = api
-        .put_environment_idle_policy(api::EnvironmentIdlePolicyPutParams {
-            environment_id: environment_id.clone(),
-            idle_policy: Some(policy.clone()),
-        })
-        .await?
-        .result
-        .environment;
-    assert_eq!(restored.idle_policy.as_ref(), Some(&policy));
-
-    // The reaper sees the candidate but no gateway serves its route here, so
-    // it cannot read an idle report and leaves the environment alone.
-    let stats = api.reap_idle_environments_once().await?;
-    assert_eq!(stats.candidates, 1);
-    assert_eq!(stats.unreachable, 1);
-    assert_eq!(stats.powered_down, 0);
-    assert_eq!(stats.closed, 0);
-
-    // Pause intent: recorded immediately, converged by the reconciler.
-    let paused_intent = api
-        .put_environment_power(api::EnvironmentPowerPutParams {
-            environment_id: environment_id.clone(),
-            power: api::EnvironmentPowerStateView::Paused,
-        })
-        .await?
-        .result
-        .environment;
-    assert_eq!(
-        paused_intent.desired_power,
-        api::EnvironmentPowerStateView::Paused
-    );
-    assert_eq!(
-        paused_intent.status,
-        api::EnvironmentLifecycleStatusView::Ready
-    );
-    let paused = wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Paused,
-    )
-    .await?;
-    assert_eq!(paused.desired_power, api::EnvironmentPowerStateView::Paused);
-    // Paused is a filterable lifecycle status.
-    assert!(
-        api.list_environments(api::EnvironmentListParams {
-            metadata: Default::default(),
-            status: Some(api::EnvironmentLifecycleStatusView::Paused),
-            ..api::EnvironmentListParams::default()
-        })
-        .await?
-        .result
-        .environments
-        .iter()
-        .any(|environment| environment.environment_id == environment_id)
-    );
-
-    // Selection only records the environment. A paused machine stays paused
-    // until an operation actually needs to use it.
-    api.start_session(SessionStartParams {
-        access: None,
-        metadata: Default::default(),
-        session_id: Some(session_id.as_str().to_owned()),
-        display_name: None,
-        config: Some(SessionConfig {
-            model: Some(model_to_api(&model)),
-            features: Some(api::FeaturesConfig {
-                environments: Some(api::EnvironmentsFeature {
-                    version: api::CURRENT_FEATURE_VERSION,
-                    selection: false,
-                    prompts: None,
-                    skills: None,
-                    environments: vec![api::EnvironmentAttachment {
-                        environment_id: Some(environment_id.clone()),
-                        inherit: false,
-                        default: false,
-                        access: api::EnvironmentAccess::Exec,
-                        working_directory: None,
-                    }],
-                }),
-                ..api::FeaturesConfig::default()
-            }),
-            ..SessionConfig::default()
-        }),
-        profile: None,
-        delete_after_close_ms: None,
-    })
-    .await?;
-    let started_view = read_session_view(&api, &session_id).await?;
-    assert!(started_view.active_environment_id.is_none());
-    api.activate_session_environment(api::SessionEnvironmentActivateParams {
-        session_id: session_id.as_str().to_owned(),
-        environment_id: environment_id.clone(),
-    })
-    .await?;
-    let activated_view = read_session_view(&api, &session_id).await?;
-    assert_eq!(
-        activated_view.active_environment_id.as_deref(),
-        Some(environment_id.as_str())
-    );
-    let selected = api
-        .read_environment(api::EnvironmentReadParams {
-            environment_id: environment_id.clone(),
-        })
-        .await?
-        .result
-        .environment;
-    assert_eq!(
-        selected.desired_power,
-        api::EnvironmentPowerStateView::Paused
-    );
-    assert_eq!(selected.status, api::EnvironmentLifecycleStatusView::Paused);
-
-    // Suspend and stop are ordinary intents on a provider that supports them.
-    api.put_environment_power(api::EnvironmentPowerPutParams {
-        environment_id: environment_id.clone(),
-        power: api::EnvironmentPowerStateView::Suspended,
-    })
-    .await?;
-    wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Suspended,
-    )
-    .await?;
-    // Wake-on-use through the jobs API: creating a job against the
-    // suspended environment fails typed `environment_not_ready` (never a
-    // generic rejection) and flips desired power back to running — the
-    // retry-with-backoff contract polling automations lean on.
-    let job_not_ready = api
-        .create_environment_jobs(api::EnvironmentJobCreateParams {
-            environment_id: environment_id.clone(),
-            request_id: format!("wake-probe-{suffix}"),
-            jobs: vec![api::SessionJobStartSpecInput {
-                name: Some("wake-probe".to_owned()),
-                job_id: None,
-                argv: vec!["true".to_owned()],
-                cwd: None,
-                env: BTreeMap::new(),
-                stdin: None,
-                timeout_ms: None,
-                depends_on: Vec::new(),
-                dependency_policy: api::SessionJobDependencyPolicyView::default(),
-                queue_key: None,
-            }],
-        })
-        .await
-        .expect_err("jobs/create against a suspended environment is not ready");
-    assert_eq!(
-        job_not_ready.kind,
-        api::AgentApiErrorKind::EnvironmentNotReady
-    );
-    let waking = api
-        .read_environment(api::EnvironmentReadParams {
-            environment_id: environment_id.clone(),
-        })
-        .await?
-        .result
-        .environment;
-    assert_eq!(
-        waking.desired_power,
-        api::EnvironmentPowerStateView::Running
-    );
-
-    api.put_environment_power(api::EnvironmentPowerPutParams {
-        environment_id: environment_id.clone(),
-        power: api::EnvironmentPowerStateView::Stopped,
-    })
-    .await?;
-    wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Offline,
-    )
-    .await?;
-    api.put_environment_power(api::EnvironmentPowerPutParams {
-        environment_id: environment_id.clone(),
-        power: api::EnvironmentPowerStateView::Running,
-    })
-    .await?;
-    wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Ready,
-    )
-    .await?;
-
-    // External environments have no power control.
-    let external = api
-        .create_external_environment(api::EnvironmentExternalCreateParams {
-            request_id: format!("power-external-{suffix}"),
-            endpoint: format!("ws://127.0.0.1:1/{suffix}"),
-            display_name: None,
-            metadata: BTreeMap::new(),
-        })
-        .await?
-        .result
-        .environment;
-    let external_rejected = api
-        .put_environment_power(api::EnvironmentPowerPutParams {
-            environment_id: external.environment_id.clone(),
-            power: api::EnvironmentPowerStateView::Paused,
-        })
-        .await
-        .expect_err("external environments have no power control");
-    assert_eq!(external_rejected.kind, api::AgentApiErrorKind::Rejected);
-    let external_policy_rejected = api
-        .put_environment_idle_policy(api::EnvironmentIdlePolicyPutParams {
-            environment_id: external.environment_id.clone(),
-            idle_policy: Some(policy.clone()),
-        })
-        .await
-        .expect_err("external environments have no idle policy");
-    assert_eq!(
-        external_policy_rejected.kind,
-        api::AgentApiErrorKind::InvalidRequest
-    );
-
-    // Closing wins over power intent.
-    api.close_session(api::SessionCloseParams {
-        session_id: session_id.as_str().to_owned(),
-        force: false,
-    })
-    .await?;
-    api.close_environment(api::EnvironmentCloseParams {
-        environment_id: environment_id.clone(),
-    })
-    .await?;
-    wait_for_environment_status(
-        &api,
-        &environment_id,
-        api::EnvironmentLifecycleStatusView::Closed,
-    )
-    .await?;
-    let closed_rejected = api
-        .put_environment_power(api::EnvironmentPowerPutParams {
-            environment_id: environment_id.clone(),
-            power: api::EnvironmentPowerStateView::Running,
-        })
-        .await
-        .expect_err("closed environments cannot change power");
-    assert_eq!(closed_rejected.kind, api::AgentApiErrorKind::InvalidRequest);
-    api.close_environment(api::EnvironmentCloseParams {
-        environment_id: external.environment_id.clone(),
-    })
-    .await?;
-    wait_for_environment_status(
-        &api,
-        &external.environment_id,
-        api::EnvironmentLifecycleStatusView::Closed,
-    )
-    .await?;
-
-    let _ = store
-        .delete_provider_binding(
-            store.config().universe_id,
-            &EnvironmentProviderBindingId::new(binding_id.clone()),
-        )
-        .await;
-    let _ = store
-        .delete_provider(&EnvironmentProviderId::new(provider_id.clone()))
-        .await;
     Ok(())
 }

@@ -45,7 +45,9 @@ import {
   modelProvider,
   pollTrigger,
   profile,
+  externalEnvironment,
   providerBinding,
+  provisionedEnvironment,
   readFile,
   recent,
   runCommand,
@@ -63,7 +65,6 @@ import {
   type ScriptedEvent,
   mcpDisplay,
 } from "./builders";
-import { INCUS_PROVIDER_ID } from "./platform";
 
 export const SOFTWARE_FACTORY_UNIVERSE_ID = "11111111-1111-4111-8111-111111111111";
 export const SOFTWARE_FACTORY_SLUG = "software-factory";
@@ -1019,7 +1020,7 @@ A Linear issue becomes pull requests without a person in the loop until review:
 2. **planner** — splits the spec into independent tasks in \`/specs/<ISSUE>-plan.md\`
    and emits one \`task.ready\` per task.
 3. **implementer** — one keyed session per task (\`task.id\`), each in its own Incus
-   sandbox that closes with the session. Sub-agents: repo-explorer (read-only),
+   sandbox environment, created for the task and closed when it is done. Sub-agents: repo-explorer (read-only),
    test-writer. Opens the PR and emits \`pr.opened\`.
 4. **ci-watch** — polls Actions every two minutes; a failure on a task branch is
    steered into the implementer's running task and told to pr-reviewer.
@@ -1202,8 +1203,6 @@ function seedWorkspaces(store: DemoStore, universe: UniverseState): void {
 // Environments
 // ---------------------------------------------------------------------------
 
-const POWER_STATES: Environment["desiredPower"][] = ["running", "paused", "stopped"];
-
 interface SandboxInit {
   id: string;
   displayName: string;
@@ -1214,37 +1213,22 @@ interface SandboxInit {
 
 /// An independently managed sandbox selected by task sessions.
 function sandbox(init: SandboxInit): Environment {
-  const requestId = `req-${hex(init.id, 12)}`;
-  const updatedAtMs = init.closedAtMs ?? init.createdAtMs + 3 * MINUTE_MS;
-  return {
+  return provisionedEnvironment({
     environmentId: init.id,
-    requestId,
-    source: { type: "provisioned", providerId: INCUS_PROVIDER_ID, bindingId: INCUS_PROVIDER_ID },
+    requestId: `req-${hex(init.id, 12)}`,
+    templateId: "dev-small-v1",
+    targetId: `ls-${init.id.slice(4)}-${hex(init.id, 6)}`,
     displayName: init.displayName,
-    status: init.closedAtMs === undefined ? "ready" : "closed",
-    desiredPower: init.closedAtMs === undefined ? "running" : "stopped",
-    idlePolicy: { pauseAfterMs: 15 * MINUTE_MS, stopAfterMs: 2 * HOUR_MS },
-    incarnation: {
-      incarnationId: `inc-${hex(`${init.id}-inc`, 10)}`,
-      provisionRequestId: requestId,
-      providerTargetId: `ls-${init.id.slice(4)}-${hex(init.id, 6)}`,
-      templateId: "dev-small-v1",
-      powerStates: POWER_STATES,
-      createdAtMs: init.createdAtMs,
-      updatedAtMs,
-    },
-    publicIngressEnabled: false,
     metadata: { repo: "acme/acme-web", checkout: "main", issue: ISSUE },
     createdAtMs: init.createdAtMs,
-    updatedAtMs,
-  };
+    updatedAtMs: init.closedAtMs ?? init.createdAtMs + 3 * MINUTE_MS,
+    ...(init.closedAtMs === undefined ? {} : { closedAtMs: init.closedAtMs }),
+  });
 }
 
 function seedEnvironments(universe: UniverseState): void {
   universe.providerBindings.push(
     providerBinding({
-      revision: 2,
-      metadata: { project: "acme", network: "lightspeed-envs" },
       createdAtMs: ago(50 * DAY_MS),
       updatedAtMs: ago(17 * DAY_MS),
     }),
@@ -1256,6 +1240,7 @@ function seedEnvironments(universe: UniverseState): void {
       description: "2 vCPU / 4 GiB, Git, Node 22, Docker, envd. The default for task sandboxes.",
       publicIngress: true,
       deprecated: false,
+      idle: { pauseAfterMs: 15 * MINUTE_MS, stopAfterMs: 2 * HOUR_MS },
       metadata: { cpu: "2", memory: "4GiB", disk: "40GiB", image: "acme/dev:2026.08" },
     }),
     template({
@@ -1276,72 +1261,38 @@ function seedEnvironments(universe: UniverseState): void {
     }),
   );
 
-  const ciRequestId = `req-${hex("ci-runner", 12)}`;
-  universe.environments.set(ENV.ci, {
+  universe.environments.set(ENV.ci, provisionedEnvironment({
     environmentId: ENV.ci,
-    requestId: ciRequestId,
-    source: { type: "provisioned", providerId: INCUS_PROVIDER_ID, bindingId: INCUS_PROVIDER_ID },
+    requestId: `req-${hex("ci-runner", 12)}`,
+    templateId: "dev-small-v1",
+    targetId: "ls-ci-runner-4e1d9b",
     displayName: "CI runner",
-    status: "ready",
-    desiredPower: "running",
-    idlePolicy: { pauseAfterMs: 30 * MINUTE_MS, stopAfterMs: 6 * HOUR_MS },
-    incarnation: {
-      incarnationId: `inc-${hex("ci-runner-inc", 10)}`,
-      provisionRequestId: ciRequestId,
-      providerTargetId: "ls-ci-runner-4e1d9b",
-      templateId: "dev-small-v1",
-      powerStates: POWER_STATES,
-      createdAtMs: ago(30 * DAY_MS),
-      updatedAtMs: p(13),
-    },
-    publicIngressEnabled: true,
+    idle: { pauseAfterMs: 30 * MINUTE_MS, stopAfterMs: 6 * HOUR_MS },
     publicEndpoint: "https://ci-runner-4e1d9b.env.acme.example",
     metadata: { role: "ci", repo: "acme/acme-web", team: "platform" },
     createdAtMs: ago(30 * DAY_MS),
     updatedAtMs: p(13),
-  });
-  universe.environments.set(ENV.laptop, {
+  }));
+  universe.environments.set(ENV.laptop, externalEnvironment({
     environmentId: ENV.laptop,
     requestId: `req-${hex("priya-laptop", 12)}`,
-    source: {
-      type: "external",
-      endpoint: "ws://priya-mbp.tailnet.acme.example:19091",
-    },
+    endpoint: "ws://priya-mbp.tailnet.acme.example:19091",
     displayName: "Priya's laptop (envd)",
-    status: "ready",
-    desiredPower: "running",
-    incarnation: {
-      incarnationId: `inc-${hex("priya-laptop-inc", 10)}`,
-      createdAtMs: ago(20 * DAY_MS),
-      updatedAtMs: ago(25 * MINUTE_MS),
-    },
-    publicIngressEnabled: false,
     metadata: { owner: "priya", os: "macOS 15" },
     createdAtMs: ago(20 * DAY_MS),
     updatedAtMs: ago(25 * MINUTE_MS),
-  });
-  const oldRequestId = `req-${hex("old-sandbox", 12)}`;
-  universe.environments.set(ENV.old, {
+  }));
+  universe.environments.set(ENV.old, provisionedEnvironment({
     environmentId: ENV.old,
-    requestId: oldRequestId,
-    source: { type: "provisioned", providerId: INCUS_PROVIDER_ID, bindingId: INCUS_PROVIDER_ID },
+    requestId: `req-${hex("old-sandbox", 12)}`,
+    templateId: "dev-small-v0",
+    targetId: "ls-sandbox-9f8e7d",
     displayName: "repo-explorer sandbox",
-    status: "closed",
-    desiredPower: "stopped",
-    incarnation: {
-      incarnationId: `inc-${hex("old-sandbox-inc", 10)}`,
-      provisionRequestId: oldRequestId,
-      providerTargetId: "ls-sandbox-9f8e7d",
-      templateId: "dev-small-v0",
-      powerStates: POWER_STATES,
-      createdAtMs: ago(33 * DAY_MS + 2 * HOUR_MS),
-      updatedAtMs: ago(33 * DAY_MS),
-    },
-    publicIngressEnabled: false,
     metadata: { repo: "acme/acme-web", checkout: "main" },
     createdAtMs: ago(33 * DAY_MS + 2 * HOUR_MS),
     updatedAtMs: ago(33 * DAY_MS),
-  });
+    closedAtMs: ago(33 * DAY_MS),
+  }));
   universe.environments.set(ENV.taskA, sandbox({ id: ENV.taskA, displayName: "implementer sandbox · lin-1421-a", createdAtMs: p(2.1), closedAtMs: p(4.9) }));
   universe.environments.set(ENV.taskB, sandbox({ id: ENV.taskB, displayName: "implementer sandbox · lin-1421-b", createdAtMs: p(2.1), closedAtMs: p(12.4) }));
   universe.environments.set(ENV.taskC, sandbox({ id: ENV.taskC, displayName: "implementer sandbox · lin-1421-c", createdAtMs: p(2.1) }));

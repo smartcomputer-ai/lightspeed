@@ -1314,47 +1314,14 @@ async fn run_agent_run_inherit_environment_live_client(
 ) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
-    use environments::{
-        EnvironmentEndpoint, EnvironmentProviderBindingId, EnvironmentProviderBindingStatus,
-        EnvironmentProviderBindingStore, EnvironmentProviderId, EnvironmentProviderStore,
-        PutEnvironmentProvider, PutEnvironmentProviderBinding,
-    };
     use temporal_runtime::environments::fake_controller::FakeController;
 
     let store = pg_store_from_env().await?;
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let provider_id = format!("fake-inherit-{suffix}");
-    let binding_id = format!("binding-inherit-{suffix}");
     // Serves the controller and data routes until the test returns.
     let controller = FakeController::start().await?;
-    store
-        .put_provider(PutEnvironmentProvider {
-            provider_id: EnvironmentProviderId::new(provider_id.clone()),
-            display_name: Some("Live fake provider".to_owned()),
-            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
-            metadata: BTreeMap::new(),
-            credential: Some(auth::SecretValue::new(controller.credential())),
-            updated_at_ms: 1,
-        })
-        .await?;
-    store
-        .put_provider_binding(PutEnvironmentProviderBinding {
-            universe_id: store.config().universe_id,
-            binding_id: EnvironmentProviderBindingId::new(binding_id.clone()),
-            provider_id: EnvironmentProviderId::new(provider_id.clone()),
-            status: EnvironmentProviderBindingStatus::Enabled,
-            expected_revision: None,
-            metadata: BTreeMap::new(),
-            updated_at_ms: 1,
-        })
-        .await?;
-    let environments_feature = |attachment: api::EnvironmentAttachment| api::EnvironmentsFeature {
-        version: api::CURRENT_FEATURE_VERSION,
-        selection: false,
-        prompts: None,
-        skills: None,
-        environments: vec![attachment],
-    };
+    register_fake_provider(&store, &controller, &provider_id).await?;
 
     // Child profile: inherits whatever environment its parent has active.
     let child_profile_id = ProfileId::new(format!("live_inherit_child_{suffix}"));
@@ -1390,11 +1357,11 @@ async fn run_agent_run_inherit_environment_live_client(
     let independent_environment = api
         .create_environment(api::EnvironmentCreateParams {
             request_id: format!("inherit-env-{suffix}"),
-            binding_id: binding_id.clone(),
+            provider_id: provider_id.clone(),
             template_id: "rust-v1".into(),
             display_name: None,
             metadata: BTreeMap::new(),
-            idle_policy: None,
+            idle: None,
         })
         .await?
         .result
@@ -1505,12 +1472,11 @@ async fn run_agent_run_inherit_environment_live_client(
         .environment;
     assert!(
         !matches!(
-            environment.status,
-            api::EnvironmentLifecycleStatusView::Closing
-                | api::EnvironmentLifecycleStatusView::Closed
+            environment.state,
+            api::EnvironmentStateView::Closing | api::EnvironmentStateView::Closed
         ),
         "inherited environment must stay open after the child closes, got {:?}",
-        environment.status
+        environment.state
     );
 
     let mut all = vec![session_id];
@@ -1520,6 +1486,56 @@ async fn run_agent_run_inherit_environment_live_client(
         environment_id: independent_environment.environment_id,
     })
     .await?;
+    Ok(())
+}
+
+fn environments_feature(attachment: api::EnvironmentAttachment) -> api::EnvironmentsFeature {
+    api::EnvironmentsFeature {
+        version: api::CURRENT_FEATURE_VERSION,
+        selection: false,
+        prompts: None,
+        skills: None,
+        environments: vec![attachment],
+    }
+}
+
+/// Registers the fake controller as a provider bound to this universe,
+/// directly through the store: the deployment API is deployment-scoped and
+/// these tests drive one universe's gateway.
+async fn register_fake_provider(
+    store: &store_pg::PgStore,
+    controller: &temporal_runtime::environments::fake_controller::FakeController,
+    provider_id: &str,
+) -> anyhow::Result<()> {
+    use environments::{
+        EnvironmentEndpoint, EnvironmentProviderBindingStore, EnvironmentProviderId,
+        EnvironmentProviderStore, ProviderCredentialChange, PutEnvironmentProvider,
+        PutEnvironmentProviderBinding,
+    };
+
+    store
+        .put_provider(PutEnvironmentProvider {
+            provider_id: EnvironmentProviderId::new(provider_id),
+            display_name: Some("Live fake provider".to_owned()),
+            controller_endpoint: EnvironmentEndpoint::parse(controller.controller_url())?,
+            data_route_base: None,
+            credential: match controller.credential() {
+                Some(credential) => {
+                    ProviderCredentialChange::Set(auth::SecretValue::new(credential))
+                }
+                None => ProviderCredentialChange::Keep,
+            },
+            updated_at_ms: 1,
+        })
+        .await?;
+    store
+        .put_provider_binding(PutEnvironmentProviderBinding {
+            universe_id: store.config().universe_id,
+            provider_id: EnvironmentProviderId::new(provider_id),
+            enabled: true,
+            updated_at_ms: 1,
+        })
+        .await?;
     Ok(())
 }
 

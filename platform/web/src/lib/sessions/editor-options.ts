@@ -2,11 +2,8 @@ import { useActionPermissions } from "@/lib/permissions";
 import { useMcpToolDiscoverySource } from "@/lib/mcp/tool-discovery";
 import { useQuery } from "@tanstack/react-query";
 import { modelLabel, useModelDefaults, useModelDiscovery } from "@/lib/model-defaults";
-import {
-  api,
-  type Environment,
-  type ProfileSummary,
-} from "@/api";
+import { api, type ProfileSummary } from "@/api";
+import { openEnvironmentsQuery } from "@/lib/environments";
 import type {
   McpServerOption,
   WorkspaceOption,
@@ -35,11 +32,7 @@ export function useSessionConfigEditorOptions(
     queryFn: () => api<ProfileSummary[]>("GET", `/api/v1/universes/${universeId}/profiles`),
     enabled,
   });
-  const environments = useQuery({
-    queryKey: ["environments", universeId],
-    queryFn: () => api<Environment[]>("GET", `/api/v1/universes/${universeId}/environments`),
-    enabled,
-  });
+  const environments = useQuery({ ...openEnvironmentsQuery(universeId), enabled });
   const permissions = useActionPermissions(enabled ? universeId : undefined);
   const mcpToolDiscovery = useMcpToolDiscoverySource(universeId);
   return {

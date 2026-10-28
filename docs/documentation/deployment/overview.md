@@ -74,7 +74,7 @@ One `lightspeed-runtime` executable supplies five roles:
 | Role | Work it owns |
 | --- | --- |
 | `gateway` | JSON-RPC, OAuth callbacks, and bot webhook ingestion |
-| `environment-gateway` | Worker routes to environments, outbound daemon connections, environment lifecycle reconciliation, and idle power management |
+| `environment-gateway` | Worker routes to environments, outbound daemon connections, and environment lifecycle reconciliation |
 | `sessions` | Session workflows and activities, plus session and blob retention work |
 | `bots` | Bot controllers, trigger work, and bot activities |
 | `channels` | Chat conversation workflows and core channel activities |

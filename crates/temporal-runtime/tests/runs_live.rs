@@ -156,9 +156,10 @@ async fn temporal_live_steering_during_final_turn_adds_a_turn() -> anyhow::Resul
     // steering is materialized while the call is in flight, and instead of
     // completing on that final output the run gets one more turn whose
     // request carries the steering — so "steer" never silently does
-    // nothing.
+    // nothing. Zero tool rounds: every session carries the core blob tools,
+    // so the fake model would otherwise spend its first turn calling one.
     let (activities, counters) =
-        fake_worker_activities_for_run_control(Duration::from_secs(4), Duration::ZERO, 1).await?;
+        fake_worker_activities_for_run_control(Duration::from_secs(4), Duration::ZERO, 0).await?;
     run_with_live_worker(activities, move |client, task_queue, session_id| {
         run_steering_final_turn_live_client(client, task_queue, session_id, counters)
     })
@@ -175,9 +176,12 @@ async fn temporal_live_queued_runs_return_promptly_and_run_in_order() -> anyhow:
     // Queueing: runs started behind an active run return `queued` at
     // once, are visible in the session view, can be cancelled while queued,
     // and start in order after the active run ends. Cancelling the active
-    // run leaves the queued one untouched and it runs next.
+    // run leaves the queued one untouched and it runs next. Zero tool
+    // rounds: every session carries the core blob tools, so the fake model
+    // would otherwise spend the first executed run's opening turn calling
+    // one, making that run take two generations.
     let (activities, counters) =
-        fake_worker_activities_for_run_control(Duration::from_secs(5), Duration::ZERO, 1).await?;
+        fake_worker_activities_for_run_control(Duration::from_secs(5), Duration::ZERO, 0).await?;
     run_with_live_worker(activities, move |client, task_queue, session_id| {
         run_queue_live_client(client, task_queue, session_id, counters)
     })
@@ -509,7 +513,8 @@ async fn run_steering_final_turn_live_client(
     session_id: SessionId,
     counters: temporal_runtime::worker::FakeRuntimeCounters,
 ) -> anyhow::Result<()> {
-    // No tools: the fake model answers in one turn.
+    // No workspace tools, and the worker's fake model takes zero tool rounds,
+    // so it answers in one turn.
     let api = run_control_api(&client, task_queue, &session_id, false).await?;
     let run = start_text_run(&api, &session_id, "answer directly").await?;
     wait_until(
@@ -683,8 +688,9 @@ async fn run_queue_live_client(
         wait_for_terminal_run_with_timeout(&api, &session_id, &fourth.id, 40).await?;
     assert_eq!(fourth_terminal.status, api::RunStatus::Completed);
 
-    // Exactly one generation per executed run (first, third, fourth); the
-    // cancelled first run never got a second turn. Whether the worker
+    // Exactly one generation per executed run (first, third, fourth), since
+    // the fake model answers directly; the cancelled first run never got a
+    // second turn. Whether the worker
     // abandoned the first generation or it completed (and was discarded)
     // depends on heartbeat timing with this short delay and is covered by
     // the mid-generation cancel scenario.
@@ -699,7 +705,7 @@ async fn run_queue_live_client(
 }
 
 /// `wait_for_terminal_run` with a longer budget, for scenarios whose fake
-/// provider sleeps on purpose.
+/// provider sleeps on purpose or that drive many sequential activities.
 async fn wait_for_terminal_run_with_timeout(
     api: &GatewayAgentApi,
     session_id: &SessionId,
@@ -1100,7 +1106,33 @@ async fn run_unbounded_hosted_run_live_client(
             config: None,
         })
         .await?;
-    let run = wait_for_terminal_run(&api, &session_id, &started.result.run.id).await?;
+    // Thirty-one generations and thirty tool batches run back to back, which
+    // can approach the default 30 s terminal-run budget on a loaded local
+    // stack; wait with headroom, since the test is about transition count,
+    // not latency.
+    let diag_started = std::time::Instant::now();
+    let run =
+        wait_for_terminal_run_with_timeout(&api, &session_id, &started.result.run.id, 120).await?;
+    eprintln!("DIAG128 run took {:?}", diag_started.elapsed());
+    {
+        let events = api
+            .read_session_events(SessionEventsReadParams {
+                direction: Default::default(),
+                before: None,
+                session_id: session_id.as_str().to_owned(),
+                after: None,
+                limit: Some(80),
+                wait_ms: None,
+            })
+            .await?
+            .result
+            .events;
+        let base = events.first().map(|e| e.observed_at_ms).unwrap_or(0);
+        for event in &events {
+            let k = format!("{:?}", event.kind);
+            eprintln!("DIAG128 +{} {}", event.observed_at_ms - base, &k[..k.len().min(60)]);
+        }
+    }
     assert!(
         final_assistant_text(&run).is_some_and(|text| text.contains("Fake agent completed run"))
     );

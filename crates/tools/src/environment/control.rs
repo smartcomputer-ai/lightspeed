@@ -35,14 +35,12 @@ pub struct EnvironmentDeactivateArgs {}
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EnvironmentModelView {
     pub environment_id: String,
-    pub provider_id: Option<String>,
     pub display_name: Option<String>,
     pub status: Option<String>,
     pub access: String,
     pub default: bool,
     pub working_directory: Option<String>,
     pub active: bool,
-    pub observed_at_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_message: Option<String>,
 }

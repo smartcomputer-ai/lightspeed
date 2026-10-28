@@ -1,48 +1,49 @@
-//! Provider controllers: dialing a provider's controller with its
-//! credential, recording what its `initialize` advertises, and classifying
-//! what goes wrong.
+//! Provider controllers: dialing a provider's controller, with its bearer
+//! credential when one is stored, and classifying what goes wrong.
 //!
-//! Every connection runs the controller handshake through
-//! [`ControllerClient::connect_initialized`]. At each successful handshake
-//! the advertised `routes.data` passes the downgrade rule and, together with
-//! the optional features, is recorded on the provider record; the gateway's
-//! provider data proxy and the reconciler's data-plane handshake build
-//! every target's data route from that recorded base, never from the
-//! controller URL.
+//! Nothing a controller advertises is stored. Every connection runs the
+//! controller handshake through [`ControllerClient::connect_initialized`],
+//! and its live `capabilities` gate the optional calls on that connection.
+//! The data route base is configuration: the provider record's configured
+//! base, or the one derived from its controller endpoint
+//! ([`EnvironmentProviderRecord::effective_data_route_base`]).
 
 use super::*;
 
 use ::environments::{
-    ControllerFeatures, EndpointScheme, EnvironmentEndpoint, EnvironmentProviderId,
-    EnvironmentProviderStore, EnvironmentRegistryError, ListEnvironmentProviders,
-    RecordProviderController,
+    EnvironmentEndpoint, EnvironmentProviderId, EnvironmentProviderRecord,
+    EnvironmentProviderStore, EnvironmentRegistryError,
 };
 use async_trait::async_trait;
 use auth::SecretValue;
 use environment_client::{ClientError, ConnectOptions, ControllerClient};
 use environment_protocol::{
-    control::handshake::ControllerInitializeResponse,
-    error::{ErrorData, PreconditionReason, ProtocolErrorKind},
-    routes::{DataRouteBase, UrlError},
+    control::handshake::ControllerCapabilities, error::ProtocolErrorKind, routes::DataRouteBase,
 };
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 use thiserror::Error;
 
-/// Deadline of every controller call. Controllers answer target methods
-/// promptly and continue slow work in the background, so this bounds a
-/// hung controller, not a slow create.
-pub(crate) const CONTROLLER_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// Deadline of every reconciler controller call. Controllers answer target
+/// methods promptly and continue slow work in the background, so this
+/// bounds a hung controller, not a slow create; it is short because a hung
+/// call holds one of the provider's in-flight rows until it expires.
+pub(crate) const CONTROLLER_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Deadline of the synchronous power and ingress calls an API request
+/// waits on.
+pub(crate) const PASS_THROUGH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Options for one controller or provider data-route connection: the
-/// provider credential as the bearer token, the default connect and
-/// `initialize` bounds, and [`CONTROLLER_REQUEST_TIMEOUT`] on every call.
-pub(crate) fn provider_connect_options(credential: &SecretValue) -> ConnectOptions {
-    ConnectOptions::new(super::gateway::runtime_client_info())
-        .with_bearer_token(credential.expose())
-        .with_request_timeout(CONTROLLER_REQUEST_TIMEOUT)
+/// provider credential as the bearer token when one is stored (no
+/// `Authorization` header otherwise), the default connect and `initialize`
+/// bounds, and [`CONTROLLER_REQUEST_TIMEOUT`] on every call.
+pub(crate) fn provider_connect_options(credential: Option<&SecretValue>) -> ConnectOptions {
+    let options = ConnectOptions::new(super::gateway::runtime_client_info())
+        .with_request_timeout(CONTROLLER_REQUEST_TIMEOUT);
+    match credential {
+        Some(credential) => options.with_bearer_token(credential.expose()),
+        None => options,
+    }
 }
 
 /// Dials a provider controller and runs its handshake. Tests substitute an
@@ -74,67 +75,48 @@ impl ProviderControllerConnector for WebSocketProviderControllerConnector {
     }
 }
 
-/// The facts a controller's `initialize` advertises, checked: the data
-/// route base must not downgrade a `wss` controller to `ws`. A controller
-/// on a Unix socket is local, so any base passes.
-pub(crate) fn controller_facts(
-    endpoint: &EnvironmentEndpoint,
-    initialize: &ControllerInitializeResponse,
-) -> Result<(ControllerFeatures, DataRouteBase), UrlError> {
-    if endpoint.scheme() != EndpointScheme::Unix {
-        initialize
-            .routes
-            .data
-            .check_for_controller(endpoint.as_str())?;
-    }
-    Ok((
-        ControllerFeatures {
-            adopt_target: initialize.capabilities.adopt_target,
-            ingress: initialize.capabilities.ingress,
-        },
-        initialize.routes.data.clone(),
-    ))
-}
-
-/// An optional controller feature the runtime gates calls on.
+/// An optional controller capability the runtime gates calls on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ControllerFeature {
-    AdoptTarget,
+    Power,
     Ingress,
 }
 
 impl ControllerFeature {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::AdoptTarget => "target adoption",
+            Self::Power => "power control",
             Self::Ingress => "public ingress",
         }
     }
 
-    pub(crate) fn in_features(self, features: &ControllerFeatures) -> bool {
+    pub(crate) fn in_capabilities(self, capabilities: &ControllerCapabilities) -> bool {
         match self {
-            Self::AdoptTarget => features.adopt_target,
-            Self::Ingress => features.ingress,
+            Self::Power => capabilities.power,
+            Self::Ingress => capabilities.ingress,
         }
     }
 }
 
-/// One initialized controller connection and what its handshake advertised.
+/// One initialized controller connection, what its handshake advertised,
+/// and what its data routes need.
 #[derive(Clone)]
 pub(crate) struct ProviderController {
     pub(crate) provider_id: EnvironmentProviderId,
     pub(crate) client: ControllerClient,
-    pub(crate) features: ControllerFeatures,
+    /// The live `initialize` capabilities of this connection.
+    pub(crate) capabilities: ControllerCapabilities,
+    /// The effective data route base.
     pub(crate) data_route_base: DataRouteBase,
     /// The provider credential, presented on its data routes too.
-    pub(crate) credential: SecretValue,
+    pub(crate) credential: Option<SecretValue>,
 }
 
 impl ProviderController {
-    /// Refuse a call that needs an optional feature the controller did not
-    /// advertise, before anything is sent.
+    /// Refuse a call that needs an optional capability the controller did
+    /// not advertise, before anything is sent.
     pub(crate) fn require(&self, feature: ControllerFeature) -> Result<(), ControllerError> {
-        if feature.in_features(&self.features) {
+        if feature.in_capabilities(&self.capabilities) {
             Ok(())
         } else {
             Err(ControllerError::FeatureUnavailable {
@@ -157,86 +139,52 @@ impl ProviderController {
     }
 }
 
-/// Connect to a provider's controller with its stored credential, check the
-/// advertised facts and record them on the provider record when they
-/// changed.
+/// Connect to a provider's controller with its stored credential, if any.
 pub(crate) async fn connect_provider_controller(
     store: &dyn EnvironmentProviderStore,
     connector: &dyn ProviderControllerConnector,
     provider_id: &EnvironmentProviderId,
 ) -> Result<ProviderController, ControllerError> {
-    let provider = store.read_provider(provider_id).await?;
+    let provider: EnvironmentProviderRecord = store.read_provider(provider_id).await?;
+    let data_route_base = provider.effective_data_route_base()?;
     let credential = store.read_provider_credential(provider_id).await?;
     let client = connector
         .connect(
             &provider.controller_endpoint,
-            provider_connect_options(&credential),
+            provider_connect_options(credential.as_ref()),
         )
         .await
         .map_err(|source| ControllerError::Connect {
             provider_id: provider_id.to_string(),
             source,
         })?;
-    let (features, data_route_base) =
-        match controller_facts(&provider.controller_endpoint, client.initialize_response()) {
-            Ok(facts) => facts,
-            Err(source) => {
-                let _ = client.close().await;
-                return Err(ControllerError::Routes {
-                    provider_id: provider_id.to_string(),
-                    source,
-                });
-            }
-        };
-    if provider.controller_features != Some(features)
-        || provider.data_route_base.as_ref() != Some(&data_route_base)
-    {
-        let recorded = store
-            .record_provider_controller(RecordProviderController {
-                provider_id: provider_id.clone(),
-                controller_endpoint: provider.controller_endpoint.clone(),
-                features,
-                data_route_base: data_route_base.clone(),
-            })
-            .await;
-        if let Err(error) = recorded {
-            let _ = client.close().await;
-            return Err(error.into());
-        }
-    }
     Ok(ProviderController {
         provider_id: provider_id.clone(),
+        capabilities: client.initialize_response().capabilities.clone(),
         client,
-        features,
         data_route_base,
         credential,
     })
 }
 
-/// Check a controller endpoint at provider registration. A controller that
-/// answers definitively wrong (an HTTP refusal such as 404 for a URL that
-/// names no controller or 401 for a wrong credential, another plane, or a
-/// data route base that fails the downgrade rule) is refused, so a
-/// mis-registered provider never provisions anything. One that cannot be
-/// reached right now is accepted; its facts are recorded at the first
-/// successful handshake.
+/// Check a controller endpoint at provider registration, with the
+/// credential the provider will hold. A controller that answers
+/// definitively wrong (an HTTP refusal such as 404 for a URL that names no
+/// controller or 401 for a wrong or missing credential, or another plane)
+/// is refused, so a mis-registered provider never provisions anything. One
+/// that cannot be reached right now is accepted.
 pub(crate) async fn probe_controller(
     connector: &dyn ProviderControllerConnector,
     endpoint: &EnvironmentEndpoint,
-    credential: &SecretValue,
-) -> Result<Option<(ControllerFeatures, DataRouteBase)>, AgentApiError> {
+    credential: Option<&SecretValue>,
+) -> Result<(), AgentApiError> {
     match connector
         .connect(endpoint, provider_connect_options(credential))
         .await
     {
         Ok(client) => {
-            let facts = controller_facts(endpoint, client.initialize_response());
             let _ = client.close().await;
-            facts.map(Some).map_err(|error| {
-                AgentApiError::invalid_request(format!(
-                    "the provider controller advertised an unusable data route: {error}"
-                ))
-            })
+            Ok(())
         }
         Err(error) if refuses_registration(&error) => Err(AgentApiError::invalid_request(format!(
             "the provider controller at {endpoint} refused the handshake: {error}"
@@ -246,9 +194,9 @@ pub(crate) async fn probe_controller(
                 target: "temporal_runtime",
                 %endpoint,
                 %error,
-                "provider controller is not reachable at registration; its features are recorded at the first successful handshake"
+                "provider controller is not reachable at registration; it is registered anyway"
             );
-            Ok(None)
+            Ok(())
         }
     }
 }
@@ -257,7 +205,7 @@ pub(crate) async fn probe_controller(
 /// controller temporarily unavailable.
 fn refuses_registration(error: &ClientError) -> bool {
     match error {
-        ClientError::UpgradeRejected { status } => {
+        ClientError::UpgradeRejected { status, .. } => {
             (400..500).contains(status) && !matches!(status, 408 | 429)
         }
         ClientError::WrongPlane { .. } | ClientError::Configuration { .. } => true,
@@ -268,8 +216,8 @@ fn refuses_registration(error: &ClientError) -> bool {
 /// How the reconciler treats a failed controller interaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ControllerDisposition {
-    /// May succeed later unchanged: keep the status, record the error and
-    /// retry next pass, until the provisioning deadline.
+    /// May succeed later unchanged: back off and retry, until the
+    /// provisioning deadline.
     Transient,
     /// The provider refused the request; repeating it cannot help.
     Refused,
@@ -289,15 +237,6 @@ pub(crate) enum ControllerError {
         source: ClientError,
     },
 
-    /// The controller advertised a data route base that fails the
-    /// downgrade rule; treated like a failed `initialize`.
-    #[error("provider controller {provider_id} advertised an unusable data route: {source}")]
-    Routes {
-        provider_id: String,
-        #[source]
-        source: UrlError,
-    },
-
     /// A call on an initialized connection failed.
     #[error("provider controller {provider_id}: {source}")]
     Call {
@@ -306,20 +245,12 @@ pub(crate) enum ControllerError {
         source: ClientError,
     },
 
-    /// The call needs an optional feature the controller did not
+    /// The call needs an optional capability the controller did not
     /// advertise; nothing was sent.
     #[error("provider {provider_id} does not offer {}", feature.as_str())]
     FeatureUnavailable {
         provider_id: String,
         feature: ControllerFeature,
-    },
-
-    /// An earlier failure in this reconcile pass marked the provider
-    /// unhealthy; its remaining environments are not attempted.
-    #[error("provider controller {provider_id} is skipped for this pass: {message}")]
-    Skipped {
-        provider_id: String,
-        message: String,
     },
 
     #[error(transparent)]
@@ -335,50 +266,7 @@ impl ControllerError {
         match self {
             Self::Call { source, .. } => call_disposition(source),
             Self::FeatureUnavailable { .. } => ControllerDisposition::Refused,
-            Self::Connect { .. } | Self::Routes { .. } | Self::Skipped { .. } => {
-                ControllerDisposition::Transient
-            }
-            Self::Registry(_) => ControllerDisposition::Transient,
-        }
-    }
-
-    /// True when the controller connection itself failed (a dial, a
-    /// deadline, a dropped socket): the provider's remaining environments
-    /// are skipped for the rest of the pass, so one hung provider costs one
-    /// deadline per pass instead of one per environment.
-    pub(crate) fn is_connection_failure(&self) -> bool {
-        match self {
-            Self::Connect { .. } | Self::Routes { .. } | Self::Skipped { .. } => true,
-            Self::Call { source, .. } => !matches!(
-                source,
-                ClientError::Protocol(_) | ClientError::Decode(_) | ClientError::Encode(_)
-            ),
-            Self::FeatureUnavailable { .. } | Self::Registry(_) => false,
-        }
-    }
-
-    /// The precondition a refusal named, if any.
-    pub(crate) fn precondition(&self) -> Option<PreconditionReason> {
-        match self {
-            Self::Call {
-                source: ClientError::Protocol(error),
-                ..
-            } => match error.data {
-                ErrorData::FailedPrecondition { reason } => Some(reason),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    pub(crate) fn provider_id(&self) -> Option<&str> {
-        match self {
-            Self::Connect { provider_id, .. }
-            | Self::Routes { provider_id, .. }
-            | Self::Call { provider_id, .. }
-            | Self::FeatureUnavailable { provider_id, .. }
-            | Self::Skipped { provider_id, .. } => Some(provider_id),
-            Self::Registry(_) => None,
+            Self::Connect { .. } | Self::Registry(_) => ControllerDisposition::Transient,
         }
     }
 
@@ -408,167 +296,6 @@ pub(crate) fn call_disposition(error: &ClientError) -> ControllerDisposition {
     }
 }
 
-/// The controllers one reconcile pass talks to: each provider is dialed at
-/// most once per pass, and a provider whose connection failed is skipped
-/// for the rest of the pass.
-#[derive(Default)]
-pub(crate) struct ProviderPass {
-    controllers: HashMap<EnvironmentProviderId, PassController>,
-}
-
-enum PassController {
-    Connected(ProviderController),
-    Unhealthy(String),
-}
-
-impl ProviderPass {
-    pub(crate) async fn controller(
-        &mut self,
-        store: &dyn EnvironmentProviderStore,
-        connector: &dyn ProviderControllerConnector,
-        provider_id: &EnvironmentProviderId,
-    ) -> Result<ProviderController, ControllerError> {
-        match self.controllers.get(provider_id) {
-            Some(PassController::Connected(controller)) => return Ok(controller.clone()),
-            Some(PassController::Unhealthy(message)) => {
-                return Err(ControllerError::Skipped {
-                    provider_id: provider_id.to_string(),
-                    message: message.clone(),
-                });
-            }
-            None => {}
-        }
-        match connect_provider_controller(store, connector, provider_id).await {
-            Ok(controller) => {
-                self.controllers.insert(
-                    provider_id.clone(),
-                    PassController::Connected(controller.clone()),
-                );
-                Ok(controller)
-            }
-            Err(error) => {
-                if error.is_connection_failure() {
-                    self.controllers.insert(
-                        provider_id.clone(),
-                        PassController::Unhealthy(error.to_string()),
-                    );
-                }
-                Err(error)
-            }
-        }
-    }
-
-    /// Record a failure of `error`'s provider: a connection failure skips
-    /// the provider for the rest of the pass.
-    pub(crate) async fn observe_failure(&mut self, error: &ControllerError) {
-        if !error.is_connection_failure() {
-            return;
-        }
-        let Some(provider_id) = error.provider_id() else {
-            return;
-        };
-        let Ok(provider_id) = EnvironmentProviderId::try_new(provider_id) else {
-            return;
-        };
-        if let Some(PassController::Connected(controller)) = self
-            .controllers
-            .insert(provider_id, PassController::Unhealthy(error.to_string()))
-        {
-            controller.close().await;
-        }
-    }
-
-    pub(crate) async fn close(self) {
-        for controller in self.controllers.into_values() {
-            if let PassController::Connected(controller) = controller {
-                controller.close().await;
-            }
-        }
-    }
-}
-
-/// Dials providers whose controller facts are not recorded yet (never
-/// reached, or their endpoint changed and the registration probe could not
-/// reach the new one), so the gateway's data proxy gets a data route base
-/// even when none of the provider's environments needs convergence. Failed
-/// attempts back off per provider.
-#[derive(Default)]
-pub(crate) struct ProviderFactsRefresh {
-    listed_at: Option<Instant>,
-    retry: HashMap<EnvironmentProviderId, (Instant, Duration)>,
-}
-
-impl ProviderFactsRefresh {
-    /// How often the provider list is read.
-    const LIST_INTERVAL: Duration = Duration::from_secs(5);
-    const FIRST_RETRY: Duration = Duration::from_secs(5);
-    const MAX_RETRY: Duration = Duration::from_secs(300);
-
-    /// One refresh step of a deployment pass; connections stay in `pass`.
-    pub(crate) async fn run(
-        &mut self,
-        pass: &mut ProviderPass,
-        store: &dyn EnvironmentProviderStore,
-        connector: &dyn ProviderControllerConnector,
-    ) {
-        let now = Instant::now();
-        if self
-            .listed_at
-            .is_some_and(|listed| now.duration_since(listed) < Self::LIST_INTERVAL)
-        {
-            return;
-        }
-        self.listed_at = Some(now);
-        let providers = match store
-            .list_providers(ListEnvironmentProviders::default())
-            .await
-        {
-            Ok(providers) => providers,
-            Err(error) => {
-                tracing::warn!(target: "temporal_runtime", %error, "listing providers for a controller handshake failed");
-                return;
-            }
-        };
-        let unrecorded: Vec<EnvironmentProviderId> = providers
-            .into_iter()
-            .filter(|provider| provider.data_route_base.is_none())
-            .map(|provider| provider.provider_id)
-            .collect();
-        self.retry
-            .retain(|provider_id, _| unrecorded.contains(provider_id));
-        for provider_id in unrecorded {
-            if self
-                .retry
-                .get(&provider_id)
-                .is_some_and(|(next, _)| now < *next)
-            {
-                continue;
-            }
-            match pass.controller(store, connector, &provider_id).await {
-                Ok(_) => {
-                    self.retry.remove(&provider_id);
-                }
-                Err(error) => {
-                    let backoff = self
-                        .retry
-                        .get(&provider_id)
-                        .map_or(Self::FIRST_RETRY, |(_, backoff)| {
-                            (*backoff * 2).min(Self::MAX_RETRY)
-                        });
-                    tracing::debug!(
-                        target: "temporal_runtime",
-                        %provider_id,
-                        %error,
-                        retry_in_s = backoff.as_secs(),
-                        "provider controller handshake failed; its data route base stays unrecorded"
-                    );
-                    self.retry.insert(provider_id, (now + backoff, backoff));
-                }
-            }
-        }
-    }
-}
-
 impl EnvironmentService {
     /// A controller connection for one API request; the caller closes it.
     pub(crate) async fn connect_provider_controller(
@@ -582,62 +309,15 @@ impl EnvironmentService {
         )
         .await
     }
-
-    /// Refuse an API request that needs an optional controller feature the
-    /// provider does not offer. Features recorded at the last handshake
-    /// decide; a provider not reached yet is dialed once to learn them.
-    pub(crate) async fn require_controller_feature(
-        &self,
-        provider_id: &EnvironmentProviderId,
-        feature: ControllerFeature,
-    ) -> Result<(), AgentApiError> {
-        let provider = self.read_environment_provider(provider_id).await?;
-        let features = match provider.controller_features {
-            Some(features) => features,
-            None => {
-                let controller = self
-                    .connect_provider_controller(provider_id)
-                    .await
-                    .map_err(ControllerError::into_api_error)?;
-                controller.close().await;
-                controller.features
-            }
-        };
-        if feature.in_features(&features) {
-            Ok(())
-        } else {
-            Err(AgentApiError::rejected(format!(
-                "provider {provider_id} does not offer {}",
-                feature.as_str()
-            )))
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use environment_protocol::{
-        CONTROLLER_PROTOCOL_VERSION,
-        control::handshake::{ControllerCapabilities, ControllerRoutes},
-        error::ProtocolError,
-        handshake::{ImplementationInfo, Plane},
+        error::{PreconditionReason, ProtocolError},
+        handshake::Plane,
     };
-
-    fn initialize(data: &str) -> ControllerInitializeResponse {
-        ControllerInitializeResponse {
-            protocol_version: CONTROLLER_PROTOCOL_VERSION,
-            plane: Plane::Controller,
-            server_info: ImplementationInfo::new("controller").unwrap(),
-            capabilities: ControllerCapabilities {
-                adopt_target: true,
-                ingress: false,
-            },
-            routes: ControllerRoutes {
-                data: DataRouteBase::new(data).unwrap(),
-            },
-        }
-    }
 
     fn call(source: ClientError) -> ControllerError {
         ControllerError::Call {
@@ -672,10 +352,14 @@ mod tests {
         for source in [
             ClientError::VersionMismatch {
                 plane: Plane::Controller,
-                local: 3,
-                remote: 4,
+                local: 4,
+                remote: 5,
             },
-            ClientError::UpgradeRejected { status: 404 },
+            ClientError::UpgradeRejected {
+                status: 404,
+                refusal: None,
+                retry_after_ms: None,
+            },
             ClientError::ConnectTimeout {
                 endpoint: "ws://provider".into(),
             },
@@ -685,7 +369,6 @@ mod tests {
                 source,
             };
             assert_eq!(error.disposition(), ControllerDisposition::Transient);
-            assert!(error.is_connection_failure());
         }
     }
 
@@ -696,28 +379,29 @@ mod tests {
             "deprecated",
         )));
         assert_eq!(refused.disposition(), ControllerDisposition::Refused);
-        assert_eq!(
-            refused.precondition(),
-            Some(PreconditionReason::TemplateDeprecated)
-        );
-        assert!(!refused.is_connection_failure());
         let gone = call(ClientError::Protocol(ProtocolError::not_found("no target")));
         assert_eq!(gone.disposition(), ControllerDisposition::Gone);
         let unadvertised = ControllerError::FeatureUnavailable {
             provider_id: "provider".into(),
-            feature: ControllerFeature::AdoptTarget,
+            feature: ControllerFeature::Power,
         };
         assert_eq!(unadvertised.disposition(), ControllerDisposition::Refused);
-        // A deadline or a dropped socket skips the provider for the pass.
-        assert!(call(ClientError::DeadlineExceeded { elapsed_ms: 1 }).is_connection_failure());
-        assert!(!call(ClientError::Decode("bad".into())).is_connection_failure());
+        assert_eq!(
+            unadvertised.into_api_error().kind,
+            api::AgentApiErrorKind::Rejected
+        );
     }
 
     #[test]
     fn registration_refuses_only_definitive_handshake_failures() {
+        let rejected = |status| ClientError::UpgradeRejected {
+            status,
+            refusal: None,
+            retry_after_ms: None,
+        };
         for refused in [
-            ClientError::UpgradeRejected { status: 404 },
-            ClientError::UpgradeRejected { status: 401 },
+            rejected(404),
+            rejected(401),
             ClientError::WrongPlane {
                 expected: Plane::Controller,
                 actual: Plane::Data,
@@ -726,47 +410,38 @@ mod tests {
             assert!(refuses_registration(&refused), "{refused}");
         }
         for accepted in [
-            ClientError::UpgradeRejected { status: 503 },
-            ClientError::UpgradeRejected { status: 429 },
+            rejected(503),
+            rejected(429),
             ClientError::Connect {
                 endpoint: "ws://provider".into(),
                 message: "refused".into(),
             },
             ClientError::VersionMismatch {
                 plane: Plane::Controller,
-                local: 3,
-                remote: 4,
+                local: 4,
+                remote: 5,
             },
         ] {
             assert!(!refuses_registration(&accepted), "{accepted}");
         }
     }
 
-    /// A connector whose every dial fails, counting the attempts.
-    #[derive(Default)]
-    struct UnreachableConnector {
-        attempts: std::sync::atomic::AtomicUsize,
-    }
-
-    #[async_trait]
-    impl ProviderControllerConnector for UnreachableConnector {
-        async fn connect(
-            &self,
-            endpoint: &EnvironmentEndpoint,
-            _options: ConnectOptions,
-        ) -> Result<ControllerClient, ClientError> {
-            self.attempts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Err(ClientError::Connect {
-                endpoint: endpoint.to_string(),
-                message: "refused".into(),
-            })
-        }
+    #[test]
+    fn the_bearer_is_sent_only_with_a_credential() {
+        assert!(provider_connect_options(None).bearer_token.is_none());
+        let credential = SecretValue::new("provider-credential");
+        assert_eq!(
+            provider_connect_options(Some(&credential))
+                .bearer_token
+                .as_ref()
+                .map(|token| token.expose()),
+            Some("provider-credential")
+        );
     }
 
     async fn provider_store(
         endpoint: &str,
-        credential: &str,
+        credential: Option<&str>,
     ) -> ::environments::InMemoryEnvironmentRegistryStore {
         let store = ::environments::InMemoryEnvironmentRegistryStore::new();
         store
@@ -774,8 +449,13 @@ mod tests {
                 provider_id: EnvironmentProviderId::new("provider"),
                 display_name: None,
                 controller_endpoint: EnvironmentEndpoint::parse(endpoint).unwrap(),
-                metadata: Default::default(),
-                credential: Some(SecretValue::new(credential)),
+                data_route_base: None,
+                credential: match credential {
+                    Some(credential) => {
+                        ::environments::ProviderCredentialChange::Set(SecretValue::new(credential))
+                    }
+                    None => ::environments::ProviderCredentialChange::Keep,
+                },
                 updated_at_ms: 1,
             })
             .await
@@ -784,68 +464,70 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn the_refresh_records_facts_of_a_provider_never_reached() {
-        let controller = crate::environments::fake_controller::FakeController::start()
-            .await
-            .unwrap();
+    async fn a_connection_carries_live_capabilities_and_the_derived_data_route() {
+        let controller = crate::environments::fake_controller::FakeController::start_with(
+            crate::environments::fake_controller::FakeControllerOptions {
+                power: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         let store = provider_store(controller.controller_url(), controller.credential()).await;
-        let provider_id = EnvironmentProviderId::new("provider");
+        let connected = connect_provider_controller(
+            &store,
+            &WebSocketProviderControllerConnector,
+            &EnvironmentProviderId::new("provider"),
+        )
+        .await
+        .expect("connect");
+        assert!(!connected.capabilities.power && connected.capabilities.ingress);
+        assert!(matches!(
+            connected.require(ControllerFeature::Power),
+            Err(ControllerError::FeatureUnavailable { .. })
+        ));
         assert!(
-            store
-                .read_provider(&provider_id)
-                .await
-                .unwrap()
+            connected
                 .data_route_base
-                .is_none()
+                .as_str()
+                .ends_with(environment_protocol::routes::DEFAULT_DATA_ROUTE_PATH)
         );
-        let mut pass = ProviderPass::default();
-        ProviderFactsRefresh::default()
-            .run(&mut pass, &store, &WebSocketProviderControllerConnector)
-            .await;
-        pass.close().await;
-        let provider = store.read_provider(&provider_id).await.unwrap();
-        assert!(provider.data_route_base.is_some());
-        assert!(provider.controller_features.is_some());
+        connected.close().await;
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn an_unreachable_provider_is_retried_with_backoff() {
-        let store = provider_store("ws://127.0.0.1:9/control", "credential").await;
-        let connector = UnreachableConnector::default();
-        let mut refresh = ProviderFactsRefresh::default();
-        let mut pass = ProviderPass::default();
-        refresh.run(&mut pass, &store, &connector).await;
-        assert_eq!(
-            connector.attempts.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
-        // The next listing still finds it unrecorded, but its retry is not
-        // due yet.
-        refresh.listed_at = None;
-        let mut pass = ProviderPass::default();
-        refresh.run(&mut pass, &store, &connector).await;
-        assert_eq!(
-            connector.attempts.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
-        let (_, backoff) = refresh.retry[&EnvironmentProviderId::new("provider")];
-        assert_eq!(backoff, ProviderFactsRefresh::FIRST_RETRY);
-    }
-
-    #[test]
-    fn controller_facts_enforce_the_downgrade_rule() {
-        let secure = EnvironmentEndpoint::parse("wss://provider.test/control").unwrap();
-        assert!(matches!(
-            controller_facts(&secure, &initialize("ws://provider.test/routes")),
-            Err(UrlError::Downgrade(_))
-        ));
-        let (features, base) =
-            controller_facts(&secure, &initialize("wss://provider.test/routes")).unwrap();
-        assert!(features.adopt_target && !features.ingress);
-        assert_eq!(base.as_str(), "wss://provider.test/routes");
-        let plain = EnvironmentEndpoint::parse("ws://127.0.0.1:9/control").unwrap();
-        assert!(controller_facts(&plain, &initialize("ws://127.0.0.1:9/routes")).is_ok());
-        let local = EnvironmentEndpoint::parse("unix:///run/provider.sock").unwrap();
-        assert!(controller_facts(&local, &initialize("ws://localhost/routes")).is_ok());
+    async fn a_provider_without_a_credential_connects_without_a_bearer() {
+        let controller = crate::environments::fake_controller::FakeController::start_with(
+            crate::environments::fake_controller::FakeControllerOptions {
+                credential: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(controller.credential().is_none());
+        let store = provider_store(controller.controller_url(), None).await;
+        let connected = connect_provider_controller(
+            &store,
+            &WebSocketProviderControllerConnector,
+            &EnvironmentProviderId::new("provider"),
+        )
+        .await
+        .expect("connect without a credential");
+        assert!(connected.credential.is_none());
+        connected.close().await;
+        // A controller that requires a credential refuses a provider that
+        // has none, and registration says so.
+        let guarded = crate::environments::fake_controller::FakeController::start()
+            .await
+            .unwrap();
+        let refused = probe_controller(
+            &WebSocketProviderControllerConnector,
+            &EnvironmentEndpoint::parse(guarded.controller_url()).unwrap(),
+            None,
+        )
+        .await
+        .expect_err("a missing credential is a definitive refusal");
+        assert_eq!(refused.kind, api::AgentApiErrorKind::InvalidRequest);
     }
 }

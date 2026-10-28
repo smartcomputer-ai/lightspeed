@@ -85,7 +85,7 @@ pub enum MethodGroup {
     DeploymentUniverses,
     #[serde(rename = "deployment/api-keys")]
     DeploymentApiKeys,
-    /// Environment providers, their bindings and adoption.
+    /// Environment providers and their universe bindings.
     #[serde(rename = "deployment/environment-providers")]
     DeploymentEnvironmentProviders,
     /// `deployment/channels/accounts/list`: a connector host's discovery.
@@ -208,7 +208,7 @@ impl MethodGroup {
             Self::DeploymentUniverses
         } else if group("deployment/api-keys/") {
             Self::DeploymentApiKeys
-        } else if group("deployment/environment-provider") || group("deployment/environments/") {
+        } else if group("deployment/environment-provider") {
             Self::DeploymentEnvironmentProviders
         } else if group("deployment/channels/") {
             Self::DeploymentChannels
@@ -512,10 +512,6 @@ mod tests {
             ),
             (
                 "deployment/environment-provider-bindings/list",
-                Some(MethodGroup::DeploymentEnvironmentProviders),
-            ),
-            (
-                "deployment/environments/adopt",
                 Some(MethodGroup::DeploymentEnvironmentProviders),
             ),
             (

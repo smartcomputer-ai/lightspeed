@@ -11,6 +11,9 @@ EnvironmentFile=/etc/lightspeed-envd/provider.env
 ExecStart=/usr/local/bin/lightspeed-envd
 Restart=always
 RestartSec=1
+# envd exits 3 (registration refused), 4 (environment closed) or 5
+# (superseded) when a restart cannot help.
+RestartPreventExitStatus=3 4 5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

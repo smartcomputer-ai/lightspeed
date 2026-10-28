@@ -1,10 +1,15 @@
 //! On-demand provider data connections.
 //!
 //! Lightspeed opens one provider WebSocket for a specific current target. The
-//! provider validates the credential and ownership, dials the target's private
-//! envd, and proxies the connection until it closes or becomes idle. There is
-//! no provider-initiated connection and no provider route registry in
+//! provider validates the credential and ownership, wakes the target when it
+//! is powered down, dials the target's private envd, and proxies the
+//! connection until it closes or becomes idle. There is no
+//! provider-initiated connection and no provider route registry in
 //! Lightspeed.
+//!
+//! Every data connection, from the dial that may wake the target to the
+//! relay's end, holds a [`RelayHold`] on its instance. The idle loop never
+//! powers down or closes an instance while one is held.
 //!
 //! The relay is an intermediary under the protocol's liveness rule: it
 //! forwards pings and pongs, counts every frame in either direction as
@@ -12,7 +17,11 @@
 //! config loading keeps at or above the protocol minimum. Both legs carry the
 //! protocol's message and frame limit.
 
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use axum::extract::ws::{Message as AxumMessage, WebSocket};
@@ -28,9 +37,50 @@ use crate::{Config, incus::OwnedTarget};
 
 pub type GuestSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Bound on the readiness probe's dial, so an observation stays prompt while
-/// a guest boots.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+/// Data connections in progress, by instance name.
+#[derive(Clone, Debug, Default)]
+pub struct Relays(Arc<Mutex<HashMap<String, usize>>>);
+
+impl Relays {
+    /// Count one data connection to `name` until the hold is dropped.
+    pub fn hold(&self, name: &str) -> RelayHold {
+        *self.lock().entry(name.to_owned()).or_default() += 1;
+        RelayHold {
+            relays: self.clone(),
+            name: name.to_owned(),
+        }
+    }
+
+    /// True while any data connection to `name` is held.
+    pub fn active(&self, name: &str) -> bool {
+        self.lock().get(name).is_some_and(|count| *count > 0)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, usize>> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// One counted data connection; see [`Relays::hold`].
+#[derive(Debug)]
+pub struct RelayHold {
+    relays: Relays,
+    name: String,
+}
+
+impl Drop for RelayHold {
+    fn drop(&mut self) {
+        let mut relays = self.relays.lock();
+        if let Some(count) = relays.get_mut(&self.name) {
+            *count -= 1;
+            if *count == 0 {
+                relays.remove(&self.name);
+            }
+        }
+    }
+}
 
 /// The protocol's message limit, applied to both relay legs.
 pub fn websocket_config() -> WebSocketConfig {
@@ -48,7 +98,8 @@ pub async fn dial_guest(config: &Config, target: &OwnedTarget) -> anyhow::Result
     .await
 }
 
-async fn dial_guest_within(
+/// Dial the guest's envd listener, giving up after `timeout`.
+pub async fn dial_guest_within(
     config: &Config,
     target: &OwnedTarget,
     timeout: Duration,
@@ -65,25 +116,6 @@ async fn dial_guest_within(
     .await
     .context("envd dial timeout")??;
     Ok(socket)
-}
-
-/// The provider's own liveness probe of envd: a WebSocket upgrade on the
-/// guest's data listener, without `initialize`, so the provider never
-/// depends on envd's protocol version.
-pub async fn probe_guest(config: &Config, target: &OwnedTarget) -> bool {
-    match dial_guest_within(
-        config,
-        target,
-        PROBE_TIMEOUT.min(Duration::from_secs(config.dial_timeout_seconds)),
-    )
-    .await
-    {
-        Ok(mut socket) => {
-            let _ = socket.close(None).await;
-            true
-        }
-        Err(_) => false,
-    }
 }
 
 pub async fn proxy(config: Config, mut lightspeed: WebSocket, mut guest: GuestSocket) {
@@ -165,6 +197,21 @@ mod tests {
     use tokio::{net::TcpListener, sync::Mutex};
 
     use super::*;
+
+    #[test]
+    fn relay_holds_count_per_instance_until_dropped() {
+        let relays = Relays::default();
+        assert!(!relays.active("a"));
+        let first = relays.hold("a");
+        let second = relays.hold("a");
+        assert!(relays.active("a"));
+        assert!(!relays.active("b"));
+        drop(first);
+        assert!(relays.active("a"));
+        drop(second);
+        assert!(!relays.active("a"));
+        assert!(relays.lock().is_empty());
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn relay_closes_guest_when_lightspeed_disappears_without_a_close_frame() {

@@ -199,8 +199,8 @@
             "type": "string"
           },
           {
-            "const": "adoptTarget",
-            "description": "The controller's `adoptTarget` capability.",
+            "const": "power",
+            "description": "The controller's `power` capability.",
             "type": "string"
           },
           {
@@ -1007,13 +1007,13 @@
         "description": "`env/getIdle` response.",
         "properties": {
           "idleForMs": {
-            "description": "Milliseconds since the last `use` request, or since running work\nlast ended, whichever is later. Zero while any process or job runs.",
+            "description": "Milliseconds since the last `use` request, or since running work\nlast ended, whichever is later. Zero while any process or job runs\nor any leftover process group has live members; the clock restarts\nwhen the last of them ends.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "leftoverProcessGroupCount": {
-            "description": "Process groups of exited processes that still have members alive:\nservices a command started and left running. They are not running\nwork and do not hold `idleForMs` at zero.",
+            "description": "Process groups of exited processes that still have members alive:\nservices a command started and left running. They hold `idleForMs`\nat zero like running work.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -2212,7 +2212,7 @@
           },
           {
             "const": "ownerMismatch",
-            "description": "The target belongs to another owner, or (`target/adopt`) the owner\nalready holds a different target.",
+            "description": "The target belongs to another owner.",
             "type": "string"
           },
           {
@@ -2228,11 +2228,6 @@
           {
             "const": "targetNotActive",
             "description": "A power change on a target whose `phase` is not `active`\n(provisioning, closing, closed or failed).",
-            "type": "string"
-          },
-          {
-            "const": "notAdoptable",
-            "description": "`target/adopt`: the source target exists but the provider cannot take\nit over, for example an instance of a kind it does not manage.",
             "type": "string"
           }
         ]
@@ -4282,9 +4277,9 @@
     }
   },
   "info": {
-    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 3. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
+    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 4. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
     "title": "Lightspeed environment data plane",
-    "version": "3"
+    "version": "4"
   },
   "methods": [
     {

@@ -1,6 +1,5 @@
 import { defaultEnvironmentAttachment } from "@/lib/sessions/resource-features";
 import type { BotView, Environment } from "@/api";
-import { describeIdlePolicy } from "@/components/environment/power-controls";
 
 const FEATURE_LABELS: Record<string, string> = {
   web: "Web",
@@ -33,8 +32,7 @@ export function environmentSummary(
   if (environment.environmentId) {
     const current = environments?.find((entry) => entry.environmentId === environment.environmentId);
     const name = current?.displayName ?? environment.environmentId;
-    const policy = current?.idlePolicy ? ` · ${describeIdlePolicy(current.idlePolicy)}` : "";
-    return `${name}${current ? ` · ${current.status}` : ""}${policy}`;
+    return `${name}${current ? ` · ${current.status}` : ""}`;
   }
   return "Inherits the session's environment";
 }

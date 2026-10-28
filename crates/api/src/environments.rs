@@ -29,17 +29,21 @@ pub struct SessionEnvironmentDeactivateResponse {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentCreateParams {
     /// Stable caller-generated retry identity, unique inside the universe.
+    /// Retrying with identical inputs returns the same environment.
     pub request_id: EnvironmentProvisionRequestId,
-    pub binding_id: EnvironmentProviderBindingId,
-    /// Immutable provider template-version identity.
+    /// The provider to create the environment with; the universe needs an
+    /// enabled binding to it.
+    pub provider_id: EnvironmentProviderId,
+    /// The provider template to create the environment from.
     pub template_id: EnvironmentTemplateId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
-    /// Optional staged idle policy applied by the power reaper.
+    /// Idle policy passed to the provider in place of the template's `idle`.
+    /// The provider runs the idle clock; it cannot be changed after create.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_policy: Option<EnvironmentIdlePolicyView>,
+    pub idle: Option<EnvironmentIdlePolicyView>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -60,29 +64,63 @@ pub struct EnvironmentReadResponse {
     pub environment: EnvironmentView,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Replace an environment's display name and caller metadata.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EnvironmentListParams {
+pub struct EnvironmentUpdateParams {
+    pub environment_id: EnvironmentId,
+    /// The new display name; omit to clear it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_id: Option<EnvironmentProviderId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_id: Option<EnvironmentProviderBindingId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<EnvironmentLifecycleStatusView>,
-    /// Only registered environments admitted by this registration key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registration_key_id: Option<EnvironmentRegistrationKeyId>,
-    /// Only environments carrying every listed metadata pair (AND
-    /// semantics); the same filter `session/list` accepts.
+    pub display_name: Option<String>,
+    /// The complete new caller metadata; omit or `{}` to clear it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentUpdateResponse {
+    pub environment: EnvironmentView,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentListParams {
+    /// Only provisioned environments of this provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<EnvironmentProviderId>,
+    /// Only registered environments admitted by this registration key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_key_id: Option<EnvironmentRegistrationKeyId>,
+    /// Only environments in this lifecycle state. `closed` lists closed
+    /// environments without `includeClosed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<EnvironmentStateView>,
+    /// Also list closed environments; they are omitted by default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_closed: bool,
+    /// Only environments carrying every listed metadata pair (AND
+    /// semantics); the same filter `session/list` accepts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
+    /// Most environments per page; omit for 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 500))]
+    pub limit: Option<u32>,
+    /// Exclusive environment id cursor: a previous page's `nextAfter`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<EnvironmentId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvironmentListResponse {
+    /// Environments in environment id order.
     #[serde(default)]
     pub environments: Vec<EnvironmentView>,
+    /// Pass as `after` to read the next page; absent on the last page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_after: Option<EnvironmentId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -101,6 +139,7 @@ pub struct EnvironmentCloseResponse {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentIngressPutParams {
     pub environment_id: EnvironmentId,
+    /// Ensure (`true`) or remove (`false`) the provider's public ingress.
     pub enabled: bool,
 }
 
@@ -110,7 +149,7 @@ pub struct EnvironmentIngressPutResponse {
     pub environment: EnvironmentView,
 }
 
-/// Steady power state of a provisioned environment.
+/// Power state of a provisioned environment's target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnvironmentPowerStateView {
@@ -123,11 +162,13 @@ pub enum EnvironmentPowerStateView {
     Stopped,
 }
 
-/// Staged idle policy. Thresholds are milliseconds of daemon-reported idle
-/// time and must be non-decreasing in the order pause, suspend, stop, close.
-/// Stages whose power state the provider does not support are skipped.
+/// Staged idle policy the provider applies. Thresholds are milliseconds of
+/// envd-reported idle time (running processes, jobs and leftover process
+/// groups hold it at zero) and must be non-decreasing in the order pause,
+/// suspend, stop, close. Stages whose power state the template does not
+/// support are skipped.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnvironmentIdlePolicyView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause_after_ms: Option<u64>,
@@ -143,8 +184,8 @@ pub struct EnvironmentIdlePolicyView {
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentPowerPutParams {
     pub environment_id: EnvironmentId,
-    /// Desired steady power state. Must be one of the provider-reported
-    /// `incarnation.powerStates`.
+    /// Power state to move the target to; one of its template's
+    /// `powerStates`.
     pub power: EnvironmentPowerStateView,
 }
 
@@ -156,22 +197,8 @@ pub struct EnvironmentPowerPutResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EnvironmentIdlePolicyPutParams {
-    pub environment_id: EnvironmentId,
-    /// The complete new policy; omit to clear it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_policy: Option<EnvironmentIdlePolicyView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentIdlePolicyPutResponse {
-    pub environment: EnvironmentView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct EnvironmentExternalCreateParams {
+    /// Stable caller-generated retry identity, unique inside the universe.
     pub request_id: EnvironmentProvisionRequestId,
     /// `ws://`, `wss://` or `unix://` URL of an envd instance reachable from
     /// Lightspeed.
@@ -188,23 +215,102 @@ pub struct EnvironmentExternalCreateResponse {
     pub environment: EnvironmentView,
 }
 
+/// The lifecycle Lightspeed owns. External and registered environments are
+/// only ever `open` or `closed`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub enum EnvironmentLifecycleStatusView {
+pub enum EnvironmentStateView {
+    /// The provider is creating the target; the environment opens after
+    /// Lightspeed's first handshake with its envd.
     Provisioning,
-    Booting,
+    Open,
+    /// The provider is removing the target.
+    Closing,
+    Closed,
+    /// Provisioning or the provider failed; `stateMessage` says why.
+    Failed,
+}
+
+/// Display status derived from `state` and the latest observation; never
+/// stored. Tools that use a paused, suspended or stopped environment wake
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentStatusView {
+    Provisioning,
     Ready,
-    /// Execution frozen; wakes on next use.
+    /// Execution frozen with RAM resident.
     Paused,
-    /// Execution state saved to disk; wakes on next use.
+    /// Execution state saved to disk.
     Suspended,
-    /// Powered off; provisioned environments wake on next use when the
-    /// provider supports power control.
-    Offline,
+    /// Powered off with disk retained.
+    Stopped,
+    /// Open, but the provider's latest observation is inconclusive.
+    Unknown,
+    /// Registered, open, and its daemon is not connected.
+    Away,
+    Closing,
+    Closed,
+    Failed,
+}
+
+/// Why an environment is closing or closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentCloseReasonView {
+    /// `environments/close`.
+    Requested,
+    /// Its registration key was revoked with `closeEnvironments`.
+    KeyRevoked,
+    /// Its ephemeral daemon stayed away longer than the key's disconnect
+    /// grace.
+    EphemeralGrace,
+    /// Its ephemeral daemon said goodbye.
+    Departed,
+    /// Its persistent daemon stayed away longer than the key's
+    /// `offlineCloseAfterMs`.
+    OfflineTimeout,
+    /// The provider reported the target closed or gone.
+    ProviderEnded,
+}
+
+/// Lifecycle phase of a provider target, as the provider reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentTargetPhaseView {
+    Provisioning,
+    Active,
     Closing,
     Closed,
     Failed,
     Unknown,
+}
+
+/// What the provider last reported about a provisioned environment's
+/// target. Display only: Lightspeed never converges it, and it may be up to
+/// a few minutes old.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentObservedTargetView {
+    pub phase: EnvironmentTargetPhaseView,
+    /// Present only while `phase` is `active`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power: Option<EnvironmentPowerStateView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub observed_at_ms: i64,
+}
+
+/// The envd build serving an environment, from its registration or
+/// Lightspeed's open handshake.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentDaemonView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_sha: Option<String>,
+    pub protocol_version: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -214,9 +320,24 @@ pub enum EnvironmentLifecycleStatusView {
     rename_all_fields = "camelCase"
 )]
 pub enum EnvironmentSourceView {
+    /// A target a deployment provider created from a template. The provider
+    /// owns its power, idle policy and ingress.
     Provisioned {
         provider_id: EnvironmentProviderId,
-        binding_id: EnvironmentProviderBindingId,
+        template_id: EnvironmentTemplateId,
+        /// The provider's handle for the target; absent until the provider
+        /// accepted the create.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_id: Option<EnvironmentTargetId>,
+        /// The create-time idle policy, when one replaced the template's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idle: Option<EnvironmentIdlePolicyView>,
+        /// Absent until the provider first reported the target.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observed: Option<EnvironmentObservedTargetView>,
+        /// The public endpoint the provider last reported.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        public_endpoint: Option<String>,
     },
     External {
         /// `ws://`, `wss://` or `unix://` URL Lightspeed dials envd at.
@@ -228,19 +349,30 @@ pub enum EnvironmentSourceView {
     Registered {
         registration_key_id: EnvironmentRegistrationKeyId,
         daemon_id: EnvironmentDaemonId,
+        /// The admitting key's identity mode.
         identity_mode: EnvironmentIdentityModeView,
+        /// The daemon's control connection is up.
+        connected: bool,
+        /// When the daemon last connected or disconnected.
+        connection_changed_at_ms: i64,
+        /// When the gateway last recorded the daemon's control connection:
+        /// at connect, at disconnect, and at most every five minutes while
+        /// connected.
+        last_seen_at_ms: i64,
     },
 }
 
-/// What Lightspeed does with a registered environment while its daemon is
-/// disconnected. Registration-key policy, copied onto each environment.
+/// What happens to a registered environment while its daemon is
+/// disconnected. Policy of the registration key that admitted it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum EnvironmentIdentityModeView {
-    /// Stays offline until explicitly closed.
+    /// Stays open: tools wait up to two minutes for the daemon to reconnect.
+    /// Closed explicitly, or after the key's `offlineCloseAfterMs`.
     Persistent,
-    /// Closed once the daemon has been away longer than the key's
-    /// disconnect grace.
+    /// Unusable while disconnected; closed once the daemon has been away
+    /// longer than the key's disconnect grace, or at once when it says
+    /// goodbye.
     Ephemeral,
 }
 
@@ -258,13 +390,17 @@ pub struct EnvironmentRegistrationKeyView {
     pub registration_key_id: EnvironmentRegistrationKeyId,
     /// The group name shown wherever registered environments are listed.
     pub display_name: String,
-    /// First characters of the secret, for identification only.
+    /// First characters of the key's live secret, for identification only.
     pub key_prefix: String,
     pub identity_mode: EnvironmentIdentityModeView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_active_environments: Option<u32>,
     /// Effective disconnect grace for ephemeral environments.
     pub ephemeral_disconnect_grace_ms: u64,
+    /// Persistent keys only: environments whose daemon has been away longer
+    /// than this are closed; absent keeps them open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_close_after_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
     pub status: EnvironmentRegistrationKeyStatusView,
@@ -275,6 +411,7 @@ pub struct EnvironmentRegistrationKeyView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_registered_at_ms: Option<i64>,
     pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revoked_at_ms: Option<i64>,
 }
@@ -296,6 +433,7 @@ impl fmt::Debug for EnvironmentRegistrationSecretView {
 pub struct EnvironmentRegistrationKeyCreateParams {
     /// Group name for the environments this key admits.
     pub display_name: String,
+    /// Immutable once the key exists.
     pub identity_mode: EnvironmentIdentityModeView,
     /// Non-closed environments the key may have at once; omit for unlimited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -303,6 +441,10 @@ pub struct EnvironmentRegistrationKeyCreateParams {
     /// Disconnect grace for ephemeral environments; omit for the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ephemeral_disconnect_grace_ms: Option<u64>,
+    /// Persistent keys only: close environments whose daemon has been away
+    /// longer than this; omit to keep them open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_close_after_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at_ms: Option<i64>,
 }
@@ -312,6 +454,48 @@ pub struct EnvironmentRegistrationKeyCreateParams {
 pub struct EnvironmentRegistrationKeyCreateResponse {
     pub registration_key: EnvironmentRegistrationKeyView,
     /// The plaintext secret, returned only here.
+    pub secret: EnvironmentRegistrationSecretView,
+}
+
+/// The complete editable policy of a registration key; an absent field is
+/// unset. The identity mode is immutable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegistrationKeyUpdateParams {
+    pub registration_key_id: EnvironmentRegistrationKeyId,
+    /// Group name for the environments this key admits.
+    pub display_name: String,
+    /// Non-closed environments the key may have at once; omit for unlimited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active_environments: Option<u32>,
+    /// Disconnect grace for ephemeral environments; omit for the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral_disconnect_grace_ms: Option<u64>,
+    /// Persistent keys only: close environments whose daemon has been away
+    /// longer than this; omit to keep them open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_close_after_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegistrationKeyUpdateResponse {
+    pub registration_key: EnvironmentRegistrationKeyView,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegistrationKeyRotateParams {
+    pub registration_key_id: EnvironmentRegistrationKeyId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRegistrationKeyRotateResponse {
+    pub registration_key: EnvironmentRegistrationKeyView,
+    /// The new plaintext secret, returned only here.
     pub secret: EnvironmentRegistrationSecretView,
 }
 
@@ -358,84 +542,44 @@ pub struct EnvironmentRegistrationKeyRevokeResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EnvironmentIncarnationView {
-    pub incarnation_id: EnvironmentIncarnationId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provision_request_id: Option<EnvironmentProvisionRequestId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_target_id: Option<EnvironmentTargetId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub template_id: Option<EnvironmentTemplateId>,
-    /// Power states the provider reported for this target; empty until
-    /// observed or when the provider offers no power control.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub power_states: Vec<EnvironmentPowerStateView>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct EnvironmentView {
     pub environment_id: EnvironmentId,
-    pub request_id: EnvironmentProvisionRequestId,
+    /// The caller's retry identity; absent for registered environments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<EnvironmentProvisionRequestId>,
     pub source: EnvironmentSourceView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
-    pub status: EnvironmentLifecycleStatusView,
-    /// Lightspeed-owned power intent; `status` is the observed state.
-    pub desired_power: EnvironmentPowerStateView,
+    pub state: EnvironmentStateView,
+    pub status: EnvironmentStatusView,
+    /// Why the environment failed, or what provisioning or closing is
+    /// waiting on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_policy: Option<EnvironmentIdlePolicyView>,
-    pub incarnation: EnvironmentIncarnationView,
-    /// Lightspeed-owned public ingress intent; `publicEndpoint` is what the
-    /// provider realized.
-    pub public_ingress_enabled: bool,
-    /// The public endpoint the provider last reported. It lags
-    /// `publicIngressEnabled` while the lifecycle reconciler converges.
+    pub state_message: Option<String>,
+    /// Present exactly while `state` is `closing` or `closed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_endpoint: Option<String>,
+    pub close_reason: Option<EnvironmentCloseReasonView>,
+    /// When `state` last changed.
+    pub state_changed_at_ms: i64,
+    /// The envd build serving the environment; absent until known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon: Option<EnvironmentDaemonView>,
+    /// Caller metadata.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
-    /// Registered environments only: when the gateway last saw the daemon's
-    /// control connection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_seen_at_ms: Option<i64>,
-    /// Why the environment failed, or the latest error (or what the
-    /// provider reports it is waiting on) while its lifecycle converges;
-    /// absent once it reaches a steady state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifecycle_error: Option<EnvironmentLifecycleErrorView>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_at_ms: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct EnvironmentLifecycleErrorView {
-    pub message: String,
-    /// When the current run of errors began.
-    pub first_at_ms: i64,
-    /// When `message` was recorded.
-    pub last_at_ms: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum EnvironmentProviderBindingStatusView {
-    Enabled,
-    Disabled,
-}
-
+/// A universe's binding to a deployment provider. Creates, templates and
+/// data routes of the provider need it enabled.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentProviderBindingView {
-    pub binding_id: EnvironmentProviderBindingId,
     pub provider_id: EnvironmentProviderId,
-    pub status: EnvironmentProviderBindingStatusView,
-    pub revision: u64,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
+    pub enabled: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -453,7 +597,7 @@ pub struct EnvironmentProviderBindingListResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentProviderBindingReadParams {
-    pub binding_id: EnvironmentProviderBindingId,
+    pub provider_id: EnvironmentProviderId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -467,16 +611,23 @@ pub struct EnvironmentProviderBindingReadResponse {
 pub struct EnvironmentTemplateView {
     pub template_id: EnvironmentTemplateId,
     pub provider_id: EnvironmentProviderId,
-    pub binding_id: EnvironmentProviderBindingId,
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// `environments/ingress/put` can enable public ingress on targets of
+    /// this template.
     pub public_ingress: bool,
     pub deprecated: bool,
     /// Compute targets of this template get; absent when the provider does
     /// not fix it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<EnvironmentTemplateResourcesView>,
+    /// Power states `environments/power/put` can move targets of this
+    /// template to; empty without power control.
+    pub power_states: Vec<EnvironmentPowerStateView>,
+    /// Idle policy targets get when `environments/create` names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle: Option<EnvironmentIdlePolicyView>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
 }
@@ -497,8 +648,9 @@ pub struct EnvironmentTemplateResourcesView {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentTemplateListParams {
+    /// Only this provider's templates; omit for every enabled binding.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_id: Option<EnvironmentProviderBindingId>,
+    pub provider_id: Option<EnvironmentProviderId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -510,7 +662,7 @@ pub struct EnvironmentTemplateListResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentTemplateReadParams {
-    pub binding_id: EnvironmentProviderBindingId,
+    pub provider_id: EnvironmentProviderId,
     pub template_id: EnvironmentTemplateId,
 }
 

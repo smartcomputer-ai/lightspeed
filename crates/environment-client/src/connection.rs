@@ -733,10 +733,7 @@ mod tests {
     async fn methods_of_another_plane_are_refused_before_sending() {
         let connection = Connection::in_process(Plane::Data, idle_handler(serde_json::json!({})));
         let params = serde_json::from_value(serde_json::json!({
-            "target": {"owner": {
-                "universeId": "u", "bindingId": "b",
-                "environmentId": "e", "incarnationId": "i"
-            }}
+            "target": {"owner": {"universeId": "u", "environmentId": "e"}}
         }))
         .unwrap();
         assert!(matches!(

@@ -113,19 +113,25 @@ pub fn resolve_discovery_url(
     let gateway_url = gateway_url.ok_or_else(|| {
         anyhow!("upgrade needs LIGHTSPEED_ENVD_GATEWAY_URL or LIGHTSPEED_ENVD_DISCOVERY_URL")
     })?;
+    let resolved = derive_discovery_url(gateway_url)?;
+    validate_discovery_url(&resolved)?;
+    Ok(resolved)
+}
+
+/// The discovery endpoint a gateway URL implies, not yet checked for
+/// transport security: `https` for `wss://`, plain `http` for `ws://`.
+pub fn derive_discovery_url(gateway_url: &str) -> anyhow::Result<String> {
     if !gateway_url.starts_with("ws://") && !gateway_url.starts_with("wss://") {
         anyhow::bail!("cannot derive a discovery URL from gateway URL {gateway_url}");
     }
     let origin = canonical_origin(gateway_url).context("parse environment gateway URL")?;
-    let resolved = match origin.as_str().strip_prefix("wss://") {
+    Ok(match origin.as_str().strip_prefix("wss://") {
         Some(authority) => format!("https://{authority}{DISCOVERY_PATH}"),
         None => format!(
             "http://{}{DISCOVERY_PATH}",
             origin.as_str().trim_start_matches("ws://")
         ),
-    };
-    validate_discovery_url(&resolved)?;
-    Ok(resolved)
+    })
 }
 
 /// Discovery and archive downloads require HTTPS. Plain HTTP exists only for

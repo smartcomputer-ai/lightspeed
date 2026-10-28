@@ -37,7 +37,6 @@ pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT: &str =
     "deployment/environment-providers/bindings/put";
 pub const METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE: &str =
     "deployment/environment-providers/bindings/delete";
-pub const METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT: &str = "deployment/environments/adopt";
 pub const METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST: &str = "deployment/channels/accounts/list";
 
 pub const METHOD_DEPLOYMENT_SESSIONS_DELETED_LIST: &str = "deployment/sessions/deleted/list";
@@ -272,16 +271,6 @@ pub struct DeploymentApiKeyRevokeResponse {
     pub api_key: DeploymentApiKeyView,
 }
 
-/// Optional controller methods the provider's controller advertised.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentEnvironmentProviderFeaturesView {
-    /// Existing targets can be adopted (`environment/adopt`).
-    pub adopt_target: bool,
-    /// Public ingress can be enabled on environments.
-    pub ingress: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentEnvironmentProviderView {
@@ -290,23 +279,25 @@ pub struct DeploymentEnvironmentProviderView {
     pub display_name: Option<String>,
     /// `ws://`, `wss://` or `unix://` URL of the provider controller.
     pub controller_endpoint: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-    /// What the controller advertised at its last successful handshake;
-    /// absent until Lightspeed first reached it at this endpoint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_features: Option<DeploymentEnvironmentProviderFeaturesView>,
-    /// Base URL of the provider's data routes, as its controller advertised
-    /// it; absent until then.
+    /// Operator-configured `ws://` or `wss://` base of the provider's data
+    /// routes; absent derives it from the controller endpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_route_base: Option<String>,
+    /// The data route base Lightspeed dials: `dataRouteBase`, or the
+    /// controller endpoint's origin followed by `/routes`. Absent only when it
+    /// cannot be derived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_data_route_base: Option<String>,
+    /// A bearer credential is stored and presented to the controller and
+    /// data routes; without one no `Authorization` header is sent.
+    pub has_credential: bool,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
 
-/// Register or replace a provider. `credential` is the bearer token
-/// Lightspeed presents to the provider's controller and data routes: it is
-/// sealed on receipt and never returned by any method. `Debug` output
+/// Register or replace a provider. `credential` is the optional bearer
+/// token Lightspeed presents to the provider's controller and data routes:
+/// it is sealed on receipt and never returned by any method. `Debug` output
 /// redacts it; request logging must never echo these params.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -316,11 +307,18 @@ pub struct DeploymentEnvironmentProviderPutParams {
     pub display_name: Option<String>,
     /// `ws://`, `wss://` or `unix://` URL of the provider controller.
     pub controller_endpoint: String,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-    /// Required when the provider is new; omit to keep the stored one.
+    /// `ws://` or `wss://` base of the provider's data routes; omit to derive
+    /// it from the controller endpoint. Required for a `unix://` controller,
+    /// and must not be `ws://` for a `wss://` controller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_route_base: Option<String>,
+    /// A new bearer credential; omit to keep the stored one. A provider needs
+    /// none. Excludes `clearCredential`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
+    /// Remove the stored credential. Excludes `credential`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_credential: bool,
 }
 
 impl fmt::Debug for DeploymentEnvironmentProviderPutParams {
@@ -329,11 +327,12 @@ impl fmt::Debug for DeploymentEnvironmentProviderPutParams {
             .field("provider_id", &self.provider_id)
             .field("display_name", &self.display_name)
             .field("controller_endpoint", &self.controller_endpoint)
-            .field("metadata", &self.metadata)
+            .field("data_route_base", &self.data_route_base)
             .field(
                 "credential",
                 &self.credential.as_ref().map(|_| "<redacted>"),
             )
+            .field("clear_credential", &self.clear_credential)
             .finish()
     }
 }
@@ -378,17 +377,14 @@ pub struct DeploymentEnvironmentProviderDeleteResponse {
     pub provider: DeploymentEnvironmentProviderView,
 }
 
+/// Create or replace a universe's binding to a deployment provider.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentProviderBindingPutParams {
     pub universe_id: String,
-    pub binding_id: EnvironmentProviderBindingId,
     pub provider_id: EnvironmentProviderId,
-    pub status: EnvironmentProviderBindingStatusView,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
+    /// Admits creates, template listing and data routes for the universe.
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -401,38 +397,13 @@ pub struct DeploymentProviderBindingPutResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentProviderBindingDeleteParams {
     pub universe_id: String,
-    pub binding_id: EnvironmentProviderBindingId,
+    pub provider_id: EnvironmentProviderId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentProviderBindingDeleteResponse {
     pub binding: EnvironmentProviderBindingView,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentEnvironmentAdoptParams {
-    pub universe_id: String,
-    /// Stable caller-generated retry identity inside the destination universe.
-    pub request_id: EnvironmentProvisionRequestId,
-    pub binding_id: EnvironmentProviderBindingId,
-    /// Provider-native source reference. The Incus provider accepts
-    /// `<project>/<instance>` or an instance name in the `default` project.
-    pub source_target: String,
-    /// Required acknowledgement that Lightspeed will move, reconfigure, and
-    /// delete the target as part of its ordinary managed lifecycle.
-    pub take_ownership: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata: BTreeMap<String, String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct DeploymentEnvironmentAdoptResponse {
-    pub environment: EnvironmentView,
 }
 
 /// One channel account of any universe, for the connector host's discovery
@@ -588,15 +559,6 @@ pub trait DeploymentApiService: Send + Sync {
         ))
     }
 
-    async fn adopt_environment(
-        &self,
-        _params: DeploymentEnvironmentAdoptParams,
-    ) -> Result<AgentApiOutcome<DeploymentEnvironmentAdoptResponse>, AgentApiError> {
-        Err(AgentApiError::internal(
-            "managed environment adoption is unavailable",
-        ))
-    }
-
     async fn list_deployment_channel_accounts(
         &self,
         _params: DeploymentChannelAccountListParams,
@@ -685,19 +647,17 @@ deployment_api_methods! {
     METHOD_DEPLOYMENT_API_KEYS_REVOKE => revoke_api_key(DeploymentApiKeyRevokeParams) -> DeploymentApiKeyRevokeResponse =>
         ["Revoke a scoped API key", "Revokes the key with this display prefix; revoking a revoked key keeps its first revocation time. An unknown prefix is not found."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT => put_environment_provider(DeploymentEnvironmentProviderPutParams) -> DeploymentEnvironmentProviderPutResponse =>
-        ["Put an environment provider", "Registers or replaces one deployment provider: its controller endpoint URL and the bearer credential Lightspeed presents to the controller and data routes. The credential is write-only: required for a new provider, kept when omitted, never returned. The provider does not call this API or require access to Lightspeed."], access: MethodAccess::Deployment,
+        ["Put an environment provider", "Registers or replaces a deployment provider: controller endpoint, optional data route base, and optional bearer credential for controller and data routes (write-only: kept when omitted, removed by clearCredential, never returned). The controller is probed: a definitive refusal is invalid_request, unreachable is accepted. The provider never calls Lightspeed."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_LIST => list_environment_providers(DeploymentEnvironmentProviderListParams) -> DeploymentEnvironmentProviderListResponse =>
-        ["List environment providers", "Returns every deployment-registered provider with its controller endpoint and the optional features its controller last advertised."], access: MethodAccess::Deployment,
+        ["List environment providers", "Returns every deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_READ => read_environment_provider(DeploymentEnvironmentProviderReadParams) -> DeploymentEnvironmentProviderReadResponse =>
-        ["Read an environment provider", "Returns one deployment-registered provider with its controller endpoint and the optional features its controller last advertised."], access: MethodAccess::Deployment,
+        ["Read an environment provider", "Returns one deployment-registered provider with its controller endpoint, data route base, and whether a credential is stored."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_DELETE => delete_environment_provider(DeploymentEnvironmentProviderDeleteParams) -> DeploymentEnvironmentProviderDeleteResponse =>
-        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding references it."], access: MethodAccess::Deployment,
+        ["Delete an environment provider", "Deletes a deployment provider only when no universe binding and no non-closed environment references it."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT => put_environment_provider_binding(DeploymentProviderBindingPutParams) -> DeploymentProviderBindingPutResponse =>
-        ["Put an environment provider binding", "Creates or replaces one universe's complete revisioned routing and admission binding. A deployment provider may have at most one binding in a universe."], access: MethodAccess::Deployment,
+        ["Put an environment provider binding", "Creates or replaces one universe's binding to a deployment provider. Only an enabled binding admits creates, template listing, and data routes for the universe."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE => delete_environment_provider_binding(DeploymentProviderBindingDeleteParams) -> DeploymentProviderBindingDeleteResponse =>
-        ["Delete an environment provider binding", "Deletes a universe provider binding only after every referencing environment has reached Closed."], access: MethodAccess::Deployment,
-    METHOD_DEPLOYMENT_ENVIRONMENTS_ADOPT => adopt_environment(DeploymentEnvironmentAdoptParams) -> DeploymentEnvironmentAdoptResponse =>
-        ["Adopt a provider environment", "Creates a universe environment by transferring an existing provider target into Lightspeed's managed lifecycle. The caller must explicitly accept ownership transfer."], access: MethodAccess::Deployment,
+        ["Delete an environment provider binding", "Deletes a universe's binding to a provider only when the universe has no non-closed environment of that provider."], access: MethodAccess::Deployment,
     METHOD_DEPLOYMENT_CHANNELS_ACCOUNTS_LIST => list_deployment_channel_accounts(DeploymentChannelAccountListParams) -> DeploymentChannelAccountListResponse =>
         ["List channel accounts across universes", "The connector host's discovery call: every enabled provider account of the deployment with its universe id and credential grant reference. Re-poll to pick up accounts created or disabled since."], access: MethodAccess::Deployment,
 }

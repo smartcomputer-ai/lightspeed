@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use api::{
-    AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentLifecycleStatusView,
-    EnvironmentProviderBindingListParams, EnvironmentProviderBindingStatusView,
-    EnvironmentSourceView, InlineAgentProfile, ProfileApplyParams, ProfileDeleteParams, ProfileId,
+    AgentApiErrorKind, AgentProfile, AgentProfileInput, EnvironmentIdentityModeView,
+    EnvironmentProviderBindingListParams, EnvironmentSourceView, EnvironmentStateView,
+    EnvironmentStatusView, InlineAgentProfile, ProfileApplyParams, ProfileDeleteParams, ProfileId,
     ProfileListParams, ProfilePutParams, ProfileReadParams, ProfileSource, WorkspaceAccess,
     WorkspaceAttachment,
 };
@@ -126,6 +126,8 @@ enum ProvisionVfsMode {
 struct ValidationReport {
     errors: Vec<String>,
     warnings: Vec<String>,
+    /// Facts worth knowing that need no action.
+    notes: Vec<String>,
 }
 
 impl ValidationReport {
@@ -137,25 +139,37 @@ impl ValidationReport {
         self.warnings.push(message.into());
     }
 
+    fn note(&mut self, message: impl Into<String>) {
+        self.notes.push(message.into());
+    }
+
     fn extend(&mut self, other: ValidationReport) {
         self.errors.extend(other.errors);
         self.warnings.extend(other.warnings);
+        self.notes.extend(other.notes);
+    }
+
+    fn print_notices(&self) {
+        for note in &self.notes {
+            eprintln!("note: {note}");
+        }
+        for warning in &self.warnings {
+            eprintln!("warning: {warning}");
+        }
     }
 
     fn finish(self, json: bool) -> Result<()> {
         if json {
             crate::output::show(
                 true,
-                &serde_json::json!({"valid":self.errors.is_empty(),"warnings":self.warnings,"errors":self.errors}),
+                &serde_json::json!({"valid":self.errors.is_empty(),"notes":self.notes,"warnings":self.warnings,"errors":self.errors}),
             )?;
             if !self.errors.is_empty() {
                 bail!("profile validation failed");
             }
             return Ok(());
         }
-        for warning in &self.warnings {
-            eprintln!("warning: {warning}");
-        }
+        self.print_notices();
         if self.errors.is_empty() {
             println!("Profile validation passed.");
             return Ok(());
@@ -167,9 +181,7 @@ impl ValidationReport {
     }
 
     fn ensure_success(self) -> Result<()> {
-        for warning in &self.warnings {
-            eprintln!("warning: {warning}");
-        }
+        self.print_notices();
         if self.errors.is_empty() {
             return Ok(());
         }
@@ -443,16 +455,11 @@ async fn validate_import_documents(
 }
 
 fn prefix_validation_report(profile_id: &str, mut report: ValidationReport) -> ValidationReport {
-    report.warnings = report
-        .warnings
-        .into_iter()
-        .map(|message| format!("profile {profile_id}: {message}"))
-        .collect();
-    report.errors = report
-        .errors
-        .into_iter()
-        .map(|message| format!("profile {profile_id}: {message}"))
-        .collect();
+    for messages in [&mut report.notes, &mut report.warnings, &mut report.errors] {
+        for message in messages.iter_mut() {
+            *message = format!("profile {profile_id}: {message}");
+        }
+    }
     report
 }
 
@@ -624,7 +631,7 @@ async fn validate_environments(
     };
     let bindings = bindings
         .into_iter()
-        .map(|binding| (binding.binding_id.clone(), binding))
+        .map(|binding| (binding.provider_id.clone(), binding))
         .collect::<BTreeMap<_, _>>();
     for environment_id in environment_ids {
         validate_environment_attachment(api, &environment_id, &bindings, report).await;
@@ -653,46 +660,79 @@ async fn validate_environment_attachment(
             return;
         }
     };
-    match environment.status {
-        EnvironmentLifecycleStatusView::Ready => {}
-        EnvironmentLifecycleStatusView::Closing
-        | EnvironmentLifecycleStatusView::Closed
-        | EnvironmentLifecycleStatusView::Failed => report.error(format!(
+    match environment.state {
+        EnvironmentStateView::Closing
+        | EnvironmentStateView::Closed
+        | EnvironmentStateView::Failed => report.error(format!(
             "profile environment {environment_id} is {:?}; applying the profile will be rejected until it points at an open environment",
-            environment.status
+            environment.state
         )),
-        status => report.warning(format!(
-            "profile environment {environment_id} is {status:?}, not ready"
+        EnvironmentStateView::Provisioning => report.warning(format!(
+            "profile environment {environment_id} is still provisioning"
         )),
-    }
-    // A long-lived box (a bot's, or one shared by several sessions) sleeps
-    // only through its own idle policy; nothing on the profile can add one.
-    match &environment.source {
-        EnvironmentSourceView::Provisioned { .. } if environment.idle_policy.is_none() => {
-            report.warning(format!(
-                "profile environment {environment_id} has no idle policy: it never pauses, suspends, or stops while idle (set one with `env idle-policy` or on the Environments page)"
-            ));
-        }
-        EnvironmentSourceView::External { .. } => {
-            report.warning(format!(
-                "profile environment {environment_id} is external: no power control, so it can never be paused or stopped while idle"
-            ));
-        }
-        _ => {}
-    }
-    if let EnvironmentSourceView::Provisioned { binding_id, .. } = &environment.source {
-        match bindings.get(binding_id) {
-            Some(binding) if binding.status != EnvironmentProviderBindingStatusView::Enabled => {
-                report.warning(format!(
-                    "profile environment binding {binding_id} is {:?}",
-                    binding.status
-                ));
-            }
-            None => report.warning(format!(
-                "profile environment binding {binding_id} is missing"
+        EnvironmentStateView::Open => match environment.status {
+            EnvironmentStatusView::Paused
+            | EnvironmentStatusView::Suspended
+            | EnvironmentStatusView::Stopped => report.note(format!(
+                "profile environment {environment_id} is {:?}; it wakes on use",
+                environment.status
             )),
-            _ => {}
+            EnvironmentStatusView::Away => report.warning(match &environment.source {
+                EnvironmentSourceView::Registered {
+                    identity_mode: EnvironmentIdentityModeView::Persistent,
+                    ..
+                } => format!(
+                    "profile environment {environment_id}: daemon disconnected (persistent key); uses wait up to two minutes for it to reconnect"
+                ),
+                EnvironmentSourceView::Registered {
+                    identity_mode: EnvironmentIdentityModeView::Ephemeral,
+                    ..
+                } => format!(
+                    "profile environment {environment_id}: daemon disconnected (ephemeral key); uses are refused, and it closes unless the daemon reconnects within the key's disconnect grace"
+                ),
+                _ => format!("profile environment {environment_id}: daemon disconnected"),
+            }),
+            EnvironmentStatusView::Unknown => report.warning(format!(
+                "profile environment {environment_id} is open, but its provider's latest observation is inconclusive"
+            )),
+            EnvironmentStatusView::Ready
+            | EnvironmentStatusView::Provisioning
+            | EnvironmentStatusView::Closing
+            | EnvironmentStatusView::Closed
+            | EnvironmentStatusView::Failed => {}
+        },
+    }
+    if let EnvironmentSourceView::External { .. } = &environment.source {
+        report.warning(format!(
+            "profile environment {environment_id} is external: no power control, so it can never be paused or stopped while idle"
+        ));
+    }
+    if let EnvironmentSourceView::Provisioned { provider_id, .. } = &environment.source {
+        warn_unusable_binding(
+            bindings,
+            provider_id,
+            &format!("profile environment {environment_id}"),
+            report,
+        );
+    }
+}
+
+fn warn_unusable_binding(
+    bindings: &BTreeMap<String, api::EnvironmentProviderBindingView>,
+    provider_id: &str,
+    subject: &str,
+    report: &mut ValidationReport,
+) {
+    match bindings.get(provider_id) {
+        Some(binding) if !binding.enabled => {
+            report.warning(format!(
+                "{subject}: provider binding {provider_id} is disabled"
+            ));
         }
+        None => report.warning(format!(
+            "{subject}: provider binding {provider_id} is missing"
+        )),
+        _ => {}
     }
 }
 

@@ -6,7 +6,12 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
 
-use crate::{control::target::TargetOwner, ids::ProviderTargetId, limits::MAX_URL_BYTES};
+use crate::{
+    control::target::TargetOwner,
+    ids::ProviderTargetId,
+    limits::{MAX_URL_BYTES, RETRY_AFTER_MAX_SECS},
+    metadata::DescriptiveText,
+};
 
 /// Gateway route an envd dials to register and hold its control connection.
 /// A gateway may be served under a path prefix (`wss://host/ls` plus this
@@ -21,6 +26,11 @@ pub const DATA_PATH: &str = "/environment-gateway/data";
 
 /// Gateway route serving the envd discovery document.
 pub const DISCOVERY_PATH: &str = "/.well-known/lightspeed-envd";
+
+/// Path of the data routes under a controller's origin when the provider
+/// is registered without a data route base
+/// ([`DataRouteBase::derived_from_controller`]).
+pub const DEFAULT_DATA_ROUTE_PATH: &str = "/routes";
 
 /// JSON Schema pattern of [`DataRouteBase`].
 pub const DATA_ROUTE_BASE_PATTERN: &str = "^wss?://[^/?#@\\s]+(/[^?#\\s]*[^/?#\\s])?$";
@@ -57,7 +67,7 @@ pub enum UrlError {
     #[error("gateway connect URL path must end with {CONNECT_PATH}: {0}")]
     NotConnectPath(String),
 
-    #[error("a controller reached over wss must advertise a wss data route: {0}")]
+    #[error("a controller reached over wss needs a wss data route base: {0}")]
     Downgrade(String),
 }
 
@@ -178,13 +188,15 @@ pub fn gateway_stream_url(gateway_connect_url: &str) -> Result<String, UrlError>
     ))
 }
 
-/// `routes.data` of a controller's `initialize`: the absolute `ws://` or
-/// `wss://` base URL of the provider's data routes, validated on decode and
-/// never rewritten. Lowercase scheme, a host and optional port, an optional
-/// path that does not end with `/`, no user information, query or
-/// fragment, at most 2048 bytes. A controller reached over `wss` must
-/// advertise a `wss` base, so the provider credential never travels in
-/// cleartext; the runtime checks it with
+/// The absolute `ws://` or `wss://` base URL of a provider's data routes,
+/// validated on decode and never rewritten: lowercase scheme, a host and
+/// optional port, an optional path that does not end with `/`, no user
+/// information, query or fragment, at most 2048 bytes. The operator may
+/// configure one when registering the provider; without one the runtime
+/// derives it from the controller URL
+/// ([`DataRouteBase::derived_from_controller`]). A controller reached over
+/// `wss` needs a `wss` base, so a provider credential never travels in
+/// cleartext; the runtime checks a configured base with
 /// [`DataRouteBase::check_for_controller`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -220,9 +232,32 @@ impl DataRouteBase {
         self.0.starts_with("wss://")
     }
 
+    /// The base a provider registered without one uses: the controller
+    /// URL's scheme, host and port as written, followed by
+    /// [`DEFAULT_DATA_ROUTE_PATH`]; the controller URL's path, query and
+    /// fragment are dropped. Only a `ws` or `wss` controller URL has one;
+    /// any other scheme (such as `unix`) is [`UrlError::Scheme`].
+    pub fn derived_from_controller(controller_url: &str) -> Result<Self, UrlError> {
+        // The scheme decides first: a `unix://` controller endpoint has no
+        // network origin to derive from, so it needs an explicit base.
+        let scheme = controller_url.split_once("://").map(|(scheme, _)| scheme);
+        if !matches!(scheme, Some("ws" | "wss")) {
+            return Err(UrlError::Scheme(controller_url.to_owned()));
+        }
+        let parts = split_url(controller_url)?;
+        let authority = match parts.port {
+            Some(port) => format!("{}:{port}", parts.host),
+            None => parts.host.to_owned(),
+        };
+        Self::new(format!(
+            "{}://{authority}{DEFAULT_DATA_ROUTE_PATH}",
+            parts.scheme
+        ))
+    }
+
     /// The downgrade rule: a controller whose URL is `wss` (or `https`) may
-    /// only advertise a `wss` base. The runtime checks it at every
-    /// `initialize` before it records the base.
+    /// only use a `wss` base. The runtime checks a configured base when the
+    /// provider is registered.
     pub fn check_for_controller(&self, controller_url: &str) -> Result<(), UrlError> {
         if canonical_origin(controller_url)?.is_secure() && !self.is_secure() {
             return Err(UrlError::Downgrade(self.0.clone()));
@@ -297,24 +332,134 @@ macro_rules! url_impls {
 url_impls!(DataRouteBase);
 url_impls!(PublicUrl);
 
-/// A target's data route under a controller's advertised `routes.data`
-/// base: the base followed by
-/// `/{universeId}/{bindingId}/{environmentId}/{incarnationId}/{targetId}`,
-/// each segment percent-encoded.
+/// A target's data route under a provider's data route base: the base
+/// followed by `/{universeId}/{environmentId}/{targetId}`, each segment
+/// percent-encoded. The runtime dials it with the provider credential, when
+/// one is configured. Before the upgrade the provider may hold the dial up
+/// to [`MAX_DATA_ROUTE_HOLD_MS`](crate::limits::MAX_DATA_ROUTE_HOLD_MS)
+/// while it wakes the target, then answers a [`DataRouteRefusal`].
 pub fn provider_data_route(
     base: &DataRouteBase,
     owner: &TargetOwner,
     target_id: &ProviderTargetId,
 ) -> String {
     format!(
-        "{}/{}/{}/{}/{}/{}",
+        "{}/{}/{}/{}",
         base.as_str(),
         encode_path_segment(owner.universe_id.as_str()),
-        encode_path_segment(owner.binding_id.as_str()),
         encode_path_segment(owner.environment_id.as_str()),
-        encode_path_segment(owner.incarnation_id.as_str()),
         encode_path_segment(target_id.as_str()),
     )
+}
+
+/// Body of the HTTP refusal a data route answers instead of upgrading, with
+/// `Content-Type: application/json`. A provider data route uses `waking`,
+/// `booting`, `gone` and `failed`; the gateway's worker route adds
+/// `provisioning`, `disconnected` and `away` and forwards a provider's
+/// refusal unchanged. Every 503 carries `Retry-After` in whole seconds,
+/// 1 to [`RETRY_AFTER_MAX_SECS`](crate::limits::RETRY_AFTER_MAX_SECS).
+/// The body is an HTTP refusal, not a JSON-RPC message, and is tagged by
+/// `state`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum DataRouteRefusal {
+    /// 503: resuming from a powered-down state.
+    Waking {},
+    /// 503: running, envd not answering yet.
+    Booting {},
+    /// 503 (gateway): the environment is still provisioning.
+    Provisioning {},
+    /// 503 (gateway): the registered daemon is not connected.
+    Disconnected {},
+    /// 410 (gateway): the registered daemon has been away past its
+    /// reconnect bound.
+    Away {},
+    /// 410: the target no longer exists.
+    Gone {},
+    /// 409: broken beyond the provider's recovery.
+    Failed { message: DescriptiveText },
+}
+
+impl DataRouteRefusal {
+    /// The HTTP status the refusal is answered with.
+    pub fn status(&self) -> u16 {
+        match self {
+            Self::Waking {} | Self::Booting {} | Self::Provisioning {} | Self::Disconnected {} => {
+                503
+            }
+            Self::Away {} | Self::Gone {} => 410,
+            Self::Failed { .. } => 409,
+        }
+    }
+
+    /// True for the 503 refusals: the same dial may succeed after
+    /// `Retry-After`.
+    pub fn is_retryable(&self) -> bool {
+        self.status() == 503
+    }
+
+    /// The refusal a refused upgrade names: its body when that decodes,
+    /// else what its status alone names. The upgrade response carries only
+    /// the bytes read along with its headers, so a body that arrives in a
+    /// later TCP segment or TLS record is missing; the refusal then must not
+    /// depend on how the transport split the bytes. 410 is `gone`, 409 is
+    /// `failed`, and a 503 with `Retry-After` is `booting`, a wait. Any other
+    /// status, such as a 503 without `Retry-After` from a proxy, names no
+    /// refusal.
+    pub fn from_refused_upgrade(
+        status: u16,
+        body: Option<&[u8]>,
+        retry_after_ms: Option<u64>,
+    ) -> Option<Self> {
+        if let Some(refusal) = body.and_then(|body| serde_json::from_slice::<Self>(body).ok()) {
+            return Some(refusal);
+        }
+        match status {
+            410 => Some(Self::Gone {}),
+            409 => Some(Self::Failed {
+                message: DescriptiveText::new("the data route reports the target failed")
+                    .expect("a fixed failure message is valid text"),
+            }),
+            503 if retry_after_ms.is_some() => Some(Self::Booting {}),
+            _ => None,
+        }
+    }
+
+    /// The `state` tag.
+    pub fn state(&self) -> &'static str {
+        match self {
+            Self::Waking {} => "waking",
+            Self::Booting {} => "booting",
+            Self::Provisioning {} => "provisioning",
+            Self::Disconnected {} => "disconnected",
+            Self::Away {} => "away",
+            Self::Gone {} => "gone",
+            Self::Failed { .. } => "failed",
+        }
+    }
+}
+
+impl fmt::Display for DataRouteRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Failed { message } => write!(formatter, "failed: {message}"),
+            refusal => formatter.write_str(refusal.state()),
+        }
+    }
+}
+
+/// A `Retry-After` header value in whole seconds, clamped to
+/// [`RETRY_AFTER_MAX_SECS`], as milliseconds. The HTTP-date form is not
+/// used by the protocol and names no delay.
+pub fn parse_retry_after_ms(value: &str) -> Option<u64> {
+    let seconds: u64 = value.trim().parse().ok()?;
+    Some(seconds.min(RETRY_AFTER_MAX_SECS) * 1_000)
 }
 
 /// Percent-encode one URL path segment: everything except RFC 3986
@@ -423,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wss_controller_cannot_advertise_a_ws_data_route() {
+    fn a_wss_controller_cannot_use_a_ws_data_route_base() {
         let plain = DataRouteBase::new("ws://p.example/routes").unwrap();
         assert!(matches!(
             plain.check_for_controller("wss://p.example/control"),
@@ -450,15 +595,118 @@ mod tests {
     fn data_routes_encode_opaque_target_ids() {
         let owner = TargetOwner {
             universe_id: "u1".parse().unwrap(),
-            binding_id: "primary".parse().unwrap(),
             environment_id: "env_1".parse().unwrap(),
-            incarnation_id: "inc_1".parse().unwrap(),
         };
         let target = ProviderTargetId::new("default/pod abc").unwrap();
         let base = DataRouteBase::new("wss://p.example/routes").unwrap();
         assert_eq!(
             provider_data_route(&base, &owner, &target),
-            "wss://p.example/routes/u1/primary/env_1/inc_1/default%2Fpod%20abc"
+            "wss://p.example/routes/u1/env_1/default%2Fpod%20abc"
         );
+    }
+
+    #[test]
+    fn data_route_bases_derive_from_the_controller_origin() {
+        for (controller, base) in [
+            ("wss://p.example/control", "wss://p.example/routes"),
+            (
+                "wss://p.example:19090/x/y?z=1",
+                "wss://p.example:19090/routes",
+            ),
+            ("ws://127.0.0.1:9000", "ws://127.0.0.1:9000/routes"),
+            ("ws://[::1]:9000/control", "ws://[::1]:9000/routes"),
+        ] {
+            assert_eq!(
+                DataRouteBase::derived_from_controller(controller)
+                    .unwrap()
+                    .as_str(),
+                base,
+                "{controller}"
+            );
+        }
+        for bad in ["unix:///run/provider.sock", "https://p.example", "wss://"] {
+            assert!(
+                DataRouteBase::derived_from_controller(bad).is_err(),
+                "{bad}"
+            );
+        }
+        assert!(matches!(
+            DataRouteBase::derived_from_controller("unix:///run/provider.sock"),
+            Err(UrlError::Scheme(_))
+        ));
+    }
+
+    #[test]
+    fn refusals_are_state_tagged_with_fixed_statuses() {
+        use serde_json::json;
+
+        let cases = [
+            (json!({"state": "waking"}), 503),
+            (json!({"state": "booting"}), 503),
+            (json!({"state": "provisioning"}), 503),
+            (json!({"state": "disconnected"}), 503),
+            (json!({"state": "away"}), 410),
+            (json!({"state": "gone"}), 410),
+            (json!({"state": "failed", "message": "disk lost"}), 409),
+        ];
+        for (body, status) in cases {
+            let refusal: DataRouteRefusal = serde_json::from_value(body.clone()).unwrap();
+            assert_eq!(refusal.status(), status, "{body}");
+            assert_eq!(refusal.is_retryable(), status == 503, "{body}");
+            assert_eq!(body["state"], refusal.state());
+            assert_eq!(serde_json::to_value(&refusal).unwrap(), body);
+        }
+        for bad in [
+            json!({"state": "waking", "retryAfterMs": 1}),
+            json!({"state": "failed"}),
+            json!({"state": "sleeping"}),
+            json!({}),
+        ] {
+            assert!(
+                serde_json::from_value::<DataRouteRefusal>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            DataRouteRefusal::Failed {
+                message: DescriptiveText::lossy("disk lost").unwrap()
+            }
+            .to_string(),
+            "failed: disk lost"
+        );
+    }
+
+    #[test]
+    fn refused_upgrades_decode_their_body_or_fall_back_on_their_status() {
+        let refused = DataRouteRefusal::from_refused_upgrade;
+        assert_eq!(
+            refused(503, Some(br#"{"state":"waking"}"#), Some(2_000)),
+            Some(DataRouteRefusal::Waking {})
+        );
+        assert_eq!(refused(410, None, None), Some(DataRouteRefusal::Gone {}));
+        assert_eq!(
+            refused(410, Some(br#"{"state":"aw"#), None),
+            Some(DataRouteRefusal::Gone {})
+        );
+        assert!(matches!(
+            refused(409, Some(b""), None),
+            Some(DataRouteRefusal::Failed { .. })
+        ));
+        assert_eq!(
+            refused(503, None, Some(4_000)),
+            Some(DataRouteRefusal::Booting {})
+        );
+        assert_eq!(refused(503, None, None), None);
+        assert_eq!(refused(502, None, Some(4_000)), None);
+    }
+
+    #[test]
+    fn retry_after_is_whole_seconds_clamped_to_the_maximum() {
+        assert_eq!(parse_retry_after_ms(" 3 "), Some(3_000));
+        assert_eq!(
+            parse_retry_after_ms("3600"),
+            Some(RETRY_AFTER_MAX_SECS * 1_000)
+        );
+        assert_eq!(parse_retry_after_ms("Wed, 21 Oct 2026 07:28:00 GMT"), None);
     }
 }

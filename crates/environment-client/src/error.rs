@@ -3,6 +3,7 @@
 use environment_protocol::{
     error::{ProtocolError, ProtocolErrorKind},
     handshake::Plane,
+    routes::DataRouteRefusal,
 };
 use thiserror::Error;
 
@@ -30,10 +31,20 @@ pub enum ClientError {
     ConnectTimeout { endpoint: String },
 
     /// The server answered the upgrade with an HTTP status instead of
-    /// switching protocols: 401 for a missing or wrong credential, 503 for
-    /// a route that is not ready yet.
-    #[error("upgrade refused with HTTP {status}")]
-    UpgradeRejected { status: u16 },
+    /// switching protocols: 401 for a missing or wrong credential, or a
+    /// data route's 503, 410 or 409. `refusal` is the response body when it
+    /// decodes as a [`DataRouteRefusal`], else the refusal the status alone
+    /// names (410 `gone`, 409 `failed`, a 503 with `Retry-After` `booting`),
+    /// so a body split from the headers by the transport still types the
+    /// refusal; `retry_after_ms` is the
+    /// `Retry-After` header in milliseconds, clamped to
+    /// [`RETRY_AFTER_MAX_SECS`](environment_protocol::limits::RETRY_AFTER_MAX_SECS).
+    #[error("upgrade refused with HTTP {status}{}", describe_refusal(refusal.as_ref()))]
+    UpgradeRejected {
+        status: u16,
+        refusal: Option<DataRouteRefusal>,
+        retry_after_ms: Option<u64>,
+    },
 
     /// The server speaks another protocol version on this plane: it
     /// answered `initialize` with `versionMismatch`, or with a different
@@ -115,6 +126,24 @@ impl ClientError {
         }
     }
 
+    /// The data route's typed refusal, for an
+    /// [`UpgradeRejected`](Self::UpgradeRejected) whose body or status
+    /// names one.
+    pub fn data_route_refusal(&self) -> Option<&DataRouteRefusal> {
+        match self {
+            Self::UpgradeRejected { refusal, .. } => refusal.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// The refused upgrade's `Retry-After`, in milliseconds.
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            Self::UpgradeRejected { retry_after_ms, .. } => *retry_after_ms,
+            _ => None,
+        }
+    }
+
     /// True when the same call may succeed later without any change: a
     /// retryable protocol kind (`busy`, `unavailable`, `aborted`), a
     /// connection failure, a closed connection, a deadline, or an upgrade
@@ -128,7 +157,7 @@ impl ClientError {
             | Self::Closed { .. }
             | Self::Transport(_)
             | Self::DeadlineExceeded { .. } => true,
-            Self::UpgradeRejected { status } => *status == 429 || (500..600).contains(status),
+            Self::UpgradeRejected { status, .. } => *status == 429 || (500..600).contains(status),
             Self::Configuration { .. }
             | Self::VersionMismatch { .. }
             | Self::WrongPlane { .. }
@@ -138,6 +167,10 @@ impl ClientError {
             | Self::InvalidMessage(_) => false,
         }
     }
+}
+
+fn describe_refusal(refusal: Option<&DataRouteRefusal>) -> String {
+    refusal.map_or_else(String::new, |refusal| format!(": {refusal}"))
 }
 
 fn describe_close(code: Option<u16>, reason: Option<&str>) -> String {
@@ -178,27 +211,56 @@ mod tests {
             .is_retryable()
         );
         assert!(ClientError::DeadlineExceeded { elapsed_ms: 10 }.is_retryable());
-        assert!(ClientError::UpgradeRejected { status: 503 }.is_retryable());
-        assert!(ClientError::UpgradeRejected { status: 429 }.is_retryable());
-        assert!(!ClientError::UpgradeRejected { status: 401 }.is_retryable());
+        assert!(rejected(503, None).is_retryable());
+        assert!(rejected(429, None).is_retryable());
+        assert!(!rejected(401, None).is_retryable());
+        assert!(!rejected(410, Some(DataRouteRefusal::Gone {})).is_retryable());
         assert!(!ClientError::Decode("x".to_owned()).is_retryable());
         assert!(
             !ClientError::VersionMismatch {
                 plane: Plane::Data,
-                local: 3,
-                remote: 2
+                local: 4,
+                remote: 3
             }
             .is_retryable()
         );
         assert_eq!(
             ClientError::VersionMismatch {
                 plane: Plane::Controller,
-                local: 3,
-                remote: 4
+                local: 4,
+                remote: 5
             }
             .protocol_kind(),
             Some(ProtocolErrorKind::VersionMismatch)
         );
+    }
+
+    fn rejected(status: u16, refusal: Option<DataRouteRefusal>) -> ClientError {
+        ClientError::UpgradeRejected {
+            status,
+            refusal,
+            retry_after_ms: None,
+        }
+    }
+
+    #[test]
+    fn upgrade_refusals_display_their_state() {
+        assert_eq!(
+            rejected(401, None).to_string(),
+            "upgrade refused with HTTP 401"
+        );
+        let waking = ClientError::UpgradeRejected {
+            status: 503,
+            refusal: Some(DataRouteRefusal::Waking {}),
+            retry_after_ms: Some(3_000),
+        };
+        assert_eq!(waking.to_string(), "upgrade refused with HTTP 503: waking");
+        assert_eq!(
+            waking.data_route_refusal(),
+            Some(&DataRouteRefusal::Waking {})
+        );
+        assert_eq!(waking.retry_after_ms(), Some(3_000));
+        assert_eq!(rejected(401, None).data_route_refusal(), None);
     }
 
     #[test]

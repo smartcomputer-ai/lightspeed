@@ -14,14 +14,14 @@ enum EnvCommand {
     /// Administer deployment-wide environment provider controllers (deployment key).
     #[command(visible_alias = "providers")]
     Provider(ProviderArgs),
-    /// Provision an environment using an immutable template on a bound provider.
+    /// Provision an environment from a provider template.
     Create(CreateArgs),
     /// Register an existing, Lightspeed-reachable envd WebSocket endpoint.
     Register(RegisterArgs),
-    /// Inspect the current universe's routing bindings to environment providers.
+    /// Inspect or set the current universe's bindings to environment providers.
     #[command(visible_alias = "bindings")]
     Binding(BindingArgs),
-    /// Browse immutable templates offered by bound environment providers.
+    /// Browse templates offered by the universe's enabled providers.
     #[command(visible_alias = "templates")]
     Template(TemplateArgs),
     /// Enable or disable provider-authorized public HTTPS ingress.
@@ -30,19 +30,19 @@ enum EnvCommand {
     List(EnvListArgs),
     /// Read one universe environment.
     Read(EnvironmentResourceArgs),
+    /// Replace the display name and metadata of one universe environment.
+    Update(EnvUpdateArgs),
     /// Close one universe environment.
     Close(EnvironmentResourceArgs),
-    /// Set the desired power state (running, paused, suspended, stopped) of
-    /// a provisioned environment; the runtime converges it asynchronously and
-    /// a powered-down environment wakes on its next use.
+    /// Move a provisioned environment to a power state (running, paused,
+    /// suspended, stopped) through its provider; the provider owns every
+    /// later transition, and a powered-down environment wakes when used.
     Power(PowerArgs),
-    /// Replace or clear the staged idle policy of a provisioned environment.
-    IdlePolicy(IdlePolicyArgs),
     /// Bind, list, or unbind universe environment credentials.
     #[command(name = "credential", visible_alias = "credentials")]
     Credentials(CredentialArgs),
-    /// Mint, list, read, or revoke registration keys that let outbound
-    /// `lightspeed-envd` daemons register as environments.
+    /// Mint, list, read, update, rotate, or revoke registration keys that let
+    /// outbound `lightspeed-envd` daemons register as environments.
     #[command(name = "registration-key", visible_alias = "registration-keys")]
     RegistrationKeys(RegistrationKeyArgs),
 }
@@ -61,6 +61,11 @@ enum RegistrationKeyCommand {
     List(ResourceArgs),
     /// Read one registration key.
     Read(RegistrationKeyResourceArgs),
+    /// Replace a key's editable policy; unset flags clear their setting.
+    Update(RegistrationKeyUpdateArgs),
+    /// Retire the key's live secret and mint a new one, printed exactly
+    /// once. Daemons it already admitted keep reconnecting.
+    Rotate(RegistrationKeyResourceArgs),
     /// Stop a key from admitting new daemons; optionally close its
     /// environments.
     Revoke(RegistrationKeyRevokeArgs),
@@ -72,22 +77,68 @@ struct RegistrationKeyCreateArgs {
     api_url: String,
     #[arg(long)]
     json: bool,
+    /// persistent: environments wait for their daemon to reconnect;
+    /// ephemeral: they close once their daemon has been away longer than the
+    /// grace. Immutable once the key exists.
+    #[arg(long, value_enum, default_value_t = IdentityModeArg::Persistent)]
+    mode: IdentityModeArg,
+    #[command(flatten)]
+    policy: RegistrationKeyPolicyArgs,
+}
+
+#[derive(Args, Debug, Clone)]
+struct RegistrationKeyPolicyArgs {
     /// Group name shown for every environment this key admits.
     #[arg(long)]
     name: String,
-    /// persistent: environments stay offline until closed; ephemeral: they
-    /// close once their daemon has been away longer than the grace.
-    #[arg(long, value_enum, default_value_t = IdentityModeArg::Persistent)]
-    mode: IdentityModeArg,
     /// Non-closed environments the key may have at once.
     #[arg(long = "max-active")]
     max_active: Option<u32>,
     /// Ephemeral disconnect grace in minutes (default: 5).
     #[arg(long = "grace-min")]
     grace_min: Option<u64>,
+    /// Persistent keys only: close an environment whose daemon has been
+    /// away longer than this many minutes.
+    #[arg(long = "offline-close-after-min")]
+    offline_close_after_min: Option<u64>,
     /// Stop admitting new daemons after this many hours.
     #[arg(long = "expires-in-hours")]
     expires_in_hours: Option<u64>,
+}
+
+impl RegistrationKeyPolicyArgs {
+    fn expires_at_ms(&self) -> Result<Option<i64>> {
+        let Some(hours) = self.expires_in_hours else {
+            return Ok(None);
+        };
+        let now_ms = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis(),
+        )?;
+        Ok(Some(
+            now_ms.saturating_add(
+                i64::try_from(hours)
+                    .unwrap_or(i64::MAX)
+                    .saturating_mul(3_600_000),
+            ),
+        ))
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+struct RegistrationKeyUpdateArgs {
+    #[arg(skip)]
+    api_url: String,
+    #[arg(long)]
+    json: bool,
+    registration_key_id: String,
+    #[command(flatten)]
+    policy: RegistrationKeyPolicyArgs,
+}
+
+fn minutes_ms(minutes: Option<u64>) -> Option<u64> {
+    minutes.map(|minutes| minutes.saturating_mul(60_000))
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
@@ -143,27 +194,6 @@ impl From<PowerArg> for api::EnvironmentPowerStateView {
 }
 
 #[derive(Args, Debug, Clone)]
-struct IdlePolicyArgs {
-    #[command(flatten)]
-    common: EnvironmentResourceArgs,
-    /// Pause after this many minutes idle.
-    #[arg(long = "pause-after-min")]
-    pause_after_min: Option<u64>,
-    /// Suspend after this many minutes idle (providers that support it).
-    #[arg(long = "suspend-after-min")]
-    suspend_after_min: Option<u64>,
-    /// Stop after this many minutes idle.
-    #[arg(long = "stop-after-min")]
-    stop_after_min: Option<u64>,
-    /// Close after this many minutes idle.
-    #[arg(long = "close-after-min")]
-    close_after_min: Option<u64>,
-    /// Remove the idle policy entirely.
-    #[arg(long, conflicts_with_all = ["pause_after_min", "suspend_after_min", "stop_after_min", "close_after_min"])]
-    clear: bool,
-}
-
-#[derive(Args, Debug, Clone)]
 struct ResourceArgs {
     #[arg(skip)]
     api_url: String,
@@ -176,11 +206,30 @@ struct EnvListArgs {
     #[arg(long)]
     provider: Option<String>,
     #[arg(long)]
-    binding: Option<String>,
-    #[arg(long)]
     registration_key: Option<String>,
+    /// Also list closed environments.
+    #[arg(long)]
+    include_closed: bool,
+    /// Most environments per page (1-500; default 100).
+    #[arg(long)]
+    limit: Option<u32>,
+    /// Start after this environment id: a previous page's `nextAfter`.
+    #[arg(long)]
+    after: Option<String>,
     #[command(flatten)]
     common: ResourceArgs,
+    #[command(flatten)]
+    metadata: crate::session_cli::MetadataPairs,
+}
+
+#[derive(Args, Debug, Clone)]
+struct EnvUpdateArgs {
+    #[command(flatten)]
+    common: EnvironmentResourceArgs,
+    /// The new display name; omit to clear it.
+    #[arg(long)]
+    name: Option<String>,
+    /// The complete new metadata; omit every pair to clear it.
     #[command(flatten)]
     metadata: crate::session_cli::MetadataPairs,
 }
@@ -248,9 +297,9 @@ pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
         EnvCommand::Ingress(args) => ingress(args).await,
         EnvCommand::List(args) => list(args).await,
         EnvCommand::Read(args) => read(args).await,
+        EnvCommand::Update(args) => update(args).await,
         EnvCommand::Close(args) => close(args).await,
         EnvCommand::Power(args) => power(args).await,
-        EnvCommand::IdlePolicy(args) => idle_policy(args).await,
         EnvCommand::Credentials(args) => credentials(args).await,
         EnvCommand::RegistrationKeys(args) => registration_keys(args).await,
     }
@@ -259,45 +308,54 @@ pub(crate) async fn handle(args: EnvArgs) -> Result<()> {
 async fn registration_keys(args: RegistrationKeyArgs) -> Result<()> {
     match args.command {
         RegistrationKeyCommand::Create(args) => {
-            let now_ms = i64::try_from(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)?
-                    .as_millis(),
-            )?;
+            let expires_at_ms = args.policy.expires_at_ms()?;
             let response = HttpAgentApi::new(args.api_url)
                 .create_environment_registration_key(api::EnvironmentRegistrationKeyCreateParams {
-                    display_name: args.name,
+                    display_name: args.policy.name,
                     identity_mode: match args.mode {
                         IdentityModeArg::Persistent => api::EnvironmentIdentityModeView::Persistent,
                         IdentityModeArg::Ephemeral => api::EnvironmentIdentityModeView::Ephemeral,
                     },
-                    max_active_environments: args.max_active,
-                    ephemeral_disconnect_grace_ms: args
-                        .grace_min
-                        .map(|minutes| minutes.saturating_mul(60_000)),
-                    expires_at_ms: args.expires_in_hours.map(|hours| {
-                        now_ms.saturating_add(
-                            i64::try_from(hours)
-                                .unwrap_or(i64::MAX)
-                                .saturating_mul(3_600_000),
-                        )
-                    }),
+                    max_active_environments: args.policy.max_active,
+                    ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
+                    offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    expires_at_ms,
                 })
                 .await
                 .map_err(crate::api_client::api_error)?
                 .result;
             print_json_or(args.json, &response, || {
-                print_registration_key(&response.registration_key);
-                println!();
-                println!("Registration key (shown once, store it now):");
-                println!("  {}", response.secret.0);
-                println!();
-                println!("Bootstrap a daemon with:");
-                println!(
-                    "  LIGHTSPEED_ENVD_GATEWAY_URL=wss://<gateway>/environment-gateway/connect"
-                );
-                println!("  LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE=<file holding the key>");
-                println!("  lightspeed-envd");
+                print_registration_secret(&response.registration_key, &response.secret.0)
+            })
+        }
+        RegistrationKeyCommand::Update(args) => {
+            let expires_at_ms = args.policy.expires_at_ms()?;
+            let response = HttpAgentApi::new(args.api_url)
+                .update_environment_registration_key(api::EnvironmentRegistrationKeyUpdateParams {
+                    registration_key_id: args.registration_key_id,
+                    display_name: args.policy.name,
+                    max_active_environments: args.policy.max_active,
+                    ephemeral_disconnect_grace_ms: minutes_ms(args.policy.grace_min),
+                    offline_close_after_ms: minutes_ms(args.policy.offline_close_after_min),
+                    expires_at_ms,
+                })
+                .await
+                .map_err(crate::api_client::api_error)?
+                .result;
+            print_json_or(args.json, &response, || {
+                print_registration_key(&response.registration_key)
+            })
+        }
+        RegistrationKeyCommand::Rotate(args) => {
+            let response = HttpAgentApi::new(args.api_url)
+                .rotate_environment_registration_key(api::EnvironmentRegistrationKeyRotateParams {
+                    registration_key_id: args.registration_key_id,
+                })
+                .await
+                .map_err(crate::api_client::api_error)?
+                .result;
+            print_json_or(args.json, &response, || {
+                print_registration_secret(&response.registration_key, &response.secret.0)
             })
         }
         RegistrationKeyCommand::List(args) => {
@@ -350,6 +408,18 @@ fn print_registration_key(key: &api::EnvironmentRegistrationKeyView) {
     crate::output::show(false, key).expect("serializable registration key metadata");
 }
 
+fn print_registration_secret(key: &api::EnvironmentRegistrationKeyView, secret: &str) {
+    print_registration_key(key);
+    println!();
+    println!("Registration key (shown once, store it now):");
+    println!("  {secret}");
+    println!();
+    println!("Bootstrap a daemon with:");
+    println!("  LIGHTSPEED_ENVD_GATEWAY_URL=wss://<gateway>/environment-gateway/connect");
+    println!("  LIGHTSPEED_ENVD_REGISTRATION_KEY_FILE=<file holding the key>");
+    println!("  lightspeed-envd");
+}
+
 async fn power(args: PowerArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.common.api_url)
         .put_environment_power(api::EnvironmentPowerPutParams {
@@ -362,46 +432,24 @@ async fn power(args: PowerArgs) -> Result<()> {
     if args.common.json {
         crate::output::show(true, &response)
     } else {
-        println!("Power change requested; the runtime converges it asynchronously.");
         crate::output::show(
             false,
-            &serde_json::json!({"environmentId":response.environment.environment_id,"desiredPower":response.environment.desired_power,"observedStatus":response.environment.status}),
+            &serde_json::json!({"environmentId":response.environment.environment_id,"status":response.environment.status}),
         )
     }
 }
 
-async fn idle_policy(args: IdlePolicyArgs) -> Result<()> {
-    let minutes = |value: Option<u64>| value.map(|minutes| minutes.saturating_mul(60_000));
-    let idle_policy = if args.clear {
-        None
-    } else {
-        let policy = api::EnvironmentIdlePolicyView {
-            pause_after_ms: minutes(args.pause_after_min),
-            suspend_after_ms: minutes(args.suspend_after_min),
-            stop_after_ms: minutes(args.stop_after_min),
-            close_after_ms: minutes(args.close_after_min),
-        };
-        if policy == api::EnvironmentIdlePolicyView::default() {
-            anyhow::bail!("set at least one --*-after-min stage or pass --clear");
-        }
-        Some(policy)
-    };
+async fn update(args: EnvUpdateArgs) -> Result<()> {
     let response = HttpAgentApi::new(args.common.api_url)
-        .put_environment_idle_policy(api::EnvironmentIdlePolicyPutParams {
+        .update_environment(api::EnvironmentUpdateParams {
             environment_id: args.common.environment_id,
-            idle_policy,
+            display_name: args.name,
+            metadata: args.metadata.map(),
         })
         .await
         .map_err(crate::api_client::api_error)?
         .result;
-    if args.common.json {
-        crate::output::show(true, &response)
-    } else {
-        crate::output::show(
-            false,
-            &serde_json::json!({"environmentId":response.environment.environment_id,"idlePolicy":response.environment.idle_policy}),
-        )
-    }
+    crate::output::show(args.common.json, &response.environment)
 }
 
 async fn list(args: EnvListArgs) -> Result<()> {
@@ -409,8 +457,10 @@ async fn list(args: EnvListArgs) -> Result<()> {
         .list_environments(api::EnvironmentListParams {
             metadata: args.metadata.map(),
             provider_id: args.provider,
-            binding_id: args.binding,
             registration_key_id: args.registration_key,
+            include_closed: args.include_closed,
+            limit: args.limit,
+            after: args.after,
             ..Default::default()
         })
         .await
@@ -425,10 +475,14 @@ async fn list(args: EnvListArgs) -> Result<()> {
                 ("environmentId", "ID"),
                 ("displayName", "NAME"),
                 ("status", "STATUS"),
-                ("desiredPower", "DESIRED POWER"),
+                ("state", "STATE"),
             ],
             "No environments found.",
-        )
+        )?;
+        if let Some(after) = &response.next_after {
+            println!("More environments: pass --after {after}");
+        }
+        Ok(())
     }
 }
 
@@ -451,10 +505,14 @@ async fn close(args: EnvironmentResourceArgs) -> Result<()> {
         .map_err(crate::api_client::api_error)?
         .result;
     print_json_or(args.json, &response, || {
-        println!(
-            "Close requested for {}. Use environment read to inspect completion.",
-            response.environment.environment_id
-        )
+        if response.environment.state == api::EnvironmentStateView::Closed {
+            println!("Closed {}.", response.environment.environment_id);
+        } else {
+            println!(
+                "Closing {}; the provider removes its target. Use environment read to inspect completion.",
+                response.environment.environment_id
+            );
+        }
     })
 }
 
@@ -540,8 +598,10 @@ pub(crate) fn print_json_or<T: serde::Serialize>(
 struct CreateArgs {
     #[command(flatten)]
     common: ResourceArgs,
+    /// The provider to create the environment with; the universe needs an
+    /// enabled binding to it.
     #[arg(long)]
-    binding: String,
+    provider: String,
     #[arg(long)]
     template: String,
     /// Supply the same request ID when retrying an uncertain creation.
@@ -573,17 +633,30 @@ struct BindingArgs {
 }
 #[derive(Subcommand, Debug, Clone)]
 enum BindingCommand {
-    /// Create or replace a universe binding from DeploymentProviderBindingPutParams JSON (deployment key).
-    Put(DocumentArgs),
-    /// Delete a binding from the selected universe (deployment key).
+    /// Bind the selected universe to a provider, enabled or disabled
+    /// (deployment key).
+    Put {
+        provider_id: String,
+        #[arg(
+            long,
+            conflicts_with = "disabled",
+            required_unless_present = "disabled"
+        )]
+        enabled: bool,
+        #[arg(long)]
+        disabled: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete the selected universe's binding to a provider (deployment key).
     Delete {
-        binding_id: String,
+        provider_id: String,
         #[arg(long)]
         json: bool,
     },
     List(ResourceArgs),
     Read {
-        binding_id: String,
+        provider_id: String,
         #[arg(long)]
         json: bool,
     },
@@ -596,15 +669,16 @@ struct TemplateArgs {
 #[derive(Subcommand, Debug, Clone)]
 enum TemplateCommand {
     List {
+        /// Only this provider's templates; omit for every enabled binding.
         #[arg(long)]
-        binding: Option<String>,
+        provider: Option<String>,
         #[arg(long)]
         json: bool,
     },
     Read {
         template_id: String,
         #[arg(long)]
-        binding: String,
+        provider: String,
         #[arg(long)]
         json: bool,
     },
@@ -624,11 +698,11 @@ async fn create(args: CreateArgs) -> Result<()> {
             api::METHOD_ENVIRONMENTS_CREATE,
             api::EnvironmentCreateParams {
                 request_id: args.request_id,
-                binding_id: args.binding,
+                provider_id: args.provider,
                 template_id: args.template,
                 display_name: args.display_name,
                 metadata: args.metadata.map(),
-                idle_policy: None,
+                idle: None,
             },
         )
         .await?
@@ -662,25 +736,32 @@ async fn register(args: RegisterArgs) -> Result<()> {
 async fn binding(args: BindingArgs) -> Result<()> {
     let client = HttpAgentApi::new("");
     match args.command {
-        BindingCommand::Put(args) => {
-            let params: api::DeploymentProviderBindingPutParams = read_document(&args.file)?;
+        BindingCommand::Put {
+            provider_id,
+            enabled,
+            disabled: _,
+            json,
+        } => {
             let response: api::DeploymentProviderBindingPutResponse = client
-                .request(api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT, params)
+                .request(
+                    api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_PUT,
+                    api::DeploymentProviderBindingPutParams {
+                        universe_id: selected_universe_id("binding a provider")?,
+                        provider_id,
+                        enabled,
+                    },
+                )
                 .await?
                 .result;
-            crate::output::show(args.json, &response.binding)
+            crate::output::show(json, &response.binding)
         }
-        BindingCommand::Delete { binding_id, json } => {
-            let universe_id = crate::connection::ACTIVE
-                .get()
-                .and_then(|c| c.active_universe_id())
-                .ok_or_else(|| anyhow::anyhow!("select a universe before deleting a binding"))?;
+        BindingCommand::Delete { provider_id, json } => {
             let response: api::DeploymentProviderBindingDeleteResponse = client
                 .request(
                     api::METHOD_DEPLOYMENT_PROVIDER_BINDINGS_DELETE,
                     api::DeploymentProviderBindingDeleteParams {
-                        universe_id,
-                        binding_id,
+                        universe_id: selected_universe_id("deleting a binding")?,
+                        provider_id,
                     },
                 )
                 .await?
@@ -703,21 +784,16 @@ async fn binding(args: BindingArgs) -> Result<()> {
             } else {
                 crate::output::table(
                     &response.bindings,
-                    &[
-                        ("bindingId", "ID"),
-                        ("providerId", "PROVIDER"),
-                        ("status", "STATUS"),
-                        ("revision", "REVISION"),
-                    ],
+                    &[("providerId", "PROVIDER"), ("enabled", "ENABLED")],
                     "No environment provider bindings available.",
                 )
             }
         }
-        BindingCommand::Read { binding_id, json } => {
+        BindingCommand::Read { provider_id, json } => {
             let response: api::EnvironmentProviderBindingReadResponse = client
                 .request(
                     api::METHOD_ENVIRONMENTS_PROVIDER_BINDINGS_READ,
-                    api::EnvironmentProviderBindingReadParams { binding_id },
+                    api::EnvironmentProviderBindingReadParams { provider_id },
                 )
                 .await?
                 .result;
@@ -728,12 +804,12 @@ async fn binding(args: BindingArgs) -> Result<()> {
 async fn template(args: TemplateArgs) -> Result<()> {
     let client = HttpAgentApi::new("");
     match args.command {
-        TemplateCommand::List { binding, json } => {
+        TemplateCommand::List { provider, json } => {
             let response: api::EnvironmentTemplateListResponse = client
                 .request(
                     api::METHOD_ENVIRONMENTS_TEMPLATES_LIST,
                     api::EnvironmentTemplateListParams {
-                        binding_id: binding,
+                        provider_id: provider,
                     },
                 )
                 .await?
@@ -746,7 +822,8 @@ async fn template(args: TemplateArgs) -> Result<()> {
                     &[
                         ("templateId", "ID"),
                         ("displayName", "NAME"),
-                        ("bindingId", "BINDING"),
+                        ("providerId", "PROVIDER"),
+                        ("powerStates", "POWER"),
                         ("deprecated", "DEPRECATED"),
                     ],
                     "No environment templates available.",
@@ -755,14 +832,14 @@ async fn template(args: TemplateArgs) -> Result<()> {
         }
         TemplateCommand::Read {
             template_id,
-            binding,
+            provider,
             json,
         } => {
             let response: api::EnvironmentTemplateReadResponse = client
                 .request(
                     api::METHOD_ENVIRONMENTS_TEMPLATES_READ,
                     api::EnvironmentTemplateReadParams {
-                        binding_id: binding,
+                        provider_id: provider,
                         template_id,
                     },
                 )
@@ -787,19 +864,34 @@ async fn ingress(args: IngressArgs) -> Result<()> {
 }
 
 #[derive(Args, Debug, Clone)]
-struct DocumentArgs {
-    /// Typed API request JSON document. See the public API reference for fields.
+struct ProviderPutArgs {
+    provider_id: String,
+    /// `ws://`, `wss://` or `unix://` URL of the provider controller.
     #[arg(long)]
-    file: std::path::PathBuf,
+    controller_endpoint: String,
+    #[arg(long)]
+    display_name: Option<String>,
+    /// `ws://` or `wss://` base of the provider's data routes; omit to derive
+    /// it from the controller endpoint. Required for a `unix://` controller.
+    #[arg(long)]
+    data_route_base: Option<String>,
+    /// File holding the bearer credential the provider expects; omit to keep
+    /// the stored one. A provider needs none.
+    #[arg(long, conflicts_with = "clear_credential")]
+    credential_file: Option<std::path::PathBuf>,
+    /// Remove the stored credential.
+    #[arg(long)]
+    clear_credential: bool,
     #[arg(long)]
     json: bool,
 }
-fn read_document<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T> {
-    use anyhow::Context;
-    serde_json::from_slice(
-        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-    )
-    .context("invalid API request document")
+
+/// The universe a deployment-scoped binding command addresses.
+fn selected_universe_id(action: &str) -> Result<String> {
+    crate::connection::ACTIVE
+        .get()
+        .and_then(|c| c.active_universe_id())
+        .ok_or_else(|| anyhow::anyhow!("select a universe before {action}"))
 }
 #[derive(Args, Debug, Clone)]
 struct ProviderArgs {
@@ -817,8 +909,8 @@ enum ProviderCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Create or replace a controller using DeploymentEnvironmentProviderPutParams JSON.
-    Put(DocumentArgs),
+    /// Register or replace a provider controller.
+    Put(ProviderPutArgs),
     Delete {
         provider_id: String,
         #[arg(long)]
@@ -844,7 +936,8 @@ async fn provider(args: ProviderArgs) -> Result<()> {
                     &[
                         ("providerId", "ID"),
                         ("displayName", "NAME"),
-                        ("controllerConnection", "CONTROLLER"),
+                        ("controllerEndpoint", "CONTROLLER"),
+                        ("hasCredential", "CREDENTIAL"),
                     ],
                     "No environment provider controllers configured.",
                 )
@@ -861,9 +954,23 @@ async fn provider(args: ProviderArgs) -> Result<()> {
             crate::output::show(json, &response.provider)
         }
         ProviderCommand::Put(args) => {
-            let params: api::DeploymentEnvironmentProviderPutParams = read_document(&args.file)?;
+            let credential = args
+                .credential_file
+                .as_deref()
+                .map(crate::connection::read_secret)
+                .transpose()?;
             let response: api::DeploymentEnvironmentProviderPutResponse = client
-                .request(api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT, params)
+                .request(
+                    api::METHOD_DEPLOYMENT_ENVIRONMENT_PROVIDERS_PUT,
+                    api::DeploymentEnvironmentProviderPutParams {
+                        provider_id: args.provider_id,
+                        display_name: args.display_name,
+                        controller_endpoint: args.controller_endpoint,
+                        data_route_base: args.data_route_base,
+                        credential,
+                        clear_credential: args.clear_credential,
+                    },
+                )
                 .await?
                 .result;
             crate::output::show(args.json, &response.provider)

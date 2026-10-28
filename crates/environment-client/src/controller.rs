@@ -9,8 +9,8 @@ use environment_protocol::{
     handshake::Plane,
     jsonrpc::{Request, Response},
     manifest::{
-        ControllerInitialize, IngressEnsure, IngressRemove, RequestMethod, TargetAdopt,
-        TargetClose, TargetCreate, TargetGet, TargetSetPower, TemplateList,
+        ControllerInitialize, IngressEnsure, IngressRemove, RequestMethod, TargetClose,
+        TargetCreate, TargetGet, TargetSetPower, TemplateList,
     },
 };
 use futures_util::future::BoxFuture;
@@ -40,12 +40,11 @@ struct Inner {
 
 impl ControllerClient {
     /// Dial the controller URL and run `initialize` with
-    /// [`CONTROLLER_PROTOCOL_VERSION`]. Pass the provider credential as
-    /// [`ConnectOptions::bearer_token`]. Fails with
+    /// [`CONTROLLER_PROTOCOL_VERSION`]. Pass the provider credential, when
+    /// one is configured, as [`ConnectOptions::bearer_token`]; without one
+    /// no `Authorization` header is sent. Fails with
     /// [`ClientError::VersionMismatch`] or [`ClientError::WrongPlane`]
-    /// before the connection is used. The caller still checks
-    /// `routes.data` against the controller URL
-    /// (`DataRouteBase::check_for_controller`).
+    /// before the connection is used.
     pub async fn connect_initialized(
         endpoint: &str,
         options: ConnectOptions,
@@ -87,7 +86,7 @@ impl ControllerClient {
         }
     }
 
-    /// The controller's `initialize` response: capabilities and routes.
+    /// The controller's `initialize` response: its capabilities.
     pub fn initialize_response(&self) -> &ControllerInitializeResponse {
         &self.inner.initialize
     }
@@ -125,8 +124,6 @@ impl ControllerClient {
         list_templates => TemplateList;
         /// `target/create`.
         create_target => TargetCreate;
-        /// `target/adopt`.
-        adopt_target => TargetAdopt;
         /// `target/get`.
         get_target => TargetGet;
         /// `target/setPower`.

@@ -16,52 +16,6 @@
           }
         ]
       },
-      "AdoptTargetParams": {
-        "additionalProperties": false,
-        "description": "`target/adopt` params: take ownership of an existing provider target.\nIdempotent per owner. Requires `capabilities.adoptTarget`. A source that\nbelongs to another owner, or an owner that already holds a different\ntarget, is `failedPrecondition` (`ownerMismatch`); a source the provider\ncannot take over is `failedPrecondition` (`notAdoptable`).",
-        "properties": {
-          "owner": {
-            "$ref": "#/components/schemas/TargetOwner"
-          },
-          "sourceTarget": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ProviderNativeRef"
-              }
-            ],
-            "description": "Provider-native reference to the existing target; the provider\ndefines its format."
-          }
-        },
-        "required": [
-          "owner",
-          "sourceTarget"
-        ],
-        "type": "object"
-      },
-      "BindingId": {
-        "description": "`bindingId` of a provider binding within a universe.",
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
-        "type": "string"
-      },
-      "BindingRef": {
-        "additionalProperties": false,
-        "description": "The provider binding a call is scoped to, for calls that concern no\nparticular target.",
-        "properties": {
-          "bindingId": {
-            "$ref": "#/components/schemas/BindingId"
-          },
-          "universeId": {
-            "$ref": "#/components/schemas/UniverseId"
-          }
-        },
-        "required": [
-          "universeId",
-          "bindingId"
-        ],
-        "type": "object"
-      },
       "BusyReason": {
         "description": "What limit a `busy` request hit.",
         "oneOf": [
@@ -116,8 +70,8 @@
             "type": "string"
           },
           {
-            "const": "adoptTarget",
-            "description": "The controller's `adoptTarget` capability.",
+            "const": "power",
+            "description": "The controller's `power` capability.",
             "type": "string"
           },
           {
@@ -129,7 +83,7 @@
       },
       "CloseTargetParams": {
         "additionalProperties": false,
-        "description": "`target/close` params: destroy the owner's target and every resource it\nholds, public ingress included. Graceful within the provider's own bound,\nthen forced. Answers `closing` until the target is gone, then `closed`;\n`closed` also when the provider holds no target for the owner.",
+        "description": "`target/close` params: destroy the owner's target and every resource it\nholds, public ingress included. Idempotent. Graceful within the\nprovider's own bound, then forced. Answers `closing` until the target is\ngone, then `closed`; `closed` also when the provider holds no target for\nthe owner.",
         "properties": {
           "target": {
             "$ref": "#/components/schemas/TargetRef"
@@ -144,12 +98,12 @@
         "additionalProperties": false,
         "description": "Optional controller methods. Calling an absent one is\n`capabilityUnavailable`.",
         "properties": {
-          "adoptTarget": {
-            "description": "`target/adopt` is served.",
-            "type": "boolean"
-          },
           "ingress": {
             "description": "`ingress/ensure` and `ingress/remove` are served.",
+            "type": "boolean"
+          },
+          "power": {
+            "description": "`target/setPower` is served.",
             "type": "boolean"
           }
         },
@@ -195,9 +149,6 @@
             "minimum": 0,
             "type": "integer"
           },
-          "routes": {
-            "$ref": "#/components/schemas/ControllerRoutes"
-          },
           "serverInfo": {
             "$ref": "#/components/schemas/ImplementationInfo"
           }
@@ -206,33 +157,30 @@
           "protocolVersion",
           "plane",
           "serverInfo",
-          "capabilities",
-          "routes"
-        ],
-        "type": "object"
-      },
-      "ControllerRoutes": {
-        "additionalProperties": false,
-        "description": "Where Lightspeed reaches a target's data plane through this provider.",
-        "properties": {
-          "data": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/DataRouteBase"
-              }
-            ],
-            "description": "Base URL of the data routes. A target's data route is this base\nfollowed by\n`/{universeId}/{bindingId}/{environmentId}/{incarnationId}/{targetId}`,\neach segment percent-encoded\n(`provider_data_route`), and is\ndialed with the same bearer credential as the controller. A\ncontroller reached over `wss` must advertise a `wss` base."
-          }
-        },
-        "required": [
-          "data"
+          "capabilities"
         ],
         "type": "object"
       },
       "CreateTargetParams": {
         "additionalProperties": false,
-        "description": "`target/create` params. Idempotent per owner: when the owner already\nhas a target, the provider returns its observation and applies no\ncreation policy (template deprecation, binding or image checks).",
+        "description": "`target/create` params. Idempotent per owner: when the owner already\nhas a target, the provider returns its observation and applies no\ncreation policy (template deprecation, image checks). Handing out a\ntarget from a warm pool counts as a create.",
         "properties": {
+          "displayName": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisplayName"
+              }
+            ],
+            "description": "Label for the target, where the provider shows one."
+          },
+          "idle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IdlePolicy"
+              }
+            ],
+            "description": "Overrides the template's `idle` for this target. A policy that does\nnot validate (`IdlePolicy::validate`) is `invalidParams`."
+          },
           "owner": {
             "$ref": "#/components/schemas/TargetOwner"
           },
@@ -246,12 +194,112 @@
         ],
         "type": "object"
       },
-      "DataRouteBase": {
-        "description": "`routes.data` of a controller's `initialize`: the absolute `ws://` or\n`wss://` base URL of the provider's data routes, validated on decode and\nnever rewritten. Lowercase scheme, a host and optional port, an optional\npath that does not end with `/`, no user information, query or\nfragment, at most 2048 bytes. A controller reached over `wss` must\nadvertise a `wss` base, so the provider credential never travels in\ncleartext; the runtime checks it with\n`DataRouteBase::check_for_controller`.",
-        "maxLength": 2048,
-        "minLength": 1,
-        "pattern": "^wss?://[^/?#@\\s]+(/[^?#\\s]*[^/?#\\s])?$",
-        "type": "string"
+      "DataRouteRefusal": {
+        "description": "Body of the HTTP refusal a data route answers instead of upgrading, with\n`Content-Type: application/json`. A provider data route uses `waking`,\n`booting`, `gone` and `failed`; the gateway's worker route adds\n`provisioning`, `disconnected` and `away` and forwards a provider's\nrefusal unchanged. Every 503 carries `Retry-After` in whole seconds,\n1 to `RETRY_AFTER_MAX_SECS`.\nThe body is an HTTP refusal, not a JSON-RPC message, and is tagged by\n`state`.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "503: resuming from a powered-down state.",
+            "properties": {
+              "state": {
+                "const": "waking",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "503: running, envd not answering yet.",
+            "properties": {
+              "state": {
+                "const": "booting",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "503 (gateway): the environment is still provisioning.",
+            "properties": {
+              "state": {
+                "const": "provisioning",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "503 (gateway): the registered daemon is not connected.",
+            "properties": {
+              "state": {
+                "const": "disconnected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "410 (gateway): the registered daemon has been away past its\nreconnect bound.",
+            "properties": {
+              "state": {
+                "const": "away",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "410: the target no longer exists.",
+            "properties": {
+              "state": {
+                "const": "gone",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "409: broken beyond the provider's recovery.",
+            "properties": {
+              "message": {
+                "$ref": "#/components/schemas/DescriptiveText"
+              },
+              "state": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "message"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "DescriptiveText": {
         "description": "A short human-readable text: 1 to 1024 bytes without control characters\nother than line feed and tab. Never parsed.",
@@ -305,6 +353,14 @@
           "displayName": {
             "$ref": "#/components/schemas/DisplayName"
           },
+          "idle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IdlePolicy"
+              }
+            ],
+            "description": "Idle policy targets get when `target/create` names none; absent when\nthe provider applies none by default."
+          },
           "metadata": {
             "allOf": [
               {
@@ -312,6 +368,13 @@
               }
             ],
             "description": "Provider-specific display facts, such as an image fingerprint."
+          },
+          "powerStates": {
+            "description": "Power states `target/setPower` can move this template's targets to.\nEmpty when the provider offers no power control beyond create and\nclose.",
+            "items": {
+              "$ref": "#/components/schemas/PowerState"
+            },
+            "type": "array"
           },
           "publicIngress": {
             "description": "Targets of this template can serve public ingress.",
@@ -682,6 +745,37 @@
         ],
         "type": "object"
       },
+      "IdlePolicy": {
+        "additionalProperties": false,
+        "description": "Staged idle policy. Each set threshold is measured against envd\n`env/getIdle` `idleForMs`, and the set thresholds are non-decreasing in\nthe order pause → suspend → stop → close. Every stage is optional; a\npolicy sets at least one.",
+        "properties": {
+          "closeAfterMs": {
+            "description": "Close the target after this long idle; the provider then reports it\n`closed`.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pauseAfterMs": {
+            "description": "Pause the target after this long idle.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stopAfterMs": {
+            "description": "Stop the target after this long idle.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "suspendAfterMs": {
+            "description": "Suspend the target after this long idle.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "ImplementationInfo": {
         "additionalProperties": false,
         "description": "What a peer says about its own build: `clientInfo`, `serverInfo` and a\ndaemon's registration `implementation`. Descriptive only; the protocol\nversion alone decides whether two peers can talk, and nothing here\nselects, authenticates or gates. Every field is 1 to 256 bytes without control characters,\nchecked on decode and by every constructor, so a value that would be\nrefused can never be built or sent.",
@@ -720,13 +814,6 @@
         ],
         "type": "object"
       },
-      "IncarnationId": {
-        "description": "`incarnationId` of one incarnation of an environment.",
-        "maxLength": 128,
-        "minLength": 1,
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
-        "type": "string"
-      },
       "IngressObservation": {
         "additionalProperties": false,
         "description": "Realized public ingress of a target.",
@@ -747,14 +834,14 @@
       },
       "ListTemplatesParams": {
         "additionalProperties": false,
-        "description": "`template/list` params.",
+        "description": "`template/list` params: the universe whose targets the templates would\ncreate. A provider may offer each universe a different set.",
         "properties": {
-          "binding": {
-            "$ref": "#/components/schemas/BindingRef"
+          "universeId": {
+            "$ref": "#/components/schemas/UniverseId"
           }
         },
         "required": [
-          "binding"
+          "universeId"
         ],
         "type": "object"
       },
@@ -991,7 +1078,7 @@
           },
           {
             "const": "ownerMismatch",
-            "description": "The target belongs to another owner, or (`target/adopt`) the owner\nalready holds a different target.",
+            "description": "The target belongs to another owner.",
             "type": "string"
           },
           {
@@ -1007,11 +1094,6 @@
           {
             "const": "targetNotActive",
             "description": "A power change on a target whose `phase` is not `active`\n(provisioning, closing, closed or failed).",
-            "type": "string"
-          },
-          {
-            "const": "notAdoptable",
-            "description": "`target/adopt`: the source target exists but the provider cannot take\nit over, for example an instance of a kind it does not manage.",
             "type": "string"
           }
         ]
@@ -1039,13 +1121,6 @@
           "data"
         ],
         "type": "object"
-      },
-      "ProviderNativeRef": {
-        "description": "`sourceTarget` of `target/adopt`: a provider-native reference to an\nexisting target, in a format the provider defines.",
-        "maxLength": 255,
-        "minLength": 1,
-        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
-        "type": "string"
       },
       "ProviderTargetId": {
         "description": "`targetId`: the provider's own id for a target, opaque to Lightspeed.",
@@ -1076,7 +1151,7 @@
       },
       "SetTargetPowerParams": {
         "additionalProperties": false,
-        "description": "`target/setPower` params: converge the target toward `power`. A target\nalready in, or moving toward, that state is observed without further\naction. Resuming may replace the underlying host process. A target whose\n`phase` is not `active` is `failedPrecondition` (`targetNotActive`); a\nstate outside `supportedPowerStates` is `invalidParams`.",
+        "description": "`target/setPower` params: move the target to `power`. Requires\n`capabilities.power`. A target already in, or moving toward, that state\nis observed without further action. Resuming may replace the underlying\nhost process. A state outside the template's `powerStates` is\n`invalidParams`; a target whose `phase` is not `active` is\n`failedPrecondition` (`targetNotActive`). The provider stays the owner\nof power afterwards: its own idle policy may move the target again.",
         "properties": {
           "power": {
             "allOf": [
@@ -1084,7 +1159,7 @@
                 "$ref": "#/components/schemas/PowerState"
               }
             ],
-            "description": "One of the target's `supportedPowerStates`."
+            "description": "One of the template's `powerStates`."
           },
           "target": {
             "$ref": "#/components/schemas/TargetRef"
@@ -1098,15 +1173,8 @@
       },
       "TargetObservation": {
         "additionalProperties": false,
-        "description": "What the provider observes about a target. Every target method answers\nwith one.",
+        "description": "What the provider observes about a target. Every target and ingress\nmethod answers with one; Lightspeed records it for display only.",
         "properties": {
-          "displayName": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/DisplayName"
-              }
-            ]
-          },
           "ingress": {
             "anyOf": [
               {
@@ -1115,13 +1183,13 @@
             ],
             "description": "Public ingress as realized; absent when disabled."
           },
-          "metadata": {
-            "allOf": [
+          "message": {
+            "anyOf": [
               {
-                "$ref": "#/components/schemas/Metadata"
+                "$ref": "#/components/schemas/DescriptiveText"
               }
             ],
-            "description": "Provider-specific display facts."
+            "description": "Why the target is `failed` or `unknown`, or what a transition waits\nfor. Providers build it with `DescriptiveText::lossy` from\nwhatever their backend reports."
           },
           "owner": {
             "allOf": [
@@ -1131,15 +1199,16 @@
             ],
             "description": "Echoed from the request."
           },
-          "state": {
-            "$ref": "#/components/schemas/TargetState"
+          "phase": {
+            "$ref": "#/components/schemas/TargetPhase"
           },
-          "supportedPowerStates": {
-            "description": "Power states `target/setPower` can move this target to. Empty when\nthe provider offers no power control beyond create and close.",
-            "items": {
-              "$ref": "#/components/schemas/PowerState"
-            },
-            "type": "array"
+          "power": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PowerState"
+              }
+            ],
+            "description": "Present exactly when `phase` is `active`."
           },
           "targetId": {
             "anyOf": [
@@ -1152,22 +1221,16 @@
         },
         "required": [
           "owner",
-          "state"
+          "phase"
         ],
         "type": "object"
       },
       "TargetOwner": {
         "additionalProperties": false,
-        "description": "The Lightspeed incarnation a target belongs to. A provider owns at most\none target per owner.",
+        "description": "The Lightspeed environment a target belongs to. A provider owns at most\none target per owner.",
         "properties": {
-          "bindingId": {
-            "$ref": "#/components/schemas/BindingId"
-          },
           "environmentId": {
             "$ref": "#/components/schemas/EnvironmentId"
-          },
-          "incarnationId": {
-            "$ref": "#/components/schemas/IncarnationId"
           },
           "universeId": {
             "$ref": "#/components/schemas/UniverseId"
@@ -1175,9 +1238,7 @@
         },
         "required": [
           "universeId",
-          "bindingId",
-          "environmentId",
-          "incarnationId"
+          "environmentId"
         ],
         "type": "object"
       },
@@ -1249,39 +1310,6 @@
         ],
         "type": "object"
       },
-      "TargetState": {
-        "additionalProperties": false,
-        "description": "A target's state on two axes: lifecycle `phase`, and `power` while\nactive.",
-        "properties": {
-          "daemonReady": {
-            "description": "envd answers on the target's data route (running targets only).",
-            "type": "boolean"
-          },
-          "message": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/DescriptiveText"
-              }
-            ],
-            "description": "Why the target is `failed` or `unknown`, or what a transition waits\nfor. Providers build it with\n`DescriptiveText::lossy` from whatever their backend reports."
-          },
-          "phase": {
-            "$ref": "#/components/schemas/TargetPhase"
-          },
-          "power": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PowerState"
-              }
-            ],
-            "description": "Present exactly when `phase` is `active`."
-          }
-        },
-        "required": [
-          "phase"
-        ],
-        "type": "object"
-      },
       "TemplateId": {
         "description": "`templateId`: the provider's own id for a template.",
         "maxLength": 255,
@@ -1321,9 +1349,9 @@
     }
   },
   "info": {
-    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 3. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
+    "description": "JSON-RPC 2.0 over WebSocket text frames of at most 16777216 bytes. Exact-match protocolVersion 4. Errors carry code, message and data.kind; see x-lightspeed-error-kinds.",
     "title": "Lightspeed environment controller plane",
-    "version": "3"
+    "version": "4"
   },
   "methods": [
     {
@@ -1354,7 +1382,7 @@
           "$ref": "#/components/schemas/ControllerInitializeResponse"
         }
       },
-      "summary": "Check the protocol version and read the controller's capabilities and routes.",
+      "summary": "Check the protocol version and read the controller's capabilities.",
       "x-lightspeed-direction": "clientToServer",
       "x-lightspeed-family": "handshake",
       "x-lightspeed-kind": "request",
@@ -1366,10 +1394,10 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "name": "binding",
+          "name": "universeId",
           "required": true,
           "schema": {
-            "$ref": "#/components/schemas/BindingRef"
+            "$ref": "#/components/schemas/UniverseId"
           }
         }
       ],
@@ -1379,7 +1407,7 @@
           "$ref": "#/components/schemas/ListTemplatesResponse"
         }
       },
-      "summary": "List the templates a binding may create targets from.",
+      "summary": "List the templates a universe may create targets from.",
       "x-lightspeed-direction": "clientToServer",
       "x-lightspeed-family": "template",
       "x-lightspeed-kind": "request",
@@ -1390,6 +1418,30 @@
       "name": "target/create",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "displayName",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DisplayName"
+              }
+            ],
+            "description": "Label for the target, where the provider shows one."
+          }
+        },
+        {
+          "name": "idle",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IdlePolicy"
+              }
+            ],
+            "description": "Overrides the template's `idle` for this target. A policy that does\nnot validate (`IdlePolicy::validate`) is `invalidParams`."
+          }
+        },
         {
           "name": "owner",
           "required": true,
@@ -1416,44 +1468,6 @@
       "x-lightspeed-family": "target",
       "x-lightspeed-kind": "request",
       "x-lightspeed-params-type": "CreateTargetParams",
-      "x-lightspeed-result-type": "TargetResponse"
-    },
-    {
-      "name": "target/adopt",
-      "paramStructure": "by-name",
-      "params": [
-        {
-          "name": "owner",
-          "required": true,
-          "schema": {
-            "$ref": "#/components/schemas/TargetOwner"
-          }
-        },
-        {
-          "name": "sourceTarget",
-          "required": true,
-          "schema": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/ProviderNativeRef"
-              }
-            ],
-            "description": "Provider-native reference to the existing target; the provider\ndefines its format."
-          }
-        }
-      ],
-      "result": {
-        "name": "result",
-        "schema": {
-          "$ref": "#/components/schemas/TargetResponse"
-        }
-      },
-      "summary": "Take ownership of an existing provider target.",
-      "x-lightspeed-capability": "adoptTarget",
-      "x-lightspeed-direction": "clientToServer",
-      "x-lightspeed-family": "target",
-      "x-lightspeed-kind": "request",
-      "x-lightspeed-params-type": "AdoptTargetParams",
       "x-lightspeed-result-type": "TargetResponse"
     },
     {
@@ -1494,7 +1508,7 @@
                 "$ref": "#/components/schemas/PowerState"
               }
             ],
-            "description": "One of the target's `supportedPowerStates`."
+            "description": "One of the template's `powerStates`."
           }
         },
         {
@@ -1511,7 +1525,8 @@
           "$ref": "#/components/schemas/TargetResponse"
         }
       },
-      "summary": "Converge a target toward a power state.",
+      "summary": "Move a target to a power state.",
+      "x-lightspeed-capability": "power",
       "x-lightspeed-direction": "clientToServer",
       "x-lightspeed-family": "target",
       "x-lightspeed-kind": "request",
@@ -1597,6 +1612,13 @@
     }
   ],
   "openrpc": "1.3.2",
+  "x-lightspeed-data-route": {
+    "maxHoldMs": 5000,
+    "refusal": {
+      "$ref": "#/components/schemas/DataRouteRefusal"
+    },
+    "retryAfterMaxSecs": 60
+  },
   "x-lightspeed-error": {
     "$ref": "#/components/schemas/ProtocolError"
   },
@@ -1697,5 +1719,8 @@
       "retryable": false
     }
   ],
+  "x-lightspeed-idle-policy": {
+    "$ref": "#/components/schemas/IdlePolicy"
+  },
   "x-lightspeed-plane": "controller"
 }

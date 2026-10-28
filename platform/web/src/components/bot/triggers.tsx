@@ -1798,7 +1798,7 @@ export function pollPayload(form: PollFormState) {
           }
         : {
             kind: "exec" as const,
-            // Blank runs in the bot's own environment (the profile's existing one).
+            // Blank runs in the bot's own environment (the profile's default one).
             ...(form.environmentId.trim() ? { environmentId: form.environmentId.trim() } : {}),
             argv: pollArgv(form),
             ...(form.cwd.trim() ? { cwd: form.cwd.trim() } : {}),
@@ -1814,8 +1814,8 @@ export function pollPayload(form: PollFormState) {
 }
 
 /// `env` is the bot profile's environment intent when known: a blank
-/// environment is fine when the profile activates an existing one (the poll
-/// runs there), and left to the server otherwise.
+/// environment is fine when the profile's default attachment names an
+/// environment (the poll runs there), and left to the server otherwise.
 export function pollFormProblem(form: PollFormState, env?: BotEnvStatus): string | null {
   if (form.sourceKind === "http") {
     if (!/^https?:\/\//.test(form.url.trim())) return "The poll URL must be http(s).";

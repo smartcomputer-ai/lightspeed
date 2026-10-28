@@ -13,7 +13,6 @@ pub fn hostname(target: &OwnedTarget, public_base_url: &str) -> anyhow::Result<S
         "ingress",
         &[
             target.owner.universe_id.as_str(),
-            target.owner.binding_id.as_str(),
             target.owner.environment_id.as_str(),
         ],
     );
@@ -46,13 +45,12 @@ pub(crate) mod tests {
     use crate::incus::InstanceStatus;
 
     pub(crate) fn target() -> OwnedTarget {
-        let owner = policy::tests::owner("universe-a", "binding-a", "environment-a");
+        let owner = policy::tests::owner("universe-a", "environment-a");
         OwnedTarget {
             target_id: policy::instance_name(&owner).try_into().unwrap(),
             owner,
             template_id: "template-a".to_owned(),
-            image_fingerprint: "fingerprint-a".to_owned(),
-            adoption_source: None,
+            idle: None,
             status: InstanceStatus::Running,
             ipv4_address: Some("10.0.0.2".to_owned()),
             ingress_hostname: None,

@@ -11,9 +11,11 @@
 //!   with the gateway and is asked for reverse-dialed streams; versioned by
 //!   [`ENVD_PROTOCOL_VERSION`].
 //!
-//! [`manifest`] lists every method with its types. The crate is
-//! transport-free: it defines messages and the rules both sides follow,
-//! not sockets.
+//! [`manifest`] lists every method with its types; [`idle`] holds the idle
+//! policy providers run against envd's `env/getIdle`, and
+//! [`routes::DataRouteRefusal`] the body a data route answers instead of
+//! upgrading. The crate is transport-free: it defines messages and the
+//! rules both sides follow, not sockets.
 //!
 //! # Conventions
 //!
@@ -86,6 +88,7 @@ pub mod control;
 pub mod data;
 pub mod error;
 pub mod handshake;
+pub mod idle;
 pub mod ids;
 pub mod jsonrpc;
 pub mod limits;

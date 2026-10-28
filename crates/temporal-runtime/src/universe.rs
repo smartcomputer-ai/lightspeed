@@ -23,6 +23,7 @@ use std::{
 };
 
 use auth::{GitHubApiClient, HttpGitHubApiClient, HttpOAuthTokenClient, OAuthTokenClient};
+use futures_util::StreamExt as _;
 use llm_clients::{
     anthropic::messages as am,
     openai::{audio as oai_audio, completions as oai_completions, responses as oai},
@@ -34,7 +35,7 @@ use uuid::Uuid;
 
 use crate::{
     config::{DeploymentStores, TaskQueues},
-    environments::gateway::EnvironmentGatewayClientConfig,
+    environments::{gateway::EnvironmentGatewayClientConfig, signals::EnvironmentSignals},
     gateway::GatewayAgentApi,
     subagents::AgentApiSubagentRuntime,
     worker::{ActivityState, AudioTranscoder},
@@ -43,6 +44,9 @@ use crate::{
 /// Evict universe states idle longer than this. Rebuilds are cheap, so this
 /// only needs to be long enough that busy tenants never churn.
 const UNIVERSE_IDLE_EVICT_MS: u64 = 4 * 60 * 60 * 1000;
+
+/// Universes the environment display sweep observes at once.
+const DISPLAY_SWEEP_UNIVERSE_CONCURRENCY: usize = 16;
 
 /// Hard cap on cached universe states, evicted LRU-first. Sized far above any
 /// expected concurrently-active tenant count; the idle sweep does the real
@@ -141,10 +145,6 @@ struct UniverseEntry {
 /// pinned universe); the worker never creates, because a workflow for a
 /// universe the gateway did not create is a routing error, not a provisioning
 /// request.
-/// How often the power reaper polls daemon idle reports. Idle thresholds are
-/// minutes to hours, so a coarse cadence keeps the data-plane load negligible.
-pub const POWER_REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-
 /// How often bot trigger Schedules are re-converged in the background.
 pub const BOT_SCHEDULE_RECONCILE_INTERVAL: std::time::Duration =
     std::time::Duration::from_secs(10 * 60);
@@ -156,6 +156,7 @@ pub struct UniverseRuntime {
     stores: DeploymentStores,
     clients: DeploymentClients,
     environment_gateway: EnvironmentGatewayClientConfig,
+    environment_signals: Arc<EnvironmentSignals>,
     states: tokio::sync::Mutex<BTreeMap<Uuid, UniverseEntry>>,
 }
 
@@ -192,6 +193,7 @@ impl UniverseRuntime {
             stores,
             clients: DeploymentClients::from_env()?,
             environment_gateway,
+            environment_signals: Arc::new(EnvironmentSignals::default()),
             states: tokio::sync::Mutex::new(BTreeMap::new()),
         })
     }
@@ -222,6 +224,11 @@ impl UniverseRuntime {
 
     pub fn environment_gateway(&self) -> &EnvironmentGatewayClientConfig {
         &self.environment_gateway
+    }
+
+    /// This process's environment signals, shared by every universe's API.
+    pub fn environment_signals(&self) -> &Arc<EnvironmentSignals> {
+        &self.environment_signals
     }
 
     /// Drop the universe's cached runtime state (operator purge). In-flight
@@ -262,52 +269,43 @@ impl UniverseRuntime {
         Ok(state)
     }
 
-    /// Run the one active deployment lifecycle reconciler. Provider calls are
-    /// idempotent, so process restart safely resumes any persisted intent.
-    /// Each tick is one deployment pass: every provider is dialed at most
-    /// once, and a provider whose connection fails is skipped for the rest
-    /// of the pass in every universe. Every
-    /// [`STEADY_OBSERVATION_INTERVAL`](crate::environments::lifecycle::STEADY_OBSERVATION_INTERVAL)
-    /// a pass also observes steady environments, and each pass first dials
-    /// providers whose controller facts are not recorded yet.
+    /// Run the one active environment reconciler (environment-gateway
+    /// role): the work loop and the display sweep, concurrently. Provider
+    /// calls are idempotent per owner, so a process restart resumes every
+    /// scheduled row.
     pub async fn run_environment_reconciler(self: Arc<Self>) {
-        use crate::environments::provider_controllers::{
-            ProviderFactsRefresh, ProviderPass, WebSocketProviderControllerConnector,
-        };
-        let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+        tokio::join!(
+            self.clone().run_environment_work_loop(),
+            self.run_environment_display_loop(),
+        );
+    }
+
+    /// Every [`WORK_TICK`](crate::environments::lifecycle::WORK_TICK), or at
+    /// once when nudged: start a work pass for every universe and provider
+    /// with due provisioning or closing rows and no pass in flight. Passes
+    /// run as their own tasks, so a slow provider never delays another
+    /// provider's or universe's rows.
+    async fn run_environment_work_loop(self: Arc<Self>) {
+        use crate::environments::lifecycle::{ProviderWork, WORK_TICK, clock_ms};
+        let mut interval = tokio::time::interval(WORK_TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let work = ProviderWork::default();
         let mut failures = crate::gateway::ReconcileFailureLog::default();
-        let mut facts = ProviderFactsRefresh::default();
-        let provider_store = self.stores.store_for(Uuid::nil());
-        let mut steady_at: Option<std::time::Instant> = None;
         loop {
-            interval.tick().await;
-            let scope = if steady_at.is_none_or(|at| {
-                at.elapsed() >= crate::environments::lifecycle::STEADY_OBSERVATION_INTERVAL
-            }) {
-                steady_at = Some(std::time::Instant::now());
-                ::environments::ReconcileScope::WithSteady
-            } else {
-                ::environments::ReconcileScope::Converging
-            };
-            let mut pass = ProviderPass::default();
-            facts
-                .run(
-                    &mut pass,
-                    provider_store.as_ref(),
-                    &WebSocketProviderControllerConnector,
-                )
-                .await;
-            let universe_ids = match store_pg::list_universes_with_pending_environments(
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = self.environment_signals.work_nudged() => {}
+            }
+            let now = clock_ms();
+            let universe_ids = match store_pg::list_universes_with_environment_work(
                 self.stores.pool(),
-                scope,
+                now,
             )
             .await
             {
                 Ok(ids) => ids,
                 Err(error) => {
                     tracing::warn!(target: "temporal_runtime", %error, "environment reconciler scan failed");
-                    pass.close().await;
                     continue;
                 }
             };
@@ -322,55 +320,60 @@ impl UniverseRuntime {
                 match state
                     .api
                     .environment_service()
-                    .reconcile_environment_lifecycle_pass(&mut pass, scope)
+                    .start_environment_work(now, &work)
                     .await
                 {
                     Ok(_) => failures.succeeded(universe_id),
                     Err(error) => failures.failed(universe_id, &error),
                 }
             }
-            pass.close().await;
         }
     }
 
-    /// Run the one active power reaper. Every pass reads daemon idle
-    /// reports for ready environments with an idle policy and records power
-    /// intent; the lifecycle reconciler converges the provider. Failures are
-    /// logged and retried on the next tick.
-    pub async fn run_power_reaper(self: Arc<Self>) {
-        let mut interval = tokio::time::interval(POWER_REAPER_INTERVAL);
+    /// Every [`DISPLAY_SWEEP_INTERVAL`](crate::environments::lifecycle::DISPLAY_SWEEP_INTERVAL):
+    /// observe the open provisioned environments of every universe.
+    async fn run_environment_display_loop(self: Arc<Self>) {
+        use crate::environments::lifecycle::{DISPLAY_SWEEP_INTERVAL, clock_ms};
+        let mut interval = tokio::time::interval(DISPLAY_SWEEP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut failures = crate::gateway::ReconcileFailureLog::default();
         loop {
             interval.tick().await;
-            let universe_ids = match store_pg::list_universes_with_idle_policies(self.stores.pool())
+            let now = clock_ms();
+            match store_pg::list_universes_with_open_provisioned_environments(self.stores.pool())
                 .await
             {
-                Ok(ids) => ids,
-                Err(error) => {
-                    tracing::warn!(target: "temporal_runtime", %error, "power reaper scan failed");
-                    continue;
-                }
-            };
-            // Providers whose daemons timed out are skipped for the rest of
-            // the pass, in every universe.
-            let mut unhealthy = std::collections::HashSet::new();
-            for universe_id in universe_ids {
-                let state = match self.state_for(universe_id, false).await {
-                    Ok(state) => state,
-                    Err(error) => {
-                        tracing::warn!(target: "temporal_runtime", %universe_id, %error, "power reaper could not resolve universe");
-                        continue;
+                Ok(universe_ids) => {
+                    // Universes are observed concurrently, so one slow
+                    // provider never holds up the others.
+                    let swept = futures_util::stream::iter(universe_ids)
+                        .map(|universe_id| {
+                            let runtime = self.clone();
+                            async move {
+                                let result = match runtime.state_for(universe_id, false).await {
+                                    Ok(state) => {
+                                        state.api.environment_service().run_display_sweep(now).await
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(target: "temporal_runtime", %universe_id, %error, "environment display sweep could not resolve universe");
+                                        return None;
+                                    }
+                                };
+                                Some((universe_id, result))
+                            }
+                        })
+                        .buffer_unordered(DISPLAY_SWEEP_UNIVERSE_CONCURRENCY)
+                        .collect::<Vec<_>>()
+                        .await;
+                    for (universe_id, result) in swept.into_iter().flatten() {
+                        match result {
+                            Ok(_) => failures.succeeded(universe_id),
+                            Err(error) => failures.failed(universe_id, &error),
+                        }
                     }
-                };
-                match state
-                    .api
-                    .environment_service()
-                    .reconcile_idle_power_pass(&mut unhealthy)
-                    .await
-                {
-                    Ok(_) => failures.succeeded(universe_id),
-                    Err(error) => failures.failed(universe_id, &error),
+                }
+                Err(error) => {
+                    tracing::warn!(target: "temporal_runtime", %error, "environment display sweep scan failed");
                 }
             }
         }
@@ -427,7 +430,8 @@ impl UniverseRuntime {
                 self.clients.openai.clone(),
                 self.clients.anthropic.clone(),
             )
-            .with_environment_gateway(self.environment_gateway.clone());
+            .with_environment_gateway(self.environment_gateway.clone())
+            .with_environment_signals(self.environment_signals.clone());
         if let Some(public_base_url) = &self.public_base_url {
             api = api.with_public_base_url(public_base_url.clone());
         }

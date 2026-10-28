@@ -7,6 +7,8 @@
     "environments/registration-keys/create",
     "environments/registration-keys/read",
     "environments/registration-keys/list",
-    "environments/registration-keys/revoke"
+    "environments/registration-keys/revoke",
+    "environments/registration-keys/update",
+    "environments/registration-keys/rotate"
   ]
 }
