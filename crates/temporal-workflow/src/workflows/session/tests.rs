@@ -1328,6 +1328,67 @@ fn workflow_await_deadline_uses_timer_not_state_condition() {
 }
 
 #[test]
+fn queued_followups_do_not_spin_while_the_active_run_awaits_a_timer() {
+    let mut workflow =
+        workflow_with_parked_tool_batch(await_spec(&["promise_1"], harness::AwaitMode::All, None));
+    add_promises(
+        &mut workflow,
+        vec![promise_with_source(
+            "promise_1",
+            PromiseStatus::Pending,
+            PromiseSource::Timer { fire_at_ms: 11_000 },
+            PromiseScope::Run {
+                run_id: RunId::new(1),
+            },
+        )],
+    );
+    let active = workflow.core_state.runs.active.as_ref().unwrap();
+    for run_id in [2, 3] {
+        workflow.core_state.runs.queued.push(harness::AcceptedRun {
+            run_id: RunId::new(run_id),
+            submission_id: None,
+            source: active.source.clone(),
+            run_config: active.run_config.clone(),
+            config_revision: active.config_revision,
+            first_seq: EventSeq::new(run_id),
+            accepted_at_ms: 1_000,
+            notify_on_terminal: Vec::new(),
+        });
+    }
+    promise_sources::reconcile_polls_for_state(&mut workflow, 1_000);
+
+    // Without yielding, workflow time cannot advance and the durable timer
+    // is never scheduled. Queued runs must wait for the active run to finish.
+    assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
+        &workflow
+    ));
+    assert!(!wait_loop::workflow_state_has_immediate_work(&workflow));
+    assert_eq!(promise_sources::nearest_wake_ms(&workflow), Some(11_000));
+
+    // New controls can still wake the owner while the run is parked.
+    workflow.queue_admission(admission(request_input_run("another_followup")));
+    assert!(wait_loop::workflow_state_has_immediate_work(&workflow));
+    workflow.pending_admissions.clear();
+
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&harness::PromiseId::new("promise_1"))
+        .unwrap()
+        .status = PromiseStatus::Resolved;
+    assert!(awaits::has_satisfied_await(&workflow));
+    assert!(wait_loop::workflow_state_has_immediate_work(&workflow));
+
+    // Once the active run finishes, the queued work must start immediately.
+    workflow.core_state.runs.active = None;
+    assert!(wait_loop::workflow_state_needs_core_drive_for_state(
+        &workflow
+    ));
+    assert!(wait_loop::workflow_state_has_immediate_work(&workflow));
+}
+
+#[test]
 fn promise_snapshot_reports_pending_promise() {
     let spec = await_spec(&["promise_1"], harness::AwaitMode::All, Some(1_000));
     let mut workflow = workflow_with_parked_tool_batch(spec.clone());

@@ -143,6 +143,21 @@ describe("run sections", () => {
     ]);
   });
 
+  it("does not end the active section with another run's cancellation", () => {
+    const entries = [user("ask", "r1"), thinking("think", "r1"), summary("cancel", "r2", "cancelled")];
+    const live = sectionsByRun(entries, { runId: "r1", label: "thinking", cancelling: false });
+    expect(live.find((section) => section.kind === "run" && section.runId === "r1")).toMatchObject({
+      live: true, input: entries[0], work: [entries[1]],
+    });
+    const finished = sectionsByRun([...entries, assistant("reply", "r1"), summary("done", "r1")], null);
+    expect(finished.filter((section) => section.kind === "run" && section.runId === "r1")).toMatchObject([
+      { input: entries[0], work: [entries[1]], reply: { key: "reply" }, summary: { status: "completed", runId: "r1" } },
+    ]);
+    expect(finished.find((section) => section.kind === "run" && section.runId === "r2")).toMatchObject({
+      work: [], summary: { status: "cancelled", runId: "r2" },
+    });
+  });
+
   it("folds steering input into the run's work", () => {
     const entries = [
       user("ask", "r1"), tools("a", "r1", [call("c1", "execute")]), user("steer", "r1", true),

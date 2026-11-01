@@ -119,4 +119,5 @@ it("preserves the queued message list without cancellation controls for readers"
   }));
   expect(html).toContain("Queued work");
   expect(html).not.toContain("Cancel queued message");
+  expect(html).not.toContain("Steer with queued message");
 });

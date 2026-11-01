@@ -70,7 +70,11 @@ pub(super) fn workflow_state_needs_core_drive(ctx: &WorkflowContext<AgentSession
 pub(super) fn workflow_state_needs_core_drive_for_state(state: &AgentSessionWorkflow) -> bool {
     state.ready
         && (!state.pending_toolsets.is_empty()
-            || !state.core_state.runs.queued.is_empty()
+            // Queued runs cannot start behind an active run. Treating them
+            // as immediate work while it is parked spins without yielding,
+            // preventing Temporal timers and incoming controls from advancing.
+            || (state.core_state.runs.active.is_none()
+                && !state.core_state.runs.queued.is_empty())
             || state.core_state.context.compaction.is_pending()
             || state.core_state.runs.active.as_ref().is_some_and(|run| {
                 awaits::parked_tool_batch(&state.core_state).is_none()

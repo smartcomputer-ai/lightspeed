@@ -22,6 +22,7 @@ export class TranscriptWindow {
     // Snapshot-supplied start times stay authoritative even while the event
     // window still begins inside that run. Usage completeness remains separate.
     base.runStartedAtMs = new Map(live.runStartedAtMs);
+    base.unstartedRuns = new Set(live.unstartedRuns);
     const rebuilt = applyEvents(base, [...this.events.values()].sort(bySequence));
     // Preserve mounted group identities when an older page supplies the start
     // of a previously displayed continuation. The scroller anchors DOM nodes.

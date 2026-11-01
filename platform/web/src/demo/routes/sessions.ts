@@ -445,12 +445,19 @@ export function sessionRoutes(store: DemoStore): Hono {
     return c.json({ run: { id: run.id, status: run.status } });
   });
 
+  app.get("/:id/sessions/:sessionId/runs/:runId", (c) => {
+    const found = lookup(c);
+    if (!found) return notFound(c, "not found in engine");
+    const run = findRun(found.session, c.req.param("runId"));
+    return run ? c.json(run) : notFound(c, "run not found");
+  });
+
   app.post("/:id/sessions/:sessionId/runs/:runId/cancel", (c) => {
     const found = lookup(c);
     if (!found) return notFound(c, "not found in engine");
     const run = cancelRun(found.session, c.req.param("runId"));
     if (!run) return notFound(c, "not found in engine");
-    return c.json({ run: { id: run.id, status: run.status } });
+    return c.json({ run: { id: run.id, status: run.status, startedAtMs: run.startedAtMs } });
   });
 
   /// Only a running run takes steering; queued, cancelling, and finished
@@ -468,7 +475,10 @@ export function sessionRoutes(store: DemoStore): Hono {
     if (!run) return notFound(c, "not found in engine");
     const steered = steerRun(store, session, runId, body.data.text, `user:${store.currentUser.id}`, body.data.attachments);
     if (!steered) {
-      return conflict(c, `engine conflict: run ${runId} is ${run.status}; only a running run accepts steering`);
+      return c.json({
+        error: `run ${runId} is ${run.status}; only a running run accepts steering`,
+        kind: "steering_not_submitted",
+      }, 409);
     }
     return c.json({
       steeringId: steered.steeringId,

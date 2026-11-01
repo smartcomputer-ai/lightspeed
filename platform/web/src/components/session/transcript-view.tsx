@@ -300,16 +300,21 @@ export interface QueuedRunItem {
   text: string;
   /// A cancel is in flight for this queued run.
   cancelling?: boolean;
+  steering?: boolean;
 }
 
 /// Messages queued behind the active run, in start order, each with a
-/// cancel control. Sits between the transcript and the composer.
+/// queue controls. Sits between the transcript and the composer.
 export function QueuedRunsBar({
   items,
   onCancel,
+  onSteer,
+  canSteer = false,
 }: {
   items: QueuedRunItem[];
   onCancel?: (runId: string) => void;
+  onSteer?: (runId: string) => void;
+  canSteer?: boolean;
 }) {
   if (items.length === 0) {
     return null;
@@ -326,7 +331,7 @@ export function QueuedRunsBar({
             key={item.key}
             className={cn(
               "flex items-center gap-2 text-sm",
-              item.cancelling && "opacity-60",
+              (item.cancelling || item.steering) && "opacity-60",
             )}
           >
             <span className="w-5 shrink-0 text-right text-xs text-muted-foreground">
@@ -335,7 +340,21 @@ export function QueuedRunsBar({
             <span className="min-w-0 flex-1 truncate whitespace-pre-wrap" title={item.text}>
               {item.text}
             </span>
-            {item.cancelling ? (
+            {onSteer && (
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={!item.runId || !canSteer || item.cancelling || item.steering}
+                aria-label="Steer with queued message"
+                title={!item.runId ? "Waiting for the engine to accept this message"
+                  : !canSteer ? "There is no run to steer right now"
+                  : "Remove from the queue and steer the current run"}
+                onClick={() => item.runId && onSteer(item.runId)}
+              >
+                Steer
+              </Button>
+            )}
+            {item.cancelling || item.steering ? (
               <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
             ) : onCancel ? (
               <Button

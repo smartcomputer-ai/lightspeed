@@ -174,6 +174,9 @@ export interface TranscriptState {
   seenItems: Set<string>;
   seenEvents: Set<number>;
   runPhases: Map<string, RunPhase>;
+  /// Accepted runs with no start, retained after queue removal. A terminal
+  /// snapshot can arrive before the cancellation event and clear queuedRuns.
+  unstartedRuns: Set<string>;
   /// Client submission id → engine run id, from `runAccepted`. Lets an
   /// optimistic send resolve its run before its own POST returns (the tail
   /// is usually faster than the gateway's acceptance poll).
@@ -214,6 +217,7 @@ export function emptyTranscript(): TranscriptState {
     seenItems: new Set(),
     seenEvents: new Set(),
     runPhases: new Map(),
+    unstartedRuns: new Set(),
     runBySubmission: new Map(),
     toolCallByCallId: new Map(),
     toolGroupByBatchId: new Map(),
@@ -268,6 +272,7 @@ export function applyEvents(
     seenItems: state.seenItems,
     seenEvents: state.seenEvents,
     runPhases: state.runPhases,
+    unstartedRuns: state.unstartedRuns,
     runBySubmission: state.runBySubmission,
     toolCallByCallId: state.toolCallByCallId,
     toolGroupByBatchId: state.toolGroupByBatchId,
@@ -405,15 +410,13 @@ export function applyEvents(
         break;
       }
       case "runCancelled": {
-        const wasQueued = next.queuedRuns.some((run) => run.runId === String(kind.runId));
         const runId = String(kind.runId);
+        const wasQueued = next.unstartedRuns.has(runId)
+          || next.queuedRuns.some((run) => run.runId === runId);
         finishRun(next, runId);
-        next.entries.push(wasQueued ? {
-          kind: "marker",
-          key: `evt-${event.cursor.seq}`,
-          text: "queued message cancelled",
-          tone: "muted",
-        } : runSummary(next, event, runId, "cancelled"));
+        // Removing unstarted input updates the queue, not the conversation.
+        // When converted, the steering input supplies the visible message.
+        if (!wasQueued) next.entries.push(runSummary(next, event, runId, "cancelled"));
         break;
       }
       case "contextCompactionRequested": {
@@ -528,19 +531,21 @@ function enqueueRun(state: TranscriptState, runId: string) {
     return;
   }
   state.runPhases.set(runId, "queued");
+  state.unstartedRuns.add(runId);
   state.queuedRuns = [...state.queuedRuns, { runId }];
   state.runRevision += 1;
 }
 
 function startRun(state: TranscriptState, runId: string, observedAtMs?: number) {
+  state.unstartedRuns.delete(runId);
+  if (observedAtMs !== undefined && !state.runStartedAtMs.has(runId)) {
+    state.runStartedAtMs.set(runId, observedAtMs);
+  }
   const phase = state.runPhases.get(runId);
   if (phase === "running" || phase === "terminal") {
     return;
   }
   state.runPhases.set(runId, "running");
-  if (observedAtMs !== undefined && !state.runStartedAtMs.has(runId)) {
-    state.runStartedAtMs.set(runId, observedAtMs);
-  }
   state.queuedRuns = state.queuedRuns.filter((run) => run.runId !== runId);
   const startedAtMs = state.runStartedAtMs.get(runId);
   state.activeRun = {
@@ -589,6 +594,7 @@ export function reconcileRuns(
     if (run.startedAtMs != null && !next.runStartedAtMs.has(runId)) {
       next.runStartedAtMs.set(runId, run.startedAtMs);
     }
+    if (run.startedAtMs != null) next.unstartedRuns.delete(runId);
     const phase = next.runPhases.get(runId);
     // Parking covers tool promises and timers as well as human approvals.
     const parkedLabel = run.pendingApprovals?.length ? "approval required" : "waiting for tools";
@@ -596,6 +602,10 @@ export function reconcileRuns(
       case "completed":
       case "failed":
       case "cancelled":
+        if (run.status === "cancelled" && (phase === undefined || phase === "queued")
+          && !next.runStartedAtMs.has(runId)) {
+          next.unstartedRuns.add(runId);
+        }
         if (phase !== "terminal") {
           finishRun(next, runId);
           changed = true;

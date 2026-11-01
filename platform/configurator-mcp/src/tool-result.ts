@@ -2,7 +2,7 @@ import {
   LightspeedRpcError,
   LightspeedTransportError,
 } from "@lightspeed-ai/sdk";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 
 // Exactly one representation of every result: the JSON text block that all
 // MCP clients read. No tool declares an outputSchema, so structuredContent

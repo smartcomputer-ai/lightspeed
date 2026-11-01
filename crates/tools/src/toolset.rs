@@ -183,9 +183,16 @@ pub enum BuiltinToolPresentation {
 }
 
 impl BuiltinToolPresentation {
+    pub(crate) fn prefers_patches(self, target: &ToolTarget) -> bool {
+        self == Self::CodexLike
+            || (self == Self::ProviderDefault
+                && target.api_kind == ProviderApiKind::OpenAiResponses)
+    }
+
     /// Responses and Completions share neutral filesystem tools and shell
     /// command execution. The resolver omits patch tools from the generic
-    /// Completions default; explicit presentations retain their full surface.
+    /// Completions default. Explicit Codex-like presentation prefers patches;
+    /// Canonical keeps both patching and exact replacement available.
     pub(crate) fn surface(self, target: &ToolTarget) -> BuiltinToolSurface {
         match self {
             Self::ProviderDefault => match target.api_kind {
@@ -805,6 +812,14 @@ mod tests {
             let names = optional_tool_names(&present_toolset(&target, &config).unwrap());
             assert!(names.contains(&"apply_patch".to_owned()));
             assert!(names.contains(&"vfs_apply_patch".to_owned()));
+            assert_eq!(
+                names.contains(&"edit_file".to_owned()),
+                presentation == BuiltinToolPresentation::Canonical
+            );
+            assert_eq!(
+                names.contains(&"vfs_edit_file".to_owned()),
+                presentation == BuiltinToolPresentation::Canonical
+            );
         }
 
         config.builtin.vfs.apply_patch = false;
@@ -863,7 +878,6 @@ mod tests {
             optional_tool_names(&toolset),
             vec![
                 "vfs_apply_patch",
-                "vfs_edit_file",
                 "vfs_glob",
                 "vfs_grep",
                 "vfs_list_dir",
@@ -922,7 +936,7 @@ mod tests {
         assert!(names.contains(&"vfs_materialize".to_owned()));
         assert!(names.contains(&"vfs_capture".to_owned()));
         assert!(names.contains(&"env_reference".to_owned()));
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 18);
         assert!(
             toolset
                 .catalog
