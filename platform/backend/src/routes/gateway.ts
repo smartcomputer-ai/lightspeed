@@ -852,6 +852,18 @@ export function gatewayRoutes(ctx: AppContext) {
     });
   });
 
+  app.get("/:id/sessions/:sessionId/runs/:runId", async (c) => {
+    const access = await universeForSession(ctx, c, c.req.param("id"));
+    if (!access) return c.json({ error: "not found" }, 404);
+    return withGateway(c, async () => {
+      const response = await engineClientFor(ctx, access).call("session/runs/read", {
+        sessionId: c.req.param("sessionId"),
+        runId: c.req.param("runId"),
+      });
+      return c.json(response.result.run);
+    });
+  });
+
   /// Cancel a queued or active run. Returns the run's projected state right
   /// after the cancel was admitted (`cancelling` for an active run,
   /// `cancelled` for a queued one); the terminal event arrives on the tail.
@@ -867,7 +879,7 @@ export function gatewayRoutes(ctx: AppContext) {
         runId: c.req.param("runId"),
       });
       const run = response.result.run;
-      return c.json({ run: { id: run.id, status: run.status } });
+      return c.json({ run: { id: run.id, status: run.status, startedAtMs: run.startedAtMs } });
     });
   });
 

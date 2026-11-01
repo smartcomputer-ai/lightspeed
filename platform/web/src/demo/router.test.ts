@@ -16,7 +16,7 @@ import type {
 import { SOFTWARE_FACTORY_UNIVERSE_ID } from "./fixtures/software-factory";
 import { applyEvents, emptyTranscript } from "@/lib/sessions/transcript";
 import { sectionsByRun } from "@/lib/sessions/run-sections";
-import { appendScriptedRun } from "./engine";
+import { appendScriptedRun, startRun } from "./engine";
 
 /// Walks the demo router the way the UI does: every read path each page
 /// opens with must answer, and the live paths (a message, its tail, a bot
@@ -63,6 +63,35 @@ const universeReads = [
 ];
 
 describe("demo router", () => {
+  it("lets the UI read, cancel, and steer a queued message with attachments", async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, call } = await boot();
+      const universe = store.universe(SOFTWARE_FACTORY_UNIVERSE_ID)!;
+      const session = universe.sessions.get("session-flaky-scheduler")!;
+      const active = startRun(store, universe, session, { text: "Work on this" });
+      const base = `/api/v1/universes/${SOFTWARE_FACTORY_UNIVERSE_ID}`;
+      const upload = await call("POST", `${base}/attachments`, { bytesBase64: btoa("%PDF-1.7") });
+      const blobRef = (upload.json as { blobs: { blobRef: string }[] }).blobs[0]!.blobRef;
+      const attachment = { blobRef, mime: "application/pdf", kind: "document" as const, name: "notes.pdf" };
+      const queued = startRun(store, universe, session, { text: "Use these notes", media: [attachment] });
+      const path = `${base}/sessions/${session.view.id}`;
+      const input = await call("GET", `${path}/runs/${queued.id}`);
+      expect(input.status).toBe(200);
+      expect(input.json).toMatchObject({ status: "queued", source: { items: [
+        { type: "media", ...attachment }, { type: "text", text: "Use these notes" },
+      ] } });
+      expect((await call("POST", `${path}/runs/${queued.id}/cancel`, {})).json).toEqual({ run: { id: queued.id, status: "cancelled" } });
+      expect((await call("POST", `${path}/runs/${active.id}/steer`, { text: "Use these notes", attachments: [attachment] })).status).toBe(200);
+      expect(session.queue.some((entry) => entry.runId === queued.id)).toBe(false);
+      expect(session.events.some((event) => event.kind.type === "runSteeringAccepted" && event.kind.runId === active.id)).toBe(true);
+      expect((await call("GET", `${path}/runs/missing`)).status).toBe(404);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("starts demo universes with distinct icons and colors while new universes use defaults", async () => {
     const { call } = await boot();
     const response = await call("GET", "/api/v1/universes");

@@ -28,7 +28,8 @@ function fixture() {
       ? { blobs: [{ blobRef: image.blobRef, bytes: 3 }] }
       : rpc.method === "session/runs/steer"
         ? { steeringId: "steer_1", run: { id: "run_1", status: "running" } }
-        : { run: { id: "run_1", status: "running" } };
+        : { run: { id: "run_1", status: "running", startedAtMs: 123,
+          source: { type: "input", items: [{ type: "text", text: "Complete queued input" }] } } };
     return Response.json({ id: rpc.id, result: { result, notifications: [] } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -38,8 +39,25 @@ function fixture() {
   const call = (path: string, body: unknown) => app.request(`/universe${path}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  return { call, requests, fetch };
+  const get = (path: string) => app.request(`/universe${path}`);
+  return { call, get, requests, fetch };
 }
+
+it("reads complete run input through the member-scoped client", async () => {
+  const f = fixture();
+  const response = await f.get("/sessions/s1/runs/run_1");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    source: { type: "input", items: [{ type: "text", text: "Complete queued input" }] },
+  });
+  expect(f.requests).toMatchObject([{ method: "session/runs/read", params: { sessionId: "s1", runId: "run_1" } }]);
+});
+
+it("returns whether a cancelled run had already started", async () => {
+  const f = fixture();
+  const response = await f.call("/sessions/s1/runs/run_1/cancel", {});
+  expect(await response.json()).toEqual({ run: { id: "run_1", status: "running", startedAtMs: 123 } });
+});
 
 it("sends operator attachments as media items before the text, with per-message run options", async () => {
   auth.role = "operator";

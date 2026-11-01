@@ -20,6 +20,46 @@ use temporalio_client::WorkflowStartUpdateOptions;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn queued_followups_allow_code_tool_timers_and_awaits_to_complete() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    require_storage_live_env()?;
+    scenario(|fixture| async move {
+        // The parent is parked on the code runner. A queued follow-up must
+        // not make its owner spin and starve timers, Updates, or queries.
+        let queued = support::live::start_text_run(
+            &fixture.api,
+            &fixture.session_id,
+            "Follow up after the timer",
+        )
+        .await?;
+        assert_eq!(queued.status, api::RunStatus::Queued);
+        let timer = fixture.invoke("timer", "sleep", json!({"ms": 300})).await?;
+        let promise = fixture.value(&timer).await?["promise"].clone();
+        let waited = fixture
+            .invoke(
+                "wait-timer",
+                "await",
+                json!({"promises": [promise], "mode": "all"}),
+            )
+            .await?;
+        let result = fixture.value(&waited).await?;
+        assert_eq!(result["outcome"], "terminal");
+        assert_eq!(result["results"][0]["status"], "resolved");
+        let cancelled = fixture
+            .api
+            .cancel_run(api::RunCancelParams {
+                session_id: fixture.session_id.to_string(),
+                run_id: queued.id,
+            })
+            .await?;
+        assert_eq!(cancelled.result.run.status, api::RunStatus::Cancelled);
+        fixture.finish().await
+    })
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn code_tool_updates_execute_parallel_dependent_joined_and_submit_wait_calls()
 -> anyhow::Result<()> {
     let _lock = LIVE_TEST_LOCK.lock().await;

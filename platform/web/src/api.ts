@@ -545,7 +545,7 @@ export interface SessionRunSteered {
 /// active run (terminal `cancelled` follows on the tail), `cancelled` for a
 /// queued one.
 export interface SessionRunCancelled {
-  run: { id: string; status: SessionRunStatus };
+  run: { id: string; status: SessionRunStatus; startedAtMs?: number | null };
 }
 
 export interface SessionRunApprovalsDecided {
