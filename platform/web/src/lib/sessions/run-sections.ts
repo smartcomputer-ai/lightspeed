@@ -116,6 +116,12 @@ export function sectionsByRun(
       continue;
     }
     if (entry.kind === "run-summary") {
+      // A queued or partially loaded run can end while another run is open.
+      // Its outcome must never close or relabel that other run's work.
+      if (open?.runId && open.runId !== entry.runId) {
+        close({ ...start(undefined, entry), summary: entry });
+        continue;
+      }
       const section = open ?? { kind: "run" as const, key: entry.key, runId: entry.runId, work: [], live: false };
       section.summary = entry;
       section.runId ??= entry.runId;

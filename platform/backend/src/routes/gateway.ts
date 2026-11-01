@@ -897,16 +897,30 @@ export function gatewayRoutes(ctx: AppContext) {
     }
     return withGateway(c, async () => {
       const client = engineClientFor(ctx, access);
-      const response = await client.call("session/runs/steer", {
-        sessionId: c.req.param("sessionId"),
-        runId: c.req.param("runId"),
-        items: messageInputItems(body.data.text, body.data.attachments, `user:${c.get("session").user.id}`),
-      });
-      const run = response.result.run;
-      return c.json({
-        steeringId: response.result.steeringId,
-        run: { id: run.id, status: run.status },
-      });
+      const runId = c.req.param("runId");
+      try {
+        const response = await client.call("session/runs/steer", {
+          sessionId: c.req.param("sessionId"),
+          runId,
+          items: messageInputItems(body.data.text, body.data.attachments, `user:${c.get("session").user.id}`),
+        });
+        const run = response.result.run;
+        return c.json({
+          steeringId: response.result.steeringId,
+          run: { id: run.id, status: run.status },
+        });
+      } catch (error) {
+        // The runtime has one rejection kind for both pre-submit checks and
+        // admission waits. Only these pre-submit failures prove no steering
+        // was sent. In particular, "run ended before steering was admitted"
+        // can follow submission and must retain the uncertain-outcome UI.
+        if (error instanceof LightspeedRpcError && error.kind === "rejected"
+          && (error.message === `run is already terminal: ${runId}`
+            || error.message === `run is not accepting steering: ${runId}`)) {
+          return c.json({ error: error.message, kind: "steering_not_submitted" }, 409);
+        }
+        throw error;
+      }
     });
   });
 

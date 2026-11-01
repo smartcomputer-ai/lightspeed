@@ -3,7 +3,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BotView, SessionView } from "@/api";
+import { ApiError, type BotView, type SessionView } from "@/api";
 import { BotChat } from "@/components/bot/chat";
 import { sessionDraftKey } from "@/lib/sessions/draft";
 import { applyEvents, emptyTranscript, reconcileRuns } from "@/lib/sessions/transcript";
@@ -194,6 +194,90 @@ describe("queued message steering", () => {
     expect(mocks.api).toHaveBeenLastCalledWith("POST", `${base}/messages`, {
       text, attachments: [attachment], submissionId: expect.any(String),
     });
+    expect(container.textContent).not.toContain("Saved message");
+  });
+
+  it("sends one follow-up when the original steering target finishes during conversion", async () => {
+    prepare();
+    const implementation = mocks.api.getMockImplementation()!;
+    let rejectSteer!: (error: Error) => void;
+    mocks.api.mockImplementation((method, path, body) => path.endsWith("/steer")
+      ? new Promise((_resolve, reject) => { rejectSteer = reject; }) : implementation(method, path, body));
+    await show("session");
+    await act(async () => { steerButton()!.click(); steerButton()!.click(); });
+    transcript.activeRun = { runId: "next-active-run", label: "thinking", cancelling: false };
+    await show("session");
+    await act(async () => rejectSteer(new ApiError(409, {
+      error: "run is already terminal: active-run", kind: "steering_not_submitted",
+    })));
+    expect(mocks.api.mock.calls.filter(([, path]) => path.endsWith("/steer"))).toHaveLength(1);
+    expect(mocks.api).toHaveBeenLastCalledWith("POST", `${base}/messages`, {
+      text, attachments: [attachment], submissionId: "queued-steer:queued-run",
+    });
+    expect(mocks.api).toHaveBeenCalledTimes(4);
+    expect(container.textContent).toContain("Sent your message as a follow-up");
+    expect(container.textContent).not.toContain("run is already terminal");
+    expect(container.textContent).not.toContain("Saved message");
+    expect(container.querySelector('[aria-label="Queued messages"]')?.textContent).toContain(text);
+  });
+
+  it.each([
+    new Error("Connection lost"),
+    new ApiError(409, { error: "run ended before steering was admitted: active-run" }),
+    new ApiError(502, { error: "Runtime unavailable" }),
+  ])("does not automatically resend an uncertain steering outcome: %s", async (error) => {
+    prepare();
+    mocks.api.mockResolvedValueOnce(queued)
+      .mockResolvedValueOnce({ run: { id: "queued-run", status: "cancelled" } })
+      .mockRejectedValueOnce(error);
+    await show("session");
+    await act(async () => steerButton()!.click());
+    expect(mocks.api).toHaveBeenCalledTimes(3);
+    expect(container.textContent).toContain("Saved message");
+  });
+
+  it("retries an unconfirmed follow-up with the same submission id after reload", async () => {
+    prepare();
+    mocks.api.mockResolvedValueOnce(queued)
+      .mockResolvedValueOnce({ run: { id: "queued-run", status: "cancelled" } })
+      .mockRejectedValueOnce(new ApiError(409, { error: "Target finished", kind: "steering_not_submitted" }))
+      .mockRejectedValueOnce(new Error("Response lost"));
+    await show("session");
+    await act(async () => steerButton()!.click());
+    const firstSubmission = mocks.api.mock.calls.at(-1);
+    expect(firstSubmission).toEqual(["POST", `${base}/messages`, {
+      text, attachments: [attachment], submissionId: "queued-steer:queued-run",
+    }]);
+    expect(container.textContent).toContain("Saved message");
+    await navigateAway();
+    await show("session");
+    mocks.api.mockResolvedValueOnce({ run: { id: "requeued-run", status: "completed" } });
+    const requeue = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Queue again")!;
+    await act(async () => { requeue.click(); requeue.click(); });
+    expect(mocks.api).toHaveBeenCalledTimes(5);
+    expect(mocks.api.mock.calls.at(-1)).toEqual(firstSubmission);
+    expect(container.textContent).not.toContain("Saved message");
+    expect(container.querySelector('[aria-label="Queued messages"]')).toBeNull();
+    expect(container.textContent).not.toContain(text);
+  });
+
+  it("restores the original session without showing a follow-up in the newly opened session", async () => {
+    prepare();
+    const implementation = mocks.api.getMockImplementation()!;
+    let rejectSteer!: (error: Error) => void;
+    mocks.api.mockImplementation((method, path, body) => path.endsWith("/steer")
+      ? new Promise((_resolve, reject) => { rejectSteer = reject; }) : implementation(method, path, body));
+    await show("session");
+    await act(async () => steerButton()!.click());
+    await show("session", "universe", "other");
+    await act(async () => rejectSteer(new ApiError(409, {
+      error: "run is already terminal: active-run", kind: "steering_not_submitted",
+    })));
+    expect(mocks.api).toHaveBeenLastCalledWith("POST", `${base}/messages`, {
+      text, attachments: [attachment], submissionId: "queued-steer:queued-run",
+    });
+    expect(container.textContent).not.toContain(text);
+    expect(container.textContent).not.toContain("Sent your message as a follow-up");
     expect(container.textContent).not.toContain("Saved message");
   });
 

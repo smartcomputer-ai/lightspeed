@@ -15,7 +15,7 @@ const image = { blobRef: `sha256:${"b".repeat(64)}`, mime: "image/png", kind: "i
 const pdf = { blobRef: `sha256:${"c".repeat(64)}`, mime: "application/pdf", kind: "document", name: "offer.pdf" };
 const route = { providerId: "openai", apiKind: "openai:responses", model: "gpt-5.5-mini" };
 
-function fixture() {
+function fixture(steeringError?: { code: number; message: string }) {
   const requests: { method: string; params: Record<string, unknown> }[] = [];
   const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
     const rpc = JSON.parse(String(init.body));
@@ -24,6 +24,9 @@ function fixture() {
       return Response.json({ id: rpc.id, result: { result: { session: { access: { visibility: "universe" } } }, notifications: [] } });
     }
     requests.push(rpc);
+    if (rpc.method === "session/runs/steer" && steeringError) {
+      return Response.json({ id: rpc.id, error: steeringError });
+    }
     const result = rpc.method === "blobs/put"
       ? { blobs: [{ blobRef: image.blobRef, bytes: 3 }] }
       : rpc.method === "session/runs/steer"
@@ -98,6 +101,27 @@ it("steers with attachments", async () => {
     { type: "media", origin: "user:member", ...pdf },
     { type: "text", origin: "user:member", text: "Also this" },
   ] });
+});
+
+it.each([
+  "run is already terminal: run_1",
+  "run is not accepting steering: run_1",
+])("identifies steering refused before submission: %s", async (message) => {
+  const f = fixture({ code: -32010, message });
+  const response = await f.call("/sessions/s1/runs/run_1/steer", { text: "Follow up" });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ error: message, kind: "steering_not_submitted" });
+});
+
+it.each([
+  { code: -32010, message: "run ended before steering was admitted: run_1" },
+  { code: -32603, message: "timed out waiting for steering admission: run_1" },
+  { code: -32009, message: "run is already terminal: run_1" },
+])("does not label an uncertain steering outcome as unsubmitted: %j", async (error) => {
+  const f = fixture(error);
+  const response = await f.call("/sessions/s1/runs/run_1/steer", { text: "Follow up" });
+  expect(response.status).toBeGreaterThanOrEqual(400);
+  expect(await response.json()).not.toHaveProperty("kind", "steering_not_submitted");
 });
 
 it.each([

@@ -113,6 +113,55 @@ describe("transcript history windows", () => {
     window.append([event(2, { type: "runCompleted" })]);
     expect(window.state.entries).toMatchObject([{ kind: "run-summary", key: "evt-2", status: "completed", durationMs: 1 }]);
   });
+  it.each(["before acceptance", "after acceptance"])("hides queue removal when cancellation is reconciled %s", (timing) => {
+    const window = new TranscriptWindow();
+    window.append([
+      event(2, { type: "runStarted", runId: "active" }),
+      event(3, { type: "contextEntriesApplied", entries: [
+        item("ask", { type: "message", role: "user" }, { text: "Work", source: { type: "runInput", runId: "active", inputIndex: 0 } }),
+      ] }),
+    ]);
+    const accepted = event(4, { type: "runAccepted", runId: "queued" });
+    if (timing === "after acceptance") window.append([accepted]);
+    window.reconcile([runView("queued", "cancelled")]);
+    window.append([accepted, event(5, { type: "runCancelled", runId: "queued" })]);
+    expect(window.state.activeRun?.runId).toBe("active");
+    expect(window.state.entries).toMatchObject([{ kind: "message", text: "Work" }]);
+    expect(sectionsByRun(window.state.entries, window.state.activeRun)).toMatchObject([
+      { kind: "run", runId: "active", live: true, work: [] },
+    ]);
+    window.append([
+      event(6, { type: "runSteeringAccepted", runId: "active" }),
+      event(7, { type: "contextEntriesApplied", entries: [
+        item("steer", { type: "message", role: "user" }, {
+          text: "sleep 10", source: { type: "steering", runId: "active", steeringId: "steering_1", inputIndex: 0 },
+        }),
+      ] }),
+      event(8, { type: "runCompleted", runId: "active" }),
+    ]);
+    const sections = sectionsByRun(window.state.entries, null);
+    expect(sections).toMatchObject([{
+      runId: "active", work: [{ kind: "message", text: "sleep 10", steering: true }], summary: { status: "completed" },
+    }]);
+    window.prepend([event(1, { type: "runAccepted", runId: "active" })]);
+    expect(sectionsByRun(window.state.entries, null)).toEqual(sections);
+  });
+  it("keeps queued cancellation hidden across partial history rebuilds", () => {
+    const window = new TranscriptWindow();
+    window.reconcile([runView("queued", "cancelled")]);
+    window.append([event(5, { type: "runCancelled", runId: "queued" })]);
+    window.prepend([event(4, { type: "runSteeringAccepted", runId: "active" })]);
+    expect(window.state.entries).toEqual([]);
+  });
+  it("still shows a real cancellation when the run started before the snapshot", () => {
+    const window = new TranscriptWindow();
+    window.append([event(1, { type: "runAccepted" })]);
+    window.reconcile([{ ...runView("run-test", "cancelled"), startedAtMs: 2 }]);
+    window.append([event(2, { type: "runStarted" }), event(5, { type: "runCancelled" })]);
+    expect(window.state.entries).toMatchObject([
+      { kind: "run-summary", runId: "run-test", status: "cancelled", durationMs: 3 },
+    ]);
+  });
   it("renders a result whose call began before the window, then hydrates it without regressing live controls", () => {
     const events = [
       event(1, { type: "runStarted" }),
@@ -693,7 +742,6 @@ describe("session transcript run control", () => {
     expect(state.activeRun).toMatchObject({ runId: "run_3", label: "running", cancelling: false });
     expect(state.queuedRuns).toEqual([]);
     expect(state.entries).toEqual([
-      { kind: "marker", key: "evt-5", text: "queued message cancelled", tone: "muted" },
       { kind: "run-summary", key: "evt-6", runId: "run_1", status: "completed", outputContentRef: null, durationMs: 4, contextTokens: undefined, usage: undefined, usageComplete: true, toolCalls: 0 },
     ]);
 

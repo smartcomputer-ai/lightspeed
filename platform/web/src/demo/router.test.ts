@@ -86,6 +86,10 @@ describe("demo router", () => {
       expect(session.queue.some((entry) => entry.runId === queued.id)).toBe(false);
       expect(session.events.some((event) => event.kind.type === "runSteeringAccepted" && event.kind.runId === active.id)).toBe(true);
       expect((await call("GET", `${path}/runs/missing`)).status).toBe(404);
+      await vi.runAllTimersAsync();
+      const rejected = await call("POST", `${path}/runs/${active.id}/steer`, { text: "Too late" });
+      expect(rejected.status).toBe(409);
+      expect(rejected.json).toMatchObject({ kind: "steering_not_submitted" });
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

@@ -1,5 +1,6 @@
 import type { RunView } from "@lightspeed-ai/sdk";
 import { sessionSteerSchema } from "@lightspeed-ai/platform-shared";
+import { ApiError } from "@/api";
 import type { ComposerMessage } from "@/components/session/composer";
 import { readSessionDraft, writeSessionDraft } from "./draft";
 
@@ -12,6 +13,16 @@ export interface QueuedMessageRecovery {
 }
 
 const recoveryKey = (scope: string) => `lightspeed:sessions:queued-steering:${scope}`;
+
+// A cancelled run can be restored only once, including across reloads and
+// lost POST responses. Run submission ids are scoped to the session.
+export const queuedRecoverySubmissionId = (runId: string) => `queued-steer:${runId}`;
+
+export function steeringWasNotSubmitted(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409
+    && typeof error.body === "object" && error.body !== null
+    && "kind" in error.body && error.body.kind === "steering_not_submitted";
+}
 
 export function readQueuedRecovery(scope: string): QueuedMessageRecovery[] {
   try {

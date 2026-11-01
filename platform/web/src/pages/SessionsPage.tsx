@@ -117,7 +117,7 @@ import {
 } from "@/lib/sessions/transcript";
 import type { SentAttachment } from "@/lib/composer-attachments";
 import type { RunView } from "@lightspeed-ai/sdk";
-import { queuedMessage, readQueuedRecovery, storeQueuedRecovery, type QueuedMessageRecovery } from "@/lib/sessions/queued-message";
+import { queuedMessage, queuedRecoverySubmissionId, readQueuedRecovery, steeringWasNotSubmitted, storeQueuedRecovery, type QueuedMessageRecovery } from "@/lib/sessions/queued-message";
 import { useSessionConfigEditorOptions } from "@/lib/sessions/editor-options";
 import { managedSessionBotId, managedSessionOwnerLabel } from "@/lib/sessions/management";
 import {
@@ -1671,22 +1671,25 @@ export function SessionDetail({
     }
   }, [settingsOpen, runActive]);
 
-  const send = async (message: ComposerMessage, mode: ComposerMode | null) => {
+  const send = async (message: ComposerMessage, mode: ComposerMode | null, submissionId: string = crypto.randomUUID()) => {
     if (!canControl) return false;
-    setSendError(null);
+    if (currentScope.current === submissionScope) setSendError(null);
     if (mode === "steer") {
-      return steer(message);
+      const result = await steer(message);
+      if (!result.ok && currentScope.current === submissionScope) {
+        setSendError(result.error instanceof Error ? result.error.message : String(result.error));
+      }
+      return result.ok;
     }
     const { text } = message;
     const media = echoMedia(message.attachments);
     // The submission id doubles as the engine idempotency key: a retried
     // POST returns the original run instead of starting a second one.
-    const submissionId = crypto.randomUUID();
     const expectQueued = runActive;
     setLocalSubmissions((previous) => new Map(previous).set(
       submissionScope, new Map(previous.get(submissionScope)).set(submissionId, null),
     ));
-    setPending((prev) => [
+    if (currentScope.current === submissionScope) setPending((prev) => [
       ...prev,
       { id: submissionId, text, media, runId: null, status: "sending", expectQueued },
     ]);
@@ -1701,36 +1704,40 @@ export function SessionDetail({
           ...(canConfigure && message.options ? { options: message.options } : {}),
         },
       );
-      setFollowRequest((request) => request + 1);
+      if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
       setLocalSubmissions((previous) => new Map(previous).set(
         submissionScope, new Map(previous.get(submissionScope)).set(submissionId, accepted.run.id),
       ));
-      setPending((prev) =>
-        prev.map((message) =>
-          message.id === submissionId
-            ? {
-                ...message,
-                runId: message.runId ?? accepted.run.id,
-                status: accepted.run.status === "queued" ? "queued" : "running",
-              }
-            : message,
-        ),
-      );
+      if (currentScope.current === submissionScope) {
+        // An idempotent retry can return a run that already finished.
+        const terminal = ["completed", "cancelled", "failed"].includes(accepted.run.status);
+        setPending((prev) => terminal
+          ? prev.filter((message) => message.id !== submissionId)
+          : prev.map((message) => message.id === submissionId ? {
+            ...message,
+            runId: message.runId ?? accepted.run.id,
+            status: accepted.run.status === "queued" ? "queued" : "running",
+          } : message));
+        if (terminal) void session.refetch();
+      }
       return true;
     } catch (error) {
-      setPending((prev) => prev.filter((message) => message.id !== submissionId));
-      setSendError(error instanceof Error ? error.message : String(error));
+      if (currentScope.current === submissionScope) {
+        setPending((prev) => prev.filter((message) => message.id !== submissionId));
+        setSendError(error instanceof Error ? error.message : String(error));
+      }
       return false;
     }
   };
 
-  const steer = async ({ text, attachments }: ComposerMessage, runId = steerTargetRunId) => {
-    if (!canControl) return false;
+  const steer = async (
+    { text, attachments }: ComposerMessage, runId = steerTargetRunId,
+  ): Promise<{ ok: true } | { ok: false; error: unknown }> => {
+    if (!canControl) return { ok: false, error: new Error("You have read-only access to this session.") };
     if (!runId) {
-      setSendError(
+      return { ok: false, error: new Error(
         "There is no run to steer yet — wait a moment and try again, or press Enter to queue it.",
-      );
-      return false;
+      ) };
     }
     const id = crypto.randomUUID();
     if (currentScope.current === submissionScope) {
@@ -1743,11 +1750,10 @@ export function SessionDetail({
         attachments.length ? { text, attachments: attachments.map(wireAttachment) } : { text },
       );
       if (currentScope.current === submissionScope) setFollowRequest((request) => request + 1);
-      return true;
+      return { ok: true };
     } catch (error) {
       setPendingSteers((prev) => prev.filter((steer) => steer.id !== id));
-      if (currentScope.current === submissionScope) setSendError(error instanceof Error ? error.message : String(error));
-      return false;
+      return { ok: false, error };
     }
   };
 
@@ -1861,13 +1867,32 @@ export function SessionDetail({
         reconcileRuns([{ id: runId, status: "cancelled", acceptedAtMs: 0, source: { type: "input" } }]);
       }
       // Keep the original target even if the tail reports a different active run.
-      if (!await steer(message, target)) {
+      const result = await steer(message, target);
+      if (result.ok) {
+        dismissRecoveredMessage(submissionScope, runId);
+      } else if (steeringWasNotSubmitted(result.error)) {
+        const recovery = {
+          id: runId, scope: submissionScope, message,
+          error: "Steering was not sent. The follow-up could not be confirmed. Use Queue again to retry.",
+        };
+        storeQueuedRecovery(submissionScope, runId, recovery);
+        if (await send(message, "queue", queuedRecoverySubmissionId(runId))) {
+          dismissRecoveredMessage(submissionScope, runId);
+          if (currentScope.current === submissionScope) setNotices((prev) => [...prev, {
+            id: queuedRecoverySubmissionId(runId),
+            text: "Steering was unavailable. Sent your message as a follow-up.",
+          }]);
+        } else {
+          recoverQueuedMessage(recovery);
+        }
+      } else {
+        if (currentScope.current === submissionScope) {
+          setSendError(result.error instanceof Error ? result.error.message : String(result.error));
+        }
         recoverQueuedMessage({
           id: runId, scope: submissionScope, message,
           error: "Removed from the queue, but steering could not be confirmed. Check the conversation before sending again.",
         });
-      } else {
-        dismissRecoveredMessage(submissionScope, runId);
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1901,7 +1926,7 @@ export function SessionDetail({
     if (queueActions.current.has(id)) return;
     queueActions.current.add(id);
     setRecoveredMessages((prev) => prev.map((item) => item.id === id ? { ...item, sending: true } : item));
-    const sent = await send(message, "queue");
+    const sent = await send(message, "queue", queuedRecoverySubmissionId(id));
     if (sent) dismissRecoveredMessage(submissionScope, id);
     else setRecoveredMessages((prev) => prev.map((item) => item.id === id ? { ...item, sending: false } : item));
     queueActions.current.delete(id);
