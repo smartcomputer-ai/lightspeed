@@ -91,6 +91,10 @@ pub fn resolve(
 ) -> ToolResult<Vec<ResolvedBuiltin>> {
     let settings = settings_from_spec(id, spec)?;
     if let Some(tool) = BuiltinTool::from_logical_id(id.as_str()) {
+        let prefers_patches = settings.presentation.prefers_patches(target);
+        if prefers_patches && tool.operation() == BuiltinToolOperation::EditFile {
+            return Ok(Vec::new());
+        }
         if settings.presentation == BuiltinToolPresentation::ProviderDefault
             && target.api_kind == ProviderApiKind::OpenAiCompletions
             && tool.operation() == BuiltinToolOperation::ApplyPatch
@@ -102,7 +106,7 @@ pub fn resolve(
             .with_one_shot(settings.one_shot);
         let mut resolved = Vec::new();
         for variant in tool.variants() {
-            let definition = match variant.definition(target, !settings.unscoped_paths) {
+            let mut definition = match variant.definition(target, !settings.unscoped_paths) {
                 Ok(definition) => definition,
                 Err(ToolError::UnsupportedCapability { .. })
                     if settings.presentation == BuiltinToolPresentation::ProviderDefault =>
@@ -111,6 +115,16 @@ pub fn resolve(
                 }
                 Err(error) => return Err(error),
             };
+            if prefers_patches && variant.operation() == BuiltinToolOperation::WriteFile {
+                let patch_name = if variant.logical_id().starts_with("vfs.") {
+                    "vfs_apply_patch"
+                } else {
+                    "apply_patch"
+                };
+                definition.description.get_or_insert_default().push_str(&format!(
+                    " Prefer {patch_name} for ordinary text edits. Use this tool for whole-file writes, including binary content and blob transfers."
+                ));
+            }
             resolved.push(ResolvedBuiltin {
                 name: definition.name.clone(),
                 definition: Definition::Function(definition),
@@ -250,10 +264,21 @@ pub(crate) fn resolve_call_binding(
         return Ok(binding);
     }
 
+    let settings = settings_from_spec(id, spec)?;
+    // Calls admitted before patch-oriented presentations stopped advertising
+    // exact replacement must still execute with their original argument shape.
+    if settings.presentation.prefers_patches(target)
+        && let Some(tool) = BuiltinTool::from_logical_id(id.as_str())
+        && tool.operation() == BuiltinToolOperation::EditFile
+    {
+        let tool = tool.with_surface(settings.presentation.surface(target));
+        if tool.name_str() == exposed_name.as_str() {
+            return Ok(tool.with_one_shot(settings.one_shot).binding(target));
+        }
+    }
     // Completions previously advertised canonical process and patch tools.
     // Retried or parked calls retain their admitted identity, original name,
     // settings, and model, including the one-shot execution restriction.
-    let settings = settings_from_spec(id, spec)?;
     if target.api_kind == ProviderApiKind::OpenAiCompletions
         && settings.presentation == BuiltinToolPresentation::ProviderDefault
         && let Some(tool) = BuiltinTool::from_logical_id(id.as_str())
@@ -282,6 +307,49 @@ fn unknown(id: &ToolName) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admitted_exact_replacements_keep_their_binding_without_readvertising() {
+        for (api, presentation) in [
+            (
+                ProviderApiKind::OpenAiResponses,
+                BuiltinToolPresentation::ProviderDefault,
+            ),
+            (
+                ProviderApiKind::OpenAiResponses,
+                BuiltinToolPresentation::CodexLike,
+            ),
+            (
+                ProviderApiKind::OpenAiCompletions,
+                BuiltinToolPresentation::CodexLike,
+            ),
+        ] {
+            let target = ToolTarget::api_kind(api);
+            let spec = BuiltinToolSpec {
+                settings: serde_json::to_value(BuiltinSettings {
+                    presentation,
+                    ..Default::default()
+                })
+                .unwrap(),
+            };
+            for (id, name) in [
+                ("env.edit_file", "edit_file"),
+                ("vfs.edit_file", "vfs_edit_file"),
+            ] {
+                let id = ToolName::new(id);
+                let name = ToolName::new(name);
+                assert!(resolve(&id, &spec, &target).unwrap().is_empty());
+                let binding = resolve_call_binding(&id, &spec, &target, &name).unwrap();
+                assert_eq!(binding.logical_id, id.as_str());
+                assert_eq!(binding.tool_name, name);
+                assert_eq!(binding.adapter_id.as_deref(), Some("codex"));
+                assert!(
+                    resolve_call_binding(&id, &spec, &target, &ToolName::new("apply_patch"))
+                        .is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn recorded_completions_calls_keep_only_their_matching_historical_binding() {

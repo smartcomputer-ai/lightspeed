@@ -12,7 +12,7 @@ fn config(case: &str, api: &ProviderApiKind) -> ToolsetConfig {
     let mut config = ToolsetConfig::empty();
     match case {
         "workspace" => config = ToolsetConfig::workspace(),
-        "environment" | "one_shot" | "canonical" => {
+        "environment" | "one_shot" | "canonical" | "codex" => {
             config.builtin.environment = EnvironmentToolsetConfig::basic();
             config.environment_read = true;
             config.environment_selection = true;
@@ -21,6 +21,10 @@ fn config(case: &str, api: &ProviderApiKind) -> ToolsetConfig {
             }
             if case == "canonical" {
                 config.builtin.presentation = BuiltinToolPresentation::Canonical;
+            }
+            if case == "codex" {
+                config.builtin.presentation = BuiltinToolPresentation::CodexLike;
+                config.builtin.vfs = tools::toolset::FilesystemToolsetConfig::workspace_edit();
             }
         }
         "web" => {
@@ -199,6 +203,41 @@ async fn anthropic_builtin_inputs_avoid_top_level_combinators_with_and_without_c
                     );
                 }
             }
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn completions_codex_patches_remain_json_functions_including_code_mode() {
+    for code_mode in [false, true] {
+        let wire = fixture(ProviderApiKind::OpenAiCompletions, "codex", code_mode).await;
+        let tools = wire["tools"].as_array().unwrap();
+        for name in ["apply_patch", "vfs_apply_patch"] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool["function"]["name"] == name)
+                .unwrap();
+            assert_eq!(tool["type"], "function");
+            let function = &tool["function"];
+            assert_eq!(
+                function["parameters"]["properties"]["patch"]["type"],
+                "string"
+            );
+            assert_eq!(
+                function["parameters"]["required"],
+                serde_json::json!(["patch"])
+            );
+            let description = function["description"].as_str().unwrap();
+            assert!(description.contains("Prefer this tool for ordinary text edits"));
+            assert!(description.contains("JSON `patch` argument"));
+            assert!(!description.contains("FREEFORM"));
+        }
+        assert!(!tools.iter().any(|tool| matches!(
+            tool["function"]["name"].as_str(),
+            Some("edit_file" | "vfs_edit_file")
+        )));
+        for name in ["write_file", "vfs_write_file"] {
+            assert!(tools.iter().any(|tool| tool["function"]["name"] == name));
         }
     }
 }

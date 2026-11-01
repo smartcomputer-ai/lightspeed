@@ -752,13 +752,37 @@ pub struct FunctionCallOutput {
 #[serde(rename_all = "snake_case")]
 pub enum FunctionCallOutputType {
     FunctionCallOutput,
+    CustomToolCallOutput,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Tool {
     Function(FunctionTool),
+    Custom(CustomTool),
     Raw(Value),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CustomTool {
+    #[serde(rename = "type")]
+    pub r#type: CustomToolType,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub format: CustomToolFormat,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomToolType {
+    Custom,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomToolFormat {
+    Grammar { syntax: String, definition: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -800,6 +824,10 @@ pub enum ToolChoice {
     Mode(ToolChoiceMode),
     Function {
         r#type: FunctionToolType,
+        name: String,
+    },
+    Custom {
+        r#type: CustomToolType,
         name: String,
     },
     Raw(Value),
@@ -971,6 +999,8 @@ pub struct ResponseOutputItem {
     pub name: Option<String>,
     #[serde(default)]
     pub arguments: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

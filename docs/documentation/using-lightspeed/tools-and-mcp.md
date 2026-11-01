@@ -44,13 +44,25 @@ the transcript for the same kinds of work:
 | API kind | Filesystem editing | Process execution |
 | --- | --- | --- |
 | Chat Completions | `write_file`, exact-replacement `edit_file` | `exec_command`, `write_stdin` |
-| OpenAI Responses | `write_file`, `edit_file`, `apply_patch` | `exec_command`, `write_stdin` |
+| OpenAI Responses | Freeform `apply_patch`, whole-file `write_file` | `exec_command`, `write_stdin` |
 | Anthropic Messages | `Write`, `Edit` | `Bash`, `BashOutput`, `KillShell` |
 
 Read, directory-listing, glob, and grep tools accompany these editing tools.
 Attached VFS workspaces have their own prefixed filesystem tools; they are
 separate from environment files. Each operation still requires its capability
 grant.
+
+OpenAI Responses defaults to a Codex-like presentation: ordinary text edits use
+`apply_patch`, which accepts raw patch text constrained by a grammar.
+`write_file` remains available for whole-file writes, including binary content
+and blob transfers. Exact-replacement `edit_file` is omitted from this presentation.
+
+Chat Completions keeps exact replacement by default for compatibility with
+different model families. An explicit `codex_like` built-in presentation instead
+prefers `apply_patch` and omits `edit_file`; patches travel in a JSON `patch`
+argument. The `canonical` presentation keeps both editing tools as JSON functions.
+In code mode, patch tools always accept an object with a `patch` string inside
+scripts, including when direct Responses calls use freeform text.
 
 Long-running commands can return output while the process continues. The
 agent uses the returned handle to collect more output or send input. See

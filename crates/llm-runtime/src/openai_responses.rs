@@ -1,4 +1,6 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
+
+mod patch;
 
 use async_trait::async_trait;
 use harness::{
@@ -37,6 +39,7 @@ const PROVIDER_KIND_MESSAGE: &str = "openai.responses.message";
 /// A model-authored refusal rendered as the assistant message.
 const PROVIDER_KIND_REFUSAL: &str = "openai.responses.refusal";
 const PROVIDER_KIND_FUNCTION_CALL: &str = "openai.responses.function_call";
+const PROVIDER_KIND_CUSTOM_TOOL_CALL: &str = "openai.responses.custom_tool_call";
 const MEDIA_TYPE_JSON: &str = "application/json";
 const MEDIA_TYPE_TEXT: &str = "text/plain";
 
@@ -214,7 +217,13 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
                 return Err(error.into());
             }
         };
-        let mut result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
+        let mut result = result_from_response_with_catalog(
+            self.blobs.as_ref(),
+            &request,
+            &response,
+            Some(&catalog),
+        )
+        .await?;
         catalog.normalize(&mut result);
         let debug_dumps = store_debug_dumps(
             self.blobs.as_ref(),
@@ -445,7 +454,7 @@ async fn materialize_request_with_catalog(
         tool_choice: catalog
             .tool_choice(request.tool_choice.as_ref())?
             .as_ref()
-            .map(openai_tool_choice),
+            .map(|choice| openai_tool_choice(choice, catalog)),
         reasoning: params.reasoning.as_ref().map(|reasoning| oai::Reasoning {
             effort: reasoning.effort.clone(),
             summary: reasoning.summary.clone(),
@@ -543,8 +552,26 @@ async fn materialize_input_items_tracked(
     let mut input: Vec<oai::ResponseInputItem> = Vec::with_capacity(entries.len());
     let mut positions = RequestPositions::with_capacity(entries.len());
     let mut media = crate::media::RequestMedia::prepare(blobs, entries).await?;
+    let mut custom_calls = BTreeSet::new();
     for item in entries {
-        let next = materialize_input_item(blobs, item, &mut media).await?;
+        let mut next = materialize_input_item(blobs, item, &mut media).await?;
+        // Replay according to the recorded call, not today's tool catalog. A
+        // session may contain both JSON and freeform calls to the same tool.
+        match &mut next {
+            oai::ResponseInputItem::Raw(raw)
+                if raw.get("type").and_then(Value::as_str) == Some("custom_tool_call") =>
+            {
+                if let Some(call_id) = raw.get("call_id").and_then(Value::as_str) {
+                    custom_calls.insert(call_id.to_owned());
+                }
+            }
+            oai::ResponseInputItem::FunctionCallOutput(output)
+                if custom_calls.remove(&output.call_id) =>
+            {
+                output.r#type = oai::FunctionCallOutputType::CustomToolCallOutput;
+            }
+            _ => {}
+        }
         // Consecutive same-role USER messages (for example an image entry
         // plus its caption) fold into one message with multiple content
         // parts — the canonical Responses input shape. Assistant history is
@@ -780,6 +807,9 @@ async fn materialize_tool(
 ) -> LlmAdapterResult<oai::Tool> {
     match &tool.kind {
         crate::tool_catalog::ResolvedToolKind::Function(function) => {
+            if patch::is_freeform(tool) {
+                return Ok(patch::materialize(function));
+            }
             let mut materialized =
                 oai::FunctionTool::new(tool.name.as_str(), function.input_schema.clone());
             materialized.description = function.description.clone();
@@ -957,11 +987,25 @@ fn set_remote_mcp_authorization(
     Ok(())
 }
 
-fn openai_tool_choice(choice: &ToolChoice) -> oai::ToolChoice {
+fn openai_tool_choice(
+    choice: &ToolChoice,
+    catalog: &crate::tool_catalog::ToolCatalog,
+) -> oai::ToolChoice {
     match choice {
         ToolChoice::Auto => oai::ToolChoice::Mode(oai::ToolChoiceMode::Auto),
         ToolChoice::None => oai::ToolChoice::Mode(oai::ToolChoiceMode::None),
         ToolChoice::RequiredAny => oai::ToolChoice::Mode(oai::ToolChoiceMode::Required),
+        ToolChoice::Specific { tool_name }
+            if catalog
+                .tools
+                .iter()
+                .any(|tool| &tool.name == tool_name && patch::is_freeform(tool)) =>
+        {
+            oai::ToolChoice::Custom {
+                r#type: oai::CustomToolType::Custom,
+                name: tool_name.to_string(),
+            }
+        }
         ToolChoice::Specific { tool_name } => oai::ToolChoice::Function {
             r#type: oai::FunctionToolType::Function,
             name: tool_name.as_str().to_string(),
@@ -1016,6 +1060,25 @@ pub async fn result_from_response(
     request: &LlmGenerationRequest,
     response: &ApiResponse<oai::Response>,
 ) -> LlmAdapterResult<LlmGenerationResult> {
+    let custom_catalog = if response
+        .parsed
+        .output
+        .iter()
+        .any(|item| item.r#type == "custom_tool_call")
+    {
+        Some(crate::tool_catalog::ToolCatalog::resolve_for_request(blobs, &request.request).await?)
+    } else {
+        None
+    };
+    result_from_response_with_catalog(blobs, request, response, custom_catalog.as_ref()).await
+}
+
+async fn result_from_response_with_catalog(
+    blobs: &dyn BlobStore,
+    request: &LlmGenerationRequest,
+    response: &ApiResponse<oai::Response>,
+    catalog: Option<&crate::tool_catalog::ToolCatalog>,
+) -> LlmAdapterResult<LlmGenerationResult> {
     let mut context_entries = Vec::new();
     let mut tool_calls = Vec::new();
     let mut approval_requests = Vec::new();
@@ -1032,6 +1095,39 @@ pub async fn result_from_response(
             "function_call" => {
                 let (context_entry, tool_call) =
                     function_call_context(blobs, request, item, raw_item, index).await?;
+                context_entries.push(context_entry);
+                tool_calls.push(tool_call);
+            }
+            "custom_tool_call" => {
+                let tool = catalog
+                    .and_then(|catalog| {
+                        catalog.tools.iter().find(|tool| {
+                            Some(tool.name.as_str()) == item.name.as_deref()
+                                && patch::is_freeform(tool)
+                        })
+                    })
+                    .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+                        message: format!(
+                            "OpenAI returned an unadvertised custom tool: {:?}",
+                            item.name
+                        ),
+                    })?;
+                let input = item.input.as_deref().ok_or_else(|| {
+                    LlmAdapterError::InvalidProviderRequest {
+                        message: "OpenAI custom_tool_call item is missing input".to_owned(),
+                    }
+                })?;
+                let arguments = json!({"patch": input}).to_string();
+                let (context_entry, mut tool_call) = tool_call_context(
+                    blobs,
+                    item,
+                    raw_item,
+                    index,
+                    &arguments,
+                    PROVIDER_KIND_CUSTOM_TOOL_CALL,
+                )
+                .await?;
+                tool_call.tool_id = Some(tool.id.clone());
                 context_entries.push(context_entry);
                 tool_calls.push(tool_call);
             }
@@ -1401,6 +1497,25 @@ async fn function_call_context(
     raw_item: Value,
     index: usize,
 ) -> LlmAdapterResult<(ContextEntryInput, ObservedToolCall)> {
+    tool_call_context(
+        blobs,
+        item,
+        raw_item,
+        index,
+        item.arguments.as_deref().unwrap_or("{}"),
+        PROVIDER_KIND_FUNCTION_CALL,
+    )
+    .await
+}
+
+async fn tool_call_context(
+    blobs: &dyn BlobStore,
+    item: &oai::ResponseOutputItem,
+    raw_item: Value,
+    index: usize,
+    arguments: &str,
+    provider_kind: &str,
+) -> LlmAdapterResult<(ContextEntryInput, ObservedToolCall)> {
     let call = oai::FunctionCallRef {
         item_id: item.id.as_deref(),
         call_id: item.call_id.as_deref(),
@@ -1408,9 +1523,9 @@ async fn function_call_context(
             .name
             .as_deref()
             .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
-                message: "OpenAI function_call item is missing name".to_string(),
+                message: format!("OpenAI {} item is missing name", item.r#type),
             })?,
-        arguments: item.arguments.as_deref().unwrap_or("{}"),
+        arguments,
     };
     let call_id = call
         .call_id
@@ -1439,7 +1554,7 @@ async fn function_call_context(
         content: harness::ContentRef {
             content_ref: native_call_ref.clone(),
             media_type: Some(MEDIA_TYPE_JSON.to_string()),
-            provider_kind: Some(PROVIDER_KIND_FUNCTION_CALL.to_string()),
+            provider_kind: Some(provider_kind.to_string()),
         },
         preview: None,
         origin: None,
@@ -1450,7 +1565,7 @@ async fn function_call_context(
         call_id,
         tool_id: Some(tool_name.clone()),
         tool_name,
-        provider_kind: Some(PROVIDER_KIND_FUNCTION_CALL.to_string()),
+        provider_kind: Some(provider_kind.to_string()),
         arguments_ref,
         native_call_ref: Some(native_call_ref),
     };
@@ -1643,6 +1758,8 @@ fn developer_message(text: String) -> oai::ResponseInputItem {
 
 #[cfg(test)]
 mod tests {
+    mod patch_tests;
+
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
