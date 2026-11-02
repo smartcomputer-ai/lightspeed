@@ -8,26 +8,29 @@ impl AgentSessionWorkflow {
 
     /// Inbound push delivery converges on ordinary promise resolution
     /// admission. The receiver's promise registry remains the semantic
-    /// idempotency boundary for duplicate transport deliveries.
-    pub fn queue_emission(&mut self, universe_id: uuid::Uuid, envelope: EmissionEnvelope) {
+    /// idempotency boundary for duplicate transport deliveries. An emission
+    /// this session will not take comes back as a warning for the caller to
+    /// record; it does not disturb the session.
+    pub fn queue_emission(
+        &mut self,
+        universe_id: uuid::Uuid,
+        envelope: EmissionEnvelope,
+    ) -> Result<(), String> {
         if envelope.producer.universe_id() != universe_id {
-            self.last_error = Some(format!(
+            return Err(format!(
                 "cross-universe emission rejected: receiver_universe={} producer_universe={}",
                 universe_id,
                 envelope.producer.universe_id()
             ));
-            return;
         }
         match envelope.body {
-            harness::EmissionBody::RunTerminal { .. } => {
-                // A receiving workflow interprets the typed run output and then
-                // sends an authorized SourceResolution. Dropping its encoding
-                // here would expose provider JSON as an ordinary tool result.
-                self.last_error = Some(
-                    "session workflow requires source resolutions, not run-terminal notifications"
-                        .to_owned(),
-                );
-            }
+            // A receiving workflow interprets the typed run output and then
+            // sends an authorized SourceResolution. Dropping its encoding
+            // here would expose provider JSON as an ordinary tool result.
+            harness::EmissionBody::RunTerminal { .. } => Err(
+                "session workflow requires source resolutions, not run-terminal notifications"
+                    .to_owned(),
+            ),
             harness::EmissionBody::SourceResolution {
                 promise_id,
                 resolution,
@@ -41,19 +44,32 @@ impl AgentSessionWorkflow {
                         resolution,
                         producer: envelope.producer,
                     });
+                Ok(())
             }
-            harness::EmissionBody::ToolInvocation { invocation, .. } => {
-                self.last_error = Some(format!(
-                    "session workflow cannot receive workflow tool invocation {}",
-                    invocation.invocation_id
-                ));
-            }
-            harness::EmissionBody::InvocationCancellation { invocation_id, .. } => {
-                self.last_error = Some(format!(
-                    "session workflow cannot receive workflow tool cancellation {invocation_id}"
-                ));
-            }
+            harness::EmissionBody::ToolInvocation { invocation, .. } => Err(format!(
+                "session workflow cannot receive workflow tool invocation {}",
+                invocation.invocation_id
+            )),
+            harness::EmissionBody::InvocationCancellation { invocation_id, .. } => Err(format!(
+                "session workflow cannot receive workflow tool cancellation {invocation_id}"
+            )),
         }
+    }
+
+    /// Keep an advisory fact on the status snapshot and in the log. A warning
+    /// says something was refused or left undone while the session carried
+    /// on, so no gateway path treats it as an error and nothing clears it.
+    pub(super) fn record_warning(&mut self, replaying: bool, warning: String) {
+        if !replaying {
+            tracing::warn!(
+                target: "temporal_workflow",
+                event = "session_workflow_warning",
+                session_id = self.session_id.as_ref().map(ToString::to_string).unwrap_or_default(),
+                warning = warning.as_str(),
+                "session workflow warning"
+            );
+        }
+        self.last_warning = Some(warning);
     }
 
     /// Outbound push delivery: when a run carrying notify-intents reaches a
@@ -234,7 +250,8 @@ impl AgentSessionWorkflow {
                 })
                 .collect(),
             admission_failures: self.admission_failures.clone(),
-            last_error: self.last_error.clone(),
+            fatal_error: self.fatal_error.clone(),
+            last_warning: self.last_warning.clone(),
             bootstrap_failed: self.bootstrap_failed,
         }
     }

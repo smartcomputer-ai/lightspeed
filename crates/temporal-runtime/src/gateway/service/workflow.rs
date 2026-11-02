@@ -159,7 +159,7 @@ impl GatewayAgentApi {
                         }
                     });
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
@@ -222,7 +222,7 @@ impl GatewayAgentApi {
                         .entry(key.clone())
                         .or_insert_with(|| Some(failure.clone()));
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
@@ -275,7 +275,7 @@ impl GatewayAgentApi {
                     let loaded = self.load_session_state(session_id).await?;
                     return Ok((loaded.state.context.revision, Some(failure)));
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
@@ -317,7 +317,7 @@ impl GatewayAgentApi {
                 {
                     return Err(map_admission_failure_to_api_error(failure));
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
@@ -401,7 +401,7 @@ impl GatewayAgentApi {
                     .project_run_by_id(session_id, RunId::new(run.run_id))
                     .await;
             }
-            if let Some(error) = status.last_error {
+            if let Some(error) = status.fatal_error {
                 return Err(AgentApiError::internal(format!(
                     "agent workflow reported error: {error}"
                 )));
@@ -437,7 +437,7 @@ impl GatewayAgentApi {
                 {
                     return Err(map_admission_failure_to_api_error(failure));
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
@@ -485,7 +485,7 @@ impl GatewayAgentApi {
                 {
                     return Err(map_admission_failure_to_api_error(failure));
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
@@ -530,7 +530,7 @@ impl GatewayAgentApi {
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await?
-                && let Some(error) = status.last_error
+                && let Some(error) = status.fatal_error
             {
                 return Err(AgentApiError::internal(format!(
                     "agent workflow reported error: {error}"
@@ -558,7 +558,7 @@ impl GatewayAgentApi {
                 )));
             }
             if let Some(status) = self.query_status_optional(session_id).await?
-                && let Some(error) = status.last_error
+                && let Some(error) = status.fatal_error
             {
                 return Err(AgentApiError::internal(format!(
                     "agent workflow reported error: {error}"
@@ -608,7 +608,7 @@ impl GatewayAgentApi {
                 if status.bootstrap_failed {
                     return Err(session_bootstrap_failed_error(
                         session_id,
-                        status.last_error.as_deref(),
+                        status.fatal_error.as_deref(),
                     ));
                 }
                 Ok(Some(status))

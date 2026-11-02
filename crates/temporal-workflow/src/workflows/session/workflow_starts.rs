@@ -269,12 +269,13 @@ pub(super) async fn process_execution_cancels(
             )
             .await
         {
-            // Best-effort: record and move on rather than wedging the loop.
-            ctx.state_mut(|state| {
-                state.last_error = Some(format!(
-                    "cancel workflow tool execution {execution_id}: {error}"
-                ));
-            });
+            // The activity refused or used up its attempts. The execution may
+            // still be running and is not asked again, but that is no reason
+            // to fail this session.
+            record_warning(
+                ctx,
+                format!("cancel workflow tool execution {execution_id}: {error}"),
+            );
         }
         ctx.state_mut(|state| {
             state.cancelled_workflow_executions.insert(execution_id);

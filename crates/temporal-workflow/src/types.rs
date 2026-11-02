@@ -133,7 +133,14 @@ pub struct AgentSessionStatus {
     pub completed_runs: Vec<AgentCompletedRunSummary>,
     #[serde(default)]
     pub admission_failures: Vec<AgentAdmissionFailure>,
-    pub last_error: Option<String>,
+    /// Why the execution is failing. Set only on paths that end the workflow,
+    /// and the one status field waiters fail fast on.
+    pub fatal_error: Option<String>,
+    /// The latest advisory fact: an emission refused or a best-effort step that
+    /// did not happen. The session carried on, so no gateway path reads this as
+    /// an error, and it stays until a newer warning replaces it.
+    #[serde(default)]
+    pub last_warning: Option<String>,
     /// True when the session workflow failed during bootstrap/rehydration. The
     /// gateway surfaces this as a typed `session_bootstrap_failed` error.
     #[serde(default)]

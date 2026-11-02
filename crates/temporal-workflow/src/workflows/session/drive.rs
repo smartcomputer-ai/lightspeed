@@ -400,7 +400,6 @@ pub(super) async fn append_events(
         state.queue_promise_cancellations_for_entries(&entries);
         state.head = appended.head;
         state.execution_has_rollover_checkpoint = true;
-        state.last_error = None;
         if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
             preparation::abandon_pending_run(state);
             state.pending_toolsets.clear();

@@ -65,7 +65,6 @@ pub(super) async fn initialize(
             state.operation_outcomes = continuation.operation_outcomes.clone();
         }
         state.initialized = true;
-        state.last_error = None;
     });
 
     if is_fresh_session {

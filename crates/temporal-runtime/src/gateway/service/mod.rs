@@ -2354,7 +2354,7 @@ impl AgentApiService for GatewayAgentApi {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
         if let Some(status) = self.query_status_optional(&session_id).await?
-            && let Some(error) = status.last_error
+            && let Some(error) = status.fatal_error
         {
             return Err(AgentApiError::internal(format!(
                 "agent workflow reported error: {error}"

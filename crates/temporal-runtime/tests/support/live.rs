@@ -551,7 +551,7 @@ pub async fn wait_for_admission_failure(
             .iter()
             .any(|failure| failure.kind == kind)
         {
-            assert_eq!(status.last_error, None);
+            assert_eq!(status.fatal_error, None);
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

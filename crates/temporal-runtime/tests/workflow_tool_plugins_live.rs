@@ -1650,8 +1650,8 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             })
             .ok_or_else(|| anyhow::anyhow!("no emitted completion promise in events"))?;
 
-        // Delivery can precede the model's await. Wait for the parked run so
-        // unrelated appends cannot clear the rejection diagnostic below.
+        // Delivery can precede the model's await. Wait for the parked run so the
+        // forged reply below reaches a promise that is actually being awaited.
         support::live::wait_until(
             "run parked on the plugin reply",
             Duration::from_secs(30),
@@ -1700,10 +1700,18 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                 .await
                 .map_err(|error| anyhow::anyhow!("query session: {error}"))?;
             if status
-                .last_error
+                .last_warning
                 .as_deref()
-                .is_some_and(|error| error.contains("unauthorized producer"))
+                .is_some_and(|warning| warning.contains("unauthorized producer"))
             {
+                // A drop is advisory: the session reads normally and the
+                // workflow keeps running until the authorized reply below.
+                assert_eq!(status.fatal_error, None);
+                api.read_session(api::SessionReadParams {
+                    session_id: session_id.as_str().to_owned(),
+                    run_limit: None,
+                })
+                .await?;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1725,24 +1733,6 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
             )
             .await
             .map_err(|error| anyhow::anyhow!("signal authorized reply: {error}"))?;
-
-        // Signal acknowledgement precedes processing. Public reads report the
-        // prior rejection until the authorized reply has actually been applied.
-        support::live::wait_until(
-            "authorized reply applied",
-            Duration::from_secs(30),
-            async || {
-                let status = session_handle
-                    .query(
-                        AgentSessionWorkflow::status,
-                        (),
-                        temporalio_client::WorkflowQueryOptions::default(),
-                    )
-                    .await?;
-                Ok(status.last_error.is_none())
-            },
-        )
-        .await?;
 
         let run = wait_for_terminal_run_slow(&api, &session_id, &run.result.run.id).await?;
         assert_eq!(run.status, api::RunStatus::Completed);
@@ -2689,9 +2679,9 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
                     )
                     .await
                     .ok()
-                    .and_then(|status| status.last_error);
+                    .and_then(|status| status.fatal_error.or(status.last_warning));
                 anyhow::bail!(
-                    "expected running-then-cancelled, got {status:?}; session last_error: {session_error:?}"
+                    "expected running-then-cancelled, got {status:?}; session error: {session_error:?}"
                 );
             }
             tokio::time::sleep(Duration::from_millis(500)).await;

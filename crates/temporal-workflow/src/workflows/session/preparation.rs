@@ -832,7 +832,7 @@ mod tests {
         assert_eq!(failure.submission_id, Some(SubmissionId::new("prepared")));
         assert_eq!(failure.correlation_token.as_deref(), Some("receipt"));
         assert!(failure.preparation_error.is_some());
-        assert!(state.last_error.is_none());
+        assert!(state.fatal_error.is_none());
         abandon_pending_run(&mut state);
         assert_eq!(state.admission_failures.len(), 1);
     }

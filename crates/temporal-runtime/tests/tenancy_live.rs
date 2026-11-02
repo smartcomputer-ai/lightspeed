@@ -105,7 +105,7 @@ async fn temporal_live_two_universes_share_one_worker_with_isolation() -> anyhow
                     WorkflowQueryOptions::default(),
                 )
                 .await?;
-            assert_eq!(status.last_error, None);
+            assert_eq!(status.fatal_error, None);
             assert_eq!(status.session_id, session_id.as_str());
         }
 

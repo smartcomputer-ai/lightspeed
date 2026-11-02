@@ -4,12 +4,16 @@ pub(super) fn record_admission_failure(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     failure: AgentAdmissionFailure,
 ) {
-    ctx.state_mut(|state| {
-        state.admission_failures.push(failure);
-        state.last_error = None;
-    });
+    ctx.state_mut(|state| state.admission_failures.push(failure));
 }
 
+pub(super) fn record_warning(ctx: &WorkflowContext<AgentSessionWorkflow>, warning: String) {
+    let replaying = ctx.is_replaying();
+    ctx.state_mut(|state| state.record_warning(replaying, warning));
+}
+
+/// Record why the workflow is about to fail. Every caller returns the error
+/// right after, so a set `fatal_error` always means the execution is ending.
 pub(super) fn record_error(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     error: &anyhow::Error,
@@ -17,7 +21,7 @@ pub(super) fn record_error(
 ) {
     let message = error.to_string();
     ctx.state_mut(|state| {
-        state.last_error = Some(message.clone());
+        state.fatal_error = Some(message.clone());
     });
     observability::log_workflow_failure(ctx, error_class, &message);
 }
@@ -32,7 +36,7 @@ pub(super) fn record_bootstrap_error(
 ) {
     let message = error.to_string();
     ctx.state_mut(|state| {
-        state.last_error = Some(message.clone());
+        state.fatal_error = Some(message.clone());
         state.bootstrap_failed = true;
     });
     observability::log_workflow_failure(ctx, "bootstrap", &message);

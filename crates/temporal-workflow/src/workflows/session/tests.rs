@@ -53,25 +53,27 @@ fn admission_failure_status_does_not_poison_later_admission() {
         Some("admit_test")
     );
     assert_eq!(status.admission_failures[0].rejection, Some(rejection));
-    assert_eq!(status.last_error, None);
+    assert_eq!(status.fatal_error, None);
 }
 
 #[test]
 fn source_resolution_emission_queues_pending_resolution_with_producer() {
     let mut workflow = AgentSessionWorkflow::default();
     let payload_ref = harness::BlobRef::from_bytes(b"job output");
-    workflow.queue_emission(
-        test_universe(),
-        harness::EmissionEnvelope::source_resolution(
+    workflow
+        .queue_emission(
             test_universe(),
-            "universe/envjob-job_1".to_owned(),
-            "universe/session_1",
-            harness::PromiseId::new("promise_1"),
-            harness::PromiseResolution::Resolved {
-                payload_ref: Some(payload_ref.clone()),
-            },
-        ),
-    );
+            harness::EmissionEnvelope::source_resolution(
+                test_universe(),
+                "universe/envjob-job_1".to_owned(),
+                "universe/session_1",
+                harness::PromiseId::new("promise_1"),
+                harness::PromiseResolution::Resolved {
+                    payload_ref: Some(payload_ref.clone()),
+                },
+            ),
+        )
+        .expect("queue resolution");
 
     // Source resolutions defer to the main loop for producer authorization
     // and optional reply-schema validation before ResolvePromise admission.
@@ -109,8 +111,12 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
             payload_ref: Some(payload_ref.clone()),
         },
     );
-    workflow.queue_emission(test_universe(), envelope.clone());
-    workflow.queue_emission(test_universe(), envelope);
+    workflow
+        .queue_emission(test_universe(), envelope.clone())
+        .expect("first delivery");
+    workflow
+        .queue_emission(test_universe(), envelope)
+        .expect("second delivery");
 
     // Both deliveries pass through the deferred authorization stage; a
     // non-workflow promise source needs no producer check or reply schema,
@@ -170,23 +176,40 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
 fn cross_universe_emission_is_rejected_before_admission() {
     let mut workflow = AgentSessionWorkflow::default();
     let producer_universe = uuid::Uuid::from_u128(2);
-    workflow.queue_emission(
-        test_universe(),
-        harness::EmissionEnvelope::source_resolution(
-            producer_universe,
-            "other-universe/envjob-job_1".to_owned(),
-            "universe/session_1",
-            harness::PromiseId::new("promise_1"),
-            harness::PromiseResolution::Resolved { payload_ref: None },
-        ),
-    );
+    let warning = workflow
+        .queue_emission(
+            test_universe(),
+            harness::EmissionEnvelope::source_resolution(
+                producer_universe,
+                "other-universe/envjob-job_1".to_owned(),
+                "universe/session_1",
+                harness::PromiseId::new("promise_1"),
+                harness::PromiseResolution::Resolved { payload_ref: None },
+            ),
+        )
+        .expect_err("another universe's emission is refused");
 
+    assert!(warning.contains("cross-universe emission rejected"));
     assert!(workflow.pending_admissions.is_empty());
-    assert!(
-        workflow
-            .last_error
-            .as_deref()
-            .is_some_and(|error| error.contains("cross-universe emission rejected"))
+    assert!(workflow.pending_source_resolutions.is_empty());
+}
+
+#[test]
+fn a_warning_is_advisory_and_stays_out_of_the_fatal_error() {
+    let mut workflow = AgentSessionWorkflow {
+        session_id: Some(SessionId::new("session_1")),
+        ..Default::default()
+    };
+
+    workflow.record_warning(true, "first".to_owned());
+    workflow.record_warning(true, "unauthorized producer".to_owned());
+
+    let status = workflow.status_snapshot();
+    assert_eq!(status.fatal_error, None);
+    assert!(!status.bootstrap_failed);
+    assert_eq!(
+        status.last_warning.as_deref(),
+        Some("unauthorized producer")
     );
 }
 
@@ -691,26 +714,27 @@ fn cancelling_watchdog_wake_is_since_plus_timeout() {
 #[test]
 fn run_terminal_notifications_cannot_drop_output_encoding_into_a_session_promise() {
     let mut workflow = AgentSessionWorkflow::default();
-    workflow.queue_emission(
-        test_universe(),
-        harness::EmissionEnvelope::run_terminal(
+    workflow
+        .queue_emission(
             test_universe(),
-            SessionId::new("child_a"),
-            EventSeq::new(8),
-            "promise_1".to_owned(),
-            RunId::new(1),
-            RunStatus::Completed,
-            Some(harness::ContentRef {
-                content_ref: harness::BlobRef::from_bytes(b"native output"),
-                media_type: Some("application/json".to_owned()),
-                provider_kind: Some("provider.message".to_owned()),
-            }),
-            None,
-        ),
-    );
+            harness::EmissionEnvelope::run_terminal(
+                test_universe(),
+                SessionId::new("child_a"),
+                EventSeq::new(8),
+                "promise_1".to_owned(),
+                RunId::new(1),
+                RunStatus::Completed,
+                Some(harness::ContentRef {
+                    content_ref: harness::BlobRef::from_bytes(b"native output"),
+                    media_type: Some("application/json".to_owned()),
+                    provider_kind: Some("provider.message".to_owned()),
+                }),
+                None,
+            ),
+        )
+        .expect_err("a session does not take run-terminal notifications");
     assert!(workflow.pending_admissions.is_empty());
     assert!(workflow.pending_source_resolutions.is_empty());
-    assert!(workflow.last_error.is_some());
 }
 
 #[test]

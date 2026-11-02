@@ -134,7 +134,7 @@ impl<T: SessionLifecycleIo> SessionLifecycle<'_, T> {
                 if let Some(error) = status.setup_error {
                     return Err(error);
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(error));
                 }
                 if status.ready {
@@ -585,7 +585,7 @@ impl GatewayAgentApi {
                 if let Some(error) = status.setup_error {
                     return Err(error);
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(error));
                 }
             }
@@ -745,7 +745,8 @@ mod tests {
             queued_runs: Vec::new(),
             completed_runs: Vec::new(),
             admission_failures: Vec::new(),
-            last_error: None,
+            fatal_error: None,
+            last_warning: None,
             bootstrap_failed: false,
         })
     }
@@ -901,9 +902,9 @@ mod tests {
         let setup_error = AgentApiError::invalid_request("setup failed");
         let mut setup = status(true);
         setup.setup_error = Some(setup_error.clone());
-        setup.last_error = Some("secondary error".into());
+        setup.fatal_error = Some("secondary error".into());
         let mut failed = status(true);
-        failed.last_error = Some("workflow failed".into());
+        failed.fatal_error = Some("workflow failed".into());
         for (query, expected) in [
             (Ok(Some(setup)), setup_error),
             (Ok(Some(failed)), AgentApiError::internal("workflow failed")),
@@ -923,6 +924,19 @@ mod tests {
             );
             io.assert_drained();
         }
+        // A warning describes something the session survived: it neither fails
+        // nor delays the wait.
+        let mut warned = status(true);
+        warned.last_warning = Some("unauthorized producer".into());
+        let io = ScriptedIo::new([
+            Step::Status(Ok(Some(warned))),
+            Step::Load(Ok(loaded(CoreAgentStatus::Open, 9, false))),
+        ]);
+        io.lifecycle()
+            .wait_for_open_session(&session_id)
+            .await
+            .expect("a warning is not a failure");
+        io.assert_drained();
         let io = ScriptedIo::new([
             Step::Status(Ok(Some(status(true)))),
             Step::Load(Ok(loaded(CoreAgentStatus::Open, 9, false))),

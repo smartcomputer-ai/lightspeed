@@ -318,11 +318,10 @@ pub(super) async fn process_pending_source_resolutions(
             (true, reply_schema_ref)
         });
         if !authorized {
-            ctx.state_mut(|state| {
-                state.last_error = Some(format!(
-                    "unauthorized producer for workflow-tool promise {promise_id}"
-                ));
-            });
+            record_warning(
+                ctx,
+                format!("unauthorized producer for workflow-tool promise {promise_id}"),
+            );
             continue;
         }
         let resolution = match (reply_schema_ref, resolution) {
@@ -361,14 +360,14 @@ fn queue_resolution(
     promise_id: String,
     resolution: harness::PromiseResolution,
 ) {
+    let promise_id = match harness::PromiseId::try_new(promise_id) {
+        Ok(promise_id) => promise_id,
+        Err(error) => {
+            record_warning(ctx, format!("cannot queue promise resolution: {error}"));
+            return;
+        }
+    };
     ctx.state_mut(|state| {
-        let promise_id = match harness::PromiseId::try_new(promise_id) {
-            Ok(promise_id) => promise_id,
-            Err(error) => {
-                state.last_error = Some(format!("cannot queue promise resolution: {error}"));
-                return;
-            }
-        };
         state.queue_admission(AgentAdmission {
             command: CoreAgentCommand::ResolvePromise {
                 promise_id,

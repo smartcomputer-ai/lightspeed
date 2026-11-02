@@ -59,7 +59,7 @@ use drive::{
     CommandAdmissionResult, DriveOutcome, admit_and_append_command, append_command,
     drive_from_state, drive_until_idle, process_pending_tool_batch_resumes,
 };
-use errors::{record_admission_failure, record_bootstrap_error, record_error};
+use errors::{record_admission_failure, record_bootstrap_error, record_error, record_warning};
 use session_state::flush_pending_emissions;
 use wait_loop::{can_continue_as_new, wait_for_workflow_work, workflow_state_should_complete};
 use watchdog::{process_cancelling_watchdog, reconcile_cancelling_watchdog};
@@ -91,7 +91,8 @@ pub struct AgentSessionWorkflow {
     admission_failures: Vec<AgentAdmissionFailure>,
     execution_has_rollover_checkpoint: bool,
     rollover_delay_logged: bool,
-    last_error: Option<String>,
+    fatal_error: Option<String>,
+    last_warning: Option<String>,
     bootstrap_failed: bool,
     code_tools: code_tools::CodeToolExecutionState,
 }
@@ -124,7 +125,8 @@ impl Default for AgentSessionWorkflow {
             admission_failures: Vec::new(),
             execution_has_rollover_checkpoint: false,
             rollover_delay_logged: false,
-            last_error: None,
+            fatal_error: None,
+            last_warning: None,
             bootstrap_failed: false,
             code_tools: Default::default(),
         }
@@ -337,14 +339,16 @@ impl AgentSessionWorkflow {
         ctx: &mut SyncWorkflowContext<Self>,
         envelope: EmissionEnvelope,
     ) {
-        let Some((universe_id, _)) = split_workflow_id(ctx.workflow_id()) else {
-            self.last_error = Some(format!(
+        let queued = match split_workflow_id(ctx.workflow_id()) {
+            Some((universe_id, _)) => self.queue_emission(universe_id, envelope),
+            None => Err(format!(
                 "cannot admit emission for malformed session workflow id {}",
                 ctx.workflow_id()
-            ));
-            return;
+            )),
         };
-        self.queue_emission(universe_id, envelope);
+        if let Err(warning) = queued {
+            self.record_warning(ctx.is_replaying(), warning);
+        }
     }
 
     #[query(name = "status")]

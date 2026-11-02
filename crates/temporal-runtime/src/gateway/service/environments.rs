@@ -46,7 +46,7 @@ impl GatewayAgentApi {
                 {
                     return Err(map_admission_failure_to_api_error(failure));
                 }
-                if let Some(error) = status.last_error {
+                if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
                         "agent workflow reported error: {error}"
                     )));
