@@ -38,7 +38,7 @@ They do not configure the TypeScript Platform backend.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. |
+| `LIGHTSPEED_POSTGRES_URL` | **Required**; falls back to `LIGHTSPEED_TEST_POSTGRES_URL` | PostgreSQL connection URL used by the runtime, migration commands, and schema diagnostics. Production must use this name. TLS is supported; use `sslmode=verify-full` for remote databases to verify the certificate and hostname. |
 | `LIGHTSPEED_PG_UNIVERSE_ID` | **Required in `single` auth mode** | UUID of the sole universe in a single-tenant deployment. Not used to auto-create universes in multi-tenant modes. |
 | `LIGHTSPEED_ROLES` | `gateway,environment-gateway,sessions,bots,channels` | Roles this process runs, a comma-separated subset of `gateway` (JSON-RPC, OAuth callbacks, webhook hooks), `environment-gateway` (worker environment routes, the public daemon registration routes, the lifecycle reconciler that creates and closes provisioned environments, and the registered-environment sweep), `sessions` (session workflows plus the promise-repair reaper, the session-retention reaper, both every five minutes, and the hourly CAS blob sweeper), `bots`, `channels` (also `--roles`). Each worker role polls its own task queue with that subsystem's workflows, activities, and background loops. Run exactly one `environment-gateway` process per deployment. |
 | `LIGHTSPEED_TASK_QUEUE` | `lightspeed-sessions` | Sessions task queue shared by the gateway and the `sessions` role. Deployments sharing a Temporal namespace must use distinct queues. |
@@ -113,20 +113,33 @@ does not supply an unset model default.
 
 ### Object storage
 
-If any `LIGHTSPEED_OBJECT_STORE_*` variable is set,
-`LIGHTSPEED_OBJECT_STORE_BUCKET` becomes required. Blobs up to 64 KiB remain
-inline in PostgreSQL; larger blobs require object storage. Without this group,
-writes above that inline limit fail.
+Blobs up to 64 KiB remain inline in PostgreSQL; larger blobs require object
+storage. With the group absent, writes above that inline limit fail. Setting
+any variable in the group activates validation, even if its value is empty.
+Existing configurations default to S3; Azure must be selected explicitly.
 
 | Variable | Requirement/default | Purpose |
 | --- | --- | --- |
-| `LIGHTSPEED_OBJECT_STORE_BUCKET` | Conditional | S3 bucket for CAS payloads. |
-| `LIGHTSPEED_OBJECT_STORE_ENDPOINT` | Provider default | Optional S3-compatible endpoint such as MinIO. |
+| `LIGHTSPEED_OBJECT_STORE_BACKEND` | `s3` | `s3` or `azure`. Azure settings require the explicit `azure` selection. |
+| `LIGHTSPEED_OBJECT_STORE_BUCKET` | Required for S3 | S3 bucket for CAS payloads. Not accepted with Azure. |
+| `LIGHTSPEED_OBJECT_STORE_ENDPOINT` | Provider default | Optional S3-compatible endpoint or Azure account endpoint. Azure endpoints must use HTTPS; HTTP is allowed only for loopback emulators. Do not include credentials or a SAS query in an Azure endpoint. |
 | `LIGHTSPEED_OBJECT_STORE_REGION` | `us-east-1` | S3 region. |
-| `LIGHTSPEED_OBJECT_STORE_PREFIX` | Unset | Key prefix inside the bucket. |
+| `LIGHTSPEED_OBJECT_STORE_PREFIX` | Unset | Key prefix inside the S3 bucket or Azure container. |
 | `LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE` | `false` | Boolean path-style addressing override; use `true` for the local MinIO stack. |
 | `AWS_ACCESS_KEY_ID` | Credential-chain dependent | S3 access key used when explicit object-store credentials are needed. |
 | `AWS_SECRET_ACCESS_KEY` | Credential-chain dependent | S3 secret key. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_ACCOUNT` | Required for Azure | Azure storage account name. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_CONTAINER` | Required for Azure | Existing Blob container name. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` | Exactly one Azure credential | Storage account access key. Supply through a Secret. |
+| `LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` | Exactly one Azure credential | SAS token, with or without a leading `?`. Supply through a Secret; permit the read/write/list/delete operations the blob store uses. |
+
+Azure requires exactly one of access key or SAS token; it does not fall back to
+managed identity. S3-only bucket, region, and path-style settings are rejected
+with Azure. Both backends use normal HTTPS certificate trust by default; no
+certificate file is required for a server trusted by the container's CA roots.
+Keep the backend, account/container, and existing objects consistent across
+restarts: PostgreSQL records physical keys, not enough information to migrate
+objects between backends or containers automatically.
 
 ### Audio preprocessing
 

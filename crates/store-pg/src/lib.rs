@@ -6,6 +6,7 @@
 mod access;
 mod api_keys;
 mod auth;
+mod azure;
 mod blob;
 mod blob_cache;
 mod bots;
@@ -21,6 +22,7 @@ mod oauth;
 mod object;
 mod profile;
 mod providers;
+mod s3;
 mod session;
 pub use session::PurgeSessionError;
 mod shared;
@@ -31,14 +33,15 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use object_store::ObjectStore;
-use object_store::aws::AmazonS3Builder;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use thiserror::Error;
 use uuid::Uuid;
 
 pub use access::AccessFilter;
 pub use access::{AccessStoreError, PgAccessStore, ResourceAccess};
+pub use azure::{AzureObjectStoreConfig, AzureObjectStoreCredential, build_azure_object_store};
 pub use model_defaults::ModelDefaultsStoreError;
+pub use s3::{S3ObjectStoreConfig, build_s3_object_store};
 
 /// A session page with the access summary each view carries.
 #[derive(Clone, Debug)]
@@ -137,74 +140,6 @@ impl PgStoreConfig {
         self.secrets_master_key = Some(key);
         self
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct S3ObjectStoreConfig {
-    pub bucket: String,
-    pub endpoint: Option<String>,
-    pub region: String,
-    pub access_key_id: Option<String>,
-    pub secret_access_key: Option<String>,
-    pub force_path_style: bool,
-}
-
-impl S3ObjectStoreConfig {
-    pub fn new(bucket: impl Into<String>) -> Self {
-        Self {
-            bucket: bucket.into(),
-            endpoint: None,
-            region: "us-east-1".to_owned(),
-            access_key_id: None,
-            secret_access_key: None,
-            force_path_style: false,
-        }
-    }
-
-    pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
-        self.endpoint = Some(endpoint.into());
-        self
-    }
-
-    pub fn with_region(mut self, region: impl Into<String>) -> Self {
-        self.region = region.into();
-        self
-    }
-
-    pub fn with_access_key_id(mut self, access_key_id: impl Into<String>) -> Self {
-        self.access_key_id = Some(access_key_id.into());
-        self
-    }
-
-    pub fn with_secret_access_key(mut self, secret_access_key: impl Into<String>) -> Self {
-        self.secret_access_key = Some(secret_access_key.into());
-        self
-    }
-
-    pub fn with_force_path_style(mut self, force_path_style: bool) -> Self {
-        self.force_path_style = force_path_style;
-        self
-    }
-}
-
-pub fn build_s3_object_store(
-    config: S3ObjectStoreConfig,
-) -> Result<Arc<dyn ObjectStore>, object_store::Error> {
-    let mut builder = AmazonS3Builder::new()
-        .with_bucket_name(config.bucket)
-        .with_region(config.region)
-        .with_virtual_hosted_style_request(!config.force_path_style);
-    if let Some(endpoint) = config.endpoint {
-        let allow_http = endpoint.starts_with("http://");
-        builder = builder.with_endpoint(endpoint).with_allow_http(allow_http);
-    }
-    if let Some(access_key_id) = config.access_key_id {
-        builder = builder.with_access_key_id(access_key_id);
-    }
-    if let Some(secret_access_key) = config.secret_access_key {
-        builder = builder.with_secret_access_key(secret_access_key);
-    }
-    Ok(Arc::new(builder.build()?))
 }
 
 #[derive(Clone)]

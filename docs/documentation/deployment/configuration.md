@@ -134,7 +134,7 @@ for setup and precedence.
 
 With all `LIGHTSPEED_OBJECT_STORE_*` variables absent, blobs up to 64 KiB are
 stored inline in PostgreSQL. Larger writes fail. This supports an initial
-small-text walkthrough; configure S3-compatible storage before working with
+small-text walkthrough; configure S3-compatible or Azure Blob storage before working with
 larger files, attachments, or other payloads.
 
 To use S3-compatible storage for blobs, configure the full group. For example:
@@ -151,15 +151,42 @@ Supply the credentials required by the object-store client. Add
 path-style addressing. The [reference](../reference/environment-variables.md#object-storage)
 lists the exact settings.
 
+Existing S3 settings remain valid without a backend selector. To use native
+Azure Blob storage instead:
+
+```dotenv
+LIGHTSPEED_OBJECT_STORE_BACKEND=azure
+LIGHTSPEED_OBJECT_STORE_AZURE_ACCOUNT=yourstorageaccount
+LIGHTSPEED_OBJECT_STORE_AZURE_CONTAINER=lightspeed-content
+LIGHTSPEED_OBJECT_STORE_PREFIX=production
+```
+
+Supply exactly one of `LIGHTSPEED_OBJECT_STORE_AZURE_ACCESS_KEY` or
+`LIGHTSPEED_OBJECT_STORE_AZURE_SAS_TOKEN` through the deployment's secret
+mechanism. Create the container first. Do not carry S3 bucket, region, or
+path-style settings into this configuration. The client uses the account's
+standard HTTPS Blob endpoint unless `LIGHTSPEED_OBJECT_STORE_ENDPOINT` is set.
+For an emulator, the endpoint can be a loopback HTTP account URL, such as
+`http://127.0.0.1:10000/account`; remote Azure endpoints require HTTPS. Put SAS
+tokens in their dedicated secret setting rather than the endpoint URL.
+
 Setting any variable in this group activates its configuration requirements,
-even if the value is empty. An endpoint or prefix without a nonempty bucket
-causes startup to fail. Remove the entire group when intentionally using only
-PostgreSQL.
+even if the value is empty. S3 requires a nonempty bucket; Azure requires its
+account, container, and credential. Remove the entire group when intentionally
+using only PostgreSQL.
 
 With object storage configured, small blobs still remain inline in PostgreSQL;
 larger blobs go to the object store. PostgreSQL keeps their catalog and exact
 physical object keys. A prefix change affects new keys, while existing records
 continue to reference their original keys. Keep those objects accessible.
+Changing the backend or container does not copy existing objects. Plan a storage
+migration separately rather than switching an existing deployment's settings.
+
+Remote PostgreSQL connections support TLS in the release build. Use
+`sslmode=verify-full` in both Runtime and Platform database URLs, keeping
+username/password authentication when that is the deployment's chosen method.
+Normal HTTPS/TLS uses the clients' existing CA trust; manual certificate files
+are needed only if a private authority must be added to that trust.
 Changing a bucket or endpoint does not copy existing content, so plan that
 change as a data migration and test old attachments and workspace files as
 well as newly written content.

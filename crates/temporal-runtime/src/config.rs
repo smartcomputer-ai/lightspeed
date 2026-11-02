@@ -2,12 +2,11 @@ use std::{env, sync::Arc, time::Duration};
 
 use object_store::ObjectStore;
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use store_pg::{
-    BlobCache, PgStore, PgStoreConfig, PgStoreError, S3ObjectStoreConfig, SchemaStatus,
-    SecretsMasterKey, build_s3_object_store,
-};
+use store_pg::{BlobCache, PgStore, PgStoreConfig, PgStoreError, SchemaStatus, SecretsMasterKey};
 use temporal_workflow::{DEFAULT_TASK_QUEUE, bots::DEFAULT_BOTS_TASK_QUEUE};
 use uuid::Uuid;
+
+mod object_storage;
 
 /// Retired deployment model policy must be migrated to universe defaults.
 /// Credentials and provider transport still use their existing configuration.
@@ -245,12 +244,11 @@ pub struct DeploymentStores {
 impl DeploymentStores {
     pub async fn from_env() -> anyhow::Result<Self> {
         let allow_unledgered_schema = allow_unledgered_schema_from_env()?;
+        let object_store = object_storage::from_env()?
+            .map(|config| config.build())
+            .transpose()?;
         let pool = postgres_pool_from_env().await?;
         verify_runtime_schema(&pool, allow_unledgered_schema).await?;
-        let object_store = match object_store_config_from_env()? {
-            Some(object_config) => Some(build_s3_object_store(object_config)?),
-            None => None,
-        };
         let secrets_master_key = match optional_env("LIGHTSPEED_SECRETS_MASTER_KEY") {
             Some(master_key) => {
                 Some(SecretsMasterKey::from_base64(&master_key).map_err(|error| {
@@ -389,48 +387,6 @@ pub async fn pg_store_from_env() -> anyhow::Result<Arc<PgStore>> {
     let store = stores.store_for(universe_id);
     store.ensure_universe().await?;
     Ok(store)
-}
-
-fn object_store_config_from_env() -> anyhow::Result<Option<S3ObjectStoreConfig>> {
-    let object_env_present = [
-        "LIGHTSPEED_OBJECT_STORE_BUCKET",
-        "LIGHTSPEED_OBJECT_STORE_ENDPOINT",
-        "LIGHTSPEED_OBJECT_STORE_REGION",
-        "LIGHTSPEED_OBJECT_STORE_PREFIX",
-        "LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE",
-    ]
-    .into_iter()
-    .any(|key| env::var_os(key).is_some());
-    let Some(bucket) = optional_env("LIGHTSPEED_OBJECT_STORE_BUCKET") else {
-        return if object_env_present {
-            Err(anyhow::anyhow!(
-                "LIGHTSPEED_OBJECT_STORE_BUCKET must be set when object store env is configured"
-            ))
-        } else {
-            Ok(None)
-        };
-    };
-
-    let mut config = S3ObjectStoreConfig::new(bucket);
-    if let Some(endpoint) = optional_env("LIGHTSPEED_OBJECT_STORE_ENDPOINT") {
-        config = config.with_endpoint(endpoint);
-    }
-    config = config.with_region(
-        optional_env("LIGHTSPEED_OBJECT_STORE_REGION").unwrap_or_else(|| "us-east-1".to_owned()),
-    );
-    if let Some(access_key_id) = optional_env("AWS_ACCESS_KEY_ID") {
-        config = config.with_access_key_id(access_key_id);
-    }
-    if let Some(secret_access_key) = optional_env("AWS_SECRET_ACCESS_KEY") {
-        config = config.with_secret_access_key(secret_access_key);
-    }
-    if let Some(force_path_style) = optional_env("LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE") {
-        config =
-            config.with_force_path_style(force_path_style.parse::<bool>().map_err(|error| {
-                anyhow::anyhow!("invalid LIGHTSPEED_OBJECT_STORE_FORCE_PATH_STYLE: {error}")
-            })?);
-    }
-    Ok(Some(config))
 }
 
 fn optional_env(key: &str) -> Option<String> {
