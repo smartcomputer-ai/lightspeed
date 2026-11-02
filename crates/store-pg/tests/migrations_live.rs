@@ -10,6 +10,22 @@ use uuid::Uuid;
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres env"]
 async fn embedded_migrations_are_locked_idempotent_and_checksum_guarded() {
+    run_migration_test(false, false).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres env"]
+async fn released_schema_upgrade_resets_only_environment_records() {
+    run_migration_test(true, false).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres env"]
+async fn environment_reset_rolls_back_on_unexpected_dependencies_and_can_retry() {
+    run_migration_test(true, true).await;
+}
+
+async fn run_migration_test(upgrade: bool, block_reset: bool) {
     let database_url = std::env::var("LIGHTSPEED_TEST_POSTGRES_URL")
         .expect("LIGHTSPEED_TEST_POSTGRES_URL must be set; run ./dev.sh infra and source scripts/dev/env.sh");
     let admin = PgPoolOptions::new()
@@ -34,7 +50,7 @@ async fn embedded_migrations_are_locked_idempotent_and_checksum_guarded() {
         .await
         .expect("connect to isolated migration schema");
 
-    let result = exercise_migrator(&pool).await;
+    let result = exercise_migrator(&pool, upgrade, block_reset).await;
     pool.close().await;
     admin
         .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -45,7 +61,11 @@ async fn embedded_migrations_are_locked_idempotent_and_checksum_guarded() {
     result.unwrap_or_else(|message| panic!("migration acceptance failed: {message}"));
 }
 
-async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
+async fn exercise_migrator(
+    pool: &sqlx::PgPool,
+    upgrade: bool,
+    block_reset: bool,
+) -> Result<(), String> {
     let before = store_pg::verify_schema(pool)
         .await
         .expect_err("empty schema must require migration");
@@ -98,6 +118,17 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?;
 
+    let retained = if upgrade {
+        seed_released_schema(pool).await?;
+        Some(retained_rows(pool).await?)
+    } else {
+        None
+    };
+
+    if block_reset {
+        exercise_unexpected_dependency(pool).await?;
+    }
+
     let (left, right) = tokio::join!(PgStore::migrate(pool), PgStore::migrate(pool));
     left.map_err(|error| error.to_string())?;
     right.map_err(|error| error.to_string())?;
@@ -109,9 +140,8 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!("unexpected migrated status: {status:?}"));
     }
 
-    // The environment baseline is folded into one migration; the ledger
-    // ends at revision 11.
-    if REQUIRED_SCHEMA_REVISION != 11 {
+    // The forward environment reset follows session deletion.
+    if REQUIRED_SCHEMA_REVISION != 12 {
         return Err(format!(
             "unexpected required schema revision {REQUIRED_SCHEMA_REVISION}"
         ));
@@ -248,6 +278,31 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err("the environment baseline must not create incarnations".to_owned());
     }
 
+    if let Some(retained) = retained {
+        if retained_rows(pool).await? != retained {
+            return Err("upgrade changed unrelated records".to_owned());
+        }
+        for table in [
+            "environment_providers",
+            "environment_provider_bindings",
+            "environment_registration_keys",
+            "environment_registration_key_secrets",
+            "environments",
+            "environment_credentials",
+        ] {
+            let count: i64 =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            if count != 0 {
+                return Err(format!(
+                    "upgrade retained old environment records in {table}"
+                ));
+            }
+        }
+    }
+
     let rows: Vec<(i64, String, String)> =
         sqlx::query_as("SELECT version, name, checksum FROM schema_migrations ORDER BY version")
             .fetch_all(pool)
@@ -278,4 +333,126 @@ async fn exercise_migrator(pool: &sqlx::PgPool) -> Result<(), String> {
         return Err(format!("unexpected checksum error: {tampered}"));
     }
     Ok(())
+}
+
+// Frozen release checksums keep this upgrade test anchored to the shipped
+// schema, rather than silently testing a subsequently edited baseline.
+async fn seed_released_schema(pool: &sqlx::PgPool) -> Result<(), String> {
+    use sha2::{Digest as _, Sha256};
+    let released_checksums = [
+        "7ad7483ce1ed32e23db6e1472d655a44e85c967f6c08bb44c52be74023891663",
+        "8336521eb3bd742760bebc26be6f6923097a6507181274944c0b31d7ed64bbe9",
+        "b90d5fd104e95d2a347b6a940741203c1bba42c71aed0fd073dd5806385d1df6",
+        "523a447a8c4d03af459cc7e6ae6fbeed0dde7d3f8b6b29bab08a238ce5a92f67",
+        "1438020d90565b50d8a93514d2080d46f29e3430620df6bb80780ac6c79879be",
+        "6c2e39070aa95c0a8c0684919450d4943209f1afe15e9dc75635a87224b9a7ae",
+        "5fc53c6cdbff5a1243cfdaad26697148551c90f3f3c3fcad857d8c81b4fe1c1b",
+        "9c956754e303234fe37c4d135a0b759e007863b713009be5865c9e43bb750dc1",
+        "a6c03027b1d98a3e555604168ce7268cde91dc4cdf724d400e42b390e517a0b9",
+        "4d7f75004d1fa1f4d64fda2bd63ea60989abca87f0bd4bd590a747fa1dfb1f1d",
+    ];
+    sqlx::raw_sql(
+        "CREATE TABLE schema_migrations (
+        version bigint PRIMARY KEY, name text NOT NULL, checksum text NOT NULL,
+        applied_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT schema_migrations_version_positive CHECK (version > 0),
+        CONSTRAINT schema_migrations_name_present CHECK (name <> ''),
+        CONSTRAINT schema_migrations_checksum_sha256 CHECK (checksum ~ '^[0-9a-f]{64}$'))",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    for (migration, expected) in store_pg::MIGRATIONS.iter().zip(released_checksums) {
+        let checksum = hex::encode(Sha256::digest(migration.sql.as_bytes()));
+        if checksum != expected {
+            return Err(format!("released migration {} changed", migration.version));
+        }
+        let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(migration.sql))
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        sqlx::query("INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)")
+            .bind(migration.version)
+            .bind(migration.name)
+            .bind(checksum)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| error.to_string())?;
+        tx.commit().await.map_err(|error| error.to_string())?;
+    }
+    sqlx::raw_sql(include_str!("fixtures/released_environment_upgrade.sql"))
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = store_pg::schema_status(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    if status.current_revision != 10 || status.pending != [11, 12] {
+        return Err(format!("unexpected released schema status: {status:?}"));
+    }
+
+    Ok(())
+}
+
+async fn exercise_unexpected_dependency(pool: &sqlx::PgPool) -> Result<(), String> {
+    // A downstream installation's unexpected dependency must fail closed.
+    // Migration 11 commits, but the entire environment reset must roll back.
+    sqlx::raw_sql(
+        "CREATE TABLE unrelated_dependency (
+        provider_id text REFERENCES environment_providers(provider_id))",
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let error = PgStore::migrate(pool)
+        .await
+        .expect_err("unexpected dependency must block reset");
+    if !matches!(&error, PgStoreError::Postgres(source)
+        if source.as_database_error().and_then(|error| error.code()).as_deref() == Some("2BP01"))
+    {
+        return Err(format!("unexpected dependency error: {error}"));
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM environment_credentials")
+        .fetch_one(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    if count != 1 {
+        return Err("failed reset did not roll back environment records".to_owned());
+    }
+    let status = store_pg::schema_status(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    if status.current_revision != 11 || status.pending != [12] {
+        return Err(format!(
+            "failed reset changed the ledger unexpectedly: {status:?}"
+        ));
+    }
+    sqlx::query("DROP TABLE unrelated_dependency")
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+async fn retained_rows(pool: &sqlx::PgPool) -> Result<Vec<(String, Vec<String>)>, String> {
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename::text FROM pg_tables
+        WHERE schemaname = current_schema() AND tablename NOT LIKE 'environment%'
+        AND tablename <> 'schema_migrations' ORDER BY tablename",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut rows = Vec::new();
+    for table in tables {
+        let data: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT (to_jsonb(t) - 'deleted_at_ms')::text FROM \"{table}\" t ORDER BY 1"
+        )))
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        rows.push((table, data));
+    }
+    Ok(rows)
 }
