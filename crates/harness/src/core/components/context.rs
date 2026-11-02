@@ -647,8 +647,11 @@ fn mark_context_entries_consumed_by_turn(
         active_run.input_consumed_by_turn_id = Some(turn_id);
     }
 
+    // A batch admitted after the turn started has no entries yet, and an empty
+    // containment test would mark it consumed before any request carried it.
     for steering in &mut active_run.steering {
         if steering.consumed_by_turn_id.is_none()
+            && steering.entry_ids.len() == steering.input.len()
             && steering
                 .entry_ids
                 .iter()

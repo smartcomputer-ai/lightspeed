@@ -6316,6 +6316,209 @@ mod tests {
     /// Steering admitted during a run's final turn is not lost: the run
     /// gets one more turn whose request carries the steering, and only then
     /// completes.
+    fn admit_logged(
+        drive: &mut CoreAgentDrive,
+        log: &mut Vec<CoreAgentEntry>,
+        command: CoreAgentCommand,
+    ) {
+        let action = drive.admit_command(command, 20).expect("admit");
+        log.extend(commit_action(drive, action));
+    }
+
+    /// Commit appends until the drive asks for something else.
+    fn pump_logged(drive: &mut CoreAgentDrive, log: &mut Vec<CoreAgentEntry>) -> CoreAgentAction {
+        for now in 200..400 {
+            match drive.next_action(now, 64).expect("next action") {
+                action @ CoreAgentAction::AppendEvents { .. } => {
+                    log.extend(commit_action(drive, action));
+                }
+                other => return other,
+            }
+        }
+        panic!("drive never left the append loop");
+    }
+
+    fn assert_log_replays_to(log: &[CoreAgentEntry], state: &CoreAgentState) {
+        let mut replayed = CoreAgentState::new();
+        for entry in log {
+            crate::core::apply::apply_event(&mut replayed, entry).expect("log replays");
+        }
+        assert_eq!(&replayed, state);
+    }
+
+    fn steering_entries_in(entries: &[ContextEntry]) -> usize {
+        entries
+            .iter()
+            .filter(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
+            .count()
+    }
+
+    /// Open a session, then stop with `Turn::Started` committed and `Turn::Planned`
+    /// not and admit a steer. The hosted loop drains admissions at this boundary.
+    fn steer_while_turn_is_only_started() -> (CoreAgentDrive, Vec<CoreAgentEntry>) {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-steer-window"),
+            CoreAgentState::new(),
+            None,
+        );
+        let mut log = Vec::new();
+        admit_logged(
+            &mut drive,
+            &mut log,
+            CoreAgentCommand::OpenSession { config: config() },
+        );
+        let spec = test_tool_spec("fn_a");
+        admit_logged(
+            &mut drive,
+            &mut log,
+            CoreAgentCommand::ReplaceTools {
+                expected_revision: None,
+                tools: std::collections::BTreeMap::from([(spec.name.clone(), spec)]),
+            },
+        );
+        admit_logged(
+            &mut drive,
+            &mut log,
+            request_run_command(
+                None,
+                user_input(BlobRef::from_bytes(b"input")),
+                run_config(),
+            ),
+        );
+        for now in 100..120 {
+            let started = drive.state().runs.active.as_ref().is_some_and(|run| {
+                run.active_turn_id
+                    .is_some_and(|turn_id| run.turns[&turn_id].status == crate::TurnStatus::Started)
+            });
+            if started {
+                admit_logged(
+                    &mut drive,
+                    &mut log,
+                    CoreAgentCommand::RequestRunSteering {
+                        requested_by: None,
+                        run_id: RunId::new(1),
+                        input: user_input(BlobRef::from_bytes(b"steer")),
+                    },
+                );
+                return (drive, log);
+            }
+            let action = drive.next_action(now, 64).expect("next action");
+            log.extend(commit_action(&mut drive, action));
+        }
+        panic!("the turn never reached its started state");
+    }
+
+    fn expect_generation(action: CoreAgentAction) -> LlmGenerationRequest {
+        let CoreAgentAction::GenerateLlm { request } = action else {
+            panic!("expected a generation, got {action:?}");
+        };
+        request
+    }
+
+    #[test]
+    fn steering_in_the_started_window_of_a_final_answer_extends_the_run_and_replays() {
+        let (mut drive, mut log) = steer_while_turn_is_only_started();
+
+        let first = expect_generation(pump_logged(&mut drive, &mut log));
+        assert_eq!(steering_entries_in(&first.request.context.entries), 0);
+        let steering = &drive.state().runs.active.as_ref().unwrap().steering[0];
+        assert!(steering.entry_ids.is_empty());
+        assert_eq!(
+            steering.consumed_by_turn_id, None,
+            "planning this turn must not consume a batch its request does not carry"
+        );
+
+        let action = drive
+            .resume_generation(final_text_result(&first), 300)
+            .expect("first answer");
+        log.extend(commit_action(&mut drive, action));
+
+        let second = expect_generation(pump_logged(&mut drive, &mut log));
+        assert_eq!(
+            second.run_id, first.run_id,
+            "the run stays open for the steer"
+        );
+        assert_eq!(steering_entries_in(&second.request.context.entries), 1);
+        assert_eq!(
+            drive.state().runs.active.as_ref().unwrap().steering[0].consumed_by_turn_id,
+            Some(second.turn_id)
+        );
+
+        let action = drive
+            .resume_generation(final_text_result(&second), 301)
+            .expect("second answer");
+        log.extend(commit_action(&mut drive, action));
+        assert!(matches!(
+            pump_logged(&mut drive, &mut log),
+            CoreAgentAction::Idle
+        ));
+        assert_eq!(drive.state().runs.completed[0].status, RunStatus::Completed);
+        assert_eq!(steering_entries_in(&drive.state().context.entries), 1);
+        assert_log_replays_to(&log, drive.state());
+    }
+
+    #[test]
+    fn steering_in_the_started_window_of_a_tool_turn_stays_uncompactable_until_carried() {
+        let (mut drive, mut log) = steer_while_turn_is_only_started();
+
+        let first = expect_generation(pump_logged(&mut drive, &mut log));
+        assert_eq!(steering_entries_in(&first.request.context.entries), 0);
+        let action = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: first.run_id,
+                    turn_id: first.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: Some("resp-tool".to_owned()),
+                        finish: LlmFinish::ToolCalls,
+                        usage: None,
+                        tool_calls: vec![ObservedToolCall {
+                            call_id: crate::ToolCallId::new("call_a"),
+                            tool_id: Some(ToolName::new("fn_a")),
+                            tool_name: ToolName::new("fn_a"),
+                            provider_kind: None,
+                            arguments_ref: BlobRef::from_bytes(b"{}"),
+                            native_call_ref: None,
+                        }],
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                300,
+            )
+            .expect("tool turn");
+        log.extend(commit_action(&mut drive, action));
+        let CoreAgentAction::InvokeTools { request } = pump_logged(&mut drive, &mut log) else {
+            panic!("expected the tool batch");
+        };
+
+        // Materialized once the turn completed, but no request has carried it, so a
+        // compaction planned now must stop short of it.
+        let run = drive.state().runs.active.as_ref().unwrap();
+        let steering_entry = run.steering[0].entry_ids[0];
+        assert_eq!(run.steering[0].consumed_by_turn_id, None);
+        assert!(
+            !crate::core::components::context::standalone_prefix_ids(drive.state())
+                .contains(&steering_entry)
+        );
+
+        let action = drive
+            .resume_tool_batch(completed_tool_result(&request), 301)
+            .expect("tool result");
+        log.extend(commit_action(&mut drive, action));
+        let second = expect_generation(pump_logged(&mut drive, &mut log));
+        assert_eq!(steering_entries_in(&second.request.context.entries), 1);
+        assert_eq!(
+            drive.state().runs.active.as_ref().unwrap().steering[0].consumed_by_turn_id,
+            Some(second.turn_id)
+        );
+        assert_log_replays_to(&log, drive.state());
+    }
+
     #[test]
     fn unconsumed_steering_extends_run_by_one_turn_after_final_output() {
         let session_id = SessionId::new("session-a");
@@ -9398,30 +9601,31 @@ mod tests {
         Ok(())
     }
 
+    fn final_text_result(request: &LlmGenerationRequest) -> LlmGenerationResult {
+        LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: vec![message_input(
+                ContextMessageRole::Assistant,
+                BlobRef::from_bytes(b"answer"),
+            )],
+            facts: LlmGenerationFacts {
+                duration_ms: None,
+                provider_response_id: None,
+                finish: LlmFinish::Stop,
+                usage: None,
+                tool_calls: Vec::new(),
+                approval_requests: Vec::new(),
+                context_token_estimate: None,
+            },
+        }
+    }
+
     fn final_answer(drive: &mut CoreAgentDrive, request: &LlmGenerationRequest) {
         let action = drive
-            .resume_generation(
-                LlmGenerationResult {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                    status: LlmGenerationStatus::Succeeded,
-                    failure_ref: None,
-                    context_entries: vec![message_input(
-                        ContextMessageRole::Assistant,
-                        BlobRef::from_bytes(b"answer"),
-                    )],
-                    facts: LlmGenerationFacts {
-                        duration_ms: None,
-                        provider_response_id: None,
-                        finish: LlmFinish::Stop,
-                        usage: None,
-                        tool_calls: Vec::new(),
-                        approval_requests: Vec::new(),
-                        context_token_estimate: None,
-                    },
-                },
-                80,
-            )
+            .resume_generation(final_text_result(request), 80)
             .expect("resume generation");
         commit_action(drive, action);
     }
