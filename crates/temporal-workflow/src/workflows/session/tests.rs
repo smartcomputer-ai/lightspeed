@@ -299,6 +299,49 @@ fn rehydrated_active_run_wakes_core_drive_without_a_new_signal() {
 }
 
 #[test]
+fn a_deferred_toolset_waits_out_a_parked_batch_without_spinning_the_loop() {
+    let mut workflow = workflow_with_parked_tool_batch(AwaitSpec {
+        promise_ids: vec![harness::PromiseId::new("promise_1")],
+        mode: harness::AwaitMode::All,
+        deadline_at_ms: Some(50_000),
+    });
+    let config = crate::default_session_config(harness::ModelSelection {
+        api_kind: harness::ProviderApiKind::OpenAiResponses,
+        provider_id: "openai".to_owned(),
+        model: "gpt-test".to_owned(),
+    });
+    workflow.pending_toolsets.push(preparation::PendingToolset {
+        prepared: crate::SessionToolsetPreparation {
+            source: crate::SessionToolsetSource {
+                config,
+                config_revision: 0,
+                bindings: Default::default(),
+                system_binding_ids: Default::default(),
+            },
+            declarations: Vec::new(),
+            tools: Default::default(),
+        },
+        run_id: RunId::new(2),
+        admission: admission(request_input_run("queued_behind_parked_batch")),
+    });
+    assert!(harness::tools_frozen(&workflow.core_state));
+    assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
+        &workflow
+    ));
+    assert!(!wait_loop::workflow_state_has_immediate_work(&workflow));
+
+    // Once the batch is gone the toolset publishes at the very next wake.
+    let run = workflow.core_state.runs.active.as_mut().unwrap();
+    run.parked_tool_batch = None;
+    run.active_tool_batch_id = None;
+    run.status = RunStatus::Active;
+    assert!(!harness::tools_frozen(&workflow.core_state));
+    assert!(wait_loop::workflow_state_needs_core_drive_for_state(
+        &workflow
+    ));
+}
+
+#[test]
 fn legacy_step_limit_decodes_but_is_never_serialized() {
     let args = agent_session_args_with_close_on_terminal(false);
     let mut encoded = serde_json::to_value(&args).expect("serialize workflow args");

@@ -879,6 +879,7 @@ pub fn admit_command(
             tools,
         } => {
             require_open(state)?;
+            require_tools_not_frozen(state)?;
             validate_expected_tool_revision(state, expected_revision)?;
             validate_tool_map(&tools).map_err(command_rejection_from_domain)?;
 
@@ -895,6 +896,7 @@ pub fn admit_command(
             patch,
         } => {
             require_open(state)?;
+            require_tools_not_frozen(state)?;
             validate_expected_tool_revision(state, expected_revision)?;
             if patch.is_empty() {
                 return Ok(Vec::new());
@@ -989,6 +991,17 @@ fn require_no_active_or_queued_work(
         || state.context.compaction.is_pending()
     {
         reject(CommandRejectionKind::ActiveWork, message)
+    } else {
+        Ok(())
+    }
+}
+
+fn require_tools_not_frozen(state: &CoreAgentState) -> Result<(), CommandError> {
+    if crate::tools_frozen(state) {
+        reject(
+            CommandRejectionKind::ActiveWork,
+            "tools cannot change between a turn's start and the end of its tool batch",
+        )
     } else {
         Ok(())
     }

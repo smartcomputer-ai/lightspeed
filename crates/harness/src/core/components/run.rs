@@ -597,24 +597,30 @@ fn terminal_run_proposal(
 }
 
 /// True when a completed tool-call turn has no tool batch yet (active or
-/// completed); the tooling planner owns the next step for that run.
-fn has_unstarted_tool_call_turn(active_run: &ActiveRun) -> bool {
-    active_run.turns.iter().any(|(turn_id, turn)| {
-        turn.status == TurnStatus::Completed
-            && turn.outcome == Some(TurnOutcome::ToolCallsQueued)
-            && turn
-                .facts
-                .as_ref()
-                .is_some_and(|facts| !facts.tool_calls.is_empty())
-            && !active_run
-                .tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
-            && !active_run
-                .completed_tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
-    })
+/// completed); the tooling planner owns the next step for that run. No later turn
+/// can start until that batch exists, so only the latest turn can be in this state.
+pub(crate) fn has_unstarted_tool_call_turn(active_run: &ActiveRun) -> bool {
+    active_run
+        .turns
+        .iter()
+        .next_back()
+        .is_some_and(|(turn_id, turn)| {
+            turn.status == TurnStatus::Completed
+                && turn.outcome == Some(TurnOutcome::ToolCallsQueued)
+                && turn
+                    .facts
+                    .as_ref()
+                    .is_some_and(|facts| !facts.tool_calls.is_empty())
+                && !active_run
+                    .tool_batches
+                    .values()
+                    .any(|batch| batch.turn_id == *turn_id)
+                && !active_run
+                    .completed_tool_batches
+                    .values()
+                    .next_back()
+                    .is_some_and(|batch| batch.turn_id == *turn_id)
+        })
 }
 
 pub(crate) fn latest_turn_is_terminal_run_outcome(

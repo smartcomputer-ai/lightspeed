@@ -78,7 +78,7 @@ pub use tooling::{
     ToolCallStatus, ToolChoice, ToolConfigEvent, ToolEvent, ToolExecutionClass, ToolExecutionSpec,
     ToolKind, ToolParallelism, ToolPatch, ToolSpec, ToolingState, UNAVAILABLE_TOOL_RESULT_CONTENT,
     cancelled_tool_result_ref, remote_mcp_call_runtime, tool_runtime_boundary_failure_ref,
-    unavailable_tool_result_ref, validate_tool_map,
+    tools_frozen, unavailable_tool_result_ref, validate_tool_map,
 };
 pub use turn::{
     LlmFinish, LlmGenerationFacts, LlmGenerationStatus, LlmUsage, PlannedRequestState, TurnEvent,

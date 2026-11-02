@@ -6519,6 +6519,208 @@ mod tests {
         assert_log_replays_to(&log, drive.state());
     }
 
+    fn tool_call_generation(request: &LlmGenerationRequest) -> LlmGenerationResult {
+        LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: Vec::new(),
+            facts: LlmGenerationFacts {
+                duration_ms: None,
+                provider_response_id: Some("resp-tool".to_owned()),
+                finish: LlmFinish::ToolCalls,
+                usage: None,
+                tool_calls: vec![ObservedToolCall {
+                    call_id: crate::ToolCallId::new(format!("call_{}", request.turn_id)),
+                    tool_id: Some(ToolName::new("fn_a")),
+                    tool_name: ToolName::new("fn_a"),
+                    provider_kind: None,
+                    arguments_ref: BlobRef::from_bytes(b"{}"),
+                    native_call_ref: None,
+                }],
+                approval_requests: Vec::new(),
+                context_token_estimate: None,
+            },
+        }
+    }
+
+    /// Both toolset commands are refused with `ActiveWork` and nothing moves.
+    fn assert_tools_frozen(drive: &mut CoreAgentDrive) {
+        assert!(crate::tools_frozen(drive.state()));
+        let revision = drive.state().tooling.revision;
+        for command in [
+            CoreAgentCommand::ReplaceTools {
+                expected_revision: Some(revision),
+                tools: std::collections::BTreeMap::new(),
+            },
+            CoreAgentCommand::PatchTools {
+                expected_revision: Some(revision),
+                patch: crate::ToolPatch {
+                    upsert: vec![test_tool_spec("added")],
+                    remove: Vec::new(),
+                },
+            },
+        ] {
+            assert!(matches!(
+                drive.admit_command(command, 500),
+                Err(CoreAgentDriveError::Command(CommandError::Rejected(rejection)))
+                    if rejection.kind == CommandRejectionKind::ActiveWork
+            ));
+        }
+    }
+
+    #[test]
+    fn tools_stay_frozen_from_turn_start_until_the_batch_ends_and_publish_at_the_next_boundary() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-tools-frozen"),
+            CoreAgentState::new(),
+            None,
+        );
+        let mut log = Vec::new();
+        admit_logged(
+            &mut drive,
+            &mut log,
+            CoreAgentCommand::OpenSession { config: config() },
+        );
+        let spec = test_tool_spec("fn_a");
+        admit_logged(
+            &mut drive,
+            &mut log,
+            CoreAgentCommand::ReplaceTools {
+                expected_revision: None,
+                tools: std::collections::BTreeMap::from([(spec.name.clone(), spec)]),
+            },
+        );
+        assert!(!crate::tools_frozen(drive.state()), "no run");
+        admit_logged(
+            &mut drive,
+            &mut log,
+            request_run_command(
+                None,
+                user_input(BlobRef::from_bytes(b"input")),
+                run_config(),
+            ),
+        );
+        assert!(!crate::tools_frozen(drive.state()), "queued, no turn yet");
+
+        // Generation in flight.
+        let first = expect_generation(pump_logged(&mut drive, &mut log));
+        assert_tools_frozen(&mut drive);
+
+        // `Turn::Completed` has cleared the active turn but `BatchStarted` is not
+        // appended yet: the window a published toolset used to wedge the planner in.
+        let action = drive
+            .resume_generation(tool_call_generation(&first), 300)
+            .expect("tool turn");
+        log.extend(commit_action(&mut drive, action));
+        assert_eq!(
+            drive.state().runs.active.as_ref().unwrap().active_turn_id,
+            None
+        );
+        assert_tools_frozen(&mut drive);
+        let CoreAgentAction::AppendEvents { .. } = drive.next_action(301, 64).unwrap() else {
+            panic!("the planner still proposes the batch start");
+        };
+
+        // Batch open, with the toolset revision the turn was planned against.
+        let CoreAgentAction::InvokeTools { request } = pump_logged(&mut drive, &mut log) else {
+            panic!("expected the tool batch");
+        };
+        assert_tools_frozen(&mut drive);
+        let action = drive
+            .resume_tool_batch(completed_tool_result(&request), 302)
+            .expect("tool result");
+        log.extend(commit_action(&mut drive, action));
+
+        // The batch has ended: the next boundary before the next turn starts.
+        for now in 303..320 {
+            if drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .unwrap()
+                .active_tool_batch_id
+                .is_none()
+            {
+                break;
+            }
+            let action = drive.next_action(now, 64).expect("next action");
+            log.extend(commit_action(&mut drive, action));
+        }
+        assert!(!crate::tools_frozen(drive.state()));
+        let revision = drive.state().tooling.revision;
+        admit_logged(
+            &mut drive,
+            &mut log,
+            CoreAgentCommand::PatchTools {
+                expected_revision: Some(revision),
+                patch: crate::ToolPatch {
+                    upsert: vec![test_tool_spec("added")],
+                    remove: Vec::new(),
+                },
+            },
+        );
+
+        // A second tool turn plans and starts its batch on the published revision.
+        let second = expect_generation(pump_logged(&mut drive, &mut log));
+        let action = drive
+            .resume_generation(tool_call_generation(&second), 330)
+            .expect("second tool turn");
+        log.extend(commit_action(&mut drive, action));
+        let CoreAgentAction::InvokeTools { request } = pump_logged(&mut drive, &mut log) else {
+            panic!("expected the second tool batch");
+        };
+        assert_eq!(request.turn_id, second.turn_id);
+        assert_log_replays_to(&log, drive.state());
+
+        // A final answer leaves nothing to protect.
+        let action = drive
+            .resume_tool_batch(completed_tool_result(&request), 331)
+            .expect("tool result");
+        log.extend(commit_action(&mut drive, action));
+        let third = expect_generation(pump_logged(&mut drive, &mut log));
+        let action = drive
+            .resume_generation(final_text_result(&third), 332)
+            .expect("final answer");
+        log.extend(commit_action(&mut drive, action));
+        assert!(!crate::tools_frozen(drive.state()));
+        assert!(matches!(
+            pump_logged(&mut drive, &mut log),
+            CoreAgentAction::Idle
+        ));
+        assert_log_replays_to(&log, drive.state());
+    }
+
+    #[test]
+    fn tools_stay_frozen_while_a_batch_is_parked_until_it_completes() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-tools-parked"),
+            CoreAgentState::new(),
+            None,
+        );
+        let request = drive_to_single_tool_invocation(&mut drive);
+        let parked = park_on_wait_promise(&mut drive, &request);
+        let action = drive
+            .resume_tool_batch_outcome(parked, 90)
+            .expect("park the batch");
+        commit_action(&mut drive, action);
+        assert_eq!(
+            drive.state().runs.active.as_ref().unwrap().status,
+            RunStatus::Parked
+        );
+        assert_tools_frozen(&mut drive);
+
+        let action = drive
+            .admit_command(resume_tool_batch_command(&request), 92)
+            .expect("resume");
+        commit_action(&mut drive, action);
+        assert_tools_frozen(&mut drive);
+        drive_until_generate(&mut drive);
+        assert_tools_frozen(&mut drive);
+    }
+
     #[test]
     fn unconsumed_steering_extends_run_by_one_turn_after_final_output() {
         let session_id = SessionId::new("session-a");
@@ -11818,18 +12020,22 @@ mod tests {
                 )
                 .is_err()
         );
+        // The parent batch is open, so the catalog this scope was granted from
+        // cannot go stale underneath it.
         let tools = drive.state().tooling.tools.clone();
-        code_tool_commit(
-            &mut drive,
-            CoreAgentCommand::ReplaceTools {
-                expected_revision: None,
-                tools,
-            },
-        );
-        assert!(
-            crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
-                .is_err()
-        );
+        assert!(matches!(
+            drive.admit_command(
+                CoreAgentCommand::ReplaceTools {
+                    expected_revision: None,
+                    tools,
+                },
+                100,
+            ),
+            Err(CoreAgentDriveError::Command(CommandError::Rejected(rejection)))
+                if rejection.kind == CommandRejectionKind::ActiveWork
+        ));
+        crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
+            .expect("the scope stays usable");
     }
     #[test]
     fn code_tool_start_failure_reuses_promise_failure_and_parallel_emission_budget() {

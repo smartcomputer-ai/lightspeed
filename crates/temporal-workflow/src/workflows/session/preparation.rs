@@ -189,9 +189,9 @@ pub(super) async fn publish_tools(
     drive: &mut CoreAgentDrive,
     prepared: SessionToolsetPreparation,
 ) -> Result<(), AgentApiError> {
-    if admissions::turn_in_flight(drive.state()) {
+    if harness::tools_frozen(drive.state()) {
         return Err(AgentApiError::conflict(
-            "cannot publish tools during an in-flight turn",
+            "cannot publish tools during a turn or its tool batch",
         ));
     }
     let universe_id = ctx
@@ -238,7 +238,7 @@ pub(super) async fn publish_pending_tools(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
 ) -> anyhow::Result<bool> {
-    if admissions::turn_in_flight(drive.state()) {
+    if harness::tools_frozen(drive.state()) {
         return Ok(false);
     }
     let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_toolsets));

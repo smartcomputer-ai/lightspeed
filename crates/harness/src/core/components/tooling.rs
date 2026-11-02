@@ -193,6 +193,19 @@ pub struct ToolingState {
     pub tools: BTreeMap<ToolName, ToolSpec>,
 }
 
+/// Whether the toolset must not move right now. The model chose its calls from the
+/// toolset its turn was planned against, and those calls and any code scope
+/// granted from them execute against that same toolset. That holds from the start
+/// of the turn until the batch it queued has finished, including while the batch is
+/// parked; a change waits for the next boundary.
+pub fn tools_frozen(state: &CoreAgentState) -> bool {
+    state.runs.active.as_ref().is_some_and(|run| {
+        run.active_turn_id.is_some()
+            || run.active_tool_batch_id.is_some()
+            || crate::core::components::run::has_unstarted_tool_call_turn(run)
+    })
+}
+
 pub fn validate_tool_map(tools: &BTreeMap<ToolName, ToolSpec>) -> Result<(), DomainError> {
     for (tool_name, tool) in tools {
         if &tool.name != tool_name {
@@ -1484,10 +1497,7 @@ fn planned_tool_for_turn(
 ) -> Option<ToolSpec> {
     let active_run = state.runs.active.as_ref()?;
     let turn = active_run.turns.get(&turn_id)?;
-    let planned = turn.planned_request.as_ref()?;
-    if planned.toolset_revision != state.tooling.revision {
-        return None;
-    }
+    turn.planned_request.as_ref()?;
     state.tooling.tools.get(tool_name).cloned()
 }
 

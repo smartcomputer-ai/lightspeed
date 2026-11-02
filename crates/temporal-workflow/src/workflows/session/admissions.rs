@@ -103,7 +103,7 @@ pub(super) async fn admit_admissions(
                         "configuration changed during tool preparation",
                     ));
                 }
-                if turn_in_flight(drive.state()) {
+                if harness::tools_frozen(drive.state()) {
                     deferred_tools = Some(prepared);
                 } else {
                     preparation::publish_tools(ctx, drive, prepared).await?;
