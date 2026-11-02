@@ -133,5 +133,83 @@ Later packages add their own entries.
 - **Run detail tails on very long runs.** Very long runs return the opening events
   plus a tail with `earlierEventsOmitted` rather than the whole run. Paged run
   detail is a follow-up.
+- **Admission refusals no longer end the workflow.** A `DomainError` at the admission
+  site now rejects that one command and logs at error level. A real proposal bug
+  costs one command and no longer produces a failed workflow signal.
+- **Reducer trust moved to the proposal layer.** With policy out of the reducer, the
+  dry run no longer catches a proposal builder that skips a moved check: a builder
+  bug can now commit a policy-violating event that replays fine. Moved checks that
+  held by construction have no second line of defence.
+- **A queued message during a long parked batch delays rollover.** The toolset of a
+  run prepared while a batch is parked stays pending, and `pending_toolsets` blocks
+  continue-as-new. History only grows by what the park itself produces, but a run
+  parked for days holds the rollover until the batch ends.
 
 ## Progress
+
+### `core-commit-safety` (H-01, H-16, H-11, H-06)
+
+Landed:
+
+- `c59fd9b3` starts this document.
+- `db961ebe` (H-01) dry-runs every append. `append_action` reduces the encoded batch
+  on a cloned state, through the same decode and apply path as `resume_appended`,
+  and returns the refusal before `AppendEvents`. The detach branch skips promises
+  cancelled in the same result, which removes the model-reachable
+  `[Cancelled, Detached]` trigger.
+- `964c13ee` (H-16) keeps policy out of the reducer. Arms enforce position, ids,
+  revisions and references; each moved check still runs at admission, in proposal
+  building, or holds by construction. `CompactionRequested` checks non-empty, every
+  id active, none unconsumed run input, plus boundary, trigger and run id, and makes
+  no prefix or ordering claim. The prefix computation stays in the planner.
+- `fa6c40a9` (H-11) requires a steering batch to be fully materialized before a turn
+  can consume it, so a steer admitted in the `Turn::Started` window is delivered.
+- `846b1eca` (H-06) adds `harness::tools_frozen`: an active turn, a completed
+  tool-call turn with no batch, or an open batch including a parked one. It gates
+  `publish_pending_tools`, `publish_tools`, the `PreparedRun` branch and the wait
+  loop's pending-toolset clause. Admission rejects `PatchTools` and `ReplaceTools`
+  with `ActiveWork` while it holds.
+
+Checks: `cargo test -p harness` (272 passed), `cargo test -p temporal-workflow --lib`
+(161 passed, run for the new wait-loop test), `cargo check --workspace --all-targets
+--locked`. No live suite ran; the Temporal paths wait for the first checkpoint.
+
+Calls made:
+
+- A refusal at the admission site becomes a rejected admission, kind
+  `InvariantViolation`, logged at error level (`session_admission_refused`). This
+  also covers `DomainError`s from `admit_command` itself, which used to end the
+  workflow. `last_warning` is added by `session-liveness-read`.
+- A refusal on the drive path still fails the workflow, as instructed, until the
+  FailRun funnel in `core-failrun`. The log stays loadable and force close works.
+- The dry run decodes the encoded events rather than applying the typed proposals,
+  so an event that would not decode is refused too. Measured earlier at about 35 ms
+  on a 1.8 MB state in an unoptimized build.
+- The H-16 audit removed more than the listed checks, on the same rule: canonical
+  invocation and execution id recomputation, the completion promise map shape and
+  promise source comparison on `Emitted`, the managed declaration version and
+  creation fingerprint recomputation, turn outcome versus generation result,
+  approval note rules, the runtime-owned promise shape on `Created` and the ownership
+  check on `Detached`, replaceable-kind rules on `EntriesReplaced`, external edit
+  rules on `KeyPrefixReplaced`, the tool-choice reference on recorded configs and
+  runs, and the code scope grant, id and joined-deadline checks.
+- Kept in the reducer: promise terminal transitions, the provider and API-kind pin on
+  recorded config updates and run overrides, the idle check on config updates, and
+  the code scope toolset revision check, which `tools_frozen` makes unreachable for
+  new input.
+- `has_unstarted_tool_call_turn` looks only at the latest turn now. No later turn can
+  start before that turn's batch exists, and the old scan was quadratic on long runs.
+- The unreachable revision branch in `planned_tool_for_turn` is deleted, along with
+  the no-op `validate_removal_reason`, `validate_rewrite_reason` and
+  `validate_active_context_api_kind`.
+
+Deviations:
+
+- `read_tool_emissions` still re-validates bindings and fingerprints on read. It is a
+  projection rather than the reducer, and a tightened rule fails only that read, not
+  the session. Left as it is; the same rule would argue for trimming it later.
+- The `tooling::plan_next` revision error stays. `tools_frozen` makes it unreachable,
+  and the reducer's `BatchStarted` revision check stays with it.
+- The separate `Run::Failed` conversion, the duplicate id checks in
+  `generation_result_proposals` and the second-gated-call fix are not here. They
+  belong to `core-failrun` and `tool-dispatch-per-call`.
