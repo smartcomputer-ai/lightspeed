@@ -240,7 +240,6 @@ pub(crate) fn apply_approval_event(
             note,
             decided_by,
         } => {
-            validate_note(note.as_deref())?;
             let run = crate::core::components::run::active_run_mut(state, *run_id)?;
             let record = run.approvals.get_mut(approval_id).ok_or_else(|| {
                 DomainError::InvariantViolation(format!("unknown approval {approval_id}"))

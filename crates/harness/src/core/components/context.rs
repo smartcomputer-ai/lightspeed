@@ -1381,11 +1381,10 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
         Event::EntriesRemoved {
             base_revision,
             entry_ids,
-            reason,
+            reason: _,
         } => {
             validate_base_revision(state, *base_revision)?;
-            validate_removal_reason(reason)?;
-            validate_entries_removable(state, entry_ids, reason)?;
+            validate_entries_removable(state, entry_ids)?;
             remove_context_entries(state, entry_ids)?;
             bump_context_revision(state)?;
             Ok(())
@@ -1420,10 +1419,10 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
         Event::StateReplaced {
             base_revision,
             entries,
-            reason,
+            reason: _,
         } => {
             validate_base_revision(state, *base_revision)?;
-            replace_context_state(state, entries, reason)?;
+            replace_context_state(state, entries)?;
             bump_context_revision(state)?;
             Ok(())
         }
@@ -1445,7 +1444,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                         entry.entry_id
                     )));
                 }
-                validate_entry_replacement(state, entry)?;
+                validate_recorded_entry_replacement(state, entry)?;
             }
             for entry in entries {
                 let active = state
@@ -1468,12 +1467,22 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             if !compaction_safe_boundary(state)
                 || plan.trigger != *trigger
                 || plan.run_id != state.runs.active.as_ref().map(|run| run.run_id)
-                || plan.covered_entry_ids != standalone_prefix_ids(state)
                 || plan.covered_entry_ids.is_empty()
             {
                 return Err(DomainError::InvariantViolation(
-                    "invalid compaction prefix or execution boundary".into(),
+                    "invalid compaction plan or execution boundary".into(),
                 ));
+            }
+            // A recorded plan is a fact: which entries it covers is the planner's
+            // decision, and the planner may change. It only has to name entries
+            // that exist and that compaction is allowed to rewrite.
+            for entry_id in &plan.covered_entry_ids {
+                if entry_by_id(state, *entry_id).is_none() {
+                    return Err(DomainError::InvariantViolation(format!(
+                        "compaction plan covers unknown context entry {entry_id}"
+                    )));
+                }
+                validate_entry_is_not_unconsumed_active_run_input(state, *entry_id)?;
             }
             if let Some(run) = state.runs.active.as_mut()
                 && let Some(turn) = run.turns.values().next_back()
@@ -1711,8 +1720,6 @@ fn validate_key_prefix_replacement_entries(
                 entry.entry_id
             )));
         }
-        let input = context_entry_input_from_active(entry);
-        validate_external_context_edit_entry(key, &input)?;
     }
     Ok(())
 }
@@ -1858,12 +1865,9 @@ pub fn validate_entry_replacement(
     state: &CoreAgentState,
     entry: &ContextEntry,
 ) -> Result<(), DomainError> {
+    validate_recorded_entry_replacement(state, entry)?;
     let entry_id = entry.entry_id;
-    let Some(active) = entry_by_id(state, entry_id) else {
-        return Err(DomainError::InvariantViolation(format!(
-            "cannot replace unknown context entry {entry_id}"
-        )));
-    };
+    let active = entry_by_id(state, entry_id).expect("validated active entry");
     let catalog_metadata_only = is_supersedable_catalog_kind(&active.kind)
         && active.content == entry.content
         && active.supersedes == entry.supersedes
@@ -1883,6 +1887,20 @@ pub fn validate_entry_replacement(
             "context entry {entry_id} cannot be replaced: only tool results, user messages, and current catalog metadata can"
         )));
     }
+    Ok(())
+}
+
+/// What any replacement must keep true, whichever kinds admission allows.
+fn validate_recorded_entry_replacement(
+    state: &CoreAgentState,
+    entry: &ContextEntry,
+) -> Result<(), DomainError> {
+    let entry_id = entry.entry_id;
+    let Some(active) = entry_by_id(state, entry_id) else {
+        return Err(DomainError::InvariantViolation(format!(
+            "cannot replace unknown context entry {entry_id}"
+        )));
+    };
     if entry.kind != active.kind || entry.key != active.key || entry.source != active.source {
         return Err(DomainError::InvariantViolation(format!(
             "replacement of context entry {entry_id} must keep its kind, key, and source"
@@ -1891,16 +1909,9 @@ pub fn validate_entry_replacement(
     validate_entry_is_not_unconsumed_active_run_input(state, entry_id)
 }
 
-fn validate_removal_reason(reason: &ContextRemovalReason) -> Result<(), DomainError> {
-    match reason {
-        ContextRemovalReason::Pruned | ContextRemovalReason::ProviderCompacted => Ok(()),
-    }
-}
-
 fn validate_entries_removable(
     state: &CoreAgentState,
     entry_ids: &[ContextEntryId],
-    _reason: &ContextRemovalReason,
 ) -> Result<(), DomainError> {
     for entry_id in entry_ids {
         validate_entry_is_not_unconsumed_active_run_input(state, *entry_id)?;
@@ -2050,9 +2061,7 @@ fn context_entry_input_from_active(entry: &ContextEntry) -> ContextEntryInput {
 fn replace_context_state(
     state: &mut CoreAgentState,
     entries: &[ContextEntry],
-    reason: &ContextRewriteReason,
 ) -> Result<(), DomainError> {
-    validate_rewrite_reason(state, reason)?;
     validate_replacement_entries(state, entries)?;
     validate_rewrite_preserves_unconsumed_entries(state, entries)?;
 
@@ -2080,17 +2089,6 @@ fn validate_rewrite_preserves_unconsumed_entries(
         }
     }
     Ok(())
-}
-
-fn validate_rewrite_reason(
-    _state: &CoreAgentState,
-    reason: &ContextRewriteReason,
-) -> Result<(), DomainError> {
-    match reason {
-        ContextRewriteReason::Pruned
-        | ContextRewriteReason::PolicyChanged
-        | ContextRewriteReason::ProviderCompacted => Ok(()),
-    }
 }
 
 fn validate_replacement_entries(

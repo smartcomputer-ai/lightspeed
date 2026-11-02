@@ -46,22 +46,21 @@ pub(crate) fn validate_config_update_for_state(
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
     validate_recorded_config_update(state, config)?;
+    config.validate()?;
+    validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
     validate_retained_native_model(state, &config.model)
 }
 
-/// Replay keeps structural invariants, but does not reapply a newer admission
-/// policy to model changes already recorded in the log.
+/// The reducer's half of a config update. A recorded document already passed
+/// the admission policy of its day, so replay keeps only the structure the rest
+/// of the log depends on and never reapplies a newer policy.
 pub(crate) fn validate_recorded_config_update(
     state: &CoreAgentState,
     config: &SessionConfig,
 ) -> Result<(), DomainError> {
     let current = current_config(state)?;
     validate_session_is_idle_for_config_update(state)?;
-    config.validate()?;
-    validate_session_provider_is_pinned(&current.model, &config.model)?;
-    validate_active_context_api_kind(state, &config.model.api_kind)?;
-    validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
-    Ok(())
+    validate_session_provider_is_pinned(&current.model, &config.model)
 }
 
 /// Turn-shaping defaults applied to every LLM generation. Per-run overrides
@@ -794,20 +793,6 @@ pub(crate) fn validate_run_config_for_state(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
-    validate_recorded_run_config(state, run_config)?;
-    let config = current_config(state)?;
-    validate_retained_native_model(
-        state,
-        run_config.model_override.as_ref().unwrap_or(&config.model),
-    )
-}
-
-/// A committed run has already passed admission. Preserve its model selection
-/// even if the current native-state admission policy would refuse it now.
-pub(crate) fn validate_recorded_run_config(
-    state: &CoreAgentState,
-    run_config: &RunConfig,
-) -> Result<(), DomainError> {
     if run_config.input_limit_tokens == Some(0) {
         return Err(DomainError::ProviderCompatibility(
             "input_limit_tokens must be positive".into(),
@@ -815,9 +800,25 @@ pub(crate) fn validate_recorded_run_config(
     }
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
-    validate_active_context_api_kind(state, &config.model.api_kind)?;
     validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
-    Ok(())
+    validate_retained_native_model(
+        state,
+        run_config.model_override.as_ref().unwrap_or(&config.model),
+    )
+}
+
+/// The reducer's half of a run request. A committed run has already passed
+/// admission, so replay preserves its configuration and only keeps the session
+/// on the provider its retained context belongs to.
+pub(crate) fn validate_recorded_run_config(
+    state: &CoreAgentState,
+    run_config: &RunConfig,
+) -> Result<(), DomainError> {
+    let config = current_config(state)?;
+    match run_config.model_override.as_ref() {
+        Some(model) => validate_session_provider_is_pinned(&config.model, model),
+        None => Ok(()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1376,14 +1377,6 @@ fn validate_retained_native_model(
     {
         return Err(DomainError::ProviderCompatibility("model cannot change while native compaction or reasoning state is retained; use a new session".into()));
     }
-    Ok(())
-}
-
-fn validate_active_context_api_kind(
-    state: &CoreAgentState,
-    api_kind: &ProviderApiKind,
-) -> Result<(), DomainError> {
-    let _ = (state, api_kind);
     Ok(())
 }
 

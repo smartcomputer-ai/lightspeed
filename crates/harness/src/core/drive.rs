@@ -2015,8 +2015,7 @@ fn tool_call_completed_proposals_inner(
                     ));
                 }
                 // Keyed completion promises are created atomically with the
-                // invocation, before its Emitted fact, so the Emitted apply
-                // can verify every keyed promise exists with the canonical
+                // invocation, before its Emitted fact, with the canonical
                 // producer-authorized source.
                 if let Some(promises) = &invocation.completion_promises {
                     let deadline_ms =
@@ -9383,6 +9382,323 @@ mod tests {
         assert_eq!(promise.scope, crate::PromiseScope::Session);
     }
 
+    /// Reduce one event as if it had been read back from the log, the way
+    /// replay and `resume_appended` do.
+    fn recorded(drive: &mut CoreAgentDrive, event: CoreAgentEvent) -> Result<(), DomainError> {
+        let entry = CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(drive.head().map_or(1, |head| head.seq.as_u64() + 1)),
+            },
+            observed_at_ms: 1_000,
+            joins: CoreAgentJoins::default(),
+            event,
+        };
+        crate::core::apply::apply_event(&mut drive.state, &entry)?;
+        drive.head = drive.state.reduced_to.clone();
+        Ok(())
+    }
+
+    fn final_answer(drive: &mut CoreAgentDrive, request: &LlmGenerationRequest) {
+        let action = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    status: LlmGenerationStatus::Succeeded,
+                    failure_ref: None,
+                    context_entries: vec![message_input(
+                        ContextMessageRole::Assistant,
+                        BlobRef::from_bytes(b"answer"),
+                    )],
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: None,
+                        finish: LlmFinish::Stop,
+                        usage: None,
+                        tool_calls: Vec::new(),
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                80,
+            )
+            .expect("resume generation");
+        commit_action(drive, action);
+    }
+
+    /// Three finished runs of a user message and an answer: six consumed entries.
+    fn session_with_finished_runs(session: &str) -> CoreAgentDrive {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new(session), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        for _ in 0..3 {
+            request_run(&mut drive, BlobRef::from_bytes(b"input"));
+            let request = drive_until_generate(&mut drive);
+            final_answer(&mut drive, &request);
+            for now in 81..120 {
+                let action = drive.next_action(now, 64).expect("next action");
+                if matches!(action, CoreAgentAction::Idle) {
+                    break;
+                }
+                commit_action(&mut drive, action);
+            }
+        }
+        drive
+    }
+
+    fn compaction_requested(
+        drive: &CoreAgentDrive,
+        covered: Vec<ContextEntryId>,
+    ) -> CoreAgentEvent {
+        CoreAgentEvent::Context(ContextEvent::CompactionRequested {
+            base_revision: drive.state().context.revision,
+            trigger: ContextCompactionTrigger::Manual,
+            plan: crate::ContextCompactionPlan {
+                run_id: None,
+                covered_entry_ids: covered,
+                trigger: ContextCompactionTrigger::Manual,
+            },
+        })
+    }
+
+    #[test]
+    fn a_recorded_compaction_plan_replays_whatever_the_planner_would_choose_today() {
+        let drive = session_with_finished_runs("session-recorded-plan");
+        let ids = entry_ids(&drive)
+            .into_iter()
+            .map(ContextEntryId::new)
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 6);
+        let planned = crate::core::components::context::standalone_prefix_ids(drive.state());
+        assert!(planned.len() < 4, "today's planner keeps recent turns");
+
+        for covered in [
+            ids[..4].to_vec(),
+            ids.clone(),
+            vec![ids[1], ids[3]],
+            vec![ids[3], ids[1]],
+        ] {
+            let mut replayed = CoreAgentDrive::from_replayed(
+                SessionId::new("session-recorded-plan"),
+                drive.state().clone(),
+                drive.head().cloned(),
+            );
+            let event = compaction_requested(&replayed, covered.clone());
+            recorded(&mut replayed, event).expect("a recorded plan is a fact");
+            assert_eq!(
+                replayed
+                    .state()
+                    .context
+                    .compaction
+                    .pending_plan()
+                    .unwrap()
+                    .covered_entry_ids,
+                covered
+            );
+        }
+    }
+
+    #[test]
+    fn a_recorded_compaction_plan_must_still_name_entries_it_may_rewrite() {
+        let mut drive = session_with_finished_runs("session-plan-structure");
+        let mut state = drive.state().clone();
+        let event = compaction_requested(&drive, Vec::new());
+        recorded(&mut drive, event).expect_err("an empty plan covers nothing");
+        let event = compaction_requested(&drive, vec![ContextEntryId::new(999)]);
+        recorded(&mut drive, event).expect_err("the plan names an unknown entry");
+        assert_eq!(
+            drive.state(),
+            &state,
+            "refused events leave state untouched"
+        );
+
+        // Run input that no request has carried yet may never be compacted.
+        request_run(&mut drive, BlobRef::from_bytes(b"unconsumed"));
+        for now in 200..220 {
+            if drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .is_some_and(|run| !run.input_entry_ids.is_empty())
+            {
+                break;
+            }
+            let action = drive.next_action(now, 64).expect("next action");
+            commit_action(&mut drive, action);
+        }
+        let input = drive.state().runs.active.as_ref().unwrap().input_entry_ids[0];
+        assert!(
+            drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .unwrap()
+                .input_consumed_by_turn_id
+                .is_none()
+        );
+        state = drive.state().clone();
+        let mut event = compaction_requested(&drive, vec![input]);
+        if let CoreAgentEvent::Context(ContextEvent::CompactionRequested { plan, .. }) = &mut event
+        {
+            plan.run_id = Some(state.runs.active.as_ref().unwrap().run_id);
+        }
+        recorded(&mut drive, event).expect_err("unconsumed run input stays out of a plan");
+    }
+
+    #[test]
+    fn recorded_config_and_tools_replay_under_a_stricter_admission_policy() {
+        let mut below_minimum = config();
+        below_minimum.model.api_kind = ProviderApiKind::AnthropicMessages;
+        below_minimum.context.compaction = Some(CompactionPolicy::ProviderTriggered {
+            compact_threshold_tokens: Some(40_000),
+        });
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-recorded-config"),
+            CoreAgentState::new(),
+            None,
+        );
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::OpenSession {
+                        config: below_minimum.clone()
+                    },
+                    10
+                )
+                .is_err(),
+            "admission still applies the threshold"
+        );
+        recorded(
+            &mut drive,
+            CoreAgentEvent::Lifecycle(crate::CoreAgentLifecycleEvent::Opened {
+                config: below_minimum.clone(),
+            }),
+        )
+        .expect("a recorded document is a fact");
+        recorded(
+            &mut drive,
+            CoreAgentEvent::Lifecycle(crate::CoreAgentLifecycleEvent::ConfigChanged {
+                config: below_minimum.clone(),
+                revision: 1,
+            }),
+        )
+        .expect("a recorded update is a fact");
+
+        let mut moved_provider = below_minimum;
+        moved_provider.model.provider_id = "another-provider".to_owned();
+        recorded(
+            &mut drive,
+            CoreAgentEvent::Lifecycle(crate::CoreAgentLifecycleEvent::ConfigChanged {
+                config: moved_provider,
+                revision: 2,
+            }),
+        )
+        .expect_err("retained context stays on the provider it belongs to");
+
+        let mut mismatched = test_tool_spec("recorded");
+        mismatched.name = ToolName::new("renamed");
+        let tools = std::collections::BTreeMap::from([(ToolName::new("recorded"), mismatched)]);
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::ReplaceTools {
+                        expected_revision: None,
+                        tools: tools.clone()
+                    },
+                    10
+                )
+                .is_err(),
+            "admission still validates the tool map"
+        );
+        recorded(
+            &mut drive,
+            CoreAgentEvent::ToolConfig(crate::ToolConfigEvent::ToolsReplaced {
+                base_revision: 0,
+                tools,
+            }),
+        )
+        .expect("a recorded tool map is a fact");
+        recorded(
+            &mut drive,
+            CoreAgentEvent::ToolConfig(crate::ToolConfigEvent::ToolsPatched {
+                base_revision: 1,
+                patch: crate::ToolPatch {
+                    upsert: Vec::new(),
+                    remove: vec![ToolName::new("already-gone")],
+                },
+            }),
+        )
+        .expect("a recorded patch is a fact");
+        recorded(
+            &mut drive,
+            CoreAgentEvent::ToolConfig(crate::ToolConfigEvent::ToolsPatched {
+                base_revision: 1,
+                patch: crate::ToolPatch {
+                    upsert: Vec::new(),
+                    remove: Vec::new(),
+                },
+            }),
+        )
+        .expect_err("tool events still follow the revision chain");
+    }
+
+    #[test]
+    fn a_recorded_run_replays_a_config_that_admission_now_refuses() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-recorded-run"),
+            CoreAgentState::new(),
+            None,
+        );
+        let mut anthropic = config();
+        anthropic.model.api_kind = ProviderApiKind::AnthropicMessages;
+        open_session_with_config(&mut drive, anthropic);
+        let run_config = RunConfig {
+            processing_tier: Some(crate::ModelProcessingTier::Flex),
+            input_limit_tokens: Some(0),
+            tool_choice: Some(ToolChoice::Specific {
+                tool_name: ToolName::new("no_longer_active"),
+            }),
+            ..RunConfig::default()
+        };
+        assert!(
+            drive
+                .admit_command(
+                    request_run_command(
+                        None,
+                        user_input(BlobRef::from_bytes(b"input")),
+                        run_config.clone(),
+                    ),
+                    20
+                )
+                .is_err(),
+            "admission still applies the provider rules"
+        );
+        let accepted = |run_config: RunConfig, run_id: u64| {
+            CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                run_id: RunId::new(run_id),
+                submission_id: None,
+                source: crate::RunSource::Input {
+                    input: user_input(BlobRef::from_bytes(b"input")),
+                },
+                run_config,
+                config_revision: 0,
+                notify_on_terminal: Vec::new(),
+                requested_by: None,
+            }))
+        };
+        recorded(&mut drive, accepted(run_config, 1)).expect("a recorded run is a fact");
+        let mut other_provider = config();
+        other_provider.model.provider_id = "another-provider".to_owned();
+        let moved = RunConfig {
+            model_override: Some(other_provider.model),
+            ..RunConfig::default()
+        };
+        recorded(&mut drive, accepted(moved, 2))
+            .expect_err("a run cannot move to another provider");
+    }
+
     /// A model-owned, run-scoped pending promise and a batch of three calls that
     /// control it, the shape that takes the unit path through `concurrency.await`.
     fn promise_control_batch(
@@ -11186,6 +11502,62 @@ mod tests {
                 .parked_tool_batch
                 .is_some()
         );
+    }
+
+    #[test]
+    fn recorded_code_tool_scope_and_calls_replay_past_todays_limits() {
+        let (mut drive, parent) = code_tool_fixture();
+        let mut scope = code_tool_scope(parent);
+        scope.max_calls = crate::MAX_CODE_TOOL_CALLS_PER_SCOPE + 1;
+        assert!(
+            drive
+                .admit_command(
+                    CoreAgentCommand::OpenCodeToolScope {
+                        scope: scope.clone()
+                    },
+                    100
+                )
+                .is_err(),
+            "admission still bounds the scope"
+        );
+        recorded(
+            &mut drive,
+            CoreAgentEvent::CodeTool(crate::CodeToolEvent::ScopeOpened { scope }),
+        )
+        .expect("a recorded scope is a fact");
+
+        // A lowered in-flight limit must not refuse calls that were admitted.
+        drive
+            .state
+            .code_tools
+            .scopes
+            .get_mut("execution-1")
+            .unwrap()
+            .spec
+            .max_in_flight = 1;
+        for request_id in ["1", "2"] {
+            let promise_id_base = drive.state().id_cursors.last_promise_id + 1;
+            recorded(
+                &mut drive,
+                CoreAgentEvent::CodeTool(crate::CodeToolEvent::CallAdmitted {
+                    call: code_tool_spec(request_id, "local_echo"),
+                    promise_id_base,
+                }),
+            )
+            .expect("a recorded call is a fact");
+        }
+
+        let mut ungranted = code_tool_spec("3", "local_echo");
+        ungranted.binding_id = "not-granted".into();
+        let promise_id_base = drive.state().id_cursors.last_promise_id + 1;
+        recorded(
+            &mut drive,
+            CoreAgentEvent::CodeTool(crate::CodeToolEvent::CallAdmitted {
+                call: ungranted,
+                promise_id_base,
+            }),
+        )
+        .expect_err("a call must still name a binding its scope granted");
     }
 
     #[test]

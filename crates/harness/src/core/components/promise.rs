@@ -274,15 +274,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     promise.promise_id
                 )));
             }
-            if promise.ownership == PromiseOwnership::Runtime
-                && (!matches!(promise.source, PromiseSource::Workflow { .. })
-                    || !matches!(promise.scope, PromiseScope::Run { .. }))
-            {
-                return Err(DomainError::InvariantViolation(format!(
-                    "runtime-owned promise {} must be a run-scoped workflow completion",
-                    promise.promise_id
-                )));
-            }
             if let PromiseScope::Run { run_id } = promise.scope {
                 let owned_by_active = state
                     .runs
@@ -331,12 +322,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
         }
         Event::Detached { promise_id } => {
             let promise = pending_promise_mut(state, promise_id)?;
-            if promise.ownership != PromiseOwnership::Model {
-                return Err(DomainError::InvariantViolation(format!(
-                    "runtime-owned promise {} cannot be detached",
-                    promise_id
-                )));
-            }
             promise.scope = PromiseScope::Session;
             Ok(())
         }

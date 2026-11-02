@@ -483,18 +483,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "turn completion requires settled generation".into(),
                 ));
             }
-            let Some(status) = turn.generation_status.as_ref() else {
-                return Err(DomainError::InvariantViolation(
-                    "settled generation is missing status".into(),
-                ));
-            };
-            let Some(facts) = turn.facts.as_ref() else {
-                return Err(DomainError::InvariantViolation(
-                    "settled generation is missing facts".into(),
-                ));
-            };
-            validate_outcome_for_generation(status, facts, outcome)?;
-
             turn.outcome = Some(outcome.clone());
             turn.status = match outcome {
                 TurnOutcome::FinalOutput { .. }
@@ -583,45 +571,4 @@ fn active_turn_mut(
     active_run.turns.get_mut(&turn_id).ok_or_else(|| {
         DomainError::InvariantViolation(format!("active turn {} is missing", turn_id))
     })
-}
-
-fn validate_outcome_for_generation(
-    status: &LlmGenerationStatus,
-    facts: &LlmGenerationFacts,
-    outcome: &TurnOutcome,
-) -> Result<(), DomainError> {
-    let valid = match status {
-        LlmGenerationStatus::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
-        LlmGenerationStatus::Failed => matches!(outcome, TurnOutcome::Failed { .. }),
-        LlmGenerationStatus::Rejected if facts.finish == LlmFinish::ContextLimit => matches!(
-            outcome,
-            TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }
-        ),
-        LlmGenerationStatus::Rejected => matches!(outcome, TurnOutcome::Rejected { .. }),
-        LlmGenerationStatus::Succeeded => match facts.finish {
-            LlmFinish::ToolCalls => matches!(outcome, TurnOutcome::ToolCallsQueued),
-            LlmFinish::ContextLimit => matches!(
-                outcome,
-                TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }
-            ),
-            LlmFinish::Cancelled => matches!(outcome, TurnOutcome::Cancelled),
-            LlmFinish::Failed | LlmFinish::ContentFilter | LlmFinish::Length => {
-                matches!(outcome, TurnOutcome::Failed { .. })
-            }
-            LlmFinish::Stop | LlmFinish::Unknown => {
-                if facts.approval_requests.is_empty() {
-                    matches!(outcome, TurnOutcome::FinalOutput { .. })
-                } else {
-                    matches!(outcome, TurnOutcome::ApprovalsRequested)
-                }
-            }
-        },
-    };
-    if valid {
-        Ok(())
-    } else {
-        Err(DomainError::InvariantViolation(
-            "turn completion outcome does not match generation result".into(),
-        ))
-    }
 }

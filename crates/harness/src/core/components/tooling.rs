@@ -314,6 +314,16 @@ impl ToolPatch {
         tools: &BTreeMap<ToolName, ToolSpec>,
     ) -> Result<BTreeMap<ToolName, ToolSpec>, DomainError> {
         self.validate_for(tools)?;
+        let next = self.merged_into(tools);
+        validate_tool_map(&next)?;
+        Ok(next)
+    }
+
+    /// The recorded effect of a patch, with no opinion on the tools it names.
+    pub(crate) fn merged_into(
+        &self,
+        tools: &BTreeMap<ToolName, ToolSpec>,
+    ) -> BTreeMap<ToolName, ToolSpec> {
         let mut next = tools.clone();
         for tool_name in &self.remove {
             next.remove(tool_name);
@@ -321,8 +331,7 @@ impl ToolPatch {
         for tool in &self.upsert {
             next.insert(tool.name.clone(), tool.clone());
         }
-        validate_tool_map(&next)?;
-        Ok(next)
+        next
     }
 }
 
@@ -1288,7 +1297,6 @@ pub(crate) fn apply_config_event(
             tools,
         } => {
             validate_tooling_base_revision(state, *base_revision)?;
-            validate_tool_map(tools)?;
             state.tooling.tools = tools.clone();
             bump_tooling_revision(state)?;
             Ok(())
@@ -1298,7 +1306,7 @@ pub(crate) fn apply_config_event(
             patch,
         } => {
             validate_tooling_base_revision(state, *base_revision)?;
-            state.tooling.tools = patch.apply_to(&state.tooling.tools)?;
+            state.tooling.tools = patch.merged_into(&state.tooling.tools);
             bump_tooling_revision(state)?;
             Ok(())
         }
