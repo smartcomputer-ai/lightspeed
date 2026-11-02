@@ -135,7 +135,10 @@ Later packages add their own entries.
   detail is a follow-up.
 - **Admission refusals no longer end the workflow.** A `DomainError` at the admission
   site now rejects that one command and logs at error level. A real proposal bug
-  costs one command and no longer produces a failed workflow signal.
+  costs one command and no longer produces a failed workflow signal. The two commands
+  the workflow reissues from durable state, `ResumeToolBatch` and `ForceCancelRun`,
+  are the exception: a refusal fails the workflow, because rejecting them would repeat
+  forever.
 - **Reducer trust moved to the proposal layer.** With policy out of the reducer, the
   dry run no longer catches a proposal builder that skips a moved check: a builder
   bug can now commit a policy-violating event that replays fine. Moved checks that
@@ -213,3 +216,29 @@ Deviations:
 - The separate `Run::Failed` conversion, the duplicate id checks in
   `generation_result_proposals` and the second-gated-call fix are not here. They
   belong to `core-failrun` and `tool-dispatch-per-call`.
+
+Review of this package, `1ad8fdad`:
+
+- The review found one bug the package introduced. Rejecting every reducer refusal at
+  the admission site looped for `ResumeToolBatch` and `ForceCancelRun`, which the
+  workflow issues again from durable state. These two now keep the drive's failure
+  path, as they did before the package. The log stays loadable because the dry run
+  wrote nothing.
+- Each moved H-16 check was traced to admission, proposal building or construction,
+  and no gap was found. The H-01, H-11 and H-06 behaviour matched the briefs.
+- Checks: `cargo test -p harness --lib` (272 passed), `cargo test -p temporal-workflow
+  --lib` (162 passed), `cargo test -p temporal-runtime --lib` (469 passed, 1 ignored),
+  `cargo check --workspace --all-targets --locked`. No live suite ran.
+
+Handoff to `core-failrun`:
+
+- The funnel is specified for the `core_drive` error site, but refusals also fail the
+  workflow at the `tool_batch_resume` and `cancellation_watchdog` sites in the session
+  loop. Both run `drive_until_idle`, so planner refusals can surface there too. The
+  funnel should cover them, or these failures stay workflow-fatal.
+
+Open, not introduced here: `resume_tool_batch_proposals` maps every `DomainError` to a
+rejection, and `process_pending_tool_batch_resumes` records it and carries on. A
+proposal-level rejection that is deterministic, rather than a stale claim, re-runs the
+await materialization on every pass with no backoff. The rejection kinds do not tell
+the two apart today.
