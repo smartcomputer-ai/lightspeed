@@ -299,6 +299,30 @@ fn rehydrated_active_run_wakes_core_drive_without_a_new_signal() {
 }
 
 #[test]
+fn only_commands_reissued_from_state_escape_a_rejected_admission() {
+    let run_id = RunId::new(1);
+    assert!(drive::reissued_from_state(
+        &CoreAgentCommand::ForceCancelRun { run_id }
+    ));
+    assert!(drive::reissued_from_state(
+        &CoreAgentCommand::ResumeToolBatch(harness::ResumeToolBatchCommand {
+            run_id,
+            batch_id: harness::ToolBatchId::new(1),
+            claim: harness::WakeReason::Terminal,
+            claim_observed_at_ms: 1,
+            output: harness::ToolBatchResumeOutput::JoinedWorkflowCalls {
+                additional_context: Vec::new(),
+            },
+        })
+    ));
+    assert!(!drive::reissued_from_state(&CoreAgentCommand::CancelRun {
+        requested_by: None,
+        run_id,
+    }));
+    assert!(!drive::reissued_from_state(&request_input_run("client")));
+}
+
+#[test]
 fn a_deferred_toolset_waits_out_a_parked_batch_without_spinning_the_loop() {
     let mut workflow = workflow_with_parked_tool_batch(AwaitSpec {
         promise_ids: vec![harness::PromiseId::new("promise_1")],

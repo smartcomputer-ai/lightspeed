@@ -34,6 +34,7 @@ pub(super) async fn admit_and_append_command(
     correlation_token: Option<String>,
 ) -> anyhow::Result<CommandAdmissionResult> {
     let submission_id = command_submission_id(&command);
+    let reissued = reissued_from_state(&command);
     if environment_prompt_publication_is_obsolete(drive.state(), &command)
         || environment_catalog_publication_is_obsolete(drive.state(), &command)
         || environment_attachment_catalog_publication_is_obsolete(drive.state(), &command)
@@ -71,7 +72,7 @@ pub(super) async fn admit_and_append_command(
         Err(
             CoreAgentDriveError::Domain(error)
             | CoreAgentDriveError::Command(CommandError::Domain(error)),
-        ) => {
+        ) if !reissued => {
             let rejection = harness::CommandRejection::new(
                 harness::CommandRejectionKind::InvariantViolation,
                 error.to_string(),
@@ -101,6 +102,17 @@ pub(super) async fn admit_and_append_command(
     }
 }
 
+/// The workflow issues these again from durable state for as long as that state
+/// asks for them, with no new signal. Failing only the command would repeat a
+/// deterministic reducer refusal forever, so the refusal takes the drive's failure
+/// path instead.
+pub(super) fn reissued_from_state(command: &CoreAgentCommand) -> bool {
+    matches!(
+        command,
+        CoreAgentCommand::ResumeToolBatch(_) | CoreAgentCommand::ForceCancelRun { .. }
+    )
+}
+
 pub(super) fn command_submission_id(command: &CoreAgentCommand) -> Option<SubmissionId> {
     match command {
         CoreAgentCommand::RequestRun(request) => request.submission_id.clone(),
@@ -126,7 +138,8 @@ pub(super) async fn process_pending_tool_batch_resumes(
                 // turns one bad batch result into a permanently wedged
                 // workflow (the 2026-07-06 incident shape). Record it and
                 // continue; if the run is now stuck in `cancelling`, the
-                // watchdog forces it terminal.
+                // watchdog forces it terminal. Only a reducer refusal, which
+                // cannot pass on a later attempt, returns an error above.
                 record_admission_failure(ctx, failure);
             }
         }
@@ -299,8 +312,9 @@ fn history_boundary_outcome(
         // the marker and active-run rollover becomes eligible.
         return None;
     }
-    // Pending preparation may need the current turn to finish before it can
-    // publish. Let the driver reach that boundary instead of yielding forever.
+    // Pending preparation may need the current turn and its tool batch to finish
+    // before it can publish. Let the driver reach that boundary instead of
+    // yielding forever.
     if ctx.state(|state| state.run_preparation.is_some() || !state.pending_toolsets.is_empty()) {
         return None;
     }

@@ -6313,9 +6313,6 @@ mod tests {
         )));
     }
 
-    /// Steering admitted during a run's final turn is not lost: the run
-    /// gets one more turn whose request carries the steering, and only then
-    /// completes.
     fn admit_logged(
         drive: &mut CoreAgentDrive,
         log: &mut Vec<CoreAgentEntry>,
@@ -6721,6 +6718,9 @@ mod tests {
         assert_tools_frozen(&mut drive);
     }
 
+    /// Steering admitted during a run's final turn is not lost: the run
+    /// gets one more turn whose request carries the steering, and only then
+    /// completes.
     #[test]
     fn unconsumed_steering_extends_run_by_one_turn_after_final_output() {
         let session_id = SessionId::new("session-a");

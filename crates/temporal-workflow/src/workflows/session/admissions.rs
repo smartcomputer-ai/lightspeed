@@ -224,7 +224,7 @@ pub(super) fn has_admissible_admissions(state: &AgentSessionWorkflow) -> bool {
         .any(|admission| admission.admissible_during_turn())
 }
 
-pub(super) fn turn_in_flight(state: &CoreAgentState) -> bool {
+fn turn_in_flight(state: &CoreAgentState) -> bool {
     state
         .runs
         .active
