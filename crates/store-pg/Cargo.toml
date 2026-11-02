@@ -18,13 +18,13 @@ environment-protocol = { path = "../environment-protocol" }
 futures-util = "0.3"
 async-trait = "0.1"
 mcp = { path = "../mcp" }
-object_store = { version = "0.14", features = ["aws"] }
+object_store = { version = "0.14", features = ["aws", "azure"] }
 profiles = { path = "../profiles" }
 rand = "0.10"
 sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "json"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid", "json"] }
 thiserror = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt"] }

@@ -35,7 +35,7 @@ llm-clients = { path = "../llm-clients" }
 llm-runtime = { path = "../llm-runtime" }
 mcp = { path = "../mcp" }
 object_store = "0.14"
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "uuid"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-native-roots", "postgres", "uuid"] }
 profiles = { path = "../profiles" }
 release-info = { path = "../release-info" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }

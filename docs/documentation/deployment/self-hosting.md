@@ -180,9 +180,9 @@ routes.
 Leave all `LIGHTSPEED_OBJECT_STORE_*` settings absent for the initial small-blob
 PostgreSQL setup. Writes above 64 KiB fail without object storage. Even setting
 part of that configuration to an empty value can activate object-store
-configuration and require a bucket. Follow
+configuration and require backend-specific settings. Follow
 [Choose the blob backend](configuration.md#choose-the-blob-backend) to add the
-complete S3-compatible configuration.
+complete S3-compatible or Azure Blob configuration.
 
 The Platform needs a deployment-scoped runtime key with every method group and
 permission to assert actors. The migration procedure below creates it. Prepare
