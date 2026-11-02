@@ -65,6 +65,27 @@ pub(super) async fn admit_and_append_command(
                 rejection: Some(rejection),
             }));
         }
+        // The reducer refused what admission proposed, and nothing was appended.
+        // This command is the only thing wrong with the session, so it is the
+        // only thing that fails.
+        Err(
+            CoreAgentDriveError::Domain(error)
+            | CoreAgentDriveError::Command(CommandError::Domain(error)),
+        ) => {
+            let rejection = harness::CommandRejection::new(
+                harness::CommandRejectionKind::InvariantViolation,
+                error.to_string(),
+            );
+            observability::log_admission_refused(ctx, &rejection.message);
+            return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
+                preparation_error: None,
+                submission_id,
+                correlation_token,
+                kind: AgentAdmissionFailureKind::RejectedCommand,
+                message: rejection.to_string(),
+                rejection: Some(rejection),
+            }));
+        }
         Err(error) => return Err(anyhow::anyhow!("{error}")),
     };
     match action {

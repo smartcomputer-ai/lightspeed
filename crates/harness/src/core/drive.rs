@@ -18,7 +18,7 @@ use crate::{
     CommandError, ContextCompactionRequest, ContextCompactionResult, ContextEntryInput,
     ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole, CoreAgentCodec,
     CoreAgentEntry, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
-    CoreAgentStatus, DomainError, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
+    CoreAgentStatus, DomainError, EventSeq, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, LlmRequest, NativeMcpApprovalRequest, PlanningError, PromiseEvent,
     PromiseId, PromiseOwnership, PromiseStatus, ResumeToolBatchCommand, RunEvent, SessionId,
     SessionPosition, ToolBatchId, ToolBatchOutcome, ToolBatchResumeOutput, ToolBatchSuspension,
@@ -410,10 +410,36 @@ impl CoreAgentDrive {
             .map(|proposal| proposal.into_uncommitted(observed_at_ms))
             .map(|event| CoreAgentCodec.encode_uncommitted(&event))
             .collect::<Result<Vec<_>, _>>()?;
+        self.dry_run_append(&events)?;
         Ok(CoreAgentAction::AppendEvents {
             expected_head: self.head.clone(),
             events,
         })
+    }
+
+    /// Reduce a batch on a scratch state exactly as `resume_appended` will once
+    /// it is durable. The store does not reduce, and every later read of the
+    /// session does, so an event the reducer refuses must never get that far:
+    /// one committed refusal leaves a log that can no longer be loaded.
+    fn dry_run_append(&self, events: &[UncommittedStoredEvent]) -> Result<(), CoreAgentDriveError> {
+        let mut state = self.state.clone();
+        for event in events {
+            let entry = CoreAgentEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(
+                        state
+                            .reduced_to
+                            .as_ref()
+                            .map_or(1, |position| position.seq.as_u64().saturating_add(1)),
+                    ),
+                },
+                observed_at_ms: event.observed_at_ms,
+                joins: CoreAgentCodec.decode_joins(&event.joins)?,
+                event: CoreAgentCodec.decode_event(&event.event)?,
+            };
+            crate::core::apply::apply_event(&mut state, &entry)?;
+        }
+        Ok(())
     }
 
     fn increment_steps(&mut self, max_steps: Option<usize>) -> bool {
@@ -1800,7 +1826,7 @@ fn tool_call_completed_proposals_inner(
     origin: Option<crate::CodeToolOrigin>,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let mut proposals = Vec::new();
-    let mut resolved_promises = BTreeSet::new();
+    let mut cancelled_in_result = BTreeSet::new();
     let mut minted_promises = BTreeSet::new();
     let mut pending_port_emissions = BTreeMap::<crate::WorkflowToolId, u32>::new();
     let mut joined_calls = Vec::new();
@@ -1892,7 +1918,7 @@ fn tool_call_completed_proposals_inner(
                         promise_id
                     )));
                 }
-                if promise.status.is_terminal() || !resolved_promises.insert(promise_id.clone()) {
+                if promise.status.is_terminal() || !cancelled_in_result.insert(promise_id.clone()) {
                     continue;
                 }
                 promise_proposals.push(CoreAgentEventProposal::new(
@@ -1915,7 +1941,9 @@ fn tool_call_completed_proposals_inner(
                         promise_id
                     )));
                 }
-                if promise.status.is_terminal() {
+                // A cancel earlier in this result is not yet in `state`, and the
+                // reducer refuses to detach a promise it has just cancelled.
+                if promise.status.is_terminal() || cancelled_in_result.contains(&promise_id) {
                     continue;
                 }
                 match promise.scope {
@@ -9353,6 +9381,198 @@ mod tests {
             .expect("promise in state");
         assert_eq!(promise.status, crate::PromiseStatus::Pending);
         assert_eq!(promise.scope, crate::PromiseScope::Session);
+    }
+
+    /// A model-owned, run-scoped pending promise and a batch of three calls that
+    /// control it, the shape that takes the unit path through `concurrency.await`.
+    fn promise_control_batch(
+        drive: &mut CoreAgentDrive,
+        first: &str,
+        second: &str,
+    ) -> (ToolInvocationBatchRequest, crate::PromiseId) {
+        open_session(drive);
+        let specs = [first, second, "await"].map(test_tool_spec);
+        let install = drive
+            .admit_command(
+                CoreAgentCommand::ReplaceTools {
+                    expected_revision: Some(drive.state().tooling.revision),
+                    tools: specs
+                        .into_iter()
+                        .map(|spec| (spec.name.clone(), spec))
+                        .collect(),
+                },
+                15,
+            )
+            .expect("replace tools");
+        commit_action(drive, install);
+        request_run(drive, BlobRef::from_bytes(b"input"));
+        let generation = drive_until_generate(drive);
+        let run_id = generation.run_id;
+        let observed = |tool: &str| ObservedToolCall {
+            call_id: crate::ToolCallId::new(format!("call_{tool}")),
+            tool_id: Some(test_tool_id(tool)),
+            tool_name: ToolName::new(tool),
+            provider_kind: None,
+            arguments_ref: BlobRef::from_bytes(tool.as_bytes()),
+            native_call_ref: None,
+        };
+        let request = drive_until_tool_batch_request_with_calls(
+            drive,
+            generation,
+            vec![observed(first), observed(second), observed("await")],
+        );
+        insert_wait_promise(drive, run_id);
+        (request, crate::PromiseId::new(WAIT_PROMISE_ID))
+    }
+
+    fn promise_control_outcome(
+        request: &ToolInvocationBatchRequest,
+        effects: [ToolEffect; 2],
+    ) -> ToolBatchOutcome {
+        let [first, second] = effects;
+        ToolBatchOutcome::Deferred {
+            batch_id: request.batch_id,
+            call_id: request.calls[2].call_id.clone(),
+            completed_results: [(0, first), (1, second)]
+                .into_iter()
+                .map(|(index, effect)| {
+                    let call_id = &request.calls[index].call_id;
+                    ToolInvocationResult {
+                        attachments: Vec::new(),
+                        duration_ms: None,
+                        output_bytes: None,
+                        truncated: false,
+                        call_id: call_id.clone(),
+                        status: ToolCallStatus::Succeeded,
+                        output_ref: Some(BlobRef::from_bytes(call_id.as_str().as_bytes())),
+                        model_visible_context_entries: Vec::new(),
+                        error_ref: None,
+                        effects: vec![effect],
+                    }
+                })
+                .collect(),
+            spec: wait_await_spec(),
+        }
+    }
+
+    fn promise_terminal_events(entries: &[CoreAgentEntry]) -> Vec<&crate::PromiseEvent> {
+        entries
+            .iter()
+            .filter_map(|entry| match &entry.event {
+                CoreAgentEvent::Promise(event) => Some(event),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cancel_then_detach_in_one_result_commits_only_the_cancel() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-cancel-detach"),
+            CoreAgentState::new(),
+            None,
+        );
+        let (request, promise_id) = promise_control_batch(&mut drive, "cancel", "detach");
+        let outcome = promise_control_outcome(
+            &request,
+            [
+                crate::promise_cancel_effect(&promise_id),
+                crate::promise_detach_effect(&promise_id),
+            ],
+        );
+
+        let action = drive
+            .resume_tool_batch_outcome(outcome, 90)
+            .expect("the detach of a promise cancelled in the same result is dropped");
+        let entries = commit_action(&mut drive, action);
+
+        assert_eq!(
+            promise_terminal_events(&entries),
+            vec![&crate::PromiseEvent::Cancelled {
+                promise_id: promise_id.clone()
+            }]
+        );
+        assert_eq!(
+            drive.state().promises.promises[&promise_id].status,
+            PromiseStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn detach_then_cancel_in_one_result_keeps_both_events_and_ends_cancelled() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-detach-cancel"),
+            CoreAgentState::new(),
+            None,
+        );
+        let (request, promise_id) = promise_control_batch(&mut drive, "detach", "cancel");
+        let outcome = promise_control_outcome(
+            &request,
+            [
+                crate::promise_detach_effect(&promise_id),
+                crate::promise_cancel_effect(&promise_id),
+            ],
+        );
+
+        let action = drive
+            .resume_tool_batch_outcome(outcome, 90)
+            .expect("the reverse order is a valid log");
+        let entries = commit_action(&mut drive, action);
+
+        assert_eq!(
+            promise_terminal_events(&entries),
+            vec![
+                &crate::PromiseEvent::Detached {
+                    promise_id: promise_id.clone()
+                },
+                &crate::PromiseEvent::Cancelled {
+                    promise_id: promise_id.clone()
+                },
+            ]
+        );
+        assert_eq!(
+            drive.state().promises.promises[&promise_id].status,
+            PromiseStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn a_batch_the_reducer_refuses_is_returned_as_an_error_before_anything_is_appended() {
+        let mut drive = CoreAgentDrive::from_replayed(
+            SessionId::new("session-dry-run"),
+            CoreAgentState::new(),
+            None,
+        );
+        let (_, promise_id) = promise_control_batch(&mut drive, "cancel", "detach");
+        let before = drive.state().clone();
+        let head = drive.head().cloned();
+        // No proposal builder emits this today. It stands in for any builder that
+        // checks less than the reducer, because only the reducer has the last word.
+        let refused = vec![
+            CoreAgentEventProposal::new(
+                CoreAgentJoins::default(),
+                CoreAgentEvent::Promise(crate::PromiseEvent::Cancelled {
+                    promise_id: promise_id.clone(),
+                }),
+            ),
+            CoreAgentEventProposal::new(
+                CoreAgentJoins::default(),
+                CoreAgentEvent::Promise(crate::PromiseEvent::Detached {
+                    promise_id: promise_id.clone(),
+                }),
+            ),
+        ];
+
+        let error = drive
+            .append_action(refused, 90)
+            .expect_err("the second event is refused after the first applies");
+
+        assert!(matches!(
+            error,
+            CoreAgentDriveError::Domain(DomainError::InvariantViolation(_))
+        ));
+        assert_eq!(drive.state(), &before, "the dry run leaves state untouched");
+        assert_eq!(drive.head().cloned(), head);
     }
 
     #[test]

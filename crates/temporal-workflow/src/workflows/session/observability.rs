@@ -160,6 +160,27 @@ pub(super) fn log_workflow_failure(
     );
 }
 
+/// A reducer refusal of an admitted command points at a bug in proposal building
+/// even though the session keeps running, so it logs at error level.
+pub(super) fn log_admission_refused(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &str) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::error!(
+        target: "temporal_workflow",
+        event = "session_admission_refused",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        lightspeed_run_id = fields.active_run_id,
+        session_head_seq = fields.session_head_seq,
+        error,
+        "session admission refused by the reducer"
+    );
+}
+
 fn log_continue_as_new(ctx: &WorkflowContext<AgentSessionWorkflow>, args: &AgentSessionArgs) {
     if ctx.is_replaying() {
         return;
