@@ -8228,11 +8228,10 @@ mod tests {
             )
             .unwrap();
         commit(&mut drive, action);
-        loop {
-            match drive.next_action_unbounded(50).unwrap() {
-                action @ CoreAgentAction::AppendEvents { .. } => commit(&mut drive, action),
-                _ => break,
-            }
+        while let action @ CoreAgentAction::AppendEvents { .. } =
+            drive.next_action_unbounded(50).unwrap()
+        {
+            commit(&mut drive, action);
         }
         assert_eq!(drive.state().runs.completed.len(), 1);
 

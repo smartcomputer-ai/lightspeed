@@ -1319,3 +1319,15 @@ Starting it stays out of bounds for this run.
 Every "never run" and "written but never run" note above is still open. This checkpoint was meant to be the first
 real proof of the workflow changes, so do not treat them as proven. With the stack up, run `live-reset.sh`, the
 three suites, then the tests the earlier notes name.
+
+## Checkpoint 1, after typed-blob-refs (2026-11-03)
+
+Static: clippy with warnings denied passes, `cargo test --workspace` passed 2,759 tests, and TypeScript typecheck and consumer tests pass.
+
+Live, on the dev stack in a separate database and Temporal namespace: `store_pg_live` 42, `session_lifecycle_live` 5, `audience_live` 1, `runs_live` 10, `sessions_live` 16, `mcp_live` 5, `subagents_live` 9, `workflow_tool_plugins_live` 17, `code_tools_live` 4 and `code_workflow_live` 15 all pass.
+
+Failures found and fixed: the cleanup of the session store dropped the two lines that clear close markers on reopen; a reply schema test built a malformed ref that decode now refuses; a retention test expected the old error variant for a value Postgres cannot hold; and clippy found two lints.
+
+One test changed meaning. `workflow_tool_start_on_call_resolves_via_plugin_worker` asserted the started execution was still running after its joined reply. Transport work now goes out at each commit, so the session cancels an execution it has finished with before the test looks. The cancel rule itself is unchanged from main, only its timing. The test now checks the call finished well inside the execution's 60 second hold.
+
+A failing test in `workflow_tool_plugins_live` can abort the whole binary with `failed to initiate panic, error 5`, which hides later tests and needs `--nocapture` to read. It predates this work and was not investigated.

@@ -407,7 +407,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
         store
             .set_session_retention(&session_id, Some(i64::MAX as u64))
             .await,
-        Err(SessionStoreError::Store { .. })
+        Err(SessionStoreError::DataRejected { .. })
     ));
     let record = store.load_session(&session_id).await.unwrap().unwrap();
     assert_eq!(record.delete_after_close_ms, Some(25));
