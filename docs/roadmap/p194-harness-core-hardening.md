@@ -137,8 +137,8 @@ Later packages add their own entries.
   site now rejects that one command and logs at error level. A real proposal bug
   costs one command and no longer produces a failed workflow signal. The two commands
   the workflow reissues from durable state, `ResumeToolBatch` and `ForceCancelRun`,
-  are the exception: a refusal fails the workflow, because rejecting them would repeat
-  forever.
+  are the exception: rejecting them would repeat forever, so a refusal takes the drive
+  failure path, which since `core-failrun` fails the run.
 - **Reducer trust moved to the proposal layer.** With policy out of the reducer, the
   dry run no longer catches a proposal builder that skips a moved check: a builder
   bug can now commit a policy-violating event that replays fine. Moved checks that
@@ -159,6 +159,15 @@ Later packages add their own entries.
   than failing. A session can read as healthy during an outage, and each read of an open
   session first waits out the client's retries, about 10 s by its defaults (read from the
   client source, not timed). Mutations still fail.
+
+- **FailRun absorbs real harness bugs.** Any `Domain` or `Planning` refusal with an
+  active run costs that run and leaves the workflow running. A bug that refuses every
+  run fails them all one at a time with no failed-workflow signal, and the only alert is
+  the `session_step_refused` error log. The kind is `Internal`, so runs can be counted.
+- **Run admission now checks the session's own tool choice.** A session whose choice
+  dangles refuses every new run at the door, with a clear error, until the config or
+  toolset changes. Before, it failed at the first turn. A queued run admitted against
+  an older toolset still reaches FailRun.
 
 ## Progress
 
@@ -366,3 +375,99 @@ removing the clears cannot leave a sticky `fatal_error`. Warnings log only outsi
 and add no workflow commands. The workflow's only clean exit is closed and quiescent, so
 `completed` under an open row does mean it stopped short, once the re-read has ruled out a
 close in flight.
+
+### `core-failrun` (H-35, H-09, H-43, H-42, H-94, H-60)
+
+Landed:
+
+- `a64527c8`, `f1bcc9e4` (H-35): `CommandRejectionKind` becomes `SessionLifecycle`,
+  `ActiveWork`, `MissingActiveRun`, `UnknownReference`, `Invalid`,
+  `ProviderCompatibility`, `DuplicateSubmission`, `RevisionConflict`, `Conflict`, `Refused`,
+  `Internal`. `command_rejection_to_api_error` is the one mapper, reached through
+  `AgentAdmissionFailure::api_error` and the candidate path. Rejection Display is the message
+  alone, `DomainError::message` drops the reducer prefix from gateway text, and
+  `is_profile_unapplicable` is now `kind == InvalidRequest`.
+- `c589f64e` (H-09): Stop or Unknown with calls queues them. A tool-call finish with nothing
+  to run fails the turn. Repeated call ids, or a call entry for no call, fail it too. Only a
+  queued turn puts `ToolCall` entries in context. `open_tool_group_closing_entries` is the
+  shared helper, used by `ForceCancelRun` and `FailRun`. The watchdog moved after the resume
+  step.
+- `9c118556` (H-43): `ApprovalEvent::RunUnparked`, public as `approvalRunUnparked`, emitted only
+  when no approval remains and no batch is parked. The reducer's `Decided` arm no longer flips
+  status. Stored and live activity follow the same park. `pending_approval_cancellations` serves
+  `CancelRun`, force close and `FailRun`. A run ended with its batch open projects unfinished
+  calls as cancelled.
+- `97929610` (H-42): an empty queued compaction finishes Failed and stamps the manual revision;
+  `compaction_safe_boundary` counts an unstarted tool-call turn; `next_context_compaction_request`
+  needs an open session; force close ends a pending or queued compaction and passes the hold.
+- `28749151` (H-94): `has_unmaterialized_steering`, one guard after the arms of
+  `terminal_run_proposal`, so any failure kind but `Cancelled` inherits the hold. A failed
+  context-limit compaction writes the steering in its own append. `runs.rs` wording updated.
+- `da5977b5` (H-60): `CoreAgentCommand::FailRun`, `drive_past_refusals` at all three drive
+  error sites, `CoreAgentDriveError::refusal_message`, the well-known
+  `RUN_INTERNAL_FAILURE_CONTENT` blob, and early validation in `prepare_toolset` and
+  `RequestRun`.
+
+Checks: `cargo test -p harness` (305 passed), `cargo test -p temporal-workflow --lib` (166 passed),
+`cargo test -p temporal-runtime --lib` (473 passed, 1 ignored), `cargo test -p api -p
+api-projection`, `transcript.test.ts` (82 passed), web typecheck, `cargo check --workspace
+--all-targets --locked`.
+
+Live, on the hardening database and namespace, passed:
+`temporal_live_harness_refusal_fails_the_run_and_the_session_serves_the_next`. It covers session
+start and config put refusing a dangling tool choice, a real reducer refusal becoming a failed
+`Internal` run with the refusal's text, and the next run completing on the same execution. The
+fake LLM gained `with_refused_generations` for it. Other live suites wait for the checkpoint;
+those that assert a `rejected` kind on input the mapper now calls invalid are the first to look at.
+
+Calls made:
+
+- The funnel also covers `tool_batch_resume` and `cancellation_watchdog`, per the earlier handoff.
+  So a refused `ResumeToolBatch` or `ForceCancelRun` now fails the run rather than the workflow.
+- `drive_past_refusals` keeps driving after a failure rather than returning to the wait loop.
+  Otherwise a `close_on_terminal` session with nothing queued would never reach its auto-close.
+- A cancelling run's steering stays dropped in `FailRun`. The spec lists the steering step
+  without exception; the settled rule that cancel drops steering won.
+- A direct `DomainError` in an `anyhow::Error` counts as a refusal, which covers
+  `attach_promise_control_runtime`. `append_events` strips the type from everything after the
+  append, so a post-commit reducer failure stays fatal.
+- A recorded tool result that fails validation is replaced by a cancelled result in the closing
+  entries. Such a result can be the refusal's cause, and repeating it would refuse FailRun too.
+- Compaction refusals with no run reuse `resume_context_compaction` with a Failed result. No new
+  command was needed.
+- `next_context_compaction_request` now passes a domain refusal through unwrapped, so a provider
+  compatibility failure keeps its text in the failure message.
+- Reducer refusals at the admission site use kind `Internal`, which maps to an API internal error.
+- `already terminal` on a decision uses `Conflict` until `api-waiters` adds its own kind. It reaches
+  callers only through a race past the gateway's check.
+- "No older compactable context" uses `Refused`, so it stays `rejected`. Compaction already pending
+  uses `ActiveWork`. `validate_standalone_compaction_can_start` is gone; admission checks both.
+- `AdmitSystemWorkflowTool` conflicts use `Invalid`, matching what `prepare_toolset` already answers.
+- A plain close now refuses while a compaction is queued, not only while one is pending.
+- A new well-known blob, `UNUSABLE_TOOL_CALLS_FAILURE_CONTENT`, names the bad tool-call turn
+  instead of the generic boundary text.
+- Every main-loop exit records `fatal_error` through `errors::fatal`, closing the handoff from
+  `session-liveness-read`. The repeated error blocks in `session/mod.rs` collapsed into it.
+
+Deviations:
+
+- "Both outcome functions" is one: H-16 removed `validate_outcome_for_generation`.
+- `generated_tool_calls_are_usable` does not require a `ToolCall` entry for every observed call.
+  Many harness fixtures carry calls with no entries, and every real adapter writes them, so this
+  direction stays unchecked. A call with no entry would produce a result with no call.
+- The adapters' `finish_reason` mappings are untouched. The harness rule makes them harmless and
+  this package's crate list excludes `llm-runtime`. The Responses failed-status branch still keeps
+  its calls in the result; the harness drops them.
+- Force close does not close the tool group, as the brief allows: the session ends.
+
+Open:
+
+- A hosted approval cancelled by `CancelRun` or `FailRun` leaves its `mcp_approval_request` entry in
+  context with no response. This is not new. Whether OpenAI accepts that on the next request was
+  not tested. The unit replay checks tool call pairing only.
+- A run parked on both a batch and a hosted approval stays `waiting` in the stored projection until
+  the batch resumes, while live activity says `working` once the approval is decided. This needs one
+  response carrying both an await and a hosted approval, and heals at the resume.
+- `FailRun` does not materialize run input that never entered context. That needs a refusal before
+  the first context step, and the run's source still holds the input.
+- A force close during a slow compaction is covered by unit tests only.
