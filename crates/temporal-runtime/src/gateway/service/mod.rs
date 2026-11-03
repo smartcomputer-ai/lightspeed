@@ -3485,7 +3485,7 @@ impl AgentApiService for GatewayAgentApi {
                 if active.run_id == requested_run_id
                     && matches!(active.status, RunStatus::Active | RunStatus::Parked) =>
             {
-                active.steering.len()
+                active.latest_steering_id()
             }
             Some(active) if active.run_id == requested_run_id => {
                 return Err(AgentApiError::rejected(format!(

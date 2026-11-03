@@ -410,14 +410,14 @@ impl GatewayAgentApi {
     }
 
     /// Wait for a correlated steering admission: resolved when the active
-    /// run's steering count advances past `baseline`, failed when the
+    /// run's newest steering batch is newer than `baseline`, failed when the
     /// workflow records a failure for `correlation_token` or the run leaves
     /// the active slot before the steering landed.
     pub(super) async fn wait_for_steering_accepted(
         &self,
         session_id: &SessionId,
         run_id: RunId,
-        baseline: usize,
+        baseline: Option<harness::SteeringId>,
         correlation_token: &str,
     ) -> Result<harness::SteeringId, AgentApiError> {
         let started = Instant::now();
@@ -445,10 +445,10 @@ impl GatewayAgentApi {
             let loaded = self.load_session_state(session_id).await?;
             match loaded.state.runs.active.as_ref() {
                 Some(active) if active.run_id == run_id => {
-                    if active.steering.len() > baseline
-                        && let Some(steering) = active.steering.last()
+                    if let Some(steering_id) = active.latest_steering_id()
+                        && Some(steering_id) > baseline
                     {
-                        return Ok(steering.steering_id);
+                        return Ok(steering_id);
                     }
                 }
                 _ => {

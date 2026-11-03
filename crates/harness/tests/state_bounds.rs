@@ -669,6 +669,9 @@ fn steering_keeps_a_window_and_never_drops_what_has_not_reached_a_turn() {
         window + 1,
         "the oldest consumed batches went first"
     );
+    // The count stays level from here on, so a caller waiting on a steer it sent reads
+    // the newest id.
+    assert_eq!(run.latest_steering_id().unwrap().as_u64(), index);
 
     // A batch accepted but not yet carried by a turn outlives any window.
     let CoreAgentAction::GenerateLlm { request } = session.pump() else {

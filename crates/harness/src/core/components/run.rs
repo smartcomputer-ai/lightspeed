@@ -139,6 +139,12 @@ impl ActiveRun {
             .values()
             .filter(|record| record.status == ApprovalStatus::Pending)
     }
+
+    /// The newest steering batch. Pruning holds the number of batches level, so this
+    /// and not their count tells whether another has been accepted.
+    pub fn latest_steering_id(&self) -> Option<SteeringId> {
+        self.steering.last().map(|steering| steering.steering_id)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
