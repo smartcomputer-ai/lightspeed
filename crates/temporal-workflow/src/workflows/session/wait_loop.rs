@@ -66,6 +66,17 @@ pub(super) fn outer_loop_can_clear_now(state: &AgentSessionWorkflow, now_ms: u64
         || workflow_starts::has_due_start(state, now_ms)
 }
 
+/// Outbound work only the outer loop services, ready now. One service pass leaves
+/// this false: a delivered or started item is gone, a failed one waits out a backoff
+/// that lies ahead of the clock, and a due deadline has become a resolution.
+pub(super) fn transport_work_due(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
+    session_state::has_due_emissions(state, now_ms)
+        || !state.pending_source_resolutions.is_empty()
+        || !state.pending_promise_cancellations.is_empty()
+        || workflow_starts::has_due_start(state, now_ms)
+        || promise_sources::has_due_promise_deadline(state, now_ms)
+}
+
 /// Passes of the outer loop allowed in one activation with nothing awaited.
 const STALLED_PASS_LIMIT: u32 = 32;
 

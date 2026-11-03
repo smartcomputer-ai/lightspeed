@@ -396,6 +396,81 @@ fn work_the_outer_loop_consumes_with_an_await_makes_a_blocked_rollover_yield() {
 }
 
 #[test]
+fn transport_work_is_due_until_a_service_pass_so_a_yield_cannot_repeat() {
+    const NOW: u64 = 1_000;
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+
+    // An emission: a failed attempt keeps it, with its retry ahead of the clock.
+    workflow.pending_emissions.push(pending_run_emission());
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    workflow.pending_emissions[0].next_attempt_at_ms = NOW + 2_000;
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+    assert!(wait_loop::transport_work_due(&workflow, NOW + 2_000));
+    workflow.pending_emissions.clear();
+
+    // Queues the pass takes whole.
+    workflow
+        .pending_promise_cancellations
+        .push(pending_promise_cancellation("promise_1"));
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    workflow.pending_promise_cancellations.clear();
+    workflow
+        .pending_source_resolutions
+        .push(PendingSourceResolution {
+            promise_id: harness::PromiseId::new("promise_1"),
+            resolution: harness::PromiseResolution::Resolved { payload_ref: None },
+            producer: harness::EmissionProducer::Workflow {
+                universe_id: test_universe(),
+                workflow_id: "producer".to_owned(),
+            },
+        });
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    workflow.pending_source_resolutions.clear();
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+
+    // A start: a new intent is due, a failed attempt backs off, a started one is done.
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    let key = invocation_id.as_str().to_owned();
+    workflow
+        .workflow_start_backoffs
+        .insert(key.clone(), (1, NOW + 2_000));
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+    assert!(wait_loop::transport_work_due(&workflow, NOW + 2_000));
+    workflow.workflow_start_backoffs.clear();
+    workflow.confirmed_workflow_starts.insert(key);
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+
+    // A deadline: due while the promise is pending, spent once it has failed.
+    let promise = workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise");
+    promise.deadline_ms = Some(NOW);
+    assert!(wait_loop::transport_work_due(&workflow, NOW));
+    assert!(!wait_loop::transport_work_due(&workflow, NOW - 1));
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Failed;
+    assert!(!wait_loop::transport_work_due(&workflow, NOW));
+}
+
+#[test]
 fn a_start_backoff_whose_candidate_is_gone_does_not_block_rollover_for_good() {
     let StartIntent {
         mut workflow,
@@ -1317,7 +1392,7 @@ fn workflow_with_turn_in_flight() -> AgentSessionWorkflow {
         ..Default::default()
     };
     let mut drive = CoreAgentDrive::from_replayed(SessionId::new("held"), CoreAgentState::new());
-    let mut commit = |drive: &mut CoreAgentDrive, action: CoreAgentAction| {
+    let commit = |drive: &mut CoreAgentDrive, action: CoreAgentAction| {
         let CoreAgentAction::AppendEvents { events, .. } = action else {
             panic!("expected an append, got {action:?}");
         };

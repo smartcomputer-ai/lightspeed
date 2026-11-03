@@ -9,7 +9,8 @@ use api::{
     InitializeParams, InlineAgentProfile, InputItem, ProfileDocument, ProfileInstructions,
     ProfileSource, RunListParams, RunStartParams, RunStartSource, SessionConfig,
     SessionConfigPutParams, SessionDeleteParams, SessionEventsReadParams, SessionLifecycleStatus,
-    SessionListParams, SessionReadParams, SessionStartParams, SessionStatus, TimersFeature,
+    SessionListParams, SessionReadParams, SessionStartParams, SessionStatus, SkillListParams,
+    TimersFeature,
 };
 use api_projection::model_to_api;
 use base64::Engine as _;
@@ -1224,6 +1225,31 @@ async fn run_continue_as_new_live_client(
         read.result.session.runs.len() >= 2,
         "projected session should include runs committed before and after continue-as-new"
     );
+
+    // A no-op operation appends nothing and still grew the history. It must earn a
+    // rollover, or an execution doing only such work grows to the server's limit.
+    let before_noop_run_id = live_workflow_handle(&client, &session_id)?
+        .describe(WorkflowDescribeOptions::default())
+        .await?
+        .run_id()
+        .to_owned();
+    api.list_skills(SkillListParams {
+        session_id: session_id.as_str().to_owned(),
+    })
+    .await?;
+    let waited = std::time::Instant::now();
+    while live_workflow_handle(&client, &session_id)?
+        .describe(WorkflowDescribeOptions::default())
+        .await?
+        .run_id()
+        == before_noop_run_id
+    {
+        anyhow::ensure!(
+            waited.elapsed() < std::time::Duration::from_secs(30),
+            "a no-op operation did not roll the execution over"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 
     let handle = live_workflow_handle(&client, &session_id)?;
     let _ = handle

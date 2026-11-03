@@ -530,8 +530,12 @@ impl TestCancellationPluginWorkflow {
 // Scripted session LLM: `CALL <tool>` -> tool call -> await its keyed
 // promise -> final text carrying the await result. `CALL_NOWAIT <tool>`
 // finishes the run right after the acknowledgement, leaving the run-scoped
-// keyed promise to auto-cancel at run terminal.
+// keyed promise to auto-cancel at run terminal. `CALL_HOLD <tool>` does the same
+// but keeps the second generation in flight until `SECOND_GENERATION_RELEASE`,
+// so a test can look at what went out while the run is still generating.
 // ---------------------------------------------------------------------------
+
+static SECOND_GENERATION_RELEASE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 struct WorkflowToolScriptedLlm {
     blobs: Arc<dyn BlobStore>,
@@ -706,22 +710,16 @@ impl CoreAgentLlm for WorkflowToolScriptedLlm {
                         .read_text(&entry.content.content_ref)
                         .await
                         .map_err(io_error)?;
-                    if tool_result.contains("\"accepted\":true")
+                    if user_text.starts_with("CALL_HOLD ") {
+                        SECOND_GENERATION_RELEASE.notified().await;
+                    } else if tool_result.contains("\"accepted\":true")
                         && !user_text.starts_with("CALL_NOWAIT ")
                         && let Some(promise_id) = parse_completion_promise(&tool_result)
                     {
-                        // A short await timeout ends the run while the keyed
-                        // promise is still pending (an await timeout never
-                        // changes the underlying promise).
-                        let timeout_ms: u64 = if user_text.starts_with("CALL_SHORTWAIT ") {
-                            5_000
-                        } else {
-                            120_000
-                        };
                         let arguments = serde_json::json!({
                             "promises": [promise_id],
                             "mode": "all",
-                            "timeout_ms": timeout_ms
+                            "timeout_ms": 120_000
                         });
                         return self
                             .tool_call_result(&request, AWAIT_TOOL_NAME, arguments)
@@ -742,7 +740,7 @@ impl CoreAgentLlm for WorkflowToolScriptedLlm {
                     if let Some(tool_name) = text
                         .strip_prefix("CALL ")
                         .or_else(|| text.strip_prefix("CALL_NOWAIT "))
-                        .or_else(|| text.strip_prefix("CALL_SHORTWAIT "))
+                        .or_else(|| text.strip_prefix("CALL_HOLD "))
                     {
                         return self
                             .tool_call_result(
@@ -970,6 +968,41 @@ async fn start_managed_session_and_run(
         .await
         .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
     wait_for_terminal_run_slow(api, session_id, &run.result.run.id).await
+}
+
+/// Start a run that calls `call_tool` and then stays in its next generation until
+/// `SECOND_GENERATION_RELEASE`. Returns the run id, with the run still going.
+async fn start_managed_session_and_hold_run(
+    api: &GatewayAgentApi,
+    session_id: &SessionId,
+    declarations: Vec<WorkflowToolDeclaration>,
+    call_tool: &str,
+) -> anyhow::Result<String> {
+    api.start_managed_session_for_workflow_with_profile(
+        session_id,
+        false,
+        None,
+        harness::ManagedSessionWorkflowTools::v1(None, declarations),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
+    let run = api
+        .start_run(RunStartParams {
+            notify_on_terminal: None,
+            submission_id: None,
+            session_id: session_id.as_str().to_owned(),
+            source: RunStartSource::Input {
+                items: vec![InputItem::Text {
+                    provenance_ref: None,
+                    origin: None,
+                    text: format!("CALL_HOLD {call_tool}"),
+                }],
+            },
+            config: None,
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("start run: {error:?}"))?;
+    Ok(run.result.run.id)
 }
 
 /// Delivery retries, recovery polls, and start backoff make some scenarios
@@ -2578,6 +2611,154 @@ async fn workflow_tool_run_terminal_auto_cancel_notifies_bound_receiver() -> any
     .await
 }
 
+/// A run that keeps generating after a start-on-call acknowledgement does not hold
+/// the execution back: it is running while the next generation is still in flight.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn workflow_tool_start_goes_out_before_the_next_generation_finishes() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
+        let recipe = serde_json::to_vec(&WorkflowToolRecipeV1 {
+            workflow_type: "TestCancellationPluginWorkflow".to_owned(),
+            task_queue: plugin_queue,
+        })?;
+        let recipe_fingerprint = workflow_tool_recipe_fingerprint(&recipe);
+        let recipe_ref = blobs.put_bytes(recipe).await?;
+        let definition = tool_definition(
+            &blobs,
+            "launch",
+            LAUNCH_JOB_TOOL,
+            "lightspeed.test.launch.v1",
+        )
+        .await?;
+        let run_id = start_managed_session_and_hold_run(
+            &api,
+            &session_id,
+            vec![WorkflowToolDeclaration::new(
+                definition,
+                WorkflowToolTarget::Start {
+                    start: WorkflowStartRef {
+                        recipe_format: 1,
+                        revision: 1,
+                        recipe_ref,
+                        recipe_fingerprint,
+                    },
+                },
+                reply_completion(),
+            )],
+            LAUNCH_JOB_TOOL,
+        )
+        .await?;
+
+        let started = std::time::Instant::now();
+        loop {
+            if started.elapsed() > Duration::from_secs(30) {
+                anyhow::bail!("the execution did not start during the next generation");
+            }
+            if let Some(execution_id) = started_execution_ids(&api, &session_id)
+                .await?
+                .into_iter()
+                .next()
+                && client
+                    .get_workflow_handle::<temporalio_client::UntypedWorkflow>(execution_id)
+                    .describe(temporalio_client::WorkflowDescribeOptions::default())
+                    .await
+                    .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        SECOND_GENERATION_RELEASE.notify_one();
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run_id).await?;
+        assert_eq!(run.status, api::RunStatus::Completed);
+        Ok(())
+    })
+    .await
+}
+
+/// A pushed invocation reaches its receiver while the run that made the call is
+/// still generating, not when that run parks or ends.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn workflow_tool_pushed_accepted_delivers_before_the_next_generation_finishes()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_plugin_worker(|client, api, blobs, session_id, plugin_queue| async move {
+        let universe_id = live_universe_id()?;
+        let receiver_id = format!("plugin/accepted-{}", uuid::Uuid::new_v4().simple());
+        client
+            .start_workflow(
+                TestBoundPluginWorkflow::run,
+                BoundPluginArgs {
+                    universe_id,
+                    auto_reply: false,
+                },
+                WorkflowStartOptions::new(plugin_queue, receiver_id.clone()).build(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("start Accepted receiver: {error}"))?;
+        let definition = tool_definition(
+            &blobs,
+            "accepted-message",
+            MESSAGE_SEND_TOOL,
+            "channels.message.accepted.v1",
+        )
+        .await?;
+        let run_id = start_managed_session_and_hold_run(
+            &api,
+            &session_id,
+            vec![WorkflowToolDeclaration::new(
+                definition,
+                WorkflowToolTarget::Bound {
+                    receiver: WorkflowEndpointRef {
+                        workflow_id: receiver_id.clone(),
+                        workflow_kind: "test_accepted_receiver".to_owned(),
+                    },
+                    dispatch: harness::BoundWorkflowToolDispatch::Push,
+                },
+                WorkflowToolCompletion::Accepted,
+            )],
+            MESSAGE_SEND_TOOL,
+        )
+        .await?;
+
+        let handle = client.get_workflow_handle::<TestBoundPluginWorkflow>(receiver_id);
+        let started = std::time::Instant::now();
+        loop {
+            if started.elapsed() > Duration::from_secs(30) {
+                anyhow::bail!("the invocation was not delivered during the next generation");
+            }
+            let snapshot = handle
+                .query(
+                    TestBoundPluginWorkflow::plugin_snapshot,
+                    (),
+                    temporalio_client::WorkflowQueryOptions::default(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!("query Accepted receiver: {error}"))?;
+            if snapshot.invocations == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        SECOND_GENERATION_RELEASE.notify_one();
+        let run = wait_for_terminal_run_slow(&api, &session_id, &run_id).await?;
+        assert_eq!(run.status, api::RunStatus::Completed);
+        let _ = handle.terminate(WorkflowTerminateOptions::default()).await;
+        Ok(())
+    })
+    .await
+}
+
 /// When run-terminal auto-cancel turns the last pending keyed promise of a
 /// session-owned started execution terminal, the exact execution is
 /// cancelled.
@@ -2620,10 +2801,9 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
         )
         .await
         .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
-        // A short await parks on the keyed promise long enough for the
-        // deterministic start to be issued, then times out; the run
-        // terminal auto-cancels the still-pending promise while the
-        // execution is waiting for cancellation.
+        // The start goes out before the next generation, and the run then finishes
+        // without awaiting. Its terminal auto-cancels the still-pending promise while
+        // the execution is waiting for cancellation.
         let run = api
             .start_run(RunStartParams {
         notify_on_terminal: None,
@@ -2631,7 +2811,7 @@ async fn workflow_tool_auto_cancel_cancels_started_execution() -> anyhow::Result
                 session_id: session_id.as_str().to_owned(),
                 source: RunStartSource::Input {
                     items: vec![InputItem::Text { provenance_ref: None, origin: None,
-                        text: format!("CALL_SHORTWAIT {LAUNCH_JOB_TOOL}"),
+                        text: format!("CALL_NOWAIT {LAUNCH_JOB_TOOL}"),
                     }],
                 },
                 config: None,

@@ -175,6 +175,14 @@ pub(super) fn nearest_promise_deadline_ms(state: &AgentSessionWorkflow) -> Optio
         .min()
 }
 
+pub(super) fn has_due_promise_deadline(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
+    state.core_state.promises.pending().any(|promise| {
+        promise
+            .deadline_ms
+            .is_some_and(|deadline| deadline <= now_ms)
+    })
+}
+
 pub(super) fn process_due_promise_deadlines(ctx: &mut WorkflowContext<AgentSessionWorkflow>) {
     let now = workflow_time_ms(ctx);
     let due = ctx.state(|state| {
