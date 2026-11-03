@@ -189,10 +189,12 @@ impl ser::Serializer for &mut RefCollector {
         serialize_i16: i16,
         serialize_i32: i32,
         serialize_i64: i64,
+        serialize_i128: i128,
         serialize_u8: u8,
         serialize_u16: u16,
         serialize_u32: u32,
         serialize_u64: u64,
+        serialize_u128: u128,
         serialize_f32: f32,
         serialize_f64: f64,
         serialize_char: char,
@@ -389,6 +391,19 @@ mod tests {
             typed_blob_refs(&value).unwrap(),
             expected.into_iter().collect()
         );
+    }
+
+    /// Serde's default for these is an error, and an error here refuses the append.
+    #[test]
+    fn no_plain_value_stops_the_walk() {
+        let held = digest(b"held");
+        let value = (
+            (true, -1i8, -1i16, -1i32, -1i64, -1i128),
+            (1u8, 1u16, 1u32, 1u64, 1u128),
+            (1.0f32, 1.0f64, 'c', (), None::<u8>),
+            held.clone(),
+        );
+        assert_eq!(typed_blob_refs(&value).unwrap(), BTreeSet::from([held]));
     }
 
     #[test]
