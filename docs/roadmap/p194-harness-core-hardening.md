@@ -312,6 +312,49 @@ Later packages add their own entries.
   profile or client sending `limits.maxToolRounds` is refused, because the API's
   `LimitsConfig` denies unknown fields, while the run-level `RunLimitsConfig` ignores it.
   This fits a breaking release with purged dev state.
+- **A pruned approval, promise or invocation answers differently than it did.** A
+  second decision on a decided approval gets `not_found` once the record is pruned,
+  instead of "already decided". `await` on a pruned promise gets the await-rejected
+  text. A retried submission older than the last 256 terminal runs starts a duplicate
+  run. `FailWorkflowToolDelivery` and `FailWorkflowToolStart` on an unknown invocation
+  id are now no-ops for any id, since invocation ids carry no cursor to tell "pruned"
+  from "never existed". A typo there is logged at info and otherwise silent.
+- **A report of an absent scope reads as closed with no calls, for any id.** The late
+  close and report had to be harmless, and the runner's cleanup loop needs an `Ok`. The
+  cost is that a report of an id that never existed looks the same, and
+  `CodeToolRejectionKind::UnknownScope` now only comes from invoke. The runner's
+  preparation still refuses it, because it requires an open scope. The workflow contract
+  text says this.
+- **An update waiter whose scope left state gets `UnknownScope`, not an outcome.** It
+  needs a run terminal to prune the scope in the same step while a call is still in
+  flight, which takes a parent whose promise was already terminal. The usual force
+  cancel keeps the interrupted outcome readable, because the parent's promise is only
+  cancelled after the terminal event, so the scope lasts until the next boundary.
+- **The code call budget check is gone, as the owner's answer says, so the second
+  concurrent script call at the limit fails late.** A script can admit more calls of a
+  full tool than the limit, and each is refused when its result is committed, as a
+  failed call with the shared message. `process_pending` already turns that rejection
+  into a failed call and not a workflow failure. A model batch cannot reach this
+  rejection in normal use, because the worker counts its siblings first.
+- **Old run summaries have no usage, and old run details leave out compaction usage.**
+  Usage is accumulated in state and never written on a run event. A summary from the
+  log omits it, as its API doc now says. `session/runs/read` totals the run's generations
+  from the log, but compaction events carry no run join, so their usage is not in that
+  total. The UI will show a blank for usage on runs older than 256. Adding usage to the
+  terminal event would fix both, if that is wanted.
+- **Old run reads scan the session's log.** `read_run_record_entries` filters
+  `session_events` by session and kind with no index of its own, as agreed. Paging
+  through runs older than 256 in a session with millions of events will be slow, though
+  it is rare and nothing on the session's own path calls it.
+- **State has settled on a higher floor than the card said for code mode.** One
+  `code_execute` per turn stays flat through turn 5,000, at about 174 KB and not near
+  35 KB. Nearly all of it is the 256 terminal promises at about 520 B each. That is 12%
+  of the budget and does not grow. Lowering the window would shrink it, at the cost of
+  an `await` on an older id being refused sooner.
+- **A very long run still cannot be read whole through `session/runs/read`.** It refuses
+  a run over 20,000 events and points at `session/events/read`, which at about 8 events a
+  turn is near turn 2,500. This was already so and is now reachable. Left alone,
+  because the refusal is typed and the events API serves the run.
 
 ## Progress
 
@@ -1417,3 +1460,82 @@ request, a decided hosted approval reaches the next run's request, and an approv
 ends the run. The wire breaks from this package's report were missing from Risky calls and are there now. Steering that
 lands during a tool turn at the limit still sits between the call and its result in context, as it does without a
 limit; that is H-58, for `context-render`.
+
+### `state-pruning` (H-57, H-76)
+
+Landed:
+
+- `caab1e95` (H-57): at turn and batch completion a run keeps its latest turn and any turn with an open batch, and an
+  older turn goes with its completed batch. Terminal approvals go at the same boundaries, except a native decision of
+  the open batch, which covers `OpenAiMcp` records with no batch id. The last 64 steering batches stay and an older one
+  goes only once consumed. The last 256 terminal run records stay, with `RunQueueState.pruned_through` and `is_pruned`
+  for readers. `wait_for_approval_decision` treats a vanished record as decided.
+- `278f71e1` (H-57, H-76): `prune_finished_invocations` and `prune_terminal_promises` run at batch completion and run
+  terminal. A closed scope leaves with its parent, replacing the current-run filter in `ScopeOpened`. Absent ids became
+  no-ops at admission: resolutions, cancel and detach effects at or below the cursor, delivery and start failures, and
+  scope close. `MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS`, `in_flight_invocation_count` and `in_flight_limit_message`
+  replace the lifetime count, and `MAX_CODE_TOOL_SCOPES_PER_RUN` is gone. The host now reads each promise event right
+  after applying it, in `apply_appended_entry`.
+- `297fb883` (H-57): `SessionStore::read_run_record_entries`, on both stores, reads a run's accepted, started and
+  terminal events by kind across fork segments. `run_record_from_entries` and `run_usage_from_entries` rebuild from them.
+  The new `gateway/service/pruned_runs.rs` fills `session/runs/list`, and run lookups, cancel and steer fall back through
+  it or `is_pruned`. The bootstrap budget comment is corrected. API and workflow contracts and TypeScript consumers are
+  regenerated.
+- The commit after it only corrects a comment in the bound test.
+
+Calls made:
+
+- Run records are pruned by terminal order and not by run id, so the newest terminal record is always there for the
+  notify lookup. Ids in the window can therefore be out of order when a queued run is cancelled behind an active one.
+  The merge in `project_run_summaries` sorts by id and lists such a run once.
+- The store method takes a run-id range and no row limit. Run ids count from one with no gaps, so a page of runs is a
+  range of ids and can never split a run's events. It also reads `RUN_STARTED`, beyond the brief's accepted and terminal
+  kinds, because that is the only source of `started_at_ms`.
+- A page reads one more run than it can hold, and `has_older_runs` is then just "more than a page". That stays true
+  across the boundary with no separate count.
+- `session/read` never consults the log. A session that has pruned holds at least 256 records and that page is at most
+  100, so its `hasOlderRuns` is true from state alone.
+- Terminal promises are kept by highest id and not by settling time. A low id settling late can leave state at once, so
+  the receiver cancel and the detached follow-up moved to per-entry reads with the execution cancel, and not just the
+  invocation lookup the brief named.
+- A notify invocation is counted by neither the worker nor admission, even when several share a batch, so the limit
+  covers only work the run waits on.
+- The guard "never prune a promise the open batch references" is structural and has no code. Promise pruning only runs
+  at batch completion and run terminal, where no batch is open, and the doc comment says so.
+- Cancel and detach effects on a pruned id are no-ops. The brief named cancels, and detach sits beside it with
+  the same reasoning.
+- A code-tool await on a pruned id now fails that call with the await-rejected text, matching the model's await.
+
+Deviations:
+
+- The "two harness tests that depend on turns accumulating" did not show up: `cargo test -p harness` stayed green after
+  turn pruning, probably because the earlier `turn_count` work changed them, though I did not trace that. The tests that
+  did change: one code-tool test asserted a scope still held after the run ended, and the emissions test in `storage.rs`
+  asserted records still held.
+- The state bound is 24 KB in the new one-call test against the brief's 35 KB, because its turns carry no reasoning
+  entry. It is asserted below 45 KB. Code mode is about 174 KB and is asserted below 200 KB. See Risky calls.
+- `run_submissions`, named by the card, was already gone.
+- The size and growth reproductions are ported as `crates/harness/tests/state_bounds.rs`, an integration test because it
+  drives whole sessions through the public API: thousands of turns in plain and code mode, provider approvals, steering,
+  run and promise windows, in-flight counting, scope lifetime and log rebuild, each replayed to the live state.
+  `repro_refute_emissioncap32_u7c` is ported as its in-flight counting test. The compaction-trigger experiments in
+  `repro_fu_h57_r4w` and `repro_fu_h57_c8m` compared options and have nothing left to pin.
+
+Verified: `cargo test -p harness` (362 unit, 15 in `state_bounds`), `cargo test -p store-pg --lib` (14), `cargo test -p
+api` (103, plus 9 contract), `cargo test -p temporal-workflow` (200, plus 3 contract), `cargo test -p api-projection --lib`
+(47), `cargo test -p temporal-runtime --lib` (495), and `cargo check --workspace --all-targets --locked`. One narrow live
+test ran, because the new SQL had no other check: `pg_live_run_record_entries_are_read_by_run_id_across_a_fork`, against
+`lightspeed_hardening`. Clippy, the full suite and the other live tests were not run, as they belong to checkpoints.
+
+Not exercised: nothing has driven pruning through Temporal, so a long run across continue-as-new is proven only by the
+reducer tests. `project_loaded_run`'s log fallback needs a `PgStore` and a client, so its helpers are tested and the
+method itself is not.
+
+Open:
+
+- `format-guards`: `RunQueueState.pruned_through` is new in checkpoints, and the checkpoint version was not bumped here.
+- `docs-and-review-notes`: the guides do not yet describe the 256-run dedupe window, old run reads from the log, or the
+  in-flight limit.
+- `temporal-runtime` unit tests abort with `failed to initiate panic, error 5` when a test panics on this machine, so a
+  failure shows no message. `--test-threads=1` at least names the test. It looks unrelated to this package, but I did not
+  check it against an earlier commit.
