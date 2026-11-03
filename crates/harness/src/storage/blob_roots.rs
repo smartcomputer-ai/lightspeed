@@ -451,6 +451,7 @@ mod tests {
             run_id: RunId::new(1),
             submission_id: Some(crate::SubmissionId::new(digest(b"retry token").to_string())),
             source: crate::RunSource::Input { input: Vec::new() },
+            input_limit_tokens: None,
             run_config: Default::default(),
             config_revision: 0,
             notify_on_terminal: Vec::new(),

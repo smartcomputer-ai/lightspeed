@@ -117,9 +117,6 @@ impl LimitsConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextConfig {
-    /// Provider-reported capacity resolved at admission, independent of the user override.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reported_input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -728,9 +725,6 @@ pub enum CompactionPolicy {
 /// session-level defaults live in [`GenerationConfig`] and [`LimitsConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
-    /// Input capacity resolved outside the reducer for this run’s effective model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input_limit_tokens: Option<u32>,
     /// Model turns this run may start, in place of the session's limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
@@ -785,11 +779,6 @@ pub(crate) fn validate_run_config_for_state(
     state: &CoreAgentState,
     run_config: &RunConfig,
 ) -> Result<(), DomainError> {
-    if run_config.input_limit_tokens == Some(0) {
-        return Err(DomainError::ProviderCompatibility(
-            "input_limit_tokens must be positive".into(),
-        ));
-    }
     validate_max_turns(run_config.max_turns)?;
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
@@ -1221,7 +1210,7 @@ fn validate_context_config(
     context: &ContextConfig,
     api_kind: &ProviderApiKind,
 ) -> Result<(), DomainError> {
-    if context.input_limit_tokens == Some(0) || context.reported_input_limit_tokens == Some(0) {
+    if context.input_limit_tokens == Some(0) {
         return Err(DomainError::ProviderCompatibility(
             "input_limit_tokens must be positive".into(),
         ));
@@ -1354,7 +1343,6 @@ mod tests {
             generation: GenerationConfig::default(),
             limits: LimitsConfig::default(),
             context: ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction,
             },
@@ -1461,6 +1449,7 @@ mod tests {
                         input: input.clone(),
                     },
                     run_config: run_config.clone(),
+                    input_limit_tokens: None,
                     notify_on_terminal: vec![],
                     requested_by: None,
                 }),
@@ -1479,6 +1468,7 @@ mod tests {
                     submission_id: None,
                     source: RunSource::Input { input },
                     run_config,
+                    input_limit_tokens: None,
                     config_revision: 0,
                     notify_on_terminal: vec![],
                     requested_by: None,
@@ -1586,7 +1576,6 @@ mod tests {
                     validate_run_config_for_state(
                         pinned_state,
                         &RunConfig {
-                            input_limit_tokens: None,
                             model_override: Some(changed),
                             ..Default::default()
                         }
@@ -1616,7 +1605,6 @@ mod tests {
                 validate_run_config_for_state(
                     pinned_state,
                     &RunConfig {
-                        input_limit_tokens: None,
                         model_override: Some(ModelSelection {
                             model: model.into(),
                             ..original.model.clone()

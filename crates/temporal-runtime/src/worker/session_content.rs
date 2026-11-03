@@ -324,6 +324,7 @@ mod tests {
                     input: vec![accepted.context_entry()],
                 },
                 run_config: Default::default(),
+                input_limit_tokens: None,
                 config_revision: 0,
                 notify_on_terminal: Vec::new(),
                 requested_by: None,

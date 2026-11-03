@@ -392,6 +392,7 @@ impl SessionPreparationService {
             source,
             declarations,
             tools,
+            input_limit_tokens: None,
         })
     }
 }

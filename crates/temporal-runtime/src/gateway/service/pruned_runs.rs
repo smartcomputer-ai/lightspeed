@@ -127,7 +127,6 @@ mod tests {
                         generation: Default::default(),
                         limits: Default::default(),
                         context: ContextConfig {
-                            reported_input_limit_tokens: None,
                             input_limit_tokens: None,
                             compaction: Some(CompactionPolicy::Disabled),
                         },
@@ -193,6 +192,7 @@ mod tests {
                     }],
                 },
                 run_config: RunConfig::default(),
+                input_limit_tokens: None,
             }))
             .await;
             loop {
@@ -333,6 +333,7 @@ mod tests {
                     }],
                 },
                 run_config: RunConfig::default(),
+                input_limit_tokens: None,
             })
         };
         session.admit(request(1)).await;

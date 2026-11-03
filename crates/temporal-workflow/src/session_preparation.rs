@@ -68,6 +68,10 @@ pub struct SessionToolsetPreparation {
     pub source: SessionToolsetSource,
     pub declarations: Vec<WorkflowToolDeclaration>,
     pub tools: BTreeMap<ToolName, ToolSpec>,
+    /// What the provider reports for `SessionToolsetRequest::input_capacity_model`.
+    /// Absent when the request named none, or when discovery failed or has no figure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
 }
 
 /// A profile's instructions as a workflow carries them. Unlike the public document,
@@ -241,6 +245,9 @@ pub struct SessionProfilePreparation {
 pub struct SessionToolsetRequest {
     pub source: SessionToolsetSource,
     pub validate_configuration: bool,
+    /// The model whose reported input capacity a run needs. Only run preparation asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_capacity_model: Option<harness::ModelSelection>,
 }
 
 /// Compute a minimal patch from the currently published tools to an observed desired set.
@@ -317,6 +324,7 @@ mod tests {
                 submission_id: Some(harness::SubmissionId::new(digest.clone())),
                 source: harness::RunRequestSource::Input { input: Vec::new() },
                 run_config: Default::default(),
+                input_limit_tokens: None,
             }),
             correlation_token: Some(digest),
         };

@@ -354,6 +354,7 @@ mod tests {
             input_entry_ids: Vec::new(),
             input_consumed_by_turn_id: None,
             run_config: crate::RunConfig::default(),
+            input_limit_tokens: None,
             config_revision: 0,
             first_seq: crate::EventSeq::new(1),
             accepted_at_ms: 1,

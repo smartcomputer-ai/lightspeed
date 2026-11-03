@@ -645,7 +645,15 @@ impl WorkerActivities {
         {
             return preparation_activity_result(Err(error));
         }
-        preparation_activity_result(service.prepare_toolset(request.source).await)
+        let mut prepared = service.prepare_toolset(request.source).await;
+        if let (Ok(prepared), Some(model), Some(discovery)) = (
+            prepared.as_mut(),
+            request.input_capacity_model.as_ref(),
+            state.model_discovery.as_ref(),
+        ) {
+            prepared.input_limit_tokens = discovery.input_limit(model).await;
+        }
+        preparation_activity_result(prepared)
     }
 
     #[activity(name = "WorkflowActivities::prepare_session_profile")]

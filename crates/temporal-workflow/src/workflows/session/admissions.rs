@@ -19,9 +19,12 @@ pub(super) async fn admit_admissions(
             }
             SessionAdmission::Core(admission) => admission,
             SessionAdmission::PreparedRun { admission, result } => {
-                let admission = *admission;
+                let mut admission = *admission;
                 match result {
-                    Ok(prepared) => observed_tools = Some(prepared),
+                    Ok(prepared) => {
+                        preparation::take_input_capacity(&mut admission.command, &prepared);
+                        observed_tools = Some(prepared);
+                    }
                     Err(error) => {
                         record_admission_failure(
                             ctx,

@@ -58,7 +58,8 @@ use mcp_api::{map_mcp_error, mcp_server_view, parse_mcp_server_id, put_mcp_serve
 use mcp_discovery::{
     ConfiguratorTrustedHeaderPolicy, HttpMcpToolDiscoverer, McpDiscoveryGate, McpToolDiscoverer,
 };
-use models_api::{ModelDiscoveryService, stored_provider_key_resolver};
+pub(crate) use models_api::ModelDiscoveryService;
+use models_api::stored_provider_key_resolver;
 use oauth_api::{
     auth_client_create_draft, auth_flow_view, cimd_config, map_mcp_oauth_error,
     mcp_oauth_target_from_record, oauth_client_view, oauth_redirect_uri, parse_auth_flow_id,
@@ -719,7 +720,7 @@ impl GatewayAgentApiBuilder {
             configurator_trusted_header,
             mcp_discovery_gate,
             github_api,
-            model_discovery,
+            model_discovery: Arc::new(model_discovery),
             provider_controller_connector: self.provider_controller_connector,
             environment_gateway: self.environment_gateway,
             environment_signals: self.environment_signals,
@@ -747,7 +748,7 @@ pub struct GatewayAgentApi {
     configurator_trusted_header: ConfiguratorTrustedHeaderPolicy,
     mcp_discovery_gate: Arc<McpDiscoveryGate>,
     github_api: Arc<dyn GitHubApiClient>,
-    model_discovery: ModelDiscoveryService,
+    model_discovery: Arc<ModelDiscoveryService>,
     provider_controller_connector: Arc<dyn ProviderControllerConnector>,
     pub(crate) environment_gateway: crate::environments::gateway::EnvironmentGatewayClientConfig,
     environment_signals: Arc<crate::environments::signals::EnvironmentSignals>,
@@ -758,6 +759,11 @@ impl GatewayAgentApi {
     /// internet. One policy for every outbound HTTP client in the process.
     pub(crate) fn private_networks(&self) -> &crate::worker::mcp::McpPrivateNetworkPolicy {
         &self.mcp_private_networks
+    }
+
+    /// The universe's one discovery cache, shared with run preparation.
+    pub(crate) fn model_discovery(&self) -> Arc<ModelDiscoveryService> {
+        self.model_discovery.clone()
     }
 
     pub fn builder(client: Client, store: Arc<PgStore>) -> GatewayAgentApiBuilder {
@@ -903,10 +909,7 @@ impl GatewayAgentApi {
         let session_config = loaded.state.lifecycle.config.as_ref().ok_or_else(|| {
             AgentApiError::invalid_request(format!("session is not open: {session_id}"))
         })?;
-        let mut run_config = api_config::run_config_for_start(session_config, config)?;
-        if let Some(model) = run_config.model_override.as_ref() {
-            run_config.input_limit_tokens = self.model_discovery.input_limit(model).await;
-        }
+        let run_config = api_config::run_config_for_start(session_config, config)?;
         let RunStartSource::Input { items } = source;
         let input = run_input_from_api(self.store.as_ref(), &items).await?;
         let source = harness::RunRequestSource::Input { input };
@@ -945,6 +948,7 @@ impl GatewayAgentApi {
                 submission_id: Some(submission_id.clone()),
                 source,
                 run_config,
+                input_limit_tokens: None,
             }),
         )
         .await?;
@@ -2275,11 +2279,10 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
         }
-        let mut config = harness_session_config_from_api(
+        let config = harness_session_config_from_api(
             params.config,
             model_defaults::current_session_model(&loaded.state)?,
         )?;
-        self.resolve_context_capacity(&mut config).await;
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.message()))?;

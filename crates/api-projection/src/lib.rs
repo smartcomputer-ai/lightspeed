@@ -3466,7 +3466,6 @@ mod tests {
                     compact_threshold_tokens: None,
                 }),
                 input_limit_tokens: Some(100_000),
-                reported_input_limit_tokens: None,
             },
         });
         let view = context_compaction_to_api(&state).unwrap();
@@ -5006,7 +5005,6 @@ mod tests {
                 max_turns: Some(12),
             },
             context: harness::ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction: Some(harness::CompactionPolicy::ProviderStandalone {
                     compact_threshold_tokens: Some(20_000),
@@ -5412,6 +5410,7 @@ mod tests {
             input_entry_ids: Vec::new(),
             input_consumed_by_turn_id: None,
             run_config: Default::default(),
+            input_limit_tokens: None,
             config_revision: 0,
             first_seq: EventSeq::new(1),
             accepted_at_ms: 1,

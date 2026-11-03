@@ -286,6 +286,7 @@ async fn anthropic_messages_live_selects_and_reads_the_matching_skill() {
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -350,7 +351,6 @@ fn session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: None,
         },
@@ -374,7 +374,6 @@ fn session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
         max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,

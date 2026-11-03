@@ -562,7 +562,10 @@ pub(crate) fn standalone_prefix_ids(state: &CoreAgentState) -> Vec<ContextEntryI
         .collect()
 }
 
-/// Capacity of the effective generation/compaction model, with no provider I/O.
+/// Capacity of the effective generation/compaction model, with no provider I/O. A
+/// run reads what was resolved for it, then the limit the document declares for its
+/// own model. An idle session has no run to ask, so manual compaction reads what the
+/// last generation recorded for its model.
 pub fn compaction_input_limit_tokens(state: &CoreAgentState) -> Option<u32> {
     let config = state.lifecycle.config.as_ref()?;
     let run = state.runs.active.as_ref();
@@ -575,26 +578,17 @@ pub fn compaction_input_limit_tokens(state: &CoreAgentState) -> Option<u32> {
         })
         .or(state.context.last_generation_model())
         .unwrap_or(&config.model);
-    let matches_config = model == &config.model;
-    matches_config
-        .then_some(config.context.input_limit_tokens)
-        .flatten()
-        .or_else(|| run.and_then(|run| run.run_config.input_limit_tokens))
+    run.and_then(|run| run.input_limit_tokens)
         .or_else(|| {
-            (run.is_none() && state.context.last_generation_model() == Some(model))
-                .then_some(
-                    state
-                        .context
-                        .last_generation
-                        .as_ref()
-                        .and_then(|generation| generation.input_limit_tokens),
-                )
+            (model == &config.model)
+                .then_some(config.context.input_limit_tokens)
                 .flatten()
         })
         .or_else(|| {
-            matches_config
-                .then_some(config.context.reported_input_limit_tokens)
+            run.is_none()
+                .then(|| state.context.last_generation.as_ref())
                 .flatten()
+                .and_then(|generation| generation.input_limit_tokens)
         })
 }
 

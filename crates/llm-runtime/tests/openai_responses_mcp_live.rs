@@ -116,6 +116,7 @@ async fn openai_responses_live_core_session_uses_public_remote_mcp() {
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(32),
         })
@@ -189,7 +190,6 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: None,
         },
@@ -199,7 +199,6 @@ fn session_config(model: ModelSelection) -> SessionConfig {
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
         max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,

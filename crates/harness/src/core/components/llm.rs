@@ -557,7 +557,6 @@ mod tests {
             processing_tier: Some(crate::ModelProcessingTier::Standard),
         };
         let run_config = RunConfig {
-            input_limit_tokens: None,
             max_output_tokens: Some(2048),
             tool_choice: Some(ToolChoice::RequiredAny),
             parallel_tool_use: Some(false),

@@ -7650,6 +7650,7 @@
             "type": "string"
           },
           "inputLimitTokens": {
+            "description": "The active run's input capacity, or the declared limit. While idle with none\ndeclared, what the last generation recorded, so a session that has not run yet\nshows no reported capacity: that is resolved for each run as it is prepared.",
             "format": "uint32",
             "minimum": 0,
             "type": [

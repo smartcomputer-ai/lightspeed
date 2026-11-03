@@ -188,7 +188,6 @@ fn config() -> SessionConfig {
         generation: Default::default(),
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: Some(200_000),
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens: None,
@@ -258,6 +257,7 @@ fn request_run(index: u64) -> CoreAgentCommand {
             )],
         },
         run_config: RunConfig::default(),
+        input_limit_tokens: None,
     })
 }
 

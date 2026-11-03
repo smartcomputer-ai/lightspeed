@@ -79,7 +79,6 @@ async fn harness_completion_history_reconstructs_one_message_and_preserves_reque
                     generation: Default::default(),
                     limits: Default::default(),
                     context: harness::ContextConfig {
-                        reported_input_limit_tokens: None,
                         input_limit_tokens: None,
                         compaction: None,
                     },
@@ -97,6 +96,7 @@ async fn harness_completion_history_reconstructs_one_message_and_preserves_reque
                 submission_id: None,
                 notify_on_terminal: Vec::new(),
                 run_config: Default::default(),
+                input_limit_tokens: None,
                 source: harness::RunRequestSource::Input {
                     input: vec![ContextEntryInput {
                         kind: ContextEntryKind::Message {

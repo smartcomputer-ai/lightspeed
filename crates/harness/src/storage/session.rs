@@ -1626,7 +1626,6 @@ mod tests {
                         generation: Default::default(),
                         limits: Default::default(),
                         context: crate::ContextConfig {
-                            reported_input_limit_tokens: None,
                             input_limit_tokens: None,
                             compaction: None,
                         },
@@ -1643,6 +1642,7 @@ mod tests {
                     submission_id: None,
                     source: crate::RunSource::Input { input: Vec::new() },
                     run_config: Default::default(),
+                    input_limit_tokens: None,
                     config_revision: 0,
                     notify_on_terminal: Vec::new(),
                     requested_by: None,
@@ -2697,6 +2697,7 @@ mod tests {
                 submission_id: None,
                 source: crate::RunSource::Input { input: Vec::new() },
                 run_config: Default::default(),
+                input_limit_tokens: None,
                 config_revision: 0,
                 notify_on_terminal: Vec::new(),
                 requested_by: None,

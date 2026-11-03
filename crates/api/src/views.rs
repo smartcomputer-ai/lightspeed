@@ -122,6 +122,9 @@ pub struct ContextCompactionView {
     pub threshold_source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_threshold_tokens: Option<u32>,
+    /// The active run's input capacity, or the declared limit. While idle with none
+    /// declared, what the last generation recorded, so a session that has not run yet
+    /// shows no reported capacity: that is resolved for each run as it is prepared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -115,6 +115,7 @@ async fn assert_tool_loop(builtin: bool) {
                     input: user_input(input_ref),
                 },
                 run_config: default_run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(64),
         })

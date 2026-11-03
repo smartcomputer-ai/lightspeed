@@ -444,6 +444,7 @@ async fn configure(
         crate::SessionToolsetRequest {
             source: source.clone(),
             validate_configuration: true,
+            input_capacity_model: None,
         },
         activity_options(),
     );
@@ -641,6 +642,34 @@ pub(super) fn begin_run_preparation(
     });
 }
 
+/// The model whose reported capacity a run needs. A limit the document declares for
+/// its own model stands, so there is nothing to look up for it.
+fn input_capacity_model(
+    config: &harness::SessionConfig,
+    command: &CoreAgentCommand,
+) -> Option<harness::ModelSelection> {
+    let CoreAgentCommand::RequestRun(request) = command else {
+        return None;
+    };
+    let model = request
+        .run_config
+        .model_override
+        .as_ref()
+        .unwrap_or(&config.model);
+    (model != &config.model || config.context.input_limit_tokens.is_none()).then(|| model.clone())
+}
+
+/// Every new run passes through preparation, whoever asked for it, so this is where
+/// each one picks up the capacity resolved for it.
+pub(super) fn take_input_capacity(
+    command: &mut CoreAgentCommand,
+    prepared: &SessionToolsetPreparation,
+) {
+    if let CoreAgentCommand::RequestRun(request) = command {
+        request.input_limit_tokens = prepared.input_limit_tokens;
+    }
+}
+
 /// Poll policy reads alongside the session driver, including while its model
 /// or tool activity is in flight. Only the driver publishes the observation.
 pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkflow>) {
@@ -648,11 +677,14 @@ pub(super) async fn run_preparation_loop(ctx: WorkflowContext<AgentSessionWorkfl
         ctx.wait_for_state(|state| state.run_preparation.is_some())
             .await;
         let pending = ctx.state(|state| state.run_preparation.clone()).unwrap();
+        let input_capacity_model =
+            input_capacity_model(&pending.source.config, &pending.admission.command);
         let activity = ctx.execute_activity(
             WorkflowActivities::prepare_session_toolset,
             crate::SessionToolsetRequest {
                 source: pending.source,
                 validate_configuration: false,
+                input_capacity_model,
             },
             activity_options(),
         );
@@ -793,12 +825,63 @@ mod tests {
                     submission_id: Some(SubmissionId::new("prepared")),
                     source: harness::RunRequestSource::Input { input: Vec::new() },
                     run_config: crate::default_run_config(),
+                    input_limit_tokens: None,
                     notify_on_terminal: Vec::new(),
                 }),
                 correlation_token: Some("receipt".into()),
             },
             source: SessionToolsetSource::from_state(&state).unwrap(),
         }
+    }
+
+    #[test]
+    fn a_run_asks_for_the_capacity_of_its_own_model_unless_the_document_declares_one() {
+        let pending = pending();
+        let session_model = pending.source.config.model.clone();
+        let other = harness::ModelSelection {
+            model: "gpt-other".into(),
+            ..session_model.clone()
+        };
+        let mut command = pending.admission.command.clone();
+        let mut config = pending.source.config.clone();
+        assert_eq!(
+            input_capacity_model(&config, &command),
+            Some(session_model.clone())
+        );
+
+        config.context.input_limit_tokens = Some(100_000);
+        assert_eq!(input_capacity_model(&config, &command), None);
+
+        let CoreAgentCommand::RequestRun(request) = &mut command else {
+            unreachable!()
+        };
+        request.run_config.model_override = Some(other.clone());
+        assert_eq!(input_capacity_model(&config, &command), Some(other));
+
+        assert_eq!(
+            input_capacity_model(&config, &CoreAgentCommand::CompactContext),
+            None
+        );
+    }
+
+    /// The same step serves every source of a run. A detached promise's follow-up is
+    /// built in the workflow and gets its capacity here, as a client's run does.
+    #[test]
+    fn prepared_capacity_lands_on_the_run_it_was_resolved_for() {
+        let pending = pending();
+        let prepared = SessionToolsetPreparation {
+            source: pending.source,
+            declarations: Vec::new(),
+            tools: Default::default(),
+            input_limit_tokens: Some(200_000),
+        };
+        let mut command = pending.admission.command;
+        take_input_capacity(&mut command, &prepared);
+        let CoreAgentCommand::RequestRun(request) = &command else {
+            unreachable!()
+        };
+        assert_eq!(request.input_limit_tokens, Some(200_000));
+        assert_eq!(request.run_config, crate::default_run_config());
     }
 
     #[test]

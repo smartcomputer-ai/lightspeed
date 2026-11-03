@@ -1211,6 +1211,7 @@ mod tests {
                 input: user_input(content_ref),
             },
             run_config: run_config(),
+            input_limit_tokens: None,
         })
     }
 
@@ -1224,7 +1225,6 @@ mod tests {
             generation: Default::default(),
             limits: Default::default(),
             context: ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction: None,
             },
@@ -1285,7 +1285,6 @@ mod tests {
 
     fn run_config() -> RunConfig {
         RunConfig {
-            input_limit_tokens: None,
             max_turns: None,
             model_override: None,
             max_output_tokens: None,

@@ -35,6 +35,7 @@ use super::audio::{
     AudioTranscoder, AudioTranscriber, OpenAiAudioTranscriber, UnavailableAudioTranscriber,
     default_audio_transcoder_from_env, default_openai_audio_transcriber,
 };
+use crate::gateway::service::ModelDiscoveryService;
 use crate::universe::DeploymentClients;
 
 #[derive(Clone)]
@@ -120,6 +121,9 @@ pub struct ActivityState {
     tools: ToolActivityDeps,
     runtime_projection: Option<RuntimeProjectionActivityDeps>,
     pub(super) preparation_store: Option<Arc<PgStore>>,
+    /// Reported model capacity for run preparation. Without it a run has no reported
+    /// limit and relies on the provider's overflow error.
+    pub(super) model_discovery: Option<Arc<ModelDiscoveryService>>,
     pub(super) code_task_queue: String,
     audio: AudioActivityDeps,
     environment_jobs: Option<EnvironmentJobActivityDeps>,
@@ -153,6 +157,7 @@ impl ActivityState {
             },
             runtime_projection: None,
             preparation_store: None,
+            model_discovery: None,
             code_task_queue: crate::config::DEFAULT_CODE_TASK_QUEUE.to_owned(),
             audio: AudioActivityDeps {
                 blobs: blobs.clone(),
@@ -167,6 +172,11 @@ impl ActivityState {
 
     pub fn with_code_task_queue(mut self, task_queue: String) -> Self {
         self.code_task_queue = task_queue;
+        self
+    }
+
+    pub(crate) fn with_model_discovery(mut self, discovery: Arc<ModelDiscoveryService>) -> Self {
+        self.model_discovery = Some(discovery);
         self
     }
 

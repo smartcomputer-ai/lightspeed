@@ -13,8 +13,7 @@ impl GatewayAgentApi {
                 .map_err(model_defaults::map_store_error)
         })
         .await?;
-        let mut config = harness_session_config_from_api(api_config, model)?;
-        self.resolve_context_capacity(&mut config).await;
+        let config = harness_session_config_from_api(api_config, model)?;
         config
             .validate()
             .map_err(|error| AgentApiError::invalid_request(error.message()))?;
@@ -23,13 +22,6 @@ impl GatewayAgentApi {
             .await?;
         self.validate_subagent_agents(&config.features).await?;
         Ok(config)
-    }
-
-    pub(super) async fn resolve_context_capacity(&self, config: &mut SessionConfig) {
-        if config.context.input_limit_tokens.is_none() {
-            config.context.reported_input_limit_tokens =
-                self.model_discovery.input_limit(&config.model).await;
-        }
     }
 
     /// Every allowlisted sub-agent profile must exist when the grant is
@@ -101,7 +93,6 @@ pub(super) fn harness_session_config_from_api(
             })
             .unwrap_or_default(),
         context: harness::ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: api_config
                 .context
                 .as_ref()

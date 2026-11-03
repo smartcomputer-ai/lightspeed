@@ -768,6 +768,7 @@ fn a_deferred_toolset_waits_out_a_parked_batch_without_spinning_the_loop() {
             },
             declarations: Vec::new(),
             tools: Default::default(),
+            input_limit_tokens: None,
         },
         run_id: RunId::new(2),
         admission: admission(request_input_run("queued_behind_parked_batch")),
@@ -829,6 +830,7 @@ fn request_input_run(submission_id: &str) -> CoreAgentCommand {
             input: user_input(harness::BlobRef::from_bytes(submission_id.as_bytes())),
         },
         run_config: crate::default_run_config(),
+        input_limit_tokens: None,
     })
 }
 
@@ -1024,6 +1026,7 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
         input_entry_ids: Vec::new(),
         input_consumed_by_turn_id: None,
         run_config: crate::default_run_config(),
+        input_limit_tokens: None,
         config_revision: 0,
         first_seq: EventSeq::new(1),
         accepted_at_ms: 1,
@@ -2144,6 +2147,7 @@ fn queued_followups_do_not_spin_while_the_active_run_awaits_a_timer() {
             submission_id: None,
             source: active.source.clone(),
             run_config: active.run_config.clone(),
+            input_limit_tokens: None,
             config_revision: active.config_revision,
             first_seq: EventSeq::new(run_id),
             accepted_at_ms: 1_000,

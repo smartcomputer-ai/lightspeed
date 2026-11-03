@@ -2144,6 +2144,7 @@ mod tests {
                         }],
                     },
                     run_config: RunConfig::default(),
+                    input_limit_tokens: None,
                 }),
                 max_steps: None,
             })

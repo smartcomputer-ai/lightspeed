@@ -635,6 +635,7 @@ async fn queue_detached_promise_followups(
                     submission_id: Some(submission_id),
                     source: harness::RunRequestSource::Input { input },
                     run_config: harness::RunConfig::default(),
+                    input_limit_tokens: None,
                 }),
                 correlation_token: None,
             });

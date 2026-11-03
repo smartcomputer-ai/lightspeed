@@ -185,6 +185,7 @@ fn provider_compaction_run(content_ref: BlobRef) -> CoreAgentCommand {
             }],
         },
         run_config: run_config(),
+        input_limit_tokens: None,
     })
 }
 
@@ -321,6 +322,7 @@ async fn anthropic_messages_live_manual_standalone_compaction_preserves_marker()
                     }],
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -479,7 +481,6 @@ fn standalone_session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
@@ -492,7 +493,6 @@ fn standalone_session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
         max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,

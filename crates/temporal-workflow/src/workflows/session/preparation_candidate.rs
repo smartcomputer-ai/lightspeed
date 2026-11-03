@@ -271,6 +271,7 @@ mod tests {
                     source: crate::SessionToolsetSource::from_state(live.state()).unwrap(),
                     declarations: Vec::new(),
                     tools,
+                    input_limit_tokens: None,
                 },
                 uuid::Uuid::nil(),
                 2,

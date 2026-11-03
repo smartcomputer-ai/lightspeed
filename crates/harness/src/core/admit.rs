@@ -284,6 +284,12 @@ pub fn admit_command(
             )?;
             validate_run_config_for_state(state, &request.run_config)
                 .map_err(command_rejection_from_domain)?;
+            if request.input_limit_tokens == Some(0) {
+                return reject(
+                    CommandRejectionKind::Invalid,
+                    "input_limit_tokens must be positive",
+                );
+            }
             let next_run_id = state.id_cursors.last_run_id.checked_add(1).ok_or_else(|| {
                 CommandError::Domain(DomainError::InvariantViolation(
                     "run id cursor exhausted".to_owned(),
@@ -312,6 +318,7 @@ pub fn admit_command(
                     submission_id: request.submission_id,
                     source,
                     run_config: request.run_config,
+                    input_limit_tokens: request.input_limit_tokens,
                     config_revision: state.lifecycle.config_revision,
                     notify_on_terminal: request.notify_on_terminal,
                     requested_by: request.requested_by,

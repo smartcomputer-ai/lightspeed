@@ -88,6 +88,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
                     input: user_input(first_input_ref.clone()),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -144,6 +145,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
                     input: user_input(second_input_ref),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -307,6 +309,7 @@ async fn openai_responses_live_high_watermark_standalone_compaction() {
                     input: user_input(prompt_ref),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
             max_steps: Some(128),
         })
@@ -394,7 +397,6 @@ fn session_config(model: ModelSelection) -> SessionConfig {
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderTriggered {
                 compact_threshold_tokens: Some(2_000),
@@ -419,7 +421,6 @@ fn standalone_session_config(
         },
         limits: Default::default(),
         context: ContextConfig {
-            reported_input_limit_tokens: None,
             input_limit_tokens: None,
             compaction: Some(CompactionPolicy::ProviderStandalone {
                 compact_threshold_tokens,
@@ -432,7 +433,6 @@ fn standalone_session_config(
 
 fn run_config() -> RunConfig {
     RunConfig {
-        input_limit_tokens: None,
         max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
@@ -638,6 +638,7 @@ async fn openai_responses_live_provider_triggered_without_threshold_override() {
                     input: user_input(input),
                 },
                 run_config: run_config(),
+                input_limit_tokens: None,
             }),
         })
         .await

@@ -429,7 +429,6 @@ fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
                     generation: Default::default(),
                     limits: Default::default(),
                     context: harness::ContextConfig {
-                        reported_input_limit_tokens: None,
                         input_limit_tokens: None,
                         compaction: None,
                     },

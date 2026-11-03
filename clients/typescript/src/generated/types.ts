@@ -2106,6 +2106,11 @@ export interface ContextCompactionView {
    * Native APIs are preferred where supported; summaries use the same model route.
    */
   effectiveStrategy: string;
+  /**
+   * The active run's input capacity, or the declared limit. While idle with none
+   * declared, what the last generation recorded, so a session that has not run yet
+   * shows no reported capacity: that is resolved for each run as it is prepared.
+   */
   inputLimitTokens?: number | null;
   observedTokens?: number | null;
   pending: boolean;

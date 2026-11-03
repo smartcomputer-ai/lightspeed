@@ -2303,7 +2303,6 @@ mod tests {
             generation: Default::default(),
             limits: Default::default(),
             context: ContextConfig {
-                reported_input_limit_tokens: None,
                 input_limit_tokens: None,
                 compaction: None,
             },
@@ -2607,6 +2606,7 @@ mod tests {
             submission_id,
             source: RunRequestSource::Input { input },
             run_config,
+            input_limit_tokens: None,
         })
     }
 
@@ -5112,11 +5112,10 @@ mod tests {
     }
 
     #[test]
-    fn input_capacity_follows_the_effective_model_without_reusing_stale_limits() {
+    fn a_declared_limit_covers_the_documents_model_and_no_other() {
         let mut drive =
             CoreAgentDrive::from_replayed(SessionId::new("capacity"), CoreAgentState::new());
         let mut config = config();
-        config.context.reported_input_limit_tokens = Some(200_000);
         config.context.input_limit_tokens = Some(100_000);
         open_session_with_config(&mut drive, config);
         assert_eq!(
@@ -5151,6 +5150,154 @@ mod tests {
         assert_eq!(request.request.model.model, "another-model");
     }
 
+    fn run_with_capacity(
+        submission_id: Option<&str>,
+        input_limit_tokens: Option<u32>,
+    ) -> CoreAgentCommand {
+        CoreAgentCommand::RequestRun(RunRequestCommand {
+            requested_by: None,
+            notify_on_terminal: Vec::new(),
+            submission_id: submission_id.map(crate::SubmissionId::new),
+            source: RunRequestSource::Input {
+                input: user_input(BlobRef::from_bytes(b"input")),
+            },
+            run_config: run_config(),
+            input_limit_tokens,
+        })
+    }
+
+    /// Capacity belongs to the run, so no change to the document can take it away.
+    /// A session whose document was replaced right after it opened, as a bot's profile
+    /// is, compacts proactively from its first run.
+    #[test]
+    fn a_run_compacts_on_the_capacity_resolved_for_it() {
+        let open_config = standalone_compaction_config(None, None);
+        let mut logged = LoggedDrive::open(open_config.clone(), &["search"]);
+        let mut replaced = open_config;
+        replaced.limits.max_turns = Some(50);
+        logged.admit(CoreAgentCommand::ReplaceSessionConfig {
+            expected_revision: None,
+            config: replaced,
+        });
+        assert_eq!(
+            crate::compaction_input_limit_tokens(logged.drive.state()),
+            None
+        );
+
+        let accepted = logged.admit(run_with_capacity(None, Some(1_000)));
+        assert!(matches!(
+            &accepted[0].event,
+            CoreAgentEvent::Run(RunEvent::Accepted(run)) if run.input_limit_tokens == Some(1_000)
+        ));
+        logged.until_generate();
+        assert_eq!(
+            crate::compaction_input_limit_tokens(logged.drive.state()),
+            Some(1_000)
+        );
+
+        counted_tool_turn(&mut logged, 900);
+        until_compaction(&mut logged);
+        assert_eq!(
+            logged
+                .drive
+                .state()
+                .context
+                .last_generation
+                .as_ref()
+                .and_then(|generation| generation.input_limit_tokens),
+            Some(1_000),
+            "what idle manual compaction reads afterwards"
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    /// Discovery failed: the run has no limit, and the provider's overflow does the work.
+    #[test]
+    fn a_run_without_a_resolved_capacity_falls_back_to_the_context_limit_error() {
+        let mut logged = LoggedDrive::open(standalone_compaction_config(None, None), &["search"]);
+        logged.admit(run_with_capacity(None, None));
+        counted_tool_turn(&mut logged, 100_000);
+        let request = logged.until_generate();
+        assert_eq!(compaction_requests(&logged), 0);
+        logged.resume(generation_result(
+            &request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::ContextLimit,
+            Vec::new(),
+            Vec::new(),
+        ));
+        until_compaction(&mut logged);
+        assert!(logged.log.iter().any(|entry| matches!(
+            &entry.event,
+            CoreAgentEvent::Context(ContextEvent::CompactionRequested { trigger, .. })
+                if *trigger == ContextCompactionTrigger::ContextLimit
+        )));
+    }
+
+    #[test]
+    fn a_zero_capacity_is_refused_at_admission() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("zero"), CoreAgentState::new());
+        open_session(&mut drive);
+        let rejection = rejection_of(
+            drive
+                .admit_command(run_with_capacity(None, Some(0)), 20)
+                .expect_err("a limit of nothing"),
+        );
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
+    }
+
+    /// A retried submission finds whatever discovery says by then. That is not a change
+    /// the client made, so it is the same submission whichever state the run is in.
+    #[test]
+    fn a_retry_with_another_capacity_is_the_same_submission() {
+        let flips = [
+            (None, Some(200_000)),
+            (Some(200_000), None),
+            (Some(200_000), Some(1_000_000)),
+        ];
+        let assert_same = |logged: &mut LoggedDrive, retried: Option<u32>| {
+            let before = logged.drive.state().clone();
+            let action = logged
+                .drive
+                .admit_command(run_with_capacity(Some("retried"), retried), 500)
+                .expect("the same submission");
+            assert!(!matches!(action, CoreAgentAction::AppendEvents { .. }));
+            assert_eq!(logged.drive.state(), &before);
+        };
+        for (first, retried) in flips {
+            // Queued, behind a run that is in flight.
+            let mut logged = LoggedDrive::open(config(), &[]);
+            logged.request_run(b"ahead");
+            let ahead = logged.until_generate();
+            logged.admit(run_with_capacity(Some("retried"), first));
+            assert_eq!(logged.drive.state().runs.queued.len(), 1);
+            assert_same(&mut logged, retried);
+
+            // Active.
+            logged.resume(final_turn(&ahead));
+            let request = logged.until_generate();
+            assert_eq!(
+                logged
+                    .drive
+                    .state()
+                    .runs
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .input_limit_tokens,
+                first
+            );
+            assert_same(&mut logged, retried);
+
+            // Finished, which keeps only the digest.
+            logged.resume(final_turn(&request));
+            assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+            assert_same(&mut logged, retried);
+            logged.assert_replays(|_| {});
+        }
+    }
+
     #[test]
     fn generation_metadata_and_usage_observation_survive_replay_with_distinct_lifetimes() {
         let session_id = SessionId::new("generation-observation");
@@ -5170,10 +5317,18 @@ mod tests {
                 .model
                 .clone()
         });
-        overrides.input_limit_tokens = Some(64_000);
         let action = drive
             .admit_command(
-                request_run_command(None, user_input(BlobRef::from_bytes(b"input")), overrides),
+                CoreAgentCommand::RequestRun(RunRequestCommand {
+                    requested_by: None,
+                    notify_on_terminal: Vec::new(),
+                    submission_id: None,
+                    source: RunRequestSource::Input {
+                        input: user_input(BlobRef::from_bytes(b"input")),
+                    },
+                    run_config: overrides,
+                    input_limit_tokens: Some(64_000),
+                }),
                 20,
             )
             .unwrap();
@@ -10356,7 +10511,6 @@ mod tests {
         open_session_with_config(&mut drive, anthropic);
         let run_config = RunConfig {
             processing_tier: Some(crate::ModelProcessingTier::Flex),
-            input_limit_tokens: Some(0),
             tool_choice: Some(ToolChoice::Specific {
                 tool_name: ToolName::new("no_longer_active"),
             }),
@@ -10383,6 +10537,7 @@ mod tests {
                     input: user_input(BlobRef::from_bytes(b"input")),
                 },
                 run_config,
+                input_limit_tokens: Some(0),
                 config_revision: 0,
                 notify_on_terminal: Vec::new(),
                 requested_by: None,
@@ -11379,7 +11534,6 @@ mod tests {
                     None,
                     user_input(BlobRef::from_bytes(b"input")),
                     RunConfig {
-                        input_limit_tokens: None,
                         model_override: Some(override_model.clone()),
                         ..Default::default()
                     },

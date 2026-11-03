@@ -69,6 +69,9 @@ pub struct AcceptedRun {
     pub submission_id: Option<SubmissionId>,
     pub source: RunSource,
     pub run_config: RunConfig,
+    /// As on [`AcceptedRunEvent`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     pub config_revision: u64,
     /// Durable event-log position and wall-clock time of acceptance. These
     /// metadata facts let current-state readers page runs without replaying
@@ -98,6 +101,9 @@ pub struct ActiveRun {
     pub input_entry_ids: Vec<ContextEntryId>,
     pub input_consumed_by_turn_id: Option<TurnId>,
     pub run_config: RunConfig,
+    /// As on [`AcceptedRunEvent`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     pub config_revision: u64,
     pub first_seq: EventSeq,
     pub accepted_at_ms: u64,
@@ -305,6 +311,12 @@ pub struct AcceptedRunEvent {
     pub submission_id: Option<SubmissionId>,
     pub source: RunSource,
     pub run_config: RunConfig,
+    /// The input capacity the provider reported for this run's model when the run
+    /// was prepared. A fact about the run rather than a request from its caller, so it
+    /// sits beside `run_config` and out of submission identity. Absent when nothing was
+    /// reported or the session declares a limit for that model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     pub config_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
@@ -318,6 +330,10 @@ pub struct RunRequestCommand {
     pub submission_id: Option<SubmissionId>,
     pub source: RunRequestSource,
     pub run_config: RunConfig,
+    /// As on [`AcceptedRunEvent`]. Run preparation sets this, so a retried submission
+    /// that finds a different answer from the provider is still the same submission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit_tokens: Option<u32>,
     /// Cross-session notify-intents recorded at admission: on this run's
     /// terminal event, signal each holder workflow with its token (the
     /// holder-side promise id). The edge event is the subscription.
@@ -827,6 +843,7 @@ pub(crate) fn apply_event(
                 submission_id,
                 source,
                 run_config,
+                input_limit_tokens,
                 config_revision,
                 notify_on_terminal,
                 requested_by: _,
@@ -858,6 +875,7 @@ pub(crate) fn apply_event(
                 submission_id: submission_id.clone(),
                 source: source.clone(),
                 run_config: run_config.clone(),
+                input_limit_tokens: *input_limit_tokens,
                 config_revision: *config_revision,
                 first_seq: seq,
                 accepted_at_ms: observed_at_ms,
@@ -900,6 +918,7 @@ pub(crate) fn apply_event(
                 input_entry_ids: Vec::new(),
                 input_consumed_by_turn_id: None,
                 run_config: queued.run_config,
+                input_limit_tokens: queued.input_limit_tokens,
                 config_revision: queued.config_revision,
                 first_seq: queued.first_seq,
                 accepted_at_ms: queued.accepted_at_ms,
