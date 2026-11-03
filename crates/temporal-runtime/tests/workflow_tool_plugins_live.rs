@@ -2011,6 +2011,66 @@ async fn workflow_tool_start_recovery_query_resolves_silent_execution() -> anyho
     .await
 }
 
+/// A recovered result meets the binding's reply schema the way a signal does: this
+/// silent execution recovers `Resolved` with no payload, which its schema refuses.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn workflow_tool_start_recovery_query_meets_the_reply_schema() -> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    run_with_plugin_worker(|_client, api, blobs, session_id, plugin_queue| async move {
+        let recipe = serde_json::to_vec(&WorkflowToolRecipeV1 {
+            workflow_type: "TestSilentStartPluginWorkflow".to_owned(),
+            task_queue: plugin_queue,
+        })?;
+        let recipe_fingerprint = workflow_tool_recipe_fingerprint(&recipe);
+        let recipe_ref = blobs.put_bytes(recipe).await?;
+        let reply_schema_ref = blobs
+            .put_bytes(serde_json::to_vec(&serde_json::json!({
+                "type": "object",
+                "required": ["ok"]
+            }))?)
+            .await?;
+
+        let definition = tool_definition(
+            &blobs,
+            "launch",
+            LAUNCH_JOB_TOOL,
+            "lightspeed.test.launch.v1",
+        )
+        .await?;
+        let run = start_managed_session_and_run(
+            &api,
+            &session_id,
+            vec![WorkflowToolDeclaration::new(
+                definition,
+                WorkflowToolTarget::Start {
+                    start: WorkflowStartRef {
+                        recipe_format: 1,
+                        revision: 1,
+                        recipe_ref,
+                        recipe_fingerprint,
+                    },
+                },
+                promises_completion(None, Some(reply_schema_ref)),
+            )],
+            LAUNCH_JOB_TOOL,
+        )
+        .await?;
+
+        assert_eq!(run.status, api::RunStatus::Completed);
+        let output = final_assistant_text(&run).expect("assistant output");
+        assert!(
+            output.contains("failed"),
+            "the schema must refuse the recovered result: {output}"
+        );
+        Ok(())
+    })
+    .await
+}
+
 /// Absent controller self-receiver: bounded push retry exhausts, terminal
 /// `DeliveryFailed` fails the keyed promise, and the awaiting run completes
 /// with the failure instead of wedging.

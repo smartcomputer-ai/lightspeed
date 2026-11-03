@@ -60,7 +60,8 @@ pub use config::{
     TOOL_REMOTE_OPERATION_TIMEOUT, TOOL_RETRY_SAFE_MAX_ATTEMPTS, activity_options,
     boundary_error_blob_activity_options, default_instructions, default_run_config,
     default_session_config, environment_ready_activity_options, llm_activity_options,
-    tool_batch_activity_options, tool_call_activity_options, tool_call_operation_timeout,
+    recovery_poll_activity_options, tool_batch_activity_options, tool_call_activity_options,
+    tool_call_operation_timeout,
 };
 pub use rehydrate::{
     ReducedSession, RehydrateError, reduce_session_entries, reduce_session_entries_from,

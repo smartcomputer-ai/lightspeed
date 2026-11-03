@@ -115,6 +115,19 @@ pub fn boundary_error_blob_activity_options() -> ActivityOptions {
     .build()
 }
 
+/// Bounded options for one recovery poll of a started execution. It runs on the
+/// session's outer loop, and when these attempts are exhausted the poll simply asks
+/// again later, so it must never reintroduce Temporal's default unlimited retries.
+pub fn recovery_poll_activity_options() -> ActivityOptions {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
+        start_to_close: Duration::from_secs(60),
+        schedule_to_close: Duration::from_secs(180),
+    })
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+    .retry_policy(tool_retry_policy(TOOL_RETRY_SAFE_MAX_ATTEMPTS))
+    .build()
+}
+
 // LLM provider activity policy. Generation and compaction execute one
 // bounded provider call per attempt; Temporal owns durable backoff between
 // attempts. Only the typed `llm_provider_transient` application failure is

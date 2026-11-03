@@ -1792,6 +1792,42 @@ fn a_late_or_unknown_source_resolution_is_a_no_op_that_never_fails_the_session()
     assert!(workflow.pending_admissions.is_empty());
 }
 
+/// What a recovery poll found arrives from the promise's own producer and goes through
+/// the gate a signal does, so the binding's reply schema applies.
+#[test]
+fn a_recovered_result_meets_the_reply_schema_a_signal_would() {
+    let StartIntent {
+        mut workflow,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+    let schema = harness::BlobRef::from_bytes(b"{}");
+    workflow
+        .core_state
+        .workflow_tools
+        .bindings
+        .get_mut(&harness::WorkflowToolId::new("launch"))
+        .expect("binding")
+        .completion = harness::WorkflowToolCompletion::Promises {
+        reply_schema_ref: Some(schema.clone()),
+        deadline_after_ms: None,
+        max_promises: 1,
+        key_source: harness::WorkflowToolCompletionKeySource::Reply,
+    };
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from(&execution_id, promise_id.as_str()),
+        ),
+        promise_sources::SourceResolutionGate::Admit {
+            reply_schema_ref: Some(schema)
+        }
+    );
+    assert!(workflow.last_warning.is_none());
+}
+
 #[test]
 fn only_the_stored_producer_settles_a_promise_and_nothing_outside_settles_a_timer() {
     let timer = promise_with_source(
@@ -2198,6 +2234,35 @@ fn promise_source_polls_rehydrate_from_pending_poll_sources() {
     assert_eq!(timer_poll.next_check_at_ms, 60_000);
     assert_eq!(timer_poll.poll_attempt, 0);
     assert_eq!(promise_sources::nearest_wake_ms(&workflow), Some(60_000));
+}
+
+#[test]
+fn a_started_execution_poll_backs_off_to_a_cap_and_a_timer_keeps_its_time() {
+    let mut poll = PromiseSourcePoll {
+        promise_id: "promise_1".to_owned(),
+        source: bound_workflow_source("child"),
+        next_check_at_ms: 0,
+        poll_attempt: 0,
+    };
+    let delays = (0..6)
+        .map(|_| {
+            promise_sources::advance(&mut poll, 1_000);
+            poll.next_check_at_ms - 1_000
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(delays, [20_000, 40_000, 60_000, 60_000, 60_000, 60_000]);
+    poll.poll_attempt = u32::MAX;
+    promise_sources::advance(&mut poll, u64::MAX);
+    assert_eq!(poll.next_check_at_ms, u64::MAX);
+
+    let mut timer = PromiseSourcePoll {
+        promise_id: "promise_2".to_owned(),
+        source: PromiseSource::Timer { fire_at_ms: 9_000 },
+        next_check_at_ms: 0,
+        poll_attempt: 0,
+    };
+    promise_sources::advance(&mut timer, 1_000);
+    assert_eq!(timer.next_check_at_ms, 9_000);
 }
 
 #[test]

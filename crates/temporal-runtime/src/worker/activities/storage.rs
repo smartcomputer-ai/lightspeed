@@ -484,11 +484,14 @@ pub(super) async fn validate_workflow_tool_reply(
     let Some(payload_ref) = request.payload_ref else {
         return invalid("reply payload is required by the binding's reply schema".to_owned()).await;
     };
-    let payload_bytes = deps
-        .blobs
-        .read_bytes(&payload_ref)
-        .await
-        .map_err(activity_error)?;
+    let payload_bytes = match deps.blobs.read_bytes(&payload_ref).await {
+        Ok(bytes) => bytes,
+        // A reply naming a blob that is not there is that reply's failure.
+        Err(harness::storage::BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply payload {payload_ref} does not exist")).await;
+        }
+        Err(error) => return Err(activity_error(error)),
+    };
     let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
         Ok(payload) => payload,
         Err(error) => {
@@ -1390,6 +1393,33 @@ mod tests {
         );
         let note = &materialized.additional_context[8];
         assert_eq!(note.content.media_type.as_deref(), Some("text/plain"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_naming_a_missing_blob_is_that_replys_failure() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let reply_schema_ref = blobs
+            .put_bytes(br#"{"type":"object"}"#.to_vec())
+            .await
+            .expect("schema");
+        let deps = StorageActivityDeps {
+            sessions: Arc::new(InMemorySessionStore::new()),
+            blobs: blobs.clone(),
+            blob_graph: None,
+        };
+        let validation = validate_workflow_tool_reply(
+            &deps,
+            temporal_workflow::WorkflowToolReplyValidationRequest {
+                reply_schema_ref,
+                payload_ref: Some(BlobRef::from_bytes(b"never stored")),
+            },
+        )
+        .await
+        .expect("the activity does not fail for it");
+        assert!(matches!(
+            validation,
+            temporal_workflow::WorkflowToolReplyValidationResult::Invalid { .. }
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

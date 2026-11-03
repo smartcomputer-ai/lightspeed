@@ -80,76 +80,84 @@ pub(super) async fn process_due(
     });
     let had_due = !due.is_empty();
 
-    for mut poll in due {
-        let check = match &poll.source {
-            harness::PromiseSource::Timer { fire_at_ms } if *fire_at_ms <= now => {
-                harness::PromiseSourceCheckResult::Resolved { payload_ref: None }
-            }
-            harness::PromiseSource::Timer { .. } => {
-                advance(&mut poll, now);
-                ctx.state_mut(|state| {
-                    state
-                        .promise_source_polls
-                        .insert(poll.promise_id.clone(), poll);
-                });
+    // All keys of an invocation describe one execution, so one answer per sweep says
+    // what a running execution's other keys would hear.
+    let mut pending_executions = BTreeSet::new();
+    for poll in due {
+        // Only started executions and timers get a poll entry.
+        let (producer_workflow_id, completion_key) = match &poll.source {
+            harness::PromiseSource::Timer { fire_at_ms } => {
+                if *fire_at_ms <= now {
+                    queue_resolution(
+                        ctx,
+                        poll.promise_id,
+                        harness::PromiseResolution::Resolved { payload_ref: None },
+                    );
+                } else {
+                    reinstall(ctx, poll, now);
+                }
                 continue;
             }
             harness::PromiseSource::Workflow {
                 producer_workflow_id,
-                producer_workflow_kind,
                 completion_key,
                 ..
-            } if producer_workflow_kind == harness::WORKFLOW_TOOL_EXECUTION_KIND => {
-                let check = ctx
-                    .execute_activity(
-                        WorkflowActivities::check_workflow_tool_execution,
-                        crate::WorkflowToolExecutionCheckRequest {
-                            execution_id: producer_workflow_id.clone(),
-                            completion_key: completion_key.clone(),
-                        },
-                        activity_options(),
-                    )
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-                if matches!(check, harness::PromiseSourceCheckResult::Pending) {
-                    advance(&mut poll, now);
-                    ctx.state_mut(|state| {
-                        state
-                            .promise_source_polls
-                            .insert(poll.promise_id.clone(), poll);
-                    });
-                    continue;
-                }
-                check
-            }
-            harness::PromiseSource::Workflow { .. } => continue,
+            } => (producer_workflow_id.clone(), completion_key.clone()),
         };
-        match check {
-            harness::PromiseSourceCheckResult::Pending => {
-                if matches!(poll.source, harness::PromiseSource::Timer { .. }) {
-                    advance(&mut poll, now);
-                    ctx.state_mut(|state| {
-                        state
-                            .promise_source_polls
-                            .insert(poll.promise_id.clone(), poll);
-                    });
-                }
-            }
-            harness::PromiseSourceCheckResult::Resolved { payload_ref } => {
-                queue_resolution(
-                    ctx,
-                    poll.promise_id,
-                    harness::PromiseResolution::Resolved { payload_ref },
-                );
-            }
-            harness::PromiseSourceCheckResult::Failed { error_ref } => {
-                queue_resolution(
-                    ctx,
-                    poll.promise_id,
-                    harness::PromiseResolution::Failed { error_ref },
-                );
-            }
+        if pending_executions.contains(&producer_workflow_id) {
+            reinstall(ctx, poll, now);
+            continue;
         }
+        let check = ctx
+            .execute_activity(
+                WorkflowActivities::check_workflow_tool_execution,
+                crate::WorkflowToolExecutionCheckRequest {
+                    execution_id: producer_workflow_id.clone(),
+                    completion_key,
+                },
+                crate::recovery_poll_activity_options(),
+            )
+            .await;
+        let resolution = match check {
+            Ok(harness::PromiseSourceCheckResult::Pending) => {
+                pending_executions.insert(producer_workflow_id);
+                reinstall(ctx, poll, now);
+                continue;
+            }
+            // A backstop that cannot run now loses nothing by asking again later.
+            Err(error) => {
+                record_warning(
+                    ctx,
+                    format!("recovery check of execution {producer_workflow_id} failed: {error}"),
+                );
+                pending_executions.insert(producer_workflow_id);
+                reinstall(ctx, poll, now);
+                continue;
+            }
+            Ok(harness::PromiseSourceCheckResult::Resolved { payload_ref }) => {
+                harness::PromiseResolution::Resolved { payload_ref }
+            }
+            Ok(harness::PromiseSourceCheckResult::Failed { error_ref }) => {
+                harness::PromiseResolution::Failed { error_ref }
+            }
+        };
+        let Some((universe_id, _)) = split_workflow_id(ctx.workflow_id()) else {
+            continue;
+        };
+        // The same queue as a signal, so the reply schema applies and a signal that
+        // arrived during this check stays ahead of what the check found.
+        ctx.state_mut(|state| {
+            state
+                .pending_source_resolutions
+                .push(PendingSourceResolution {
+                    promise_id: harness::PromiseId::new(poll.promise_id),
+                    resolution,
+                    producer: harness::EmissionProducer::Workflow {
+                        universe_id,
+                        workflow_id: producer_workflow_id,
+                    },
+                });
+        });
     }
     if had_due {
         // A completed poll with its next schedule installed is a safe
@@ -405,9 +413,11 @@ fn queue_resolution(
     });
 }
 
-/// The started-execution recovery poll is a slow backstop behind the
-/// primary pushed-emission path, not a delivery mechanism.
+/// The started-execution recovery poll is a backstop behind the primary
+/// pushed-emission path, not a delivery mechanism. Each poll is an activity in
+/// history, so a long-running execution is asked less and less often.
 const WORKFLOW_EXECUTION_RECOVERY_POLL_MS: u64 = 10_000;
+const WORKFLOW_EXECUTION_RECOVERY_POLL_MAX_MS: u64 = 60_000;
 
 fn initial_check_at_ms(source: &harness::PromiseSource, now_ms: u64) -> u64 {
     match source {
@@ -416,10 +426,29 @@ fn initial_check_at_ms(source: &harness::PromiseSource, now_ms: u64) -> u64 {
     }
 }
 
-fn advance(poll: &mut PromiseSourcePoll, now_ms: u64) {
+pub(super) fn advance(poll: &mut PromiseSourcePoll, now_ms: u64) {
     poll.poll_attempt = poll.poll_attempt.saturating_add(1);
     poll.next_check_at_ms = match &poll.source {
         harness::PromiseSource::Timer { fire_at_ms } => *fire_at_ms,
-        harness::PromiseSource::Workflow { .. } => now_ms + WORKFLOW_EXECUTION_RECOVERY_POLL_MS,
+        harness::PromiseSource::Workflow { .. } => {
+            let doublings = 1u64.checked_shl(poll.poll_attempt).unwrap_or(u64::MAX);
+            let backoff = WORKFLOW_EXECUTION_RECOVERY_POLL_MS
+                .saturating_mul(doublings)
+                .min(WORKFLOW_EXECUTION_RECOVERY_POLL_MAX_MS);
+            now_ms.saturating_add(backoff)
+        }
     };
+}
+
+fn reinstall(
+    ctx: &WorkflowContext<AgentSessionWorkflow>,
+    mut poll: PromiseSourcePoll,
+    now_ms: u64,
+) {
+    advance(&mut poll, now_ms);
+    ctx.state_mut(|state| {
+        state
+            .promise_source_polls
+            .insert(poll.promise_id.clone(), poll);
+    });
 }
