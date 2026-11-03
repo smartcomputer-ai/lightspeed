@@ -148,6 +148,16 @@ Later packages add their own entries.
   continue-as-new. History only grows by what the park itself produces, but a run
   parked for days holds the rollover until the batch ends.
 
+- **A dead session looks busy to bots until `bot-delivery-wedges`.** `session/read` used
+  to fail on a recorded fatal error, which ended a bot delivery as `run_failed` after its
+  attempts. It now succeeds with status `error`, and `session_status_from_view` still
+  maps that to `Busy { run_id: None }`, so a lane on a dead session waits instead. The
+  `BotSessionStatus::Failed` mapping is in that package, as instructed. Do not ship
+  between the two.
+- **A failed describe leaves `session/read` without the check.** The read is served from
+  the store, so a Temporal outage logs a warning and reports the stored status rather
+  than failing. A session can read as healthy during an outage. Mutations still fail.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -242,3 +252,85 @@ rejection, and `process_pending_tool_batch_resumes` records it and carries on. A
 proposal-level rejection that is deterministic, rather than a stale claim, re-runs the
 await materialization on every pass with no backoff. The rejection kinds do not tell
 the two apart today.
+
+### `session-liveness-read` (H-61)
+
+Landed:
+
+- `aa788978`: `last_error` on the session status is split. `fatal_error` is set only by
+  `record_error` and `record_bootstrap_error`, every caller of which returns the error
+  straight after, and it is the only field the gateway waiters and
+  `wait_for_closed_session` fail fast on. `last_warning` takes the advisory setters and
+  logs. No gateway path reads it and nothing clears it. The clears on append, on
+  admission failure and in bootstrap are deleted. The bot controller's and the
+  environment job's own `last_error` are untouched. The stale-flag force terminate on
+  close goes with this.
+- `aee00c0d`: `session/read` no longer queries the workflow. It projects from the store
+  and, for rows that are not closed, calls `execution_liveness`. A stopped execution
+  reports the existing `error` status and `SessionView.execution_failure` (`failed`,
+  `terminated`, `timedOut`, `missing`). Lists stay store-only. A completed or canceled
+  execution under an open row maps to `terminated`. The web detail page shows a banner
+  and a Stopped chip. Public API contract and TypeScript consumers are regenerated. The
+  workflow contract did not change.
+
+Calls made:
+
+- `execution_liveness` is the single helper. `SessionLifecycleIo::is_running` and
+  `classify_workflow_interaction_not_found` use it, and `workflow_is_running` is deleted.
+  `ExecutionLiveness` is re-exported from `gateway::service` for the later packages;
+  `bots` will need a further re-export through `gateway`.
+- A closing workflow commits the close and then completes, so a dead execution behind an
+  open row can mean the row was read too early. The read projects once more on that path
+  only, and reports the failure only if the row is still open.
+- A row in lifecycle `New` is treated as open. Temporal accepts the start before the row
+  exists, so a row without a live execution is real.
+- Statuses that do not say the execution ended count as running: `ContinuedAsNew`,
+  `Paused`, `Unspecified`, `Unknown` and anything newer. A paused workflow used to count
+  as not running, so force close now signals it first and falls back to terminate when
+  the close does not land.
+- `queue_emission` returns its refusal, because the state method has no replay flag and
+  warnings log only outside replay. The dead promise-id branch stays as advisory, as
+  instructed.
+- The composer stays enabled on a dead session. Restart from the log comes with H-64, and
+  the banner already says new messages will fail.
+
+Deviations:
+
+- `classify_workflow_interaction_not_found` changed beyond a move to the helper. Using it
+  for reads with no row would have turned a deleted session, whose execution completed,
+  into `session_bootstrap_failed`, and bots would have lost `Missing`. With no row, it now
+  returns the store's not found unless the execution failed. A read of an unknown id keeps
+  the message `session not found: <id>`.
+- The two fact-checks in the brief disagree on the cancel activity's retries. The code
+  has them bounded: `activity_options` sets 3 attempts and a 90 s schedule-to-close. So a
+  retryable failure does reach the warning branch, and the corrected comment says the
+  activity refused or used up its attempts. The execution is not asked again.
+- The `session/read` method description is cut to fit the 360-byte manifest limit.
+
+Checks: `cargo check --workspace --all-targets --locked`; `cargo test -p api -p
+api-projection`; `cargo test -p temporal-workflow --lib` (163 passed); `cargo test -p
+temporal-runtime --lib` (470 passed, 1 ignored); `npm run typecheck`; `SessionsPage.test`
+(74 passed). The SDK needs `npm run build --workspace @lightspeed-ai/sdk` after
+regeneration before the web typecheck sees new types.
+
+Live, on the hardening database and namespace, both passed:
+
+- New `temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution`. It stops
+  the worker first, then reads, terminates, reads, lists, force closes and reads again.
+- `workflow_tool_reply_requires_exact_stored_producer`, updated for `last_warning`.
+
+Other live suites wait for the checkpoint. A live fixture that writes a session row with
+no workflow behind it and then reads it would now see `error` with `missing`. I found
+none by reading, but did not run them all.
+
+Handoff:
+
+- `bot-delivery-wedges`: map `SessionStatus::Error` to `BotSessionStatus::Failed`, and
+  reuse `execution_liveness` for the sweep. See Risky calls.
+- Waiters still poll the status query, so they need a worker and a dead execution can hold
+  them to `operation_timeout` when there is no worker to answer.
+- Several main-loop exits fail the workflow without `record_error`:
+  `prepare_initial_session`, `code_tools::process_pending`, `drive_from_state` before the
+  admission drain, `drain_pending_admissions` and the code tool dispatcher. Those leave
+  `fatal_error` empty, so waiters do not fail fast on them. This was already so with
+  `last_error`. `core-failrun` or H-64 is the natural place to fix it.
