@@ -272,7 +272,32 @@ Later packages add their own entries.
   script gets a readable error and the run continues.
 - **A model answer that is exactly a digest fails the run until `typed-blob-refs`.** Its preview looks
   like a blob ref, so the store reports `MissingBlobs` and the run fails with that message. Before this
-  package it stalled the session. The next package stops previews counting as refs.
+  package it stalled the session. The next package stops previews counting as refs. Closed by
+  `typed-blob-refs`.
+- **A malformed emission is dropped, not answered.** A plugin signal with a bad id or blob ref cannot
+  be attributed, so it logs and drops. Its promise stays pending until its deadline, if it has one, and
+  the plugin hears nothing. The session's `last_warning` shows it, but the other five receivers keep
+  only an error log. The gate used to fail the promise for a malformed ref, because that ref decoded.
+- **A ref in a plain string now retains nothing.** Roots come only from `BlobRef` values. The
+  cross-check that catches a writer doing otherwise runs only in the in-memory store, so it sees only the
+  writers tests exercise. A ref it misses gets swept after the grace period and fails a later read.
+  `AttachmentSource.id` is deliberately in that group: a `vfs_snapshot` source's snapshot can now be
+  collected while the attachment lives. Nothing resolves that id, but the web shows it.
+- **Append decodes every event.** One decode and walk per event, inside the Postgres transaction. The
+  earlier prototype measured about three times the shape scan: 1.5 to 2.3 ms for 2,000 context entries.
+  An event that does not decode now fails its run as `DataRejected`, instead of committing and failing
+  every later read of the log.
+- **`typed-blob-refs` breaks stored data.** Logs written before it hold workflow emit effects with their
+  refs in `data`, which `invocation_from_emit_effect` now refuses, and VFS commit effects whose snapshot
+  ref roots nothing. Purge dev state at this release, as the branch already requires.
+- **Older workspace heads stay rooted for the life of the session.** Typing the VFS commit effect's ref
+  keeps today's retention. A session with thousands of VFS edits holds every head until it is deleted.
+  Pruning them was left out of scope.
+- **`typed-blob-refs` has never run against Temporal or Postgres.** Docker was down. The live test that
+  sends garbage signals at a parked run has not run, so the claim that `RawValue` survives them rests on
+  reading the SDK and on unit tests of the decode. The Postgres live fixtures were rewritten to real
+  events and only compile. Run `workflow_tool_reply_requires_exact_stored_producer`,
+  `store_pg_live`, `session_lifecycle_live` and `audience_live` at the next checkpoint.
 
 ## Progress
 
@@ -1176,3 +1201,82 @@ Independent review of this package:
   binary `Failed` refs on promises materialize by reference; the workflow, API and TypeScript contracts
   regenerate with no diff.
 - Still unverified: everything live, because the Docker daemon is down.
+
+### `typed-blob-refs` (H-18, H-63, H-53)
+
+Landed:
+
+- `40021e98` (H-18): all six `deliver_emission` handlers take `RawValue` and decode through
+  `receive_emission`, which treats zero payloads as a decode failure. A failure logs at error level and
+  drops the signal. Only the session also sets `last_warning`. There is no `fatal_error`, `last_error`
+  or counter. Senders wrap the envelope with `emission_signal_input`, and the wire form is unchanged, so
+  typed plugin senders keep working. `BlobRef` decode validates through `parse`.
+- `5031cbfe` (H-63): a collecting serializer gathers only `BlobRef` values, recognised by the named
+  newtype they serialize as. The store runs it over the decoded event in the append's transaction, and
+  the gateway over its typed input. Root tables, foreign keys, the sweep predicate and `MissingBlobs`
+  stay, and no refs come back from `encode_uncommitted`. `ToolEffect` gets a typed `refs` map,
+  `WorkspaceAttachmentTarget::Snapshot` holds a `BlobRef`, and the workflow intent gets
+  `SessionProfileInstructions`. The in-memory store runs both collectors on each event and refuses one
+  whose digest the typed walk misses, outside `preview`, `submission_id` and `source.id`.
+- `2e882d0f` (H-53): `ScopeOpened` and `ScopeClosed` carry the parent's run, turn and batch joins, and a
+  joined `CallDeferred` from a code tool names its tool call id.
+- `27113766` (H-18, H-63): a real drive test with a digest as submission id and whole reply, store tests
+  for what the in-memory append refuses, and a paragraph in the workflow contract on dropped signals and
+  deploy order.
+
+Calls made:
+
+- See Risky calls for dropped emissions, plain-string refs, the append's decode, stored data and older
+  heads.
+- Workflow emit effects moved `arguments_ref` and `execution_context_ref` into `refs` too. The brief
+  allowed relying on the event appended alongside. Moving them keeps one rule for effects and lets the
+  cross-check run per event rather than per append.
+- `tool_effects_to_api` merges `refs` into `data`, so `ToolEffectView` and the API contract do not change.
+- `Attachment::blob_refs` is gone. It included `source.id`, so once that stops being a root, a swept
+  snapshot would have made a live attachment look unavailable and failed its edge recording. Admission
+  and edges use only `content_ref`.
+- A non-canonical `snapshotRef` or profile `blobRef` is now `invalid_request` at the API edge, because
+  those are where a string becomes a ref.
+- A closing scope whose parent cannot be found keeps empty joins and still closes.
+- `BlobRef`'s explanation is a plain comment, not a doc comment. A doc comment turned it into a named
+  schema definition and churned the whole workflow schema.
+- The reaper test's malformed log uses bad joins, since a store now refuses an undecodable event. The
+  `session_content` test no longer has foreign events, so its claim that they are skipped undecoded went.
+
+Deviations:
+
+- H-18's brief says to count failures. The package instructions say no counter, and those were followed.
+- `new_unchecked_for_tests` was already gone.
+- The judge's sender-side suggestion, tightening `sourceResolutionEnvelope` and `parseEmissionEnvelope`
+  to `promise_<number>`, was not done. It is outside this package's crates. A TypeScript plugin can still
+  send a bad promise id, and the receiver now drops it.
+- The dead re-validation also went from `CodeExecutionDescriptor::validate` (with its error variant), the
+  code execution context and the reply gate, which the earlier package's note anticipated.
+- The gateway still answers `internal` when a typed input ref has no blob, for example a `snapshotRef`
+  naming nothing. Only free-text digests were in scope.
+
+Ported as tests beside the code, in the behaviour they argued for: `repro_blobref_trace_v4k7` (decode and
+attachment cases), `repro_fu_h63chk_v9k`, `repro_storagecodec_zq9` and `repro_refute_appendwedge_n5g`
+(digest cases), `repro_refute_emissiondecode_g7h`, `repro_poisonsignal_refute_h4v` and
+`repro_scopejoins_refute_y2g7`. The adversarial walk fuzz was not ported.
+
+Verified: `cargo test -p harness` (343 passed), `cargo test -p store-pg --lib` (14), `cargo test -p
+temporal-workflow` (196, plus 3 contract tests), `cargo test -p temporal-runtime --lib` (490, 1 ignored),
+`cargo test -p temporal-runtime --test fake_loop` (2), `cargo test -p tools --lib` (318), `cargo test -p
+api-projection --lib` (46), `cargo test -p llm-runtime --lib` (199), `cargo test -p test-support` (13), and
+`cargo check --workspace --all-targets --locked`. The workflow contract exporter changed only
+`workflow-contract.md`. Clippy and the full workspace suite were not run, as they belong to checkpoints.
+
+Written but never run, for the checkpoint: the garbage-signal step in
+`workflow_tool_reply_requires_exact_stored_producer`, the rewritten fixtures in `store_pg_live`,
+`session_lifecycle_live` and `audience_live`, and the digest-in-preview step in the blob root test. The
+Docker daemon is down.
+
+Open:
+
+- For the docs package: `session/events/read` scope events now have joins. A grep of the guides found
+  nothing describing roots by string shape, so H-63 appears to need no correction there.
+- Any failing test in the `temporal-runtime` lib binary aborts it on this machine with "failed to initiate
+  panic, error 5" rather than reporting the failure, so a parallel run names no test. Running tests
+  one at a time with `--exact` finds them. I did not check whether it predates this package; nothing here
+  touches panic handling.
