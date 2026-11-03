@@ -94,7 +94,7 @@ pub(super) async fn process_due(
                         harness::PromiseResolution::Resolved { payload_ref: None },
                     );
                 } else {
-                    reinstall(ctx, poll, now);
+                    reinstall(ctx, poll);
                 }
                 continue;
             }
@@ -105,7 +105,7 @@ pub(super) async fn process_due(
             } => (producer_workflow_id.clone(), completion_key.clone()),
         };
         if pending_executions.contains(&producer_workflow_id) {
-            reinstall(ctx, poll, now);
+            reinstall(ctx, poll);
             continue;
         }
         let check = ctx
@@ -121,7 +121,7 @@ pub(super) async fn process_due(
         let resolution = match check {
             Ok(harness::PromiseSourceCheckResult::Pending) => {
                 pending_executions.insert(producer_workflow_id);
-                reinstall(ctx, poll, now);
+                reinstall(ctx, poll);
                 continue;
             }
             // A backstop that cannot run now loses nothing by asking again later.
@@ -131,7 +131,7 @@ pub(super) async fn process_due(
                     format!("recovery check of execution {producer_workflow_id} failed: {error}"),
                 );
                 pending_executions.insert(producer_workflow_id);
-                reinstall(ctx, poll, now);
+                reinstall(ctx, poll);
                 continue;
             }
             Ok(harness::PromiseSourceCheckResult::Resolved { payload_ref }) => {
@@ -440,12 +440,11 @@ pub(super) fn advance(poll: &mut PromiseSourcePoll, now_ms: u64) {
     };
 }
 
-fn reinstall(
-    ctx: &WorkflowContext<AgentSessionWorkflow>,
-    mut poll: PromiseSourcePoll,
-    now_ms: u64,
-) {
-    advance(&mut poll, now_ms);
+/// Schedules from the clock as it is now, not as the sweep began: the checks ahead of
+/// this one may have held the sweep for minutes, and a backoff measured from before them
+/// would already be due, so a slow check would run back to back.
+fn reinstall(ctx: &WorkflowContext<AgentSessionWorkflow>, mut poll: PromiseSourcePoll) {
+    advance(&mut poll, workflow_time_ms(ctx));
     ctx.state_mut(|state| {
         state
             .promise_source_polls
