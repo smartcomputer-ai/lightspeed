@@ -27,6 +27,12 @@ fn limit_error(message: &str) -> LlmAdapterError {
     }
 }
 
+fn unusable_summary_error(message: &str) -> LlmAdapterError {
+    LlmAdapterError::InvalidProviderResponse {
+        message: message.into(),
+    }
+}
+
 fn is_context_limit(error: &LlmAdapterError) -> bool {
     match error {
         LlmAdapterError::ContextLimit { .. } => true,
@@ -175,7 +181,7 @@ pub(crate) async fn compact(
                     if result.status != ContextCompactionStatus::Succeeded
                         || result.context_entries.is_empty()
                     {
-                        return Err(limit_error(
+                        return Err(unusable_summary_error(
                             "compaction produced no complete usable summary",
                         ));
                     }
@@ -194,7 +200,9 @@ pub(crate) async fn compact(
                             .map(|(i, e)| synthetic_entry(e, i as u64 + 1))
                             .collect();
                         if estimate(adapter, &entries).await? >= size {
-                            return Err(limit_error("compaction did not reduce its input"));
+                            return Err(unusable_summary_error(
+                                "compaction did not reduce its input",
+                            ));
                         }
                     }
                     calls += result.calls.saturating_sub(1) as usize;

@@ -2,11 +2,14 @@ use std::collections::BTreeMap;
 
 use harness::{
     BlobRef, ContextEntryId, LlmFinish, LlmGenerationFacts, LlmGenerationRequest,
-    LlmGenerationResult, LlmGenerationStatus, RunId, TurnId, storage::BlobStore,
+    LlmGenerationResult, LlmGenerationStatus, LlmUsage, RunId, TurnId, storage::BlobStore,
 };
 use serde::Serialize;
 
-use crate::{blob_io::put_json, error::LlmAdapterResult};
+use crate::{
+    blob_io::put_json,
+    error::{LlmAdapterError, LlmAdapterResult},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LlmGenerationExecution {
@@ -38,7 +41,7 @@ where
         return Ok(None);
     }
     serde_json::to_value(request).map(Some).map_err(|error| {
-        crate::error::LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderRequest {
             message: format!("failed to encode provider request dump: {error}"),
         }
     })
@@ -72,6 +75,46 @@ pub(crate) async fn store_debug_dumps(
         provider_request_ref,
         raw_response_ref,
     }))
+}
+
+/// Ends a generation whose response could not be read as an ordinary failed
+/// result, in the worker's provider-error blob layout. The provider already
+/// served it, so its usage is kept and the caller can still store the debug
+/// dump. Nothing from the response reaches context: it could not be read
+/// whole, and what it did hold may not replay. Any other outcome passes through.
+pub(crate) async fn fail_on_invalid_response(
+    parsed: LlmAdapterResult<LlmGenerationResult>,
+    blobs: &dyn BlobStore,
+    request: &LlmGenerationRequest,
+    response_id: &str,
+    usage: Option<LlmUsage>,
+) -> LlmAdapterResult<LlmGenerationResult> {
+    let error = match parsed {
+        Err(error @ LlmAdapterError::InvalidProviderResponse { .. }) => error,
+        other => return other,
+    };
+    tracing::warn!(
+        target: "llm_runtime",
+        session_id = %request.session_id,
+        run_id = %request.run_id,
+        turn_id = %request.turn_id,
+        response_id,
+        %error,
+        "provider response could not be read"
+    );
+    let failure_ref = crate::blob_io::put_text(
+        blobs,
+        format!(
+            "core agent LLM generation failed\nrun_id={}\nturn_id={}\nerror={error}\n",
+            request.run_id, request.turn_id
+        ),
+    )
+    .await?;
+    let mut result = failed_generation_result(request.run_id, request.turn_id);
+    result.failure_ref = Some(failure_ref);
+    result.facts.provider_response_id = Some(response_id.to_owned());
+    result.facts.usage = usage;
+    Ok(result)
 }
 
 pub fn failed_generation_result(run_id: RunId, turn_id: TurnId) -> LlmGenerationResult {
@@ -155,7 +198,7 @@ pub async fn partial_output_entries(
                 }
                 _ => None,
             }
-            .ok_or_else(|| crate::error::LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: "invalid partial assistant content".to_owned(),
             })?;
             entry.content.content_ref = crate::blob_io::put_text(blobs, &text).await?;

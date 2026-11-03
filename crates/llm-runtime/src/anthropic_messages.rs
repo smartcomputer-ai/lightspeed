@@ -39,8 +39,8 @@ use crate::{
     },
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
-        partial_output_entries, store_debug_dumps, truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, fail_on_invalid_response,
+        log_request_rejection, partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
     secrets::{
         REDACTED_SECRET_PLACEHOLDER, SecretResolveError, SecretResolver, UnconfiguredSecretResolver,
@@ -246,8 +246,8 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
         let provider =
             resolve_model_provider(self.provider_keys.as_ref(), &request.request.model).await?;
         let mut request_dumps = Vec::new();
-        let mut responses = Vec::new();
-        loop {
+        let mut responses: Vec<ApiResponse<am::Message>> = Vec::new();
+        let continued = loop {
             if let Some(dump) = debug_dump_request(self.debug_dumps, &redacted_request)? {
                 request_dumps.push(dump);
             }
@@ -269,25 +269,41 @@ impl LlmGenerationAdapter for AnthropicMessagesLlmAdapter {
             };
             log_input_transformations(&request, &response.raw_json);
             let paused = response.parsed.stop_reason == Some(am::StopReason::PauseTurn);
-            if paused && responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
-                return Err(LlmAdapterError::InvalidProviderRequest {
+            let continuation = if !paused {
+                Ok(None)
+            } else if responses.len() >= MAX_PAUSE_TURN_CONTINUATIONS {
+                Err(LlmAdapterError::InvalidProviderResponse {
                     message: format!(
-                        "Anthropic server-tool turn exceeded {} pause_turn continuations",
-                        MAX_PAUSE_TURN_CONTINUATIONS
+                        "Anthropic server-tool turn exceeded {MAX_PAUSE_TURN_CONTINUATIONS} \
+                         pause_turn continuations"
                     ),
-                });
-            }
-            if paused {
-                let paused_message = paused_assistant_message(&response.raw_json)?;
-                send_request.messages.push(paused_message.clone());
-                redacted_request.messages.push(paused_message);
-            }
+                })
+            } else {
+                paused_assistant_message(&response.raw_json).map(Some)
+            };
             responses.push(response);
-            if !paused {
-                break;
+            match continuation {
+                Ok(Some(paused_message)) => {
+                    send_request.messages.push(paused_message.clone());
+                    redacted_request.messages.push(paused_message);
+                }
+                Ok(None) => break Ok(()),
+                Err(error) => break Err(error),
             }
+        };
+        let parsed = match continued {
+            Ok(()) => result_from_responses(self.blobs.as_ref(), &request, &responses).await,
+            Err(error) => Err(error),
+        };
+        let mut usage = None;
+        for response in &responses {
+            let part = response.parsed.usage.as_ref().map(llm_usage);
+            merge_llm_usage(&mut usage, part.as_ref());
         }
-        let mut result = result_from_responses(self.blobs.as_ref(), &request, &responses).await?;
+        let response_id = responses.last().map_or("", |last| last.parsed.id.as_str());
+        let mut result =
+            fail_on_invalid_response(parsed, self.blobs.as_ref(), &request, response_id, usage)
+                .await?;
         catalog.normalize(&mut result);
         let request_dump = match request_dumps.len() {
             0 => None,
@@ -350,7 +366,7 @@ fn paused_assistant_message(raw_response: &Value) -> LlmAdapterResult<am::Messag
     let blocks = raw_response
         .get("content")
         .and_then(Value::as_array)
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Anthropic pause_turn response is missing a content array".to_owned(),
         })?
         .iter()
@@ -1539,7 +1555,7 @@ async fn result_from_responses(
             }
         }
     }
-    combined.ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+    combined.ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
         message: "Anthropic generation produced no responses".to_owned(),
     })
 }
@@ -1651,7 +1667,7 @@ async fn result_from_compact_response_with_strategy(
             });
         }
         if response.raw_json["stop_reason"] != "compaction" {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: format!(
                     "Anthropic compaction did not finish: {:?}",
                     response.parsed.stop_reason
@@ -1659,7 +1675,7 @@ async fn result_from_compact_response_with_strategy(
             });
         }
         let blocks = response.raw_json["content"].as_array().ok_or_else(|| {
-            LlmAdapterError::InvalidProviderRequest {
+            LlmAdapterError::InvalidProviderResponse {
                 message: "compaction response has no content".into(),
             }
         })?;
@@ -1670,7 +1686,7 @@ async fn result_from_compact_response_with_strategy(
                 .is_none_or(|s| s.trim().is_empty())
             || blocks[0]["signature"].as_str().is_none_or(str::is_empty)
         {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: "compaction response has no valid signed block".into(),
             });
         }
@@ -1699,7 +1715,7 @@ async fn result_from_compact_response_with_strategy(
         response.parsed.stop_reason,
         Some(am::StopReason::EndTurn | am::StopReason::StopSequence)
     ) {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: "summary did not complete normally".into(),
         });
     }
@@ -1713,7 +1729,7 @@ async fn result_from_compact_response_with_strategy(
             .map(|block| block.r#type.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: format!(
                 "Anthropic Messages compaction response {} did not include summary text \
                  (stop_reason: {:?}, stop_details: {:?}, blocks: [{block_types}], \
@@ -1773,7 +1789,7 @@ fn raw_content_block(
     {
         return Ok(raw_block.clone());
     }
-    serde_json::to_value(block).map_err(|error| LlmAdapterError::InvalidProviderRequest {
+    serde_json::to_value(block).map_err(|error| LlmAdapterError::InvalidProviderResponse {
         message: format!("failed to encode Anthropic content block: {error}"),
     })
 }
@@ -1815,18 +1831,18 @@ async fn tool_use_context(
 ) -> LlmAdapterResult<(ContextEntryInput, ObservedToolCall)> {
     let call_id = block.id.clone().unwrap_or_else(|| format!("toolu_{index}"));
     let call_id = ToolCallId::try_new(call_id.clone()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Anthropic tool call id {call_id:?}: {error}"),
         }
     })?;
     let name = block
         .name
         .as_deref()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Anthropic tool_use block is missing name".to_owned(),
         })?;
     let tool_name = ToolName::try_new(name.to_owned()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Anthropic tool name {name:?}: {error}"),
         }
     })?;

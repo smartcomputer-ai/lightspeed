@@ -25,8 +25,15 @@ pub enum LlmAdapterError {
     #[error("invalid JSON in blob {blob_ref}: {message}")]
     InvalidJson { blob_ref: BlobRef, message: String },
 
+    /// A request this runtime could not build for the provider.
     #[error("invalid provider request: {message}")]
     InvalidProviderRequest { message: String },
+
+    /// A response the provider sent that could not be read, such as a tool
+    /// name or call id outside the harness grammar. The generation was already
+    /// served, so an adapter ends it as a failed result with its usage intact.
+    #[error("invalid provider response: {message}")]
+    InvalidProviderResponse { message: String },
 
     #[error("model {model} does not support {feature}: {message}")]
     UnsupportedModelFeature {

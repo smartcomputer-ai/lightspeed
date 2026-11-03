@@ -7299,6 +7299,105 @@ mod tests {
         }
     }
 
+    /// A response the adapter could not read ends as a failed generation that
+    /// still carries what it cost. The run fails as a model failure with the
+    /// adapter's text, the turn adds nothing to context, and the session serves
+    /// the next run.
+    #[test]
+    fn a_failed_generation_with_usage_fails_the_run_and_keeps_the_usage() {
+        let session_id = SessionId::new("session-a");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
+        let mut log = Vec::new();
+        let open = drive
+            .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
+            .expect("open");
+        log.extend(commit_action(&mut drive, open));
+        let request = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"input")),
+                    run_config(),
+                ),
+                20,
+            )
+            .expect("request run");
+        log.extend(commit_action(&mut drive, request));
+        let llm_request = loop {
+            let action = drive.next_action(21, 8).expect("next");
+            if let CoreAgentAction::GenerateLlm { request } = action {
+                break request;
+            }
+            log.extend(commit_action(&mut drive, action));
+        };
+        let context_before = drive.state().context.entries.len();
+        let failure_ref = BlobRef::from_bytes(b"invalid provider response: bad tool name");
+        let resumed = drive
+            .resume_generation(
+                LlmGenerationResult {
+                    run_id: llm_request.run_id,
+                    turn_id: llm_request.turn_id,
+                    status: LlmGenerationStatus::Failed,
+                    failure_ref: Some(failure_ref.clone()),
+                    context_entries: Vec::new(),
+                    facts: LlmGenerationFacts {
+                        duration_ms: None,
+                        provider_response_id: Some("chatcmpl_bad".to_owned()),
+                        finish: LlmFinish::Failed,
+                        usage: Some(crate::LlmUsage {
+                            input_tokens: Some(40),
+                            output_tokens: Some(5),
+                            total_tokens: Some(45),
+                            reasoning_tokens: None,
+                            cached_input_tokens: None,
+                            cache_write_input_tokens: None,
+                            cache_miss_input_tokens: None,
+                        }),
+                        tool_calls: Vec::new(),
+                        approval_requests: Vec::new(),
+                        context_token_estimate: None,
+                    },
+                },
+                30,
+            )
+            .expect("resume failed generation");
+        log.extend(commit_action(&mut drive, resumed));
+        let fail_run = drive.next_action(31, 8).expect("fail run");
+        log.extend(commit_action(&mut drive, fail_run));
+
+        let completed = drive.state().runs.completed.last().expect("completed run");
+        assert_eq!(completed.status, RunStatus::Failed);
+        let failure = completed.failure.as_ref().expect("run failure");
+        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+        assert_eq!(failure.message_ref.as_ref(), Some(&failure_ref));
+        assert_eq!(
+            completed
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.total_tokens),
+            Some(45)
+        );
+        assert_eq!(drive.state().context.entries.len(), context_before);
+        assert_log_replays_to(&log, drive.state());
+
+        let next = drive
+            .admit_command(
+                request_run_command(
+                    None,
+                    user_input(BlobRef::from_bytes(b"next input")),
+                    run_config(),
+                ),
+                40,
+            )
+            .expect("the session takes another run");
+        log.extend(commit_action(&mut drive, next));
+        let next = pump_logged(&mut drive, &mut log);
+        assert!(
+            matches!(next, CoreAgentAction::GenerateLlm { .. }),
+            "{next:?}"
+        );
+    }
+
     /// A provider content filter (an Anthropic `refusal`, an OpenAI
     /// `content_filter` stop) fails the run like a model failure instead of
     /// completing it with an empty answer; the adapter's failure text rides

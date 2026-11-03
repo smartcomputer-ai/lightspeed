@@ -27,8 +27,8 @@ use crate::{
     params::{openai_reasoning_from_effort, openai_responses_params},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
-        partial_output_entries, store_debug_dumps, truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, fail_on_invalid_response,
+        log_request_rejection, partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
     secrets::{
         REDACTED_SECRET_PLACEHOLDER, SecretResolveError, SecretResolver, UnconfiguredSecretResolver,
@@ -217,11 +217,19 @@ impl LlmGenerationAdapter for OpenAiResponsesLlmAdapter {
                 return Err(error.into());
             }
         };
-        let mut result = result_from_response_with_catalog(
+        let parsed = result_from_response_with_catalog(
             self.blobs.as_ref(),
             &request,
             &response,
             Some(&catalog),
+        )
+        .await;
+        let mut result = fail_on_invalid_response(
+            parsed,
+            self.blobs.as_ref(),
+            &request,
+            &response.parsed.id,
+            response.parsed.usage.as_ref().map(llm_usage),
         )
         .await?;
         catalog.normalize(&mut result);
@@ -304,13 +312,13 @@ impl OpenAiResponsesLlmAdapter {
                 .iter()
                 .any(|item| item.r#type != "message" && item.r#type != "reasoning")
         {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: "Responses summary did not finish with a complete text reply".into(),
             });
         }
         let text = response.parsed.output_text();
         if text.trim().is_empty() {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: "Responses summary is empty or refused".into(),
             });
         }
@@ -1104,14 +1112,14 @@ async fn result_from_response_with_catalog(
                                 && patch::is_freeform(tool)
                         })
                     })
-                    .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+                    .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                         message: format!(
                             "OpenAI returned an unadvertised custom tool: {:?}",
                             item.name
                         ),
                     })?;
                 let input = item.input.as_deref().ok_or_else(|| {
-                    LlmAdapterError::InvalidProviderRequest {
+                    LlmAdapterError::InvalidProviderResponse {
                         message: "OpenAI custom_tool_call item is missing input".to_owned(),
                     }
                 })?;
@@ -1239,14 +1247,14 @@ async fn mcp_approval_request_context(
     let provider_request_id =
         item.id
             .clone()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: "OpenAI MCP approval request is missing id".to_owned(),
             })?;
     let server_label = raw_item
         .get("server_label")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "OpenAI MCP approval request is missing server_label".to_owned(),
         })?
         .to_owned();
@@ -1255,7 +1263,7 @@ async fn mcp_approval_request_context(
         .as_deref()
         .or_else(|| raw_item.get("name").and_then(Value::as_str))
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "OpenAI MCP approval request is missing tool name".to_owned(),
         })?
         .to_owned();
@@ -1272,7 +1280,7 @@ async fn mcp_approval_request_context(
             ToolKind::RemoteMcp(remote) if remote.server_label == server_label => Some(remote),
             _ => None,
         })
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: format!(
                 "OpenAI MCP approval request names unknown server label {server_label}"
             ),
@@ -1326,7 +1334,7 @@ pub async fn result_from_compact_response(
         }
     }
     if !has_compaction {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: format!(
                 "OpenAI Responses compact response {} did not include a compaction output item",
                 response.parsed.id
@@ -1399,7 +1407,7 @@ fn raw_output_item(
     {
         return Ok(raw_item.clone());
     }
-    serde_json::to_value(item).map_err(|error| LlmAdapterError::InvalidProviderRequest {
+    serde_json::to_value(item).map_err(|error| LlmAdapterError::InvalidProviderResponse {
         message: format!("failed to encode OpenAI output item: {error}"),
     })
 }
@@ -1520,7 +1528,7 @@ async fn tool_call_context(
         name: item
             .name
             .as_deref()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: format!("OpenAI {} item is missing name", item.r#type),
             })?,
         arguments,
@@ -1531,12 +1539,12 @@ async fn tool_call_context(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("call_{index}"));
     let call_id = ToolCallId::try_new(call_id.clone()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid OpenAI tool call id {call_id:?}: {error}"),
         }
     })?;
     let tool_name = ToolName::try_new(call.name.to_string()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid OpenAI tool name {:?}: {error}", call.name),
         }
     })?;
@@ -1649,7 +1657,7 @@ async fn mcp_context_entry(
         "mcp_call" => OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
         "mcp_approval_request" => OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND,
         _ => {
-            return Err(LlmAdapterError::InvalidProviderRequest {
+            return Err(LlmAdapterError::InvalidProviderResponse {
                 message: format!("unsupported OpenAI MCP output item type {}", item.r#type),
             });
         }

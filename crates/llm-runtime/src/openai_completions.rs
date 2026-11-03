@@ -26,8 +26,8 @@ use crate::{
     params::{openai_completions_params, validate_openai_reasoning_effort},
     provider_keys::{ModelProviderResolver, NoStoredModelProviders, resolve_model_provider},
     result::{
-        LlmGenerationExecution, RequestPositions, debug_dump_request, log_request_rejection,
-        partial_output_entries, store_debug_dumps, truncation_failure_text,
+        LlmGenerationExecution, RequestPositions, debug_dump_request, fail_on_invalid_response,
+        log_request_rejection, partial_output_entries, store_debug_dumps, truncation_failure_text,
     },
 };
 
@@ -229,7 +229,15 @@ impl LlmGenerationAdapter for OpenAiCompletionsLlmAdapter {
             }
         };
         reject_failure_finish(&response)?;
-        let mut result = result_from_response(self.blobs.as_ref(), &request, &response).await?;
+        let parsed = result_from_response(self.blobs.as_ref(), &request, &response).await;
+        let mut result = fail_on_invalid_response(
+            parsed,
+            self.blobs.as_ref(),
+            &request,
+            &response.parsed.id,
+            response.parsed.usage.as_ref().map(llm_usage),
+        )
+        .await?;
         catalog.normalize(&mut result);
         let debug_dumps = store_debug_dumps(
             self.blobs.as_ref(),
@@ -1054,19 +1062,16 @@ pub async fn result_from_response(
     request: &LlmGenerationRequest,
     response: &ApiResponse<oai_c::Completion>,
 ) -> LlmAdapterResult<LlmGenerationResult> {
-    let choice =
-        response
-            .parsed
-            .choices
-            .first()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
-                message: format!("Chat completion {} has no choices", response.parsed.id),
-            })?;
+    let choice = response.parsed.choices.first().ok_or_else(|| {
+        LlmAdapterError::InvalidProviderResponse {
+            message: format!("Chat completion {} has no choices", response.parsed.id),
+        }
+    })?;
     let message =
         choice
             .message
             .as_ref()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: format!("Chat completion {} has no message", response.parsed.id),
             })?;
 
@@ -1074,7 +1079,7 @@ pub async fn result_from_response(
     // native message fields together, including unknown response metadata.
     let mut payload = raw_assistant_message(&response.raw_json)
         .cloned()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Chat Completions response has no raw assistant message".to_owned(),
         })?;
     let reasoning_state = ["reasoning_content", "reasoning", "reasoning_details"]
@@ -1239,14 +1244,14 @@ pub async fn result_from_compact_response(
     if response.parsed.choices.len() != 1
         || response.parsed.choices[0].finish_reason.as_deref() != Some("stop")
     {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: "Chat Completions compaction did not finish with a complete summary".into(),
         });
     }
     let summary = response.parsed.output_text();
     let summary = summary.trim();
     if summary.is_empty() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
+        return Err(LlmAdapterError::InvalidProviderResponse {
             message: format!(
                 "Chat Completions compaction response {} did not include summary text",
                 response.parsed.id
@@ -1294,7 +1299,7 @@ fn raw_tool_call(
     {
         return Ok(raw.clone());
     }
-    serde_json::to_value(call).map_err(|error| LlmAdapterError::InvalidProviderRequest {
+    serde_json::to_value(call).map_err(|error| LlmAdapterError::InvalidProviderResponse {
         message: format!("failed to encode Chat Completions tool call: {error}"),
     })
 }
@@ -1353,28 +1358,29 @@ async fn tool_call_context(
     let id = call
         .id
         .as_deref()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+        .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
             message: "Chat Completions tool call is missing id".to_owned(),
         })?;
     let call_id = ToolCallId::try_new(id.to_owned()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Chat Completions tool call id {id:?}: {error}"),
         }
     })?;
     let function =
         call.function
             .as_ref()
-            .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
                 message: format!("Chat Completions tool call {id} has no function"),
             })?;
-    let name = function
-        .name
-        .as_deref()
-        .ok_or_else(|| LlmAdapterError::InvalidProviderRequest {
-            message: format!("Chat Completions tool call {id} has no function name"),
-        })?;
+    let name =
+        function
+            .name
+            .as_deref()
+            .ok_or_else(|| LlmAdapterError::InvalidProviderResponse {
+                message: format!("Chat Completions tool call {id} has no function name"),
+            })?;
     let tool_name = ToolName::try_new(name.to_owned()).map_err(|error| {
-        LlmAdapterError::InvalidProviderRequest {
+        LlmAdapterError::InvalidProviderResponse {
             message: format!("invalid Chat Completions tool name {name:?}: {error}"),
         }
     })?;

@@ -275,7 +275,7 @@ async fn custom_calls_require_an_advertised_freeform_patch_and_string_input() {
         );
         assert!(matches!(
             result_from_response(&blobs, &request, &response).await,
-            Err(LlmAdapterError::InvalidProviderRequest { .. })
+            Err(LlmAdapterError::InvalidProviderResponse { .. })
         ));
     }
 }
