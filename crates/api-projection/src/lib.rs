@@ -24,21 +24,24 @@ use api::{
 };
 use futures_util::future::try_join_all;
 use harness::{
-    ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
-    ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
     CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
     ContextMessageRole, ContextRemovalReason, CoreAgentCodec, CoreAgentEntry, CoreAgentEvent,
     CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, EventSeq,
-    LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
-    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    ObservedToolCall, ProviderApiKind, RunEvent, RunFailure, RunFailureKind, RunId, RunSource,
-    RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
-    ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec, TurnEvent, TurnId,
+    LlmGenerationStatus, ModelSelection, ObservedToolCall, ProviderApiKind, RunEvent, RunFailure,
+    RunFailureKind, RunId, RunSource, RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId,
+    ToolCallStatus, ToolChoice, ToolConfigEvent, ToolEvent, ToolKind, ToolParallelism, ToolSpec,
+    TurnEvent, TurnId,
     storage::{
         BlobStore, BlobStoreError, ReadSessionEvents, SessionRecord, SessionStore,
         SessionStoreError, StoredSessionEntry,
     },
+};
+use llm_clients::content::{
+    ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
+    ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
+    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
 };
 use serde_json::Value;
 

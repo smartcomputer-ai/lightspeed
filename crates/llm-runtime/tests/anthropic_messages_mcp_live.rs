@@ -277,8 +277,8 @@ async fn mcp_context_items(
                 if matches!(
                     item.content.provider_kind.as_deref(),
                     Some(
-                        harness::ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND
-                            | harness::ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND
+                        llm_clients::content::ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND
+                            | llm_clients::content::ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND
                     )
                 ) {
                     let bytes = blobs
@@ -306,8 +306,8 @@ async fn tool_search_context_items(
                 if matches!(
                     item.content.provider_kind.as_deref(),
                     Some(
-                        harness::ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND
-                            | harness::ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND
+                        llm_clients::content::ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND
+                            | llm_clients::content::ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND
                     )
                 ) {
                     let bytes = blobs

@@ -296,7 +296,7 @@ fn final_turn(request: &LlmGenerationRequest) -> LlmGenerationResult {
     result.context_entries.push(message(
         ContextMessageRole::Assistant,
         format!("assistant-{}", request.turn_id),
-        Some(OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
+        Some("openai.responses.message"),
     ));
     result
 }

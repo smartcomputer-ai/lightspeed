@@ -240,7 +240,7 @@ async fn mcp_call_items(blobs: &dyn BlobStore, entries: &[harness::CoreAgentEntr
         {
             for item in entries {
                 if item.content.provider_kind.as_deref()
-                    == Some(harness::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
+                    == Some(llm_clients::content::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
                 {
                     let bytes = blobs
                         .read_bytes(&item.content.content_ref)

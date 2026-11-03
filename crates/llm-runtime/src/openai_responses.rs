@@ -8,13 +8,15 @@ use harness::{
     ContextCompactionResult, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
     ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts,
     LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
-    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND,
-    OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND, OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND,
-    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    ObservedApprovalRequest, ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution,
-    RemoteMcpApprovalPolicy, RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec,
-    TokenEstimate, TokenEstimateQuality, ToolCallId, ToolChoice, ToolKind, ToolName, ToolSpec,
-    storage::BlobStore,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedApprovalRequest, ObservedToolCall,
+    ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy, RemoteMcpExecution,
+    RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality, ToolCallId,
+    ToolChoice, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+};
+use llm_clients::content::{
+    OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
+    OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND, OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND,
+    OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
 };
 use llm_clients::{ApiResponse, openai::responses as oai};
 use serde_json::{Value, json};
@@ -3589,15 +3591,15 @@ mod tests {
         }
         assert_eq!(
             result.context_entries[0].content.provider_kind.as_deref(),
-            Some(harness::OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND)
+            Some(llm_clients::content::OPENAI_RESPONSES_MCP_LIST_TOOLS_PROVIDER_KIND)
         );
         assert_eq!(
             result.context_entries[1].content.provider_kind.as_deref(),
-            Some(harness::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
+            Some(llm_clients::content::OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND)
         );
         assert_eq!(
             result.context_entries[2].content.provider_kind.as_deref(),
-            Some(harness::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND)
+            Some(llm_clients::content::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND)
         );
         assert_eq!(
             result.context_entries[1].preview.as_deref(),

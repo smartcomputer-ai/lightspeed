@@ -1,15 +1,16 @@
 use std::sync::Arc;
 
 use harness::{
-    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND,
+    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, BlobRef, ContextCompactionRequest,
+    ContextCompactionStatus, ContextCompactionTask, ContextEntry, ContextEntryId,
+    ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextMessageRole, ContextSnapshot,
+    LlmFinish, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest,
+    ModelSelection, ProviderApiKind, RunId, SessionId, ToolChoice, ToolName, TurnId,
+    storage::{BlobStore, InMemoryBlobStore},
+};
+use llm_clients::content::{
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
-    BlobRef, ContextCompactionRequest, ContextCompactionStatus, ContextCompactionTask,
-    ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-    ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, LlmRequest, ModelSelection, ProviderApiKind, RunId, SessionId, ToolChoice,
-    ToolName, TurnId,
-    storage::{BlobStore, InMemoryBlobStore},
 };
 use llm_runtime::{AnthropicMessagesLlmAdapter, LlmCompactionAdapter, LlmGenerationAdapter};
 use serde_json::{Value, json};

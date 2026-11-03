@@ -272,7 +272,8 @@ impl SubagentScriptedLlm {
                     content_ref: output_ref,
                     media_type: Some("application/json".to_owned()),
                     provider_kind: Some(
-                        harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND.to_owned(),
+                        llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND
+                            .to_owned(),
                     ),
                 },
                 preview: Some("subagent scripted final".to_owned()),
@@ -1064,7 +1065,7 @@ async fn run_agent_run_inline_live_client(
     assert_eq!(output.media_type.as_deref(), Some("application/json"));
     assert_eq!(
         output.provider_kind.as_deref(),
-        Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND)
+        Some(llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND)
     );
     assert_eq!(parent_run.output.as_ref(), Some(&output));
     assert_eq!(parent_run.output_text.as_deref(), Some(parent_output));

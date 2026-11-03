@@ -30,10 +30,10 @@ pub async fn project_content_text(
         return Ok(Some(text));
     }
     let project = match content.provider_kind.as_deref() {
-        Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
+        Some(llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND) => {
             llm_clients::content::anthropic_text_blocks
         }
-        Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
+        Some(llm_clients::content::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND) => {
             llm_clients::content::openai_response_message
         }
         Some(llm_clients::content::OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND) => {
@@ -145,9 +145,9 @@ mod tests {
         let full = "héllo 🦀\n".repeat(2000);
         for (kind, bytes) in [
             (None, full.as_bytes().to_vec()),
-            (Some(harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND),
+            (Some(llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND),
                 serde_json::to_vec(&json!([{"type":"text","text":full,"citations":[]}])).unwrap()),
-            (Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
+            (Some(llm_clients::content::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":full,"annotations":[]}]})).unwrap()),
             (Some(OPENAI_COMPLETIONS_MESSAGE_PROVIDER_KIND),
                 serde_json::to_vec(&json!({"role":"assistant","content":full,"annotations":[]})).unwrap()),

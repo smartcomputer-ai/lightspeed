@@ -1336,7 +1336,8 @@ impl CoreAgentLlm for ApprovalScriptedLlm {
                     content_ref: opaque_ref,
                     media_type: Some("application/json".to_owned()),
                     provider_kind: Some(
-                        harness::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND.to_owned(),
+                        llm_clients::content::OPENAI_RESPONSES_MCP_APPROVAL_REQUEST_PROVIDER_KIND
+                            .to_owned(),
                     ),
                 },
                 preview: None,

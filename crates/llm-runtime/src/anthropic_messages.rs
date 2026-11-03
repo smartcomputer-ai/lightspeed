@@ -12,17 +12,19 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use harness::{
-    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
+    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, CompactionPolicy, ContextCompactionRequest,
+    ContextCompactionResult, ContextCompactionStatus, ContextCompactionTask, ContextEntry,
+    ContextEntryInput, ContextEntryKind, ContextMessageRole, LlmFinish, LlmGenerationFacts,
+    LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, LlmRequest, LlmUsage,
+    ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution, RemoteMcpApprovalPolicy,
+    RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec, TokenEstimate, TokenEstimateQuality,
+    ToolCallId, ToolChoice, ToolKind, ToolName, ToolSpec, storage::BlobStore,
+};
+use llm_clients::content::{
+    ANTHROPIC_MESSAGES_MCP_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_MCP_TOOL_USE_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_RESULT_PROVIDER_KIND,
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
-    CompactionPolicy, ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus,
-    ContextCompactionTask, ContextEntry, ContextEntryInput, ContextEntryKind, ContextMessageRole,
-    LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus,
-    LlmRequest, LlmUsage, ObservedToolCall, ProviderApiKind, ProviderNativeToolExecution,
-    RemoteMcpApprovalPolicy, RemoteMcpExecution, RemoteMcpExposure, RemoteMcpToolSpec,
-    TokenEstimate, TokenEstimateQuality, ToolCallId, ToolChoice, ToolKind, ToolName, ToolSpec,
-    storage::BlobStore,
 };
 use llm_clients::{ApiResponse, anthropic::messages as am};
 use serde_json::{Value, json};

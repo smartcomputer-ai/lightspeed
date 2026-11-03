@@ -3,10 +3,12 @@ use std::sync::Arc;
 use harness::{
     BlobRef, CompactionPolicy, ContextEntry, ContextEntryId, ContextEntryKind, ContextEntrySource,
     ContextMessageRole, ContextSnapshot, LlmFinish, LlmGenerationRequest, LlmGenerationStatus,
-    LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
-    ProviderApiKind, ProviderParams, RunId, SessionId, ToolChoice, TurnId,
+    LlmRequest, ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ProviderApiKind,
+    ProviderParams, RunId, SessionId, ToolChoice, TurnId,
     storage::{BlobStore, InMemoryBlobStore},
+};
+use llm_clients::content::{
+    OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
 };
 use llm_runtime::{
     LlmGenerationAdapter, OpenAiResponsesLlmAdapter, OpenAiResponsesParams,

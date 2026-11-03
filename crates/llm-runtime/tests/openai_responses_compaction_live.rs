@@ -164,7 +164,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
     assert_eq!(output.media_type.as_deref(), Some("application/json"));
     assert_eq!(
         output.provider_kind.as_deref(),
-        Some(harness::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND)
+        Some(llm_clients::content::OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND)
     );
     let assistant_text = support::content_text(blobs.as_ref(), output).await;
     assert!(

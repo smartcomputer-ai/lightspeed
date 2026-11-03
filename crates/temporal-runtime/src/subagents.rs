@@ -1735,7 +1735,8 @@ mod tests {
                         content_ref,
                         media_type: Some("application/json".into()),
                         provider_kind: Some(
-                            harness::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND.into(),
+                            llm_clients::content::ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND
+                                .into(),
                         ),
                     }),
                     failure_message_ref: None,
