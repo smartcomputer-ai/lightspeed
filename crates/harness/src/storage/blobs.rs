@@ -24,7 +24,7 @@ pub struct BlobInfo {
 /// Contents of the well-known constant blobs the deterministic core
 /// references by hash without being able to write them itself (for example
 /// [`crate::UNAVAILABLE_TOOL_RESULT_CONTENT`]).
-pub const ENGINE_BLOB_CONTENTS: [&str; 17] = [
+pub const ENGINE_BLOB_CONTENTS: [&str; 18] = [
     crate::UNAVAILABLE_TOOL_RESULT_CONTENT,
     crate::TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT,
     crate::LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT,
@@ -33,6 +33,7 @@ pub const ENGINE_BLOB_CONTENTS: [&str; 17] = [
     crate::UNUSABLE_TOOL_CALLS_FAILURE_CONTENT,
     crate::RUN_INTERNAL_FAILURE_CONTENT,
     crate::TURN_LIMIT_FAILURE_CONTENT,
+    crate::CONTEXT_LIMIT_FAILURE_CONTENT,
     crate::PROVIDER_CANCELLED_FAILURE_CONTENT,
     crate::OUTPUT_TRUNCATED_FAILURE_CONTENT,
     crate::CONTENT_FILTERED_FAILURE_CONTENT,
@@ -74,6 +75,7 @@ pub async fn ensure_harness_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStore
             crate::unusable_tool_calls_failure_ref(),
             crate::run_internal_failure_ref(),
             crate::turn_limit_failure_ref(),
+            crate::context_limit_failure_ref(),
             crate::provider_cancelled_failure_ref(),
             crate::output_truncated_failure_ref(),
             crate::content_filtered_failure_ref(),
@@ -717,6 +719,7 @@ mod tests {
                 crate::unusable_tool_calls_failure_ref(),
                 crate::run_internal_failure_ref(),
                 crate::turn_limit_failure_ref(),
+                crate::context_limit_failure_ref(),
                 crate::provider_cancelled_failure_ref(),
                 crate::output_truncated_failure_ref(),
                 crate::content_filtered_failure_ref(),

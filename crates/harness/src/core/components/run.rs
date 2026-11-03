@@ -410,6 +410,16 @@ pub fn turn_limit_failure_ref() -> BlobRef {
     BlobRef::from_bytes(TURN_LIMIT_FAILURE_CONTENT.as_bytes())
 }
 
+/// Failure message of a run whose context would not fit when no message came with
+/// the overflow: compaction was disabled, had nothing left to remove, or ran out of
+/// attempts or failed.
+pub const CONTEXT_LIMIT_FAILURE_CONTENT: &str =
+    "the context is larger than the model accepts and compaction did not make it fit\n";
+
+pub fn context_limit_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(CONTEXT_LIMIT_FAILURE_CONTENT.as_bytes())
+}
+
 /// Failure message of a generation the provider cancelled while nobody had asked
 /// for that. A cancel someone asked for ends the run as cancelled, not failed.
 pub const PROVIDER_CANCELLED_FAILURE_CONTENT: &str =
@@ -579,7 +589,7 @@ fn terminal_run_proposal(
                     kind: RunFailureKind::ContextFailure,
                     message_ref: failure_ref
                         .clone()
-                        .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
+                        .or_else(|| Some(context_limit_failure_ref())),
                 },
             }))
         }

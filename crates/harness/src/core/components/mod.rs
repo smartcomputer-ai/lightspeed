@@ -64,14 +64,15 @@ pub use promise::{
 };
 pub use run::{
     AcceptedRun, AcceptedRunEvent, ActiveRun, AwaitMode, AwaitSpec,
-    CONTENT_FILTERED_FAILURE_CONTENT, ContextRecoveryState, JoinedWorkflowCall,
-    OUTPUT_TRUNCATED_FAILURE_CONTENT, PROVIDER_CANCELLED_FAILURE_CONTENT, ParkedToolBatch,
-    PromiseContextEntries, RUN_INTERNAL_FAILURE_CONTENT, ResumeToolBatchCommand, RunEvent,
-    RunFailure, RunFailureKind, RunQueueState, RunRecord, RunRequestCommand, RunRequestSource,
-    RunSource, RunStatus, RunTerminalNotifyIntent, SteeringBatch, TURN_LIMIT_FAILURE_CONTENT,
-    ToolBatchResumeOutput, ToolBatchSuspension, WakeReason, content_filtered_failure_ref,
-    output_truncated_failure_ref, provider_cancelled_failure_ref, request_run_submission_digest,
-    run_internal_failure_ref, turn_limit_failure_ref,
+    CONTENT_FILTERED_FAILURE_CONTENT, CONTEXT_LIMIT_FAILURE_CONTENT, ContextRecoveryState,
+    JoinedWorkflowCall, OUTPUT_TRUNCATED_FAILURE_CONTENT, PROVIDER_CANCELLED_FAILURE_CONTENT,
+    ParkedToolBatch, PromiseContextEntries, RUN_INTERNAL_FAILURE_CONTENT, ResumeToolBatchCommand,
+    RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord, RunRequestCommand,
+    RunRequestSource, RunSource, RunStatus, RunTerminalNotifyIntent, SteeringBatch,
+    TURN_LIMIT_FAILURE_CONTENT, ToolBatchResumeOutput, ToolBatchSuspension, WakeReason,
+    content_filtered_failure_ref, context_limit_failure_ref, output_truncated_failure_ref,
+    provider_cancelled_failure_ref, request_run_submission_digest, run_internal_failure_ref,
+    turn_limit_failure_ref,
 };
 pub use state::*;
 pub use tooling::{

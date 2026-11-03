@@ -875,7 +875,9 @@ pub fn context_compaction_result_proposals(
                 run_id: run.run_id,
                 failure: crate::RunFailure {
                     kind: crate::RunFailureKind::ContextFailure,
-                    message_ref: result.failure_ref,
+                    message_ref: result
+                        .failure_ref
+                        .or_else(|| Some(crate::context_limit_failure_ref())),
                 },
             }),
         ));
@@ -14838,6 +14840,118 @@ mod tests {
         assert_eq!(failure.kind, RunFailureKind::ContextFailure);
         assert_eq!(failure.message_ref, Some(failure_ref));
         assert_eq!(steering_in_context(&logged.drive), 1);
+        logged.assert_replays(|_| {});
+    }
+
+    fn overflow_without_message(request: &LlmGenerationRequest) -> LlmGenerationResult {
+        LlmGenerationResult {
+            failure_ref: None,
+            ..overflow_result(request)
+        }
+    }
+
+    fn assert_context_limit_message(logged: &LoggedDrive) {
+        let failure = logged.last_run().failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::ContextFailure);
+        assert_eq!(
+            failure.message_ref,
+            Some(crate::context_limit_failure_ref())
+        );
+    }
+
+    #[test]
+    fn an_overflow_with_no_message_and_compaction_off_says_what_happened() {
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::Disabled);
+        let mut logged = LoggedDrive::open(config, &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(overflow_without_message(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_context_limit_message(&logged);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn an_overflow_with_no_message_after_recovery_runs_out_says_what_happened() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        logged.request_run(b"earlier");
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        logged.request_run(b"input");
+        let mut compactions = 0;
+        loop {
+            match logged.pump() {
+                CoreAgentAction::GenerateLlm { request } => {
+                    logged.resume(overflow_without_message(&request));
+                }
+                CoreAgentAction::CompactContext { request } => {
+                    compactions += 1;
+                    let action = logged
+                        .drive
+                        .resume_context_compaction(
+                            ContextCompactionResult {
+                                usage: None,
+                                calls: 1,
+                                session_id: request.session_id,
+                                context_revision: request.request.context.context_revision,
+                                status: ContextCompactionStatus::Succeeded,
+                                failure_ref: None,
+                                context_entries: vec![message_input(
+                                    ContextMessageRole::User,
+                                    BlobRef::from_bytes(b"summary"),
+                                )],
+                            },
+                            80,
+                        )
+                        .expect("resume compaction");
+                    logged.commit(action);
+                }
+                CoreAgentAction::Idle => break,
+                other => panic!("unexpected action {other:?}"),
+            }
+        }
+        assert_eq!(
+            compactions,
+            crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
+        );
+        assert_context_limit_message(&logged);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_failed_overflow_compaction_with_no_message_says_what_happened() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        logged.request_run(b"earlier");
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(overflow_without_message(&request));
+        let CoreAgentAction::CompactContext { request } = logged.pump() else {
+            panic!("overflow asks for compaction");
+        };
+        let failed = logged
+            .drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    usage: None,
+                    calls: 1,
+                    session_id: request.session_id,
+                    context_revision: request.request.context.context_revision,
+                    status: ContextCompactionStatus::Failed,
+                    failure_ref: None,
+                    context_entries: Vec::new(),
+                },
+                80,
+            )
+            .expect("resume compaction");
+        logged.commit(failed);
+        assert_context_limit_message(&logged);
         logged.assert_replays(|_| {});
     }
 
