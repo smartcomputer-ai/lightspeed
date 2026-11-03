@@ -5143,36 +5143,33 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn a_malformed_await_fails_alone_and_keeps_its_workflow_tool_sibling() {
+    async fn a_malformed_await_fails_alone_and_keeps_the_spawn_beside_it() {
         let blobs = Arc::new(InMemoryBlobStore::new());
-        let sessions = InMemorySessionStore::new();
-        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let binding = subagent_binding(&blobs, SubagentToolKind::Spawn).await;
         let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
-        let workflow_args = blobs
-            .put_bytes(br#"{"status":"complete"}"#.to_vec())
-            .await
-            .unwrap();
+        let mut request = agent_run_batch(
+            &blobs,
+            &binding,
+            br#"{"agent":"reviewer","input":"review this change"}"#,
+            Some(subagents_policy(&["reviewer"], Default::default())),
+        )
+        .await;
+        request.calls[0].tool_name = ToolName::new(SubagentToolKind::Spawn.tool_name());
         // `timeout` instead of `timeout_ms`: the argument structs deny unknown fields.
         let wait_args = blobs
             .put_bytes(br#"{"promises":["promise_1"],"timeout":5}"#.to_vec())
             .await
             .unwrap();
+        request.calls.push(await_call("call_wait", wait_args));
 
         let results = tools
-            .invoke_batch(batch_request_of(
-                session_id,
-                vec![
-                    workflow_call("call_report", &binding, workflow_args),
-                    await_call("call_wait", wait_args),
-                ],
-            ))
+            .invoke_batch(request)
             .await
             .expect("a parse failure is not a batch failure")
             .completed_result()
             .expect("nothing to wait for")
             .results;
 
-        assert_eq!(results[0].call_id, ToolCallId::new("call_report"));
         assert_eq!(results[0].status, ToolCallStatus::Succeeded);
         assert_eq!(
             results[0].effects[0].kind,
