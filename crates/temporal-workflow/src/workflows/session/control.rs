@@ -27,7 +27,7 @@ pub(super) enum Raced<T> {
 /// (`TryCancel`: the future resolves at once, the worker learns through its
 /// heartbeat) and `Preempted` is returned.
 ///
-/// During compaction, only cancellation admissions can pass its frozen revision.
+/// During compaction, only cancellation and force close can pass its frozen revision.
 pub(super) async fn race_activity_with_admissions<T, F>(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,

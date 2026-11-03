@@ -604,6 +604,7 @@ pub(crate) fn compaction_safe_boundary(state: &CoreAgentState) -> bool {
             run.status == RunStatus::Active
                 && run.active_turn_id.is_none()
                 && run.active_tool_batch_id.is_none()
+                && !crate::core::components::run::has_unstarted_tool_call_turn(run)
         })
 }
 
@@ -916,16 +917,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
                     .is_none_or(|run| run.run_id != run_id || run.status != RunStatus::Active)
             })
     {
-        return Ok(vec![CoreAgentEventProposal::new(
-            CoreAgentJoins::default(),
-            CoreAgentEvent::Context(Event::CompactionFinished {
-                base_revision: state.context.revision,
-                status: ContextCompactionStatus::Failed,
-                failure_ref: None,
-                usage: None,
-                calls: 0,
-            }),
-        )]);
+        return Ok(vec![compaction_abandoned_proposal(state)]);
     }
     if let Some(proposal) = provider_compacted_prune_proposal(state)? {
         return Ok(vec![proposal]);
@@ -990,6 +982,11 @@ fn high_watermark_compaction_proposal(
         return Ok(None);
     }
     if state.context.compaction.is_queued() {
+        // Edits landing after the request was queued can leave nothing to cover.
+        // The caller is still waiting, so it gets an answer.
+        if standalone_prefix_ids(state).is_empty() {
+            return Ok(Some(compaction_abandoned_proposal(state)));
+        }
         return Ok(Some(compaction_requested_proposal(
             state,
             ContextCompactionTrigger::Manual,
@@ -1097,6 +1094,20 @@ fn high_watermark_compaction_proposal(
         state,
         ContextCompactionTrigger::HighWatermark,
     )))
+}
+
+/// Ends a pending or queued compaction that no longer has anything to do.
+pub(crate) fn compaction_abandoned_proposal(state: &CoreAgentState) -> CoreAgentEventProposal {
+    CoreAgentEventProposal::new(
+        CoreAgentJoins::default(),
+        CoreAgentEvent::Context(Event::CompactionFinished {
+            base_revision: state.context.revision,
+            status: ContextCompactionStatus::Failed,
+            failure_ref: None,
+            usage: None,
+            calls: 0,
+        }),
+    )
 }
 
 fn compaction_requested_proposal(
@@ -1501,7 +1512,8 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     "successful context compaction cannot include a failure ref".to_owned(),
                 ));
             }
-            if !state.context.compaction.is_pending() {
+            let queued = state.context.compaction.is_queued();
+            if !state.context.compaction.is_pending() && !queued {
                 return Err(DomainError::InvariantViolation(
                     "context compaction finished without a pending request".to_owned(),
                 ));
@@ -1511,11 +1523,12 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             {
                 crate::core::components::turn::accumulate_usage(&mut run.usage, usage);
             }
-            let manual = state
-                .context
-                .compaction
-                .pending_plan()
-                .is_some_and(|plan| plan.trigger == ContextCompactionTrigger::Manual);
+            let manual = queued
+                || state
+                    .context
+                    .compaction
+                    .pending_plan()
+                    .is_some_and(|plan| plan.trigger == ContextCompactionTrigger::Manual);
             state.context.compaction.phase = ContextCompactionPhase::Idle;
             bump_context_revision(state)?;
             state.context.compaction.last_finished_revision = Some(state.context.revision);

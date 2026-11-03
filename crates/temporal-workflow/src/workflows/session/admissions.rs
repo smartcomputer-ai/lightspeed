@@ -157,8 +157,8 @@ pub(super) async fn admit_admissions(
 /// the live drive. Returns whether anything was admitted (accepted or
 /// rejected). Two classes are held back, in order, for a later drain:
 ///
-/// - context/config/tool mutations while compaction is pending. Cancellation
-///   passes immediately and can abandon the frozen compaction request;
+/// - context/config/tool mutations while compaction is pending. Cancellation and
+///   force close pass immediately and can abandon the frozen compaction request;
 /// - context/config/tool mutations while a turn's generation is in flight.
 ///   That turn's request is frozen at its planned revisions and the runtime
 ///   re-derives it from state, so those revisions must not move until the
@@ -236,7 +236,9 @@ fn admissible_during_compaction(admission: &SessionAdmission) -> bool {
     admission.core().is_some_and(|admission| {
         matches!(
             admission.command,
-            CoreAgentCommand::CancelRun { .. } | CoreAgentCommand::ForceCancelRun { .. }
+            CoreAgentCommand::CancelRun { .. }
+                | CoreAgentCommand::ForceCancelRun { .. }
+                | CoreAgentCommand::CloseSession { force: true }
         )
     })
 }

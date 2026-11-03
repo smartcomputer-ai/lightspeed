@@ -2314,3 +2314,24 @@ fn continuations_require_explicit_preparation_state() {
         }
     }
 }
+
+#[test]
+fn only_a_forced_close_passes_a_pending_compaction() {
+    let mut workflow = AgentSessionWorkflow::default();
+    workflow.core_state.context.compaction.phase =
+        harness::ContextCompactionPhase::Pending(harness::ContextCompactionPlan {
+            run_id: None,
+            covered_entry_ids: Vec::new(),
+            trigger: harness::ContextCompactionTrigger::Manual,
+        });
+    let close = |force| {
+        SessionAdmission::Core(AgentAdmission {
+            command: CoreAgentCommand::CloseSession { force },
+            correlation_token: None,
+        })
+    };
+    workflow.pending_admissions = vec![close(false)];
+    assert!(!admissions::has_admissible_admissions(&workflow));
+    workflow.pending_admissions = vec![close(true)];
+    assert!(admissions::has_admissible_admissions(&workflow));
+}

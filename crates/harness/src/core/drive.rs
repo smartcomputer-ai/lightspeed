@@ -602,7 +602,7 @@ pub fn next_context_compaction_request(
     session_id: &SessionId,
     state: &CoreAgentState,
 ) -> Result<Option<ContextCompactionRequest>, DomainError> {
-    if !state.context.compaction.is_pending() {
+    if state.lifecycle.status != CoreAgentStatus::Open || !state.context.compaction.is_pending() {
         return Ok(None);
     }
     let request = crate::core::components::llm::build_context_compaction_task(state)
@@ -13190,5 +13190,150 @@ mod tests {
         );
         assert_eq!(logged.last_run().run_id, batch.run_id);
         logged.assert_replays(|_| {});
+    }
+
+    fn compaction_config() -> SessionConfig {
+        standalone_compaction_config(None, Some(256))
+    }
+
+    /// A manual compaction admitted between a tool-call turn and its batch waits
+    /// for the batch. Planning over the open call would either fail and lose the
+    /// request or orphan the result that arrives after it.
+    #[test]
+    fn manual_compaction_between_a_tool_turn_and_its_batch_waits_for_the_batch() {
+        // The first turn, the second turn, and the first call of a later run.
+        for (earlier_turns, earlier_runs) in [(0, 0), (1, 0), (0, 1)] {
+            let mut logged = LoggedDrive::open(compaction_config(), &["tool_a"]);
+            for run in 0..earlier_runs {
+                logged.request_run(format!("run {run}").as_bytes());
+                let request = logged.until_generate();
+                logged.resume(final_turn(&request));
+                assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+            }
+            logged.request_run(b"input");
+            for turn in 0..earlier_turns {
+                let request = logged.until_generate();
+                let call = observed_call(&format!("call_early_{turn}"), "tool_a");
+                logged.resume(tool_call_turn(&request, LlmFinish::ToolCalls, vec![call]));
+                let batch = logged.until_tools();
+                let results = completed_tool_result(&batch);
+                let action = logged.drive.resume_tool_batch(results, 72).expect("resume");
+                logged.commit(action);
+            }
+            let request = logged.until_generate();
+            logged.resume(tool_call_turn(
+                &request,
+                LlmFinish::ToolCalls,
+                vec![observed_call("call_open", "tool_a")],
+            ));
+
+            logged.admit(CoreAgentCommand::CompactContext);
+            assert!(logged.drive.state().context.compaction.is_queued());
+
+            let batch = logged.until_tools();
+            let results = completed_tool_result(&batch);
+            let action = logged.drive.resume_tool_batch(results, 80).expect("resume");
+            logged.commit(action);
+
+            let CoreAgentAction::CompactContext { request } = logged.pump() else {
+                panic!("the queued compaction flushes once the batch is done");
+            };
+            assert_tool_calls_answered(&request.request.context.entries);
+            logged.assert_replays(|_| {});
+        }
+    }
+
+    /// Cancel and compact landing in one drain before a first run's input enters
+    /// context leave only the keyed note to cover, and removing it empties the plan.
+    fn queued_compaction_with_nothing_left_to_cover() -> LoggedDrive {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        logged.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("note"),
+            entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"note")),
+        });
+        logged.request_run(b"input");
+        let started = logged.drive.next_action_unbounded(55).expect("start");
+        logged.commit(started);
+        let run_id = logged.drive.state().runs.active.as_ref().unwrap().run_id;
+        logged.admit(CoreAgentCommand::CancelRun {
+            run_id,
+            requested_by: None,
+        });
+        logged.admit(CoreAgentCommand::CompactContext);
+        assert!(logged.drive.state().context.compaction.is_queued());
+        logged.admit(CoreAgentCommand::RemoveContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("note"),
+        });
+        logged
+    }
+
+    #[test]
+    fn a_queued_compaction_with_nothing_left_to_cover_finishes_failed() {
+        let mut logged = queued_compaction_with_nothing_left_to_cover();
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let compaction = &logged.drive.state().context.compaction;
+        assert!(!compaction.is_queued() && !compaction.is_pending());
+        // The manual stamp is what `session/context/compact` waits on.
+        assert_eq!(
+            compaction.last_manual_finished_revision,
+            Some(logged.drive.state().context.revision)
+        );
+        assert_eq!(logged.last_run().status, RunStatus::Cancelled);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn force_close_ends_a_pending_or_queued_compaction() {
+        let mut pending = LoggedDrive::open(compaction_config(), &[]);
+        pending.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("note"),
+            entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"note")),
+        });
+        pending.admit(CoreAgentCommand::CompactContext);
+        assert!(pending.drive.state().context.compaction.is_pending());
+        let mut queued = queued_compaction_with_nothing_left_to_cover();
+
+        for logged in [&mut pending, &mut queued] {
+            let entries = logged.admit(CoreAgentCommand::CloseSession { force: true });
+            assert_eq!(
+                event_kinds(&entries)[0],
+                "lightspeed.core.context.compaction_finished"
+            );
+            let state = logged.drive.state();
+            assert!(
+                !state.context.compaction.is_pending() && !state.context.compaction.is_queued()
+            );
+            assert!(matches!(
+                logged.drive.next_action_unbounded(70).expect("next action"),
+                CoreAgentAction::Closed
+            ));
+            logged.assert_replays(|_| {});
+        }
+    }
+
+    #[test]
+    fn a_closed_session_is_never_asked_to_compact() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        logged.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("note"),
+            entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"note")),
+        });
+        logged.admit(CoreAgentCommand::CompactContext);
+        let mut state = logged.drive.state().clone();
+        assert!(
+            next_context_compaction_request(logged.drive.session_id(), &state)
+                .expect("request")
+                .is_some()
+        );
+        state.lifecycle.status = CoreAgentStatus::Closed;
+        assert!(
+            next_context_compaction_request(logged.drive.session_id(), &state)
+                .expect("no request")
+                .is_none()
+        );
     }
 }

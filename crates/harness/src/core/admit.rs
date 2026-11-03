@@ -9,7 +9,7 @@ use crate::{
     core::components::{
         approval::pending_approval_cancellations,
         config::{validate_config_update_for_state, validate_run_config_for_state},
-        context::entries_applied_proposal,
+        context::{compaction_abandoned_proposal, entries_applied_proposal},
         tooling::{open_tool_group_closing_entries, validate_tool_map},
     },
 };
@@ -501,6 +501,11 @@ pub fn admit_command(
             }
             let mut proposals = Vec::new();
             if force {
+                // A closed session never compacts, so a request still open would
+                // stay open for good. Nothing else in this append reads the revision.
+                if state.context.compaction.is_pending() || state.context.compaction.is_queued() {
+                    proposals.push(compaction_abandoned_proposal(state));
+                }
                 if let Some(active_run) = state.runs.active.as_ref() {
                     proposals.extend(pending_approval_cancellations(active_run));
                     proposals.push(CoreAgentEventProposal::new(
