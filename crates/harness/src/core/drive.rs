@@ -2108,10 +2108,13 @@ fn tool_call_completed_proposals_inner(
     }
     if !joined_calls.is_empty() {
         proposals.extend(joined_promise_proposals);
+        // A code tool call is one call, as its await deferral says too. A model batch
+        // defers as a whole, so it names none.
         let joins = CoreAgentJoins {
             run_id: Some(result.run_id),
             turn_id: Some(result.turn_id),
             tool_batch_id: Some(result.batch_id),
+            tool_call_id: origin.as_ref().map(crate::code_tool_call_id),
             ..CoreAgentJoins::default()
         };
         let promise_ids = joined_calls
@@ -12105,6 +12108,112 @@ mod tests {
         crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
             .expect("the scope stays usable");
     }
+    #[test]
+    fn every_code_tool_lifecycle_event_is_attributed_to_its_parent_call() {
+        let (mut drive, parent) = code_tool_fixture();
+        let checkpoint = drive.state().clone();
+        let mut log = code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::OpenCodeToolScope {
+                scope: code_tool_scope(parent),
+            },
+        );
+        let joined = code_tool_spec("joined", "agent_run");
+        let submit = code_tool_spec("submit", "job_submit");
+        let waiter = code_tool_spec("await", "await");
+        for call in [&joined, &submit, &waiter] {
+            log.extend(code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+            ));
+        }
+        let mut submitted = None;
+        for call in [&joined, &submit] {
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                &call.origin.request_id,
+            )
+            .unwrap();
+            submitted = Some(PromiseId::from_number(request.promise_id_base));
+            let (result, _) = code_tool_workflow_effect(&request);
+            log.extend(code_tool_commit(
+                &mut drive,
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: call.origin.clone(),
+                    result,
+                },
+            ));
+        }
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::DeferCodeToolCall {
+                origin: waiter.origin.clone(),
+                spec: AwaitSpec {
+                    promise_ids: vec![submitted.unwrap()],
+                    mode: AwaitMode::All,
+                    deadline_at_ms: None,
+                },
+            },
+        ));
+        log.extend(code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::CloseCodeToolScope {
+                execution_id: "execution-1".into(),
+            },
+        ));
+
+        let outer = checkpoint.runs.active.as_ref().unwrap();
+        let run_id = outer.run_id;
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &log {
+            let CoreAgentEvent::CodeTool(event) = &entry.event else {
+                continue;
+            };
+            assert_eq!(entry.joins.run_id, Some(run_id), "{event:?}");
+            assert!(entry.joins.turn_id.is_some(), "{event:?}");
+            assert!(entry.joins.tool_batch_id.is_some(), "{event:?}");
+            let (name, call_id) = match event {
+                crate::CodeToolEvent::ScopeOpened { .. } => ("opened", None),
+                crate::CodeToolEvent::ScopeClosed { .. } => ("closed", None),
+                crate::CodeToolEvent::CallAdmitted { call, .. } => {
+                    ("admitted", Some(crate::code_tool_call_id(&call.origin)))
+                }
+                crate::CodeToolEvent::CallCompleted { origin, .. } => {
+                    ("completed", Some(crate::code_tool_call_id(origin)))
+                }
+                crate::CodeToolEvent::CallDeferred { origin, suspension } => (
+                    match suspension {
+                        ToolBatchSuspension::JoinedWorkflowCalls { .. } => "deferred joined",
+                        _ => "deferred await",
+                    },
+                    Some(crate::code_tool_call_id(origin)),
+                ),
+            };
+            assert_eq!(entry.joins.tool_call_id, call_id, "{name}");
+            seen.insert(name);
+        }
+        assert_eq!(
+            seen.into_iter().collect::<Vec<_>>(),
+            vec![
+                "admitted",
+                "closed",
+                "completed",
+                "deferred await",
+                "deferred joined",
+                "opened"
+            ]
+        );
+
+        // Joins sit beside the events and change nothing about what the state becomes.
+        let mut replayed = checkpoint;
+        for entry in &log {
+            crate::apply_event(&mut replayed, entry).unwrap();
+        }
+        assert_eq!(&replayed, drive.state());
+    }
+
     #[test]
     fn code_tool_start_failure_reuses_promise_failure_and_parallel_emission_budget() {
         let (mut drive, parent) = code_tool_fixture();

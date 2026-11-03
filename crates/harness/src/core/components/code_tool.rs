@@ -457,19 +457,30 @@ fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), 
     Ok(())
 }
 
+/// A scope belongs to the batch of the tool call that opened it. A reader of the log
+/// has no other way to attribute a scope that made no calls.
+fn scope_joins(
+    state: &CoreAgentState,
+    scope: &CodeToolScopeSpec,
+) -> Result<CoreAgentJoins, DomainError> {
+    let parent = code_tool_parent(state, scope)?;
+    Ok(CoreAgentJoins {
+        run_id: Some(parent.run_id),
+        turn_id: Some(parent.turn_id),
+        tool_batch_id: Some(parent.tool_batch_id),
+        ..Default::default()
+    })
+}
+
 fn joins(state: &CoreAgentState, origin: &CodeToolOrigin) -> Result<CoreAgentJoins, DomainError> {
     let scope = state
         .code_tools
         .scopes
         .get(&origin.execution_id)
         .ok_or_else(|| invalid("unknown code tool execution scope"))?;
-    let parent = code_tool_parent(state, &scope.spec)?;
     Ok(CoreAgentJoins {
-        run_id: Some(parent.run_id),
-        turn_id: Some(parent.turn_id),
-        tool_batch_id: Some(parent.tool_batch_id),
         tool_call_id: Some(code_tool_call_id(origin)),
-        ..Default::default()
+        ..scope_joins(state, &scope.spec)?
     })
 }
 
@@ -488,7 +499,7 @@ pub fn open_code_tool_scope_proposals(
     }
     validate_scope(state, &scope)?;
     Ok(vec![CoreAgentEventProposal::new(
-        CoreAgentJoins::default(),
+        scope_joins(state, &scope)?,
         CoreAgentEvent::CodeTool(CodeToolEvent::ScopeOpened { scope }),
     )])
 }
@@ -784,8 +795,9 @@ pub fn close_code_tool_scope_proposals(
     if scope.closed {
         return Ok(Vec::new());
     }
+    // Attribution must never stop a scope from closing.
     let mut proposals = vec![CoreAgentEventProposal::new(
-        CoreAgentJoins::default(),
+        scope_joins(state, &scope.spec).unwrap_or_default(),
         CoreAgentEvent::CodeTool(CodeToolEvent::ScopeClosed { execution_id }),
     )];
     for call in scope.calls.values() {
