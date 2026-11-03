@@ -1109,7 +1109,7 @@ fn tool_result_context_entries(
 }
 
 pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(), DomainError> {
-    let next_promise_id_base = state.id_cursors.last_promise_id + 1;
+    let next_promise_id_base = state.id_cursors.last_promise_id.saturating_add(1);
     match event {
         Event::BatchStarted {
             run_id,

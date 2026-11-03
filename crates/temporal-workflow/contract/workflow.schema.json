@@ -1346,7 +1346,7 @@
       "type": "object"
     },
     "PromiseId": {
-      "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The harness hands every tool batch a\nbase one past the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from\nthat base, and the reducer accepts a creation only at or above the\nbatch's base and never twice. Producer correlation lives on\n`PromiseSource`, not in the id.",
+      "description": "Stable identifier for a promise: a session-scoped counter rendered as\n`promise_<n>`, the same convention as `run_<n>`, so the model copies a\nshort handle rather than a digest. The harness hands every dispatch of a\ntool batch a base above the session cursor (`ToolInvocationBatchRequest::\npromise_id_base`); the executor numbers the promises it creates from that\nbase. Proposal building accepts a creation only at or above the batch's\nbase, and neither it nor the reducer accepts one twice. Producer correlation\nlives on `PromiseSource`, not in the id.",
       "type": "string"
     },
     "PromiseResolution": {

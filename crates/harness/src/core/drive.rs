@@ -1747,8 +1747,8 @@ fn joined_workflow_resume_result(
 /// A tool result may only mint promise ids from its batch's slot: at or
 /// above the base recorded when the batch was created, and never one the
 /// session already holds. Executors number from
-/// `ToolInvocationBatchRequest::promise_id_base`; this is the reducer-side
-/// half of that contract.
+/// `ToolInvocationBatchRequest::promise_id_base`; this is the half of that
+/// contract checked while proposals are built, before anything is appended.
 fn validate_minted_promise_id(
     state: &CoreAgentState,
     run_id: crate::RunId,
@@ -10819,6 +10819,34 @@ mod tests {
     /// Runtime-measured per-call durations recorded by the execution
     /// activity survive on the stored tool results, where analytics and
     /// projections read them back per call.
+    #[test]
+    fn a_tool_event_accepts_a_promise_cursor_at_its_limit() {
+        let session_id = SessionId::new("session-cursor-limit");
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
+        let request = two_call_tool_batch(&mut drive, config());
+        drive.state.id_cursors.last_promise_id = u64::MAX;
+
+        let result = drive
+            .resume_tool_call(
+                request.batch_id,
+                per_call_result(
+                    &request.calls[0].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                90,
+            )
+            .expect("result");
+        commit_action(&mut drive, result);
+        let CoreAgentAction::InvokeTools {
+            request: redispatch,
+        } = drive.next_action(91, 64).expect("next action")
+        else {
+            panic!("expected the pending call again");
+        };
+        assert_eq!(redispatch.promise_id_base, u64::MAX);
+    }
+
     #[test]
     fn per_call_results_retain_runtime_durations() {
         let session_id = SessionId::new("session-durations");
