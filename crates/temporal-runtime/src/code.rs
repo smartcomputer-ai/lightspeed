@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use temporal_workflow::{
     CloseCodeToolScopeRequest, CodeExecutionDescriptor, CodeExecutionLimits, CodeToolCallOutcome,
-    CodeToolCallStatus, CodeToolClient, CodeToolScopeReport, CodeToolScopeReportRequest,
-    InvokeCodeToolRequest,
+    CodeToolCallStatus, CodeToolClient, CodeToolRejectionKind, CodeToolScopeReport,
+    CodeToolScopeReportRequest, InvokeCodeToolRequest,
 };
 use temporalio_client::Client;
 use tokio::{sync::Semaphore, time::Instant};
@@ -437,18 +437,23 @@ impl CodeRunner {
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 // Update replies are cached; only queries provide fresh progress.
-                latest = Some(
-                    code_tools
-                        .report(
-                            CodeToolScopeReportRequest {
-                                execution_id: execution_id.to_owned(),
-                            },
-                            Default::default(),
-                        )
-                        .await
-                        .map_err(|error| error.to_string())?
-                        .map_err(|error| error.to_string())?,
-                );
+                let report = code_tools
+                    .report(
+                        CodeToolScopeReportRequest {
+                            execution_id: execution_id.to_owned(),
+                        },
+                        Default::default(),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                match report {
+                    Ok(scope) => latest = Some(scope),
+                    // A scope only leaves state once every call in it has an outcome.
+                    Err(error) if error.kind == CodeToolRejectionKind::UnknownScope => {
+                        return Ok(());
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
             }
         };
         let error = match tokio::time::timeout(self.cleanup_timeout, cleanup).await {

@@ -3166,10 +3166,19 @@ fn the_last_promise_of_an_invocation_cancels_its_execution_with_a_sibling_alread
 }
 
 #[test]
-fn a_runner_cleaning_up_after_its_scope_left_state_reads_it_as_closed() {
+fn a_runner_closing_after_its_scope_left_state_reads_it_as_closed() {
     let workflow = AgentSessionWorkflow::default();
-    let report = code_tools::report(&workflow, "execution").expect("report");
+    let report = code_tools::closed_report(&workflow, "execution").expect("report");
     assert!(report.closed);
     assert!(report.calls.is_empty());
     assert_eq!(report.execution_id, "execution");
+}
+
+/// A runner that lost its prepare receipt opens and closes the scope on this rejection,
+/// which is what stops a delayed prepare opening it later.
+#[test]
+fn a_query_does_not_read_a_scope_never_opened_as_closed() {
+    let workflow = AgentSessionWorkflow::default();
+    let error = code_tools::report(&workflow, "execution").expect_err("unknown");
+    assert_eq!(error.kind, crate::CodeToolRejectionKind::UnknownScope);
 }

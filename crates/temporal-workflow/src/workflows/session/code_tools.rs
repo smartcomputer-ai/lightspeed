@@ -124,29 +124,39 @@ pub(super) async fn close(
     let admitted = await_admission(ctx, ticket).await;
     ctx.state_mut(|state| state.code_tools.waiters -= 1);
     admitted?;
-    ctx.state(|state| report(state, &execution_id))
+    ctx.state(|state| closed_report(state, &execution_id))
 }
 
 /// A scope leaves state with its parent invocation, and a runner can still be cleaning
-/// up after that. To it, a scope that is gone reads as closed with nothing outstanding.
+/// up after that. To its close, a scope that is gone is closed with nothing outstanding.
+pub(super) fn closed_report(
+    state: &AgentSessionWorkflow,
+    execution_id: &str,
+) -> crate::CodeToolScopeResult {
+    report(state, execution_id).or_else(|_| {
+        Ok(crate::CodeToolScopeReport {
+            execution_id: execution_id.to_owned(),
+            closed: true,
+            bindings: BTreeMap::new(),
+            calls: BTreeMap::new(),
+        })
+    })
+}
+
+/// A scope that is gone and one never opened look the same here, and a runner that
+/// lost its prepare receipt opens and closes the scope on hearing this, so that a
+/// delayed prepare cannot open it later.
 pub(super) fn report(
     state: &AgentSessionWorkflow,
     execution_id: &str,
 ) -> crate::CodeToolScopeResult {
-    Ok(state
+    state
         .core_state
         .code_tools
         .scopes
         .get(execution_id)
-        .map_or_else(
-            || crate::CodeToolScopeReport {
-                execution_id: execution_id.to_owned(),
-                closed: true,
-                bindings: BTreeMap::new(),
-                calls: BTreeMap::new(),
-            },
-            crate::CodeToolScopeReport::from,
-        ))
+        .map(crate::CodeToolScopeReport::from)
+        .ok_or_else(|| rejected(Rejection::UnknownScope, "unknown code tool execution scope"))
 }
 
 /// All durable mutations run on the session loop, including completions that
