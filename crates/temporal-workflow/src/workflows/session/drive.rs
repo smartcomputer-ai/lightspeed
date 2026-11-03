@@ -254,10 +254,11 @@ pub(super) async fn drive_until_idle(
         if preparation::publish_pending_tools(ctx, drive).await? {
             action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
         }
-        // Client admissions (cancel, steer, queue, context edits) land
-        // at every action boundary against the live drive, and the plan is
-        // recomputed so a cancel stops the next turn/batch from starting and
-        // a steer is part of the next request.
+        // Client admissions (cancel, steer, queue, context edits) land at every
+        // action boundary against the live drive, and the plan is recomputed so a
+        // cancel stops the next turn/batch from starting and a steer is part of the
+        // next request. `action` only ever holds a plan here, because each arm
+        // commits what its activity returned, so replanning discards no result.
         if admissions::drain_pending_admissions(ctx, drive).await? {
             action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
         }
@@ -267,30 +268,22 @@ pub(super) async fn drive_until_idle(
                 events,
             } => {
                 append_events(ctx, drive, expected_head, events).await?;
-                if let Some(outcome) = history_boundary_outcome(ctx, args) {
-                    return Ok(outcome);
-                }
-                action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
             }
             CoreAgentAction::GenerateLlm { request } => {
-                action = match call_llm_generate(ctx, drive, request).await? {
-                    control::Raced::Completed(result) => {
-                        drive.resume_generation(result, workflow_time_ms(ctx))?
-                    }
-                    control::Raced::Preempted => {
-                        drive.next_action_unbounded(workflow_time_ms(ctx))?
-                    }
-                };
+                if let control::Raced::Completed(result) =
+                    call_llm_generate(ctx, drive, request).await?
+                {
+                    let resume = drive.resume_generation(result, workflow_time_ms(ctx))?;
+                    commit_resume(ctx, drive, resume).await?;
+                }
             }
             CoreAgentAction::CompactContext { request } => {
-                action = match call_context_compact(ctx, drive, request).await? {
-                    control::Raced::Completed(result) => {
-                        drive.resume_context_compaction(result, workflow_time_ms(ctx))?
-                    }
-                    control::Raced::Preempted => {
-                        drive.next_action_unbounded(workflow_time_ms(ctx))?
-                    }
-                };
+                if let control::Raced::Completed(result) =
+                    call_context_compact(ctx, drive, request).await?
+                {
+                    let resume = drive.resume_context_compaction(result, workflow_time_ms(ctx))?;
+                    commit_resume(ctx, drive, resume).await?;
+                }
             }
             CoreAgentAction::InvokeTools { request } => {
                 let request = match request.promise_control_argument_request() {
@@ -301,21 +294,49 @@ pub(super) async fn drive_until_idle(
                     }
                     None => request,
                 };
-                action = tool_batches::invoke_tool_batch(ctx, drive, request).await?;
+                tool_batches::invoke_tool_batch(ctx, drive, request).await?;
             }
             CoreAgentAction::Idle | CoreAgentAction::Closed => {
-                if args.auto_reject_approvals && auto_reject_pending_approvals(ctx, drive).await? {
-                    action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
-                    continue;
+                if !args.auto_reject_approvals || !auto_reject_pending_approvals(ctx, drive).await?
+                {
+                    maybe_close_on_terminal(ctx, args, drive).await?;
+                    return Ok(DriveOutcome::Idle);
                 }
-                maybe_close_on_terminal(ctx, args, drive).await?;
-                return Ok(DriveOutcome::Idle);
             }
             CoreAgentAction::StepLimitReached => {
                 anyhow::bail!("unbounded hosted drive unexpectedly reached a step limit");
             }
         }
+        if let Some(outcome) = drive_boundary_after_commit(ctx, args) {
+            return Ok(outcome);
+        }
+        action = drive.next_action_unbounded(workflow_time_ms(ctx))?;
     }
+}
+
+/// Store the append a resume returned, the only copy of an activity's result.
+/// A resume that proposes nothing has nothing to keep, and the next plan decides.
+pub(super) async fn commit_resume(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    drive: &mut CoreAgentDrive,
+    resume: CoreAgentAction,
+) -> anyhow::Result<()> {
+    if let CoreAgentAction::AppendEvents {
+        expected_head,
+        events,
+    } = resume
+    {
+        append_events(ctx, drive, expected_head, events).await?;
+    }
+    Ok(())
+}
+
+/// What the drive does after each arm's commit, before it plans again.
+fn drive_boundary_after_commit(
+    ctx: &WorkflowContext<AgentSessionWorkflow>,
+    args: &AgentSessionArgs,
+) -> Option<DriveOutcome> {
+    history_boundary_outcome(ctx, args)
 }
 
 async fn auto_reject_pending_approvals(

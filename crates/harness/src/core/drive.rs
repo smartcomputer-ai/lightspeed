@@ -6617,6 +6617,142 @@ mod tests {
         }
     }
 
+    fn steer_command(run_id: RunId) -> CoreAgentCommand {
+        CoreAgentCommand::RequestRunSteering {
+            run_id,
+            input: vec![message_input(
+                ContextMessageRole::User,
+                BlobRef::from_bytes(b"steer"),
+            )],
+            requested_by: None,
+        }
+    }
+
+    // A host commits each activity's result before it admits anything that landed
+    // with it, so the next plan never asks for the same work again. These walk that
+    // order: result, then admission, then plan.
+
+    #[test]
+    fn a_steer_after_a_committed_answer_adds_a_turn_instead_of_repeating_one() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let answered = drive_until_generate(&mut drive);
+        let resume = drive
+            .resume_generation(final_text_result(&answered), 300)
+            .expect("answer");
+        commit_action(&mut drive, resume);
+
+        let mut log = Vec::new();
+        admit_logged(&mut drive, &mut log, steer_command(answered.run_id));
+        let next = expect_generation(pump_logged(&mut drive, &mut log));
+
+        assert_eq!(next.run_id, answered.run_id);
+        assert_ne!(next.turn_id, answered.turn_id);
+        assert_eq!(steering_entries_in(&next.request.context.entries), 1);
+    }
+
+    #[test]
+    fn a_cancel_after_a_committed_answer_ends_the_run_without_generating_again() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
+        open_session(&mut drive);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let answered = drive_until_generate(&mut drive);
+        let resume = drive
+            .resume_generation(final_text_result(&answered), 300)
+            .expect("answer");
+        commit_action(&mut drive, resume);
+
+        let mut log = Vec::new();
+        admit_logged(
+            &mut drive,
+            &mut log,
+            CoreAgentCommand::CancelRun {
+                requested_by: None,
+                run_id: answered.run_id,
+            },
+        );
+
+        assert!(matches!(
+            pump_logged(&mut drive, &mut log),
+            CoreAgentAction::Idle
+        ));
+        assert!(drive.state().runs.active.is_none());
+    }
+
+    #[test]
+    fn a_steer_after_a_committed_batch_result_never_dispatches_its_calls_again() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
+        let batch = drive_to_single_tool_invocation(&mut drive);
+        let resume = drive
+            .resume_tool_batch(completed_tool_result(&batch), 300)
+            .expect("batch result");
+        commit_action(&mut drive, resume);
+
+        let mut log = Vec::new();
+        admit_logged(&mut drive, &mut log, steer_command(batch.run_id));
+        let next = expect_generation(pump_logged(&mut drive, &mut log));
+
+        assert_ne!(next.turn_id, batch.turn_id);
+        assert_eq!(steering_entries_in(&next.request.context.entries), 1);
+    }
+
+    #[test]
+    fn a_stale_cancel_after_a_committed_compaction_does_not_compact_again() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
+        open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
+        upsert(
+            &mut drive,
+            "client.native",
+            provider_opaque_input(BlobRef::from_bytes(b"native")),
+            20,
+        );
+        let compact = drive
+            .admit_command(CoreAgentCommand::CompactContext, 30)
+            .expect("compact");
+        commit_action(&mut drive, compact);
+        let CoreAgentAction::CompactContext { request } =
+            drive.next_action(31, 64).expect("next action")
+        else {
+            panic!("expected compaction");
+        };
+        let resume = drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
+                    session_id: request.session_id.clone(),
+                    context_revision: request.request.context.context_revision,
+                    status: ContextCompactionStatus::Failed,
+                    failure_ref: Some(BlobRef::from_bytes(b"failure")),
+                    context_entries: Vec::new(),
+                },
+                32,
+            )
+            .expect("compaction result");
+        commit_action(&mut drive, resume);
+
+        let stale = drive
+            .admit_command(
+                CoreAgentCommand::CancelRun {
+                    requested_by: None,
+                    run_id: RunId::new(99),
+                },
+                33,
+            )
+            .expect("a stale cancel is a no-op");
+
+        assert!(!matches!(stale, CoreAgentAction::AppendEvents { .. }));
+        assert!(matches!(
+            drive.next_action(34, 64).expect("next action"),
+            CoreAgentAction::Idle
+        ));
+    }
+
     /// Both toolset commands are refused with `ActiveWork` and nothing moves.
     fn assert_tools_frozen(drive: &mut CoreAgentDrive) {
         assert!(crate::tools_frozen(drive.state()));

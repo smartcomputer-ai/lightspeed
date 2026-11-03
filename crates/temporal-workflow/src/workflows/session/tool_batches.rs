@@ -29,11 +29,13 @@ use super::*;
 /// stay bounded even for pathological error chains.
 const MAX_BOUNDARY_ERROR_BYTES: usize = 16 * 1024;
 
+/// Run one batch and commit its results. The drive plans again from the state
+/// that leaves, so nothing here hands a result back to be overwritten.
 pub(super) async fn invoke_tool_batch(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: ToolInvocationBatchRequest,
-) -> anyhow::Result<CoreAgentAction> {
+) -> anyhow::Result<()> {
     if batch_requires_unit_execution(&request) {
         return invoke_tool_batch_as_unit(ctx, drive, request).await;
     }
@@ -45,9 +47,7 @@ pub(super) async fn invoke_tool_batch(
         }
         execute_call_group(ctx, drive, &request, group).await?;
     }
-    drive
-        .next_action_unbounded(workflow_time_ms(ctx))
-        .map_err(Into::into)
+    Ok(())
 }
 
 /// `await` defers the whole batch and admitted workflow-tool calls share
@@ -66,7 +66,7 @@ async fn invoke_tool_batch_as_unit(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: ToolInvocationBatchRequest,
-) -> anyhow::Result<CoreAgentAction> {
+) -> anyhow::Result<()> {
     let run_id = request.run_id;
     let batch_id = request.batch_id;
     let activity_ctx = ctx.clone();
@@ -83,16 +83,10 @@ async fn invoke_tool_batch_as_unit(
     .await?
     {
         control::Raced::Completed(outcome) => outcome,
-        control::Raced::Preempted => {
-            return drive
-                .next_action_unbounded(workflow_time_ms(ctx))
-                .map_err(Into::into);
-        }
+        control::Raced::Preempted => return Ok(()),
     };
-    match outcome {
-        Ok(outcome) => drive
-            .resume_tool_batch_outcome(outcome, workflow_time_ms(ctx))
-            .map_err(Into::into),
+    let resume = match outcome {
+        Ok(outcome) => drive.resume_tool_batch_outcome(outcome, workflow_time_ms(ctx))?,
         Err(error) => {
             let status = boundary_call_status(&error);
             let error_ref = put_boundary_error_blob(ctx, &format!("{error}")).await;
@@ -101,19 +95,18 @@ async fn invoke_tool_batch_as_unit(
                 .iter()
                 .map(|call| boundary_call_result(call.call_id.clone(), status, error_ref.clone()))
                 .collect();
-            drive
-                .resume_tool_batch(
-                    harness::ToolInvocationBatchResult {
-                        run_id: request.run_id,
-                        turn_id: request.turn_id,
-                        batch_id: request.batch_id,
-                        results,
-                    },
-                    workflow_time_ms(ctx),
-                )
-                .map_err(Into::into)
+            drive.resume_tool_batch(
+                harness::ToolInvocationBatchResult {
+                    run_id: request.run_id,
+                    turn_id: request.turn_id,
+                    batch_id: request.batch_id,
+                    results,
+                },
+                workflow_time_ms(ctx),
+            )?
         }
-    }
+    };
+    drive::commit_resume(ctx, drive, resume).await
 }
 
 /// Execution order over call indices: consecutive parallel-safe calls run
