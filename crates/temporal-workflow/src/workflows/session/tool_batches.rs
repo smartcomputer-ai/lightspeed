@@ -211,7 +211,12 @@ async fn execute_call_group(
         };
         match ready {
             Some((index, outcome)) => {
-                resume_call(ctx, drive, request, index, outcome).await?;
+                // A refusal here ends the run while the workflow lives on, so the
+                // siblings must not keep working for a run that is gone.
+                if let Err(error) = resume_call(ctx, drive, request, index, outcome).await {
+                    abandon_inflight_calls(inflight).await;
+                    return Err(error);
+                }
             }
             None => {
                 admissions::drain_pending_admissions(ctx, drive).await?;
