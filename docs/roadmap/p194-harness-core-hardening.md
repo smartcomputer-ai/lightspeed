@@ -387,6 +387,26 @@ Later packages add their own entries.
   still fails on a missing id where the other two fall back to an index, because evening that out is the rejected
   option's fallback.
 
+- **A user's next message can wait behind a compaction.** Proactive compaction moved from run end to the next
+  run's start, so the wait that a parent or a bot lane used to pay now lands on whoever starts the next run, up to
+  the LLM activity budget. A session the user never returns to pays nothing. Compaction also no longer tidies an idle
+  session, so a read of an idle session can show context over the watermark.
+- **The failure floor holds off proactive compaction near the limit.** After a failure the token trigger waits for
+  10% growth, which on a 200k window with a floor near 190k means the provider's overflow arrives first, and overflow
+  recovery does the work. A temporary outage costs a 10% wait after it heals, and any success clears the floor. Nothing
+  else clears it: lowering the threshold, removing entries or switching to a smaller model leaves the old floor in
+  place until a compaction succeeds. Overflow recovery is the backstop there too.
+- **The 1,500-entry trigger compacts sessions that never asked.** A low-token session on a large window loses verbatim
+  history and its prefix cache at 1,500 entries, and pays for a summary it did not need for tokens. It applies to
+  ProviderTriggered sessions too, which run standalone compaction here for the first time unless a provider summary
+  already existed. Whether every provider behind that policy gives a good standalone summary has not been tried.
+- **The guard's failure message does not carry compaction's own error.** It says to enable or run compaction, as
+  specified. The real reason is on the `ContextCompactionFinished` event and in the transcript, one event earlier.
+  Someone reading only the failed run sees advice that does not fit a provider outage.
+- **These compaction changes have not run against Temporal or a real provider.** They are unit and replay tested only.
+  `sessions_live` and both provider `*_compaction_live` suites relied on idle compaction and were rewritten to start a
+  run, and only compile. Run them at the next checkpoint.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -1664,3 +1684,72 @@ message with no provider kind; the workflow contract exporter leaves no diff. Fi
   with more than one chunk failed before the provider was asked. The check is gone: the budget is enforced after each
   call from reported usage, with the estimate standing in only when a backend reports none. The `2e281a2c` entry above
   describes the first version. Risky calls now also records the tail PDF case and the timeout message.
+
+### `compaction-triggers` (H-77, H-78, H-85, H-50)
+
+Landed:
+
+- `54d47eb1` (H-50): the catalog update header no longer says the earlier version is "above". The adapters do not change.
+- `cae019dd` (H-77): `ContextCompactionState.failure_floor` holds the estimate and the active entry count of the last
+  failed proactive attempt, set by the reducer and cleared by any success. Either trigger waits for about 10% growth past
+  its floor. The last generation's count no longer fires once a compaction has finished after that turn was planned. The
+  planner function is split into `next_compaction_proposal` and `high_watermark_compaction_proposal`, and the floor sits
+  only on the second. Manual compaction and overflow recovery are not gated.
+- `5f3ea158` (H-78): proactive compaction needs an active run, so it fires at the next run's start, before its input is
+  written. Manual compaction still runs when idle.
+- `fb5a1c7c` (H-85): the entry count triggers at 1,500 active entries, after the enabled check and before the policy
+  gate. The snapshot input stays.
+- `7402f301` (H-85, the guard, revertable alone): at a turn boundary with 2,000 or more active entries, one compaction
+  attempt per run that ignores the floor, otherwise the run fails as `ContextFailure` with the new engine blob
+  `ENTRY_GUARD_FAILURE_CONTENT`. `ActiveRun.entry_guard_attempted` records the attempt. Public API text regenerated.
+
+Calls made:
+
+- The estimate travels on the plan as `ContextCompactionPlan.estimated_tokens`. The request moves the revision, so the
+  observed count is gone by the finish and the reducer could not read it back. A recorded plan is already a fact.
+- A plan whose run has ended, or is being cancelled, records no floor, because that says nothing about whether
+  compaction works. This covers `compaction_abandoned_proposal`, which finishes as Failed.
+- The token floor is `None` when an attempt fired on the entry count with no estimate. The next token crossing can then
+  try once, and that failure sets it.
+- Both triggers keep the `HighWatermark` wire value. "Proactive" means that value, and a new one would have added an API
+  and client change for no behaviour.
+- The attempt flag is set for any `HighWatermark` request at 2,000 or more, not only the guard's own, since either one is
+  the attempt that decides the run.
+- The flag clears when a success lands under 2,000, beyond the brief. Otherwise a very long run whose compaction works
+  would fail the second time it reaches the limit. A success that stays over keeps the flag, so the run fails rather
+  than re-summarizing at every boundary.
+- The entry trigger also needs a summary to be able to get the count back under, beyond the brief's "no prefix". A
+  retained tail of 1,500 would otherwise compact at every boundary with no failure for the floor to catch. The guard
+  does not have this check, because it is bounded by its one attempt.
+- An active run is the only case tested for H-78, not "active or queued". The run planner starts a queued run before the
+  context planner looks, so a queued run with none active cannot reach it.
+- `CompactionPolicy::Disabled` gets an API doc saying what 2,000 entries does to it, and `ContextFailure` is widened in
+  both the harness and the API text. The guard's limit is not exposed as config.
+
+Found on the way:
+
+- The context planner wrote a fresh run's input while a compaction was pending, which moved the revision under the frozen
+  request and made its result refuse. It was reachable before, by a manual compaction landing right at a run's start.
+  H-78 made it the normal path, so a pending compaction now holds that planner. Fixed in `5f3ea158`.
+
+Deviations:
+
+- No overflow exception in the guard. I wrote one and removed it after tracing: once the attempt is made, the run fails
+  before another turn can start, so an overflow with the flag set cannot occur, and an overflow without it goes to
+  recovery first because the context planner checks it before the watermark.
+- Not ported from the old reproductions: `every_turn_boundary_compacts_when_the_floor_is_above_the_threshold`, because the
+  owner accepted that churn on low-threshold sessions when choosing failure-only backoff. It is unchanged. Ported as
+  regression tests beside the planner: the failing-compaction, stale-fallback, steering, run-end and mid-run cases.
+
+Verified: `cargo test -p harness` (383 unit, 16 in `state_bounds`), `cargo test -p temporal-workflow --lib` (201) and
+`--test workflow_contract`, `cargo test -p api --test schema_artifacts`, `cargo check --workspace --all-targets --locked`.
+The workflow contract exporter leaves no diff. No live test ran.
+
+Handoff:
+
+- `docs-and-review-notes`: the compaction guide should say that proactive compaction waits for a run, that 1,500 active
+  entries triggers it on every enabled policy, and that a failed attempt backs off by growth. It should also describe the
+  2,000-entry guard, what it does to a Disabled session, and that manual compaction is the way out. The web demo's
+  simulated compaction in `platform/web/src/demo/engine.ts` was not reviewed against the new timing.
+- `format-guards`: `failure_floor`, `estimated_tokens` and `entry_guard_attempted` change the stored state and the
+  requested event, for the checkpoint bump and the shape tests.
