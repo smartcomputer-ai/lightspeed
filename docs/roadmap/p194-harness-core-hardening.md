@@ -298,6 +298,15 @@ Later packages add their own entries.
   reading the SDK and on unit tests of the decode. The Postgres live fixtures were rewritten to real
   events and only compile. Run `workflow_tool_reply_requires_exact_stored_producer`,
   `store_pg_live`, `session_lifecycle_live` and `audience_live` at the next checkpoint.
+- **What a turn limit counts and when it fires.** Context-recovery and steering
+  turns count, because the limit is "turns started". A final answer that still has
+  unheard steering fails as `limit_exceeded` instead of completing, so a client does
+  not read the steering as handled; the answer stays in context and the steering
+  reaches the next run. An overflow on the last allowed turn fails at the limit without
+  compacting. A pending approval on the last allowed turn still parks and asks, then the
+  run fails once it is decided, so an approved hosted call only proceeds in a later
+  run's request. An operator who sets a low `maxTurns` on a session with recovery
+  compaction can lose a run to a limit they thought was about model steps.
 
 ## Progress
 
@@ -1331,3 +1340,67 @@ Failures found and fixed: the cleanup of the session store dropped the two lines
 One test changed meaning. `workflow_tool_start_on_call_resolves_via_plugin_worker` asserted the started execution was still running after its joined reply. Transport work now goes out at each commit, so the session cancels an execution it has finished with before the test looks. The cancel rule itself is unchanged from main, only its timing. The test now checks the call finished well inside the execution's 60 second hold.
 
 A failing test in `workflow_tool_plugins_live` can abort the whole binary with `failed to initiate panic, error 5`, which hides later tests and needs `--nocapture` to read. It predates this work and was not investigated.
+
+## Progress after checkpoint 1
+
+### `run-limits-and-failure-kinds` (H-59, H-92, message part of H-25)
+
+Landed:
+
+- `c5d048ea` (H-59): `ActiveRun.turn_count` is incremented in the `Turn::Started` arm and never pruned.
+  `terminal_run_proposal` compares it with the run's `max_turns`, then the session's, wherever the run would need
+  another turn, and fails with `LimitExceeded` and a new engine message. Unset is unbounded. Admission refuses 0 on
+  session and run config. `maxToolRounds` is gone everywhere, with the contract and TypeScript consumers regenerated.
+- `84fbead5` (H-92): the kinds are now `ContextFailure`, `ModelFailure`, `RequestRejected`, `OutputTruncated`,
+  `ContentFiltered`, `LimitExceeded` and `Internal`, changed together with the view and the projection mapping.
+  Truncation and filtering are read from `facts.finish` at the terminal proposal, which covers both the status in-tree
+  adapters use and the `Succeeded` arm. A provider-cancelled generation on an active run is `ModelFailure` with its own
+  engine message. Every failure holds for steering, and only a requested cancel drops it.
+- `0defdd1e` (H-25, message only): `context_limit_failure_ref` replaces the false runtime-boundary text on a context
+  failure with no message. The H-25 renames stay in `rename-wire-identities`.
+
+Calls made:
+
+- See Risky calls for what the limit counts and when it fires.
+- `RunFailure.message_ref` stays an `Option`, so older-shaped writers still decode, but every producer now fills it. A
+  turn result with no message gets a constant: `OutputTruncated` and `ContentFiltered` have their own, `ModelFailure`
+  and `RequestRejected` use the existing runtime-boundary text, whose documented purpose this is.
+- The projection's last resort, for a message it cannot read back, is a fixed sentence and not the kind name.
+- The failed overflow compaction path in `drive.rs` also uses the context-limit constant. It had no fallback, and the
+  brief only named the planner's arm.
+- A run out of turns and a provider-cancelled turn skip proactive compaction during the steering hold, like a failed
+  turn, since nothing will use the room.
+- Web and CLI lead with "The response was cut off" and "The provider refused the response" for the two new kinds.
+  `limit_exceeded` keeps "Run failed:", because its message already says it all.
+
+Deviations:
+
+- Eval and live-test limits that would bind were removed rather than raised, since none of those tests is about limits
+  and unset is the product default. Eval no longer has default caps of 12 and 8, and keeps its `max_steps` ceiling.
+- A run limit of 0 reaching the gateway is refused by workflow admission like `input_limit_tokens: 0`, not at the API
+  edge. A session limit of 0 is `invalid_request` at the edge through `SessionConfig::validate`.
+- The answer on the card suggested `turns.len()`. The package's `turn_count` replaces it, with a test that drops
+  settled turn records.
+
+Ported as tests beside the code: `repro_naming_vocab_q8w` (limits, override both ways, unbounded, last-turn answer, next
+run from zero) and the provider-cancelled case of `repro_runlife_more`, whose old assertion wanted `Cancelled` and now
+asserts the agreed `ModelFailure`. `repro_fu_h59grow` measures state growth and belongs to `state-pruning`.
+
+Verified: `cargo test -p harness` (360 passed), `cargo test -p api` (103, plus 9 contract), `cargo test -p api-projection
+--lib` (47), `cargo test -p temporal-workflow` (197, plus 3 contract), `cargo test -p temporal-runtime --lib
+gateway::service` (154), `cargo test -p test-support` (13), `cargo test -p eval` (6), the CLI failure message test,
+vitest on the config editor, transcript and run section, `npm run typecheck`, and `cargo check --workspace --all-targets
+--locked`. Clippy, the full suite and live tests were not run, as they belong to checkpoints.
+
+Written but never run, for the checkpoint: the live fixtures that lost their limits in `code_model_live`, `mcp_live` and
+the eight `llm-runtime` live suites, and the eval cases. Nothing has driven a turn limit through Temporal yet, though it
+is the same planner path as other failures.
+
+Open:
+
+- `state-pruning`: `terminal_run_proposal` reads only the latest turn record and `turn_count`, so pruning settled turns
+  is safe for the limit. The latest turn has to survive, and `facts.finish` on it decides the failure kind.
+- `rename-casing`: `limit_exceeded` appears in the `LimitsConfig.maxTurns` doc, and the web's `RUN_FAILURE_LEADS` keys
+  and transcript tests hold the snake_case values.
+- `docs-and-review-notes`: a grep of `docs/documentation` found no `maxToolRounds` or failure kind lists to fix. The
+  guides do not yet say that `maxTurns` is enforced or how.
