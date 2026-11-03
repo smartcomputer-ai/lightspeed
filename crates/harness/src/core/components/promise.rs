@@ -209,9 +209,14 @@ pub struct Promise {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromiseComponentState {
     pub promises: BTreeMap<PromiseId, Promise>,
+    /// The terminal promises in `promises`, oldest settled first. Pruning follows this
+    /// order and not the ids, so a promise that was pending for a long time can still
+    /// be awaited once it has settled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settled: Vec<PromiseId>,
 }
 
-/// Terminal promises state keeps, the most recently minted ones. An older id reads as
+/// Terminal promises state keeps, the most recently settled ones. An older id reads as
 /// unknown, which `await` reports and a late resolution ignores.
 pub const MAX_RETAINED_TERMINAL_PROMISES: usize = 256;
 
@@ -308,6 +313,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             let promise = pending_promise_mut(state, promise_id)?;
             promise.status = PromiseStatus::Resolved;
             promise.payload_ref = payload_ref.clone();
+            state.promises.settled.push(promise_id.clone());
             Ok(())
         }
         Event::Failed {
@@ -317,11 +323,13 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             let promise = pending_promise_mut(state, promise_id)?;
             promise.status = PromiseStatus::Failed;
             promise.error_ref = error_ref.clone();
+            state.promises.settled.push(promise_id.clone());
             Ok(())
         }
         Event::Cancelled { promise_id } => {
             let promise = pending_promise_mut(state, promise_id)?;
             promise.status = PromiseStatus::Cancelled;
+            state.promises.settled.push(promise_id.clone());
             Ok(())
         }
         Event::Detached { promise_id } => {
@@ -335,19 +343,11 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
 /// Only ever runs with no batch open, so nothing a batch waits on can go. Pending
 /// promises always stay, and the id cursor is unaffected.
 pub(crate) fn prune_terminal_promises(state: &mut CoreAgentState) {
-    let promises = &mut state.promises.promises;
-    let terminal = promises
-        .values()
-        .filter(|promise| promise.status.is_terminal())
-        .count();
-    let mut droppable = terminal.saturating_sub(MAX_RETAINED_TERMINAL_PROMISES);
-    promises.retain(|_, promise| {
-        let oldest = droppable > 0 && promise.status.is_terminal();
-        if oldest {
-            droppable -= 1;
-        }
-        !oldest
-    });
+    let PromiseComponentState { promises, settled } = &mut state.promises;
+    let excess = settled.len().saturating_sub(MAX_RETAINED_TERMINAL_PROMISES);
+    for promise_id in settled.drain(..excess) {
+        promises.remove(&promise_id);
+    }
 }
 
 /// A resolution or cancel can name a promise state has since pruned. Ids are never

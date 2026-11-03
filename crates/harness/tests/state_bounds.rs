@@ -1116,47 +1116,50 @@ fn an_open_scope_holds_its_parent_and_a_closed_one_goes_with_it() {
     session.assert_replays();
 }
 
-/// Each run forces a window's worth of timers and leaves one more pending.
-#[test]
-fn terminal_promises_keep_a_window_and_old_ids_become_harmless() {
-    let mut session = open_with_workflow_tools();
-    session.admit(request_run(1));
-    let timer = |id: &PromiseId| {
-        promise_create_effect(
-            id,
+impl Session {
+    /// One tool turn whose call mints a timer promise and leaves it pending.
+    fn timer_turn(&mut self) -> PromiseId {
+        let request = self.next_generation();
+        self.generate(tool_turn(&request));
+        let request = self.next_batch();
+        let promise_id = PromiseId::from_number(request.promise_id_base);
+        let mut results = tool_results(&request);
+        results.results[0].effects = vec![promise_create_effect(
+            &promise_id,
             &PromiseSource::Timer {
                 fire_at_ms: u64::MAX,
             },
             None,
-        )
-    };
+        )];
+        self.answer(results);
+        promise_id
+    }
+
+    /// One tool turn that does nothing else, so a pruning boundary passes.
+    fn boundary_turn(&mut self) {
+        let request = self.next_generation();
+        self.generate(tool_turn(&request));
+        let request = self.next_batch();
+        self.answer(tool_results(&request));
+    }
+}
+
+#[test]
+fn terminal_promises_keep_a_window_and_old_ids_become_harmless() {
+    let mut session = open_with_workflow_tools();
+    session.admit(request_run(1));
     // One long pending promise from the very start.
-    let request = session.next_generation();
-    session.generate(tool_turn(&request));
-    let request = session.next_batch();
-    let survivor = PromiseId::from_number(request.promise_id_base);
-    let mut results = tool_results(&request);
-    results.results[0].effects = vec![timer(&survivor)];
-    session.answer(results);
+    let survivor = session.timer_turn();
 
     let extra = 40;
     let mut first_settled = None;
     for _ in 0..(MAX_RETAINED_TERMINAL_PROMISES + extra) {
-        let request = session.next_generation();
-        session.generate(tool_turn(&request));
-        let request = session.next_batch();
-        let promise_id = PromiseId::from_number(request.promise_id_base);
+        let promise_id = session.timer_turn();
         first_settled.get_or_insert(promise_id.clone());
-        let mut results = tool_results(&request);
-        results.results[0].effects = vec![timer(&promise_id)];
-        session.answer(results);
         session.resolve(&promise_id);
     }
     // The last settled promise waits for the next boundary.
-    let request = session.next_generation();
-    session.generate(tool_turn(&request));
-    let request = session.next_batch();
-    session.answer(tool_results(&request));
+    session.boundary_turn();
 
     let state = session.state();
     let promises = &state.promises.promises;
@@ -1197,6 +1200,35 @@ fn terminal_promises_keep_a_window_and_old_ids_become_harmless() {
     let mut results = tool_results(&request);
     results.results[0].effects = vec![promise_cancel_effect(&first_settled)];
     session.answer(results);
+    session.assert_replays();
+}
+
+/// A job submitted early can settle long after hundreds of newer promises did, and the
+/// model has not read it yet, so the window counts from when a promise settled.
+#[test]
+fn a_promise_settling_late_stays_awaitable_for_a_whole_window() {
+    let mut session = open_with_workflow_tools();
+    session.admit(request_run(1));
+    let long_job = session.timer_turn();
+    for _ in 0..MAX_RETAINED_TERMINAL_PROMISES + 8 {
+        let promise_id = session.timer_turn();
+        session.resolve(&promise_id);
+    }
+    session.resolve(&long_job);
+    session.boundary_turn();
+    assert_eq!(
+        session.state().promises.promises[&long_job].status,
+        PromiseStatus::Resolved
+    );
+
+    for _ in 0..MAX_RETAINED_TERMINAL_PROMISES {
+        let promise_id = session.timer_turn();
+        session.resolve(&promise_id);
+    }
+    session.boundary_turn();
+    let state = session.state();
+    assert!(!state.promises.promises.contains_key(&long_job));
+    assert_eq!(state.promises.settled.len(), MAX_RETAINED_TERMINAL_PROMISES);
     session.assert_replays();
 }
 

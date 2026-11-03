@@ -3087,18 +3087,6 @@ fn a_terminal_event_and_a_pruning_boundary_in_one_append_still_reach_the_host() 
     .runs
     .active;
     workflow.core_state.reduced_to = None;
-    // Enough newer terminal promises that this one leaves state at the boundary.
-    add_promises(
-        &mut workflow,
-        (2..=harness::MAX_RETAINED_TERMINAL_PROMISES as u64 + 1)
-            .map(|number| {
-                promise(
-                    harness::PromiseId::from_number(number).as_str(),
-                    PromiseStatus::Resolved,
-                )
-            })
-            .collect(),
-    );
     let entry = |seq, event| CoreAgentEntry {
         position: SessionPosition {
             seq: harness::EventSeq::new(seq),
@@ -3141,62 +3129,6 @@ fn a_terminal_event_and_a_pruning_boundary_in_one_append_still_reach_the_host() 
             .start_requests
             .contains_key(&invocation_id)
     );
-    assert!(!state.promises.promises.contains_key(&promise_id));
-}
-
-#[test]
-fn a_detached_promise_settling_right_before_the_boundary_still_wakes_the_session() {
-    let mut workflow = workflow_with_parked_tool_batch(await_spec(
-        &["promise_999"],
-        harness::AwaitMode::All,
-        None,
-    ));
-    workflow.core_state.reduced_to = None;
-    let promise_id = harness::PromiseId::from_number(1);
-    add_promises(
-        &mut workflow,
-        std::iter::once(promise(promise_id.as_str(), PromiseStatus::Pending))
-            .chain(
-                (2..=harness::MAX_RETAINED_TERMINAL_PROMISES as u64 + 1).map(|number| {
-                    promise(
-                        harness::PromiseId::from_number(number).as_str(),
-                        PromiseStatus::Resolved,
-                    )
-                }),
-            )
-            .collect(),
-    );
-    let payload_ref = harness::BlobRef::from_bytes(b"done");
-    let followup = drive::apply_appended_entry(
-        &mut workflow,
-        &promise_entry(harness::PromiseEvent::Resolved {
-            promise_id: promise_id.clone(),
-            payload_ref: Some(payload_ref.clone()),
-        }),
-    )
-    .expect("apply");
-    drive::apply_appended_entry(
-        &mut workflow,
-        &CoreAgentEntry {
-            position: SessionPosition {
-                seq: harness::EventSeq::new(2),
-            },
-            observed_at_ms: 1,
-            joins: Default::default(),
-            event: CoreAgentEvent::Run(harness::RunEvent::ForceCancelled {
-                run_id: RunId::new(1),
-            }),
-        },
-    )
-    .expect("apply");
-    assert!(
-        !workflow
-            .core_state
-            .promises
-            .promises
-            .contains_key(&promise_id)
-    );
-    assert!(followup.is_some());
 }
 
 #[test]
