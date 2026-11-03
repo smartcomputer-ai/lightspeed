@@ -226,6 +226,11 @@ pub struct ContextCompactionPlan {
 /// their own that token compaction does not control: a tool-heavy session on a large
 /// window could otherwise reach the bootstrap budget long before its threshold.
 pub const ENTRY_COUNT_COMPACTION_TRIGGER: usize = 1_500;
+/// Active entries past which a run does not go on with no compaction tried. Reduced
+/// state crosses the bootstrap budget near 3,000 entries, and a session over that
+/// budget can no longer load. This is reached only with compaction disabled or failing:
+/// a run that cannot bring the count down fails while the session can still be saved.
+pub const ENTRY_GUARD_LIMIT: usize = 2_000;
 
 pub const STANDALONE_COMPACTION_SOURCE: &str = "standalone_compaction_prefix";
 pub const MAX_CONTEXT_RECOVERY_ATTEMPTS: u32 = 2;
@@ -997,6 +1002,34 @@ pub(crate) fn compaction_enabled(config: &crate::SessionConfig) -> bool {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EntryGuard {
+    Clear,
+    /// One attempt for this run, whatever the failure floor says: the floor must not
+    /// hold off the only cure, and each new run trying afresh is what lets a temporary
+    /// outage heal with nobody at the controls.
+    Compact,
+    FailRun,
+}
+
+/// What this turn boundary owes [`ENTRY_GUARD_LIMIT`].
+pub(crate) fn entry_guard(state: &CoreAgentState, run: &crate::ActiveRun) -> EntryGuard {
+    if state.context.entries.len() < ENTRY_GUARD_LIMIT || !compaction_safe_boundary(state) {
+        return EntryGuard::Clear;
+    }
+    if !run.entry_guard_attempted
+        && state
+            .lifecycle
+            .config
+            .as_ref()
+            .is_some_and(compaction_enabled)
+        && !standalone_prefix_ids(state).is_empty()
+    {
+        return EntryGuard::Compact;
+    }
+    EntryGuard::FailRun
+}
+
 /// The compaction this boundary calls for: a queued manual request, overflow
 /// recovery, or the high watermark. Only the last is subject to the failure floor.
 fn next_compaction_proposal(state: &CoreAgentState) -> Option<CoreAgentEventProposal> {
@@ -1073,7 +1106,18 @@ fn high_watermark_compaction_proposal(
     // terminals flush after the drive settles, so compacting here would hold a
     // sub-agent's parent or a bot lane behind a summary nobody may read. A queued run
     // starts before this planner looks, so an active run is the only case.
-    state.runs.active.as_ref()?;
+    let run = state.runs.active.as_ref()?;
+    match entry_guard(state, run) {
+        EntryGuard::Compact => {
+            return Some(compaction_requested_proposal(
+                state,
+                ContextCompactionTrigger::HighWatermark,
+                high_watermark_token_estimate(state),
+            ));
+        }
+        EntryGuard::FailRun => return None,
+        EntryGuard::Clear => {}
+    }
     // Nothing has moved since the last attempt, so another would see the same context.
     if state.context.compaction.last_finished_revision == Some(state.context.revision) {
         return None;
@@ -1563,6 +1607,12 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 run.context_recovery.attempts += 1;
                 run.context_recovery.recovered_turn_id = Some(turn.turn_id);
             }
+            if *trigger == ContextCompactionTrigger::HighWatermark
+                && state.context.entries.len() >= ENTRY_GUARD_LIMIT
+                && let Some(run) = state.runs.active.as_mut()
+            {
+                run.entry_guard_attempted = true;
+            }
             state.context.compaction.phase = ContextCompactionPhase::Pending(plan.clone());
             bump_context_revision(state)?;
             Ok(())
@@ -1610,6 +1660,13 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             match status {
                 ContextCompactionStatus::Succeeded => {
                     state.context.compaction.failure_floor = None;
+                    // A long run that gets back under may need the guard again later.
+                    // One that stays over has no use for another attempt.
+                    if state.context.entries.len() < ENTRY_GUARD_LIMIT
+                        && let Some(run) = state.runs.active.as_mut()
+                    {
+                        run.entry_guard_attempted = false;
+                    }
                 }
                 // A plan whose run has ended was abandoned, which says nothing about
                 // whether compaction works.

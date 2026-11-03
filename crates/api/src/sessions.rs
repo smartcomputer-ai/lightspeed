@@ -356,6 +356,9 @@ pub struct ContextConfig {
     tag = "mode"
 )]
 pub enum CompactionPolicy {
+    /// The engine never compacts on its own, and `session/context/compact` still works.
+    /// Once active context reaches 2,000 entries each run fails at its next turn
+    /// boundary, until a compaction brings the count down or the policy changes.
     Disabled,
     ProviderTriggered {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1692,7 +1695,8 @@ pub enum SessionEventKindView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKindView {
-    /// The context no longer fits the model and compaction did not make it fit.
+    /// The context no longer fits the model, or holds too many entries to keep
+    /// running, and compaction did not bring it down. `message` says what to do.
     ContextFailure,
     /// The provider or the path to it failed the generation, including a generation
     /// the provider cancelled unasked. A run someone cancelled has status `cancelled`

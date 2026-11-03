@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::components::context::{EntryGuard, entry_guard};
 use crate::{
     ActiveToolBatch, ApprovalId, ApprovalRecord, ApprovalStatus, BlobRef, CompletedToolBatch,
     ContextEntryId, ContextEntryInput, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
@@ -111,6 +112,10 @@ pub struct ActiveRun {
     /// settled records, because a turn limit has to see every one of them.
     #[serde(default)]
     pub turn_count: u32,
+    /// This run has made its one compaction attempt at the structural entry limit,
+    /// and has not been back under that limit since.
+    #[serde(default)]
+    pub entry_guard_attempted: bool,
     pub active_turn_id: Option<TurnId>,
     pub active_tool_batch_id: Option<ToolBatchId>,
     /// Single-use approval records owned by this run. A decided one leaves
@@ -376,7 +381,8 @@ impl RunSource {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKind {
-    /// The context no longer fits the model and compaction did not make it fit.
+    /// The context no longer fits the model, or holds too many entries to keep
+    /// running, and compaction did not bring it down.
     ContextFailure,
     /// The provider or the path to it failed the generation.
     ModelFailure,
@@ -424,6 +430,13 @@ pub const CONTEXT_LIMIT_FAILURE_CONTENT: &str =
 
 pub fn context_limit_failure_ref() -> BlobRef {
     BlobRef::from_bytes(CONTEXT_LIMIT_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a run stopped at the structural limit on active entries.
+pub const ENTRY_GUARD_FAILURE_CONTENT: &str = "the session holds too many context entries to keep running and compaction did not bring them down; enable compaction or run it for this session\n";
+
+pub fn entry_guard_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(ENTRY_GUARD_FAILURE_CONTENT.as_bytes())
 }
 
 /// Failure message of a generation the provider cancelled while nobody had asked
@@ -518,6 +531,24 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
                 && let Some(proposal) = terminal_run_proposal(state, active_run)?
             {
                 return Ok(vec![proposal]);
+            }
+            // Accepted steering gets written down first, as for any failing run.
+            if entry_guard(state, active_run) == EntryGuard::FailRun
+                && !has_unmaterialized_steering(active_run)
+            {
+                return Ok(vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins {
+                        run_id: Some(active_run.run_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    CoreAgentEvent::Run(Event::Failed {
+                        run_id: active_run.run_id,
+                        failure: RunFailure {
+                            kind: RunFailureKind::ContextFailure,
+                            message_ref: Some(entry_guard_failure_ref()),
+                        },
+                    }),
+                )]);
             }
         }
         return Ok(Vec::new());
@@ -877,6 +908,7 @@ pub(crate) fn apply_event(
                 steering: Vec::new(),
                 turns: BTreeMap::new(),
                 turn_count: 0,
+                entry_guard_attempted: false,
                 active_turn_id: None,
                 active_tool_batch_id: None,
                 approvals: BTreeMap::new(),

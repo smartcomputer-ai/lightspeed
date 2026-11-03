@@ -7419,6 +7419,7 @@
       "CompactionPolicy": {
         "oneOf": [
           {
+            "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
             "properties": {
               "mode": {
                 "const": "disabled",
@@ -13596,7 +13597,7 @@
         "oneOf": [
           {
             "const": "context_failure",
-            "description": "The context no longer fits the model and compaction did not make it fit.",
+            "description": "The context no longer fits the model, or holds too many entries to keep\nrunning, and compaction did not bring it down. `message` says what to do.",
             "type": "string"
           },
           {

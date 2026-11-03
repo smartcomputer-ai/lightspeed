@@ -134,6 +134,7 @@ mod tests {
             steering: Vec::new(),
             turns: Default::default(),
             turn_count: 0,
+            entry_guard_attempted: false,
             active_turn_id: None,
             active_tool_batch_id: batch.map(harness::ToolBatchId::new),
             approvals: Default::default(),

@@ -16169,22 +16169,15 @@ mod tests {
         until_compaction(&mut logged);
     }
 
-    /// Bring active context up to this many entries, with one append. Each entry is
-    /// plain conversation that compaction may rewrite.
-    fn fill_context_to(logged: &mut LoggedDrive, count: usize) {
-        let missing = count - logged.drive.state().context.entries.len();
-        let inputs = (0..missing)
-            .map(|index| {
-                (
-                    None,
-                    ContextEntrySource::ContextEdit,
-                    message_input(
-                        ContextMessageRole::User,
-                        BlobRef::from_bytes(format!("note {index}").as_bytes()),
-                    ),
-                )
-            })
-            .collect();
+    /// One append of unkeyed or keyed entries, however many there are.
+    fn append_entries(
+        logged: &mut LoggedDrive,
+        inputs: Vec<(
+            Option<ContextEntryKey>,
+            ContextEntrySource,
+            ContextEntryInput,
+        )>,
+    ) {
         let entries = crate::core::components::context::context_entries_from_inputs(
             logged.drive.state(),
             inputs,
@@ -16204,6 +16197,39 @@ mod tests {
             )
             .expect("append");
         logged.commit(action);
+    }
+
+    /// Bring active context up to this many entries of plain conversation, which
+    /// compaction may rewrite.
+    fn fill_context_to(logged: &mut LoggedDrive, count: usize) {
+        let missing = count - logged.drive.state().context.entries.len();
+        let inputs = (0..missing)
+            .map(|index| {
+                (
+                    None,
+                    ContextEntrySource::ContextEdit,
+                    message_input(
+                        ContextMessageRole::User,
+                        BlobRef::from_bytes(format!("note {index}").as_bytes()),
+                    ),
+                )
+            })
+            .collect();
+        append_entries(logged, inputs);
+    }
+
+    /// Entries compaction must keep.
+    fn fill_with_instructions(logged: &mut LoggedDrive, count: usize) {
+        let inputs = (0..count)
+            .map(|index| {
+                (
+                    Some(ContextEntryKey::new(format!("instructions.{index}"))),
+                    ContextEntrySource::ContextEdit,
+                    instruction_input(BlobRef::from_bytes(b"always")),
+                )
+            })
+            .collect();
+        append_entries(logged, inputs);
     }
 
     fn finish_run_with_answer(logged: &mut LoggedDrive) {
@@ -16297,34 +16323,7 @@ mod tests {
     #[test]
     fn the_entry_trigger_needs_a_prefix_that_gets_it_back_under() {
         let mut logged = LoggedDrive::open(compaction_config(), &[]);
-        let inputs = (0..crate::ENTRY_COUNT_COMPACTION_TRIGGER)
-            .map(|index| {
-                (
-                    Some(ContextEntryKey::new(format!("instructions.{index}"))),
-                    ContextEntrySource::ContextEdit,
-                    instruction_input(BlobRef::from_bytes(b"always")),
-                )
-            })
-            .collect();
-        let entries = crate::core::components::context::context_entries_from_inputs(
-            logged.drive.state(),
-            inputs,
-        )
-        .expect("entries");
-        let action = logged
-            .drive
-            .append_action(
-                vec![CoreAgentEventProposal::new(
-                    CoreAgentJoins::default(),
-                    CoreAgentEvent::Context(ContextEvent::EntriesApplied {
-                        base_revision: logged.drive.state().context.revision,
-                        entries,
-                    }),
-                )],
-                55,
-            )
-            .expect("append");
-        logged.commit(action);
+        fill_with_instructions(&mut logged, crate::ENTRY_COUNT_COMPACTION_TRIGGER);
 
         logged.request_run(b"no prefix");
         finish_run_with_answer(&mut logged);
@@ -16334,5 +16333,165 @@ mod tests {
         logged.request_run(b"a prefix of no use");
         finish_run_with_answer(&mut logged);
         assert_eq!(compaction_requests(&logged), 0);
+    }
+
+    fn assert_stopped_by_the_entry_guard(logged: &LoggedDrive) {
+        let run = logged.last_run();
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::ContextFailure);
+        assert_eq!(failure.message_ref, Some(crate::entry_guard_failure_ref()));
+    }
+
+    /// The whole journey of a compaction that keeps failing: the floor climbs towards
+    /// the guard, the guard ignores it, each run gets one attempt and then fails, and
+    /// the first attempt to succeed puts the session back to work with nobody's help.
+    #[test]
+    fn the_entry_guard_gives_each_run_one_attempt_and_heals_when_compaction_works() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        for entries in [1_500, 1_650, 1_815, 1_996] {
+            fill_context_to(&mut logged, entries);
+            logged.request_run(b"input");
+            let request = until_compaction(&mut logged);
+            finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+            finish_run_with_answer(&mut logged);
+        }
+        let floor = logged
+            .drive
+            .state()
+            .context
+            .compaction
+            .failure_floor
+            .clone();
+        assert_eq!(floor.expect("floor").entries, 1_996);
+        assert_eq!(compaction_requests(&logged), 4);
+
+        fill_context_to(&mut logged, crate::ENTRY_GUARD_LIMIT);
+        for attempts in [5, 6] {
+            logged.request_run(b"stopped");
+            let request = until_compaction(&mut logged);
+            assert_eq!(compaction_requests(&logged), attempts);
+            finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+            assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+            assert_stopped_by_the_entry_guard(&logged);
+            assert_eq!(compaction_requests(&logged), attempts);
+            assert_eq!(
+                logged.drive.state().context.entries.len(),
+                crate::ENTRY_GUARD_LIMIT,
+                "a stopped run's input stays out of context"
+            );
+        }
+
+        logged.request_run(b"healed");
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        finish_run_with_answer(&mut logged);
+        assert_eq!(logged.last_run().status, RunStatus::Completed);
+        assert_eq!(logged.drive.state().context.compaction.failure_floor, None);
+        logged.assert_replays(|_| {});
+    }
+
+    /// A run crossing the limit stops at its next boundary, not only at its start, and
+    /// steering it had accepted reaches the next run as history.
+    #[test]
+    fn a_run_crossing_the_entry_guard_writes_steering_down_before_failing() {
+        let mut logged = LoggedDrive::open(compaction_config(), &["search"]);
+        fill_context_to(&mut logged, crate::ENTRY_GUARD_LIMIT - 2);
+        logged.request_run(b"input");
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        let call = observed_call("call-1", "search");
+        logged.resume(tool_call_turn(&request, LlmFinish::ToolCalls, vec![call]));
+        let batch = logged.until_tools();
+        let action = logged
+            .drive
+            .resume_tool_batch(completed_tool_result(&batch), 80)
+            .expect("batch");
+        logged.commit(action);
+
+        let request = until_compaction(&mut logged);
+        assert_eq!(compaction_requests(&logged), 2, "past a floor of 1,998");
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_by_the_entry_guard(&logged);
+        assert_eq!(steering_in_context(&logged.drive), 1);
+        logged.assert_replays(|_| {});
+    }
+
+    /// Disabled reaches the guard with no attempt to make. Manual compaction is still
+    /// allowed, and it is the way out the failure names.
+    #[test]
+    fn a_disabled_session_fails_at_the_entry_guard_until_someone_compacts() {
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::Disabled);
+        let mut logged = LoggedDrive::open(config, &[]);
+        fill_context_to(&mut logged, crate::ENTRY_GUARD_LIMIT);
+
+        logged.request_run(b"stopped");
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_by_the_entry_guard(&logged);
+        assert_eq!(compaction_requests(&logged), 0);
+
+        logged.admit(CoreAgentCommand::CompactContext);
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        logged.request_run(b"running again");
+        finish_run_with_answer(&mut logged);
+        assert_eq!(logged.last_run().status, RunStatus::Completed);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn with_nothing_to_compact_the_entry_guard_fails_the_run() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        fill_with_instructions(&mut logged, crate::ENTRY_GUARD_LIMIT);
+        logged.request_run(b"stopped");
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_by_the_entry_guard(&logged);
+        assert_eq!(compaction_requests(&logged), 0);
+    }
+
+    /// A compaction that succeeds and stays over the limit has had its one attempt.
+    #[test]
+    fn a_success_that_stays_over_the_entry_guard_still_fails_the_run() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        fill_with_instructions(&mut logged, crate::ENTRY_GUARD_LIMIT - 1);
+        fill_context_to(&mut logged, crate::ENTRY_GUARD_LIMIT);
+        logged.request_run(b"stopped");
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_by_the_entry_guard(&logged);
+        assert_eq!(compaction_requests(&logged), 1);
+    }
+
+    /// A long run that gets back under the limit may meet the guard again much later,
+    /// and that time is a new attempt.
+    #[test]
+    fn getting_back_under_the_entry_guard_earns_another_attempt() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        fill_context_to(&mut logged, crate::ENTRY_GUARD_LIMIT);
+        logged.request_run(b"input");
+        let request = until_compaction(&mut logged);
+        let run = logged.drive.state().runs.active.as_ref().expect("a run");
+        assert!(run.entry_guard_attempted);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        let run = logged.drive.state().runs.active.as_ref().expect("a run");
+        assert!(!run.entry_guard_attempted);
+        logged.assert_replays(|_| {});
+    }
+
+    /// An attempt below the limit is the ordinary trigger, and spends nothing.
+    #[test]
+    fn an_attempt_below_the_entry_guard_does_not_spend_the_runs_attempt() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        fill_context_to(&mut logged, crate::ENTRY_COUNT_COMPACTION_TRIGGER);
+        logged.request_run(b"input");
+        until_compaction(&mut logged);
+        let run = logged.drive.state().runs.active.as_ref().expect("a run");
+        assert!(!run.entry_guard_attempted);
     }
 }

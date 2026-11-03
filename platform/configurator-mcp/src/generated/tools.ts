@@ -229,6 +229,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -1468,6 +1469,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -3869,6 +3871,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -5941,6 +5944,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
@@ -7067,6 +7071,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         "CompactionPolicy": {
           "oneOf": [
             {
+              "description": "The engine never compacts on its own, and `session/context/compact` still works.\nOnce active context reaches 2,000 entries each run fails at its next turn\nboundary, until a compaction brings the count down or the policy changes.",
               "properties": {
                 "mode": {
                   "const": "disabled",
