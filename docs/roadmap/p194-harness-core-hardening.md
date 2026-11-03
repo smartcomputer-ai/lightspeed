@@ -430,6 +430,12 @@ Later packages add their own entries.
   switches back, and nothing warns before it. Idle manual compaction still uses the last generation's model, so after a
   switch away from a retired model it can fail while a run on the new model works.
 
+- **What the model reads is no longer always the log's order.** A note appended during a batch, or media from one of several
+  parallel calls, is stored between a call and its result but renders behind the group's last result. The transcript and the
+  public `active_context` view keep arrival order, so in that case they differ from the request. A note can also render ahead
+  of a media entry from an earlier result. The media entry labels itself with its `media:` handle, but no test shows a model
+  still pairs it with the right result. The fix rests on OpenAI's documented rejection, not a live one, and Responses was never checked with the old order.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -1860,3 +1866,46 @@ which the implementer had only filtered. Added:
   not force retained thinking across the switch, so it proves the path, not reasoning continuity.
 
 No code changed. The idle view and idle manual compaction notes under Risky calls stand as written.
+
+### `context-render` (H-58)
+
+Landed:
+
+- `4420f71e` (H-58): `planned_context_entry_ids` renders through one new pass, `tool_groups_adjacent`. Results follow their
+  calls and anything else arriving inside a group goes behind its last result. The log keeps arrival order, and the reducer
+  makes no ordering claim. `context::plan_next` also holds steering while a batch is open, so a steer lands after
+  `BatchCompleted` and before the next `Turn::Started`, in the log as well. `turn_in_flight` is not widened.
+
+Calls made:
+
+- The calling turn's own output stays in place, including text and reasoning after its first call. Holding it back would
+  break Anthropic's signed thinking between calls.
+- A later turn's output closes a group that was never answered, and whatever was held goes out ahead of it. A removed result
+  therefore leaves arrival order, which is what the next request already carried. A result answering no open call is an
+  ordinary entry.
+- A media entry counts as "anything else". It goes behind every result of its group, after any note that arrived before it.
+- Compaction needed no code of its own. `standalone_prefix_ids` already reads the planned order, covered entries go by id, and
+  a summary renders first, so nothing assumes a stored prefix. `safe_cuts` sees the rendered order.
+
+Deviations:
+
+- "Replay vectors" means log replay assertions in the new tests. The crate has no vector format and no new fixture was added.
+- The Completions lowering repair proposed in the source finding was not built, because the owner chose render order.
+- `steering_in_the_started_window_of_a_tool_turn_stays_uncompactable_until_carried` asserted steering materializes before the
+  batch. It now checks the same exclusion in the real window, after the batch and before the next turn.
+
+Tests: order assertions in the steering and parked-await tests, new drive tests for steering during generation and during a
+native approval wait, appends during a batch and during that wait, media of parallel calls, a compaction request and a
+compaction cut, all with log replay except the cut. `assert_tool_calls_answered` no longer excuses a media entry inside a group.
+Seven unit tests cover the pass. Disabling the steering hold fails 4 tests, and disabling the holding in the pass fails 10.
+Ported from `repro_refute_steerwindow_k2v.rs` and `repro_ctxgen_core.rs`.
+
+Verified: `cargo test -p harness` (403 unit, 16 in `state_bounds`) and `cargo check --workspace --all-targets --locked`. No live
+test ran. `target/` was removed first under the package's 30 GiB rule (27 GiB free).
+
+Handoff:
+
+- `docs-and-review-notes`: `how-it-works/context-and-storage.md` near line 108 says entries "follow their recorded positions".
+  It should add that a tool group renders adjacent, with anything arriving inside it behind the last result.
+- Anyone touching `llm-runtime`: the interleaving case in the `push_block` comment in `anthropic_messages.rs` no longer reaches
+  it from the harness. It is harmless, and I left it because this package is harness only.
