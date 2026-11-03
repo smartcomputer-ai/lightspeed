@@ -545,7 +545,8 @@ fn turn_limit_failure(state: &CoreAgentState, active_run: &ActiveRun) -> Option<
 /// Steering the model has not seen yet: a batch no turn has consumed. A
 /// final-output turn does not end a run while such steering exists — the
 /// run gets one more turn that carries it, so "steer" never silently does
-/// nothing on a single-turn answer.
+/// nothing on a single-turn answer. With no turn left the run fails at its limit
+/// instead, and the steering reaches the next run.
 pub(crate) fn has_unconsumed_steering(active_run: &ActiveRun) -> bool {
     active_run
         .steering

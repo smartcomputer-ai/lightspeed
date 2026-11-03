@@ -14660,10 +14660,18 @@ mod tests {
         assert_stopped_at_turn_limit(&logged);
         assert_eq!(steering_in_context(&logged.drive), 1);
         logged.assert_replays(|_| {});
+        logged.request_run(b"next");
+        let next = logged.until_generate();
+        assert!(
+            openai_items(&next)
+                .iter()
+                .any(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
+        );
     }
 
     /// A pending approval still gets its decision, then the run ends where the next
-    /// turn would have started.
+    /// turn would have started. The decision stays in context, so the next run's
+    /// request carries it to the provider.
     #[test]
     fn a_turn_limit_waits_for_an_approval_decision() {
         let mut logged = LoggedDrive::open(limited_config(1), &[]);
@@ -14686,6 +14694,69 @@ mod tests {
         assert!(matches!(logged.pump(), CoreAgentAction::Idle));
         assert_stopped_at_turn_limit(&logged);
         assert_eq!(turns_started(&logged.log), 1);
+        logged.assert_replays(|_| {});
+
+        logged.request_run(b"next");
+        let next = logged.until_generate();
+        assert!(openai_items(&next).iter().any(|entry| matches!(
+            entry.kind,
+            ContextEntryKind::McpApprovalResponse { approve: true, .. }
+        )));
+    }
+
+    /// A call waiting on approval belongs to the turn that is already spent, so it
+    /// still runs and gets its result before the limit ends the run.
+    #[test]
+    fn a_turn_limit_lets_an_approved_native_call_finish() {
+        let mut logged = LoggedDrive::open(limited_config(1), &[]);
+        let mcp = native_inject_mcp_tool("mcp_echo", crate::RemoteMcpApprovalPolicy::Always);
+        logged.admit(CoreAgentCommand::ReplaceTools {
+            expected_revision: None,
+            tools: BTreeMap::from([(mcp.name.clone(), mcp)]),
+        });
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_m", "mcp_echo__hello")],
+        ));
+        let batch = logged.until_tools();
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                vec![native_mcp_approval(&batch.calls[0].call_id)],
+                75,
+            )
+            .expect("park");
+        logged.commit(parked);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Parked);
+
+        logged.admit(CoreAgentCommand::DecideApproval(
+            crate::ApprovalDecisionCommand {
+                approval_id: crate::ApprovalId::new("approval_1"),
+                run_id: batch.run_id,
+                decision: crate::ApprovalDecision::Approved,
+                note: None,
+                decided_by: None,
+                response: None,
+            },
+        ));
+        let redispatch = logged.until_tools();
+        assert_eq!(injected_decision(&redispatch.calls[0]), Some(true));
+        let action = logged
+            .drive
+            .resume_tool_batch(completed_tool_result(&redispatch), 80)
+            .expect("resume batch");
+        logged.commit(action);
+
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_at_turn_limit(&logged);
+        assert_eq!(turns_started(&logged.log), 1);
+        assert_tool_calls_answered(&logged.drive.state().context.entries);
         logged.assert_replays(|_| {});
     }
 

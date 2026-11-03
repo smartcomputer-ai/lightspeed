@@ -992,10 +992,10 @@ fn high_watermark_compaction_proposal(
         .active
         .as_ref()
         .and_then(|run| run.turns.values().next_back());
-    // A failed or provider-cancelled turn only waits for its steering to be written down before the run
-    // ends. It needs no room, and with the provider down a compaction would hold
-    // that failure back for its whole retry budget. A run out of turns is the same:
-    // nothing will use the room.
+    // A failed or provider-cancelled turn only waits for its steering to be written
+    // down before the run ends. It needs no room, and with the provider down a
+    // compaction would hold that failure back for its whole retry budget. A run out
+    // of turns is the same: nothing will use the room.
     if latest.is_some_and(|turn| {
         matches!(
             turn.status,
