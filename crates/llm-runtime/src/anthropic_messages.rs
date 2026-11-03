@@ -1026,10 +1026,7 @@ async fn materialize_block(
                     ],
                 ));
             }
-            if let Some(document) = crate::blob_io::document_entry(
-                entry.content.media_type.as_deref(),
-                entry.preview.as_deref(),
-            ) {
+            if let Some(document) = crate::blob_io::document_entry(entry) {
                 let blocks = if document.is_pdf {
                     let data = media.pdf_base64(blobs, entry).await?;
                     vec![
@@ -1771,7 +1768,7 @@ async fn result_from_compact_response_with_strategy(
                 media_type: Some(MEDIA_TYPE_TEXT.to_owned()),
                 provider_kind: Some(ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND.to_owned()),
             },
-            preview: Some(summary.to_owned()),
+            preview: Some(summary.chars().take(256).collect()),
             origin: None,
             provenance_ref: None,
             token_estimate: None,
@@ -2376,6 +2373,58 @@ mod tests {
             "Keep ABC-123"
         );
         assert_eq!(api.seen.lock().unwrap()[0].model, "claude-opus-5-5");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_summary_entry_previews_only_the_start_of_its_text() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let summary = "é".repeat(2_000);
+        let api = fake_api(json!({
+            "id": "summary",
+            "type": "message",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": summary}],
+        }));
+        let adapter =
+            AnthropicMessagesLlmAdapter::new(Arc::new(SummaryOnlyMessagesApi(api)), blobs.clone());
+        let result = LlmCompactionAdapter::compact_context(
+            &adapter,
+            ContextCompactionRequest {
+                session_id: SessionId::new("preview"),
+                request: ContextCompactionTask {
+                    model: ModelSelection {
+                        model: "claude-opus-5-5".into(),
+                        ..model()
+                    },
+                    request_fingerprint: "preview".into(),
+                    context: ContextSnapshot {
+                        api_kind: ProviderApiKind::AnthropicMessages,
+                        context_revision: 4,
+                        entries: vec![user_entry(1, text_blob(&blobs, "Remember").await)],
+                        token_estimate: None,
+                    },
+                    target_tokens: Some(128),
+                    tools: vec![],
+                    input_limit_tokens: None,
+                    covered_entry_ids: vec![],
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let entry = &result.context_entries[0];
+        assert_eq!(
+            entry.preview.as_deref().map(|text| text.chars().count()),
+            Some(256)
+        );
+        assert_eq!(
+            read_text(blobs.as_ref(), &entry.content.content_ref)
+                .await
+                .unwrap(),
+            summary,
+            "the blob holds the whole summary"
+        );
     }
 
     fn fake_api(raw_json: Value) -> Arc<FakeAnthropicMessagesApi> {

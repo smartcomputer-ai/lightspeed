@@ -98,11 +98,7 @@ impl RequestMedia {
                 crate::blob_io::image_media_type(content.media_type.as_deref())
             {
                 PreparedMedia::Image(model_image(blobs, &content.content_ref, mime).await?)
-            } else if crate::blob_io::document_entry(
-                content.media_type.as_deref(),
-                entry.preview.as_deref(),
-            )
-            .is_some_and(|document| document.is_pdf)
+            } else if crate::blob_io::document_entry(entry).is_some_and(|document| document.is_pdf)
             {
                 PreparedMedia::Pdf(crate::blob_io::read_base64(blobs, &content.content_ref).await?)
             } else {

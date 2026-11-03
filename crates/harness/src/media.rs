@@ -159,7 +159,8 @@ pub fn sniff_media_type(bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// The preview a media entry carries: `[image]`, `[image: photo.png]`,
-/// `[document: report.pdf]`. Adapters recognize documents by this prefix.
+/// `[document: report.pdf]`. Adapters recognize a text document on a user
+/// message with no provider kind by this prefix.
 pub fn media_preview(kind: MediaKind, name: Option<&str>) -> String {
     match name.map(str::trim).filter(|name| !name.is_empty()) {
         Some(name) => format!("[{}: {name}]", kind.label()),

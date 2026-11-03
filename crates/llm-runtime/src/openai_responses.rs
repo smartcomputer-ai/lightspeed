@@ -678,10 +678,7 @@ async fn materialize_input_item(
                     extra: Default::default(),
                 }));
             }
-            if let Some(document) = crate::blob_io::document_entry(
-                item.content.media_type.as_deref(),
-                item.preview.as_deref(),
-            ) {
+            if let Some(document) = crate::blob_io::document_entry(item) {
                 let parts = if document.is_pdf {
                     let data = media.pdf_base64(blobs, item).await?;
                     vec![

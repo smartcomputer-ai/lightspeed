@@ -699,10 +699,7 @@ async fn materialize_message(
                         ),
                     ])
                 }
-            } else if let Some(document) = crate::blob_io::document_entry(
-                entry.content.media_type.as_deref(),
-                entry.preview.as_deref(),
-            ) {
+            } else if let Some(document) = crate::blob_io::document_entry(entry) {
                 if document.is_pdf && drop_media {
                     oai_c::CompletionMessageContent::Text(crate::blob_io::text_only_omission(entry))
                 } else if document.is_pdf {
@@ -908,11 +905,7 @@ fn validate_dialect_capabilities(
         }
         let is_image =
             crate::blob_io::image_media_type(entry.content.media_type.as_deref()).is_some();
-        let is_pdf = crate::blob_io::document_entry(
-            entry.content.media_type.as_deref(),
-            entry.preview.as_deref(),
-        )
-        .is_some_and(|document| document.is_pdf);
+        let is_pdf = crate::blob_io::document_entry(entry).is_some_and(|document| document.is_pdf);
         if is_image || is_pdf {
             return Err(LlmAdapterError::InvalidProviderRequest {
                 message: format!(

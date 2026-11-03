@@ -229,7 +229,11 @@ pub struct ContextEntry {
     pub source: ContextEntrySource,
     /// Immutable payload reference and encoding, also used for run outputs.
     pub content: crate::ContentRef,
-    /// Short display text for projections and logs; not authoritative model input.
+    /// Short display text for projections and logs; not authoritative model
+    /// input. One exception: media entries carry the `[kind: name]` form from
+    /// `media_preview` and gateway admission. Its name reaches the model, and
+    /// its `[document` prefix marks a text document on a user message with no
+    /// provider kind, so adapters read it when lowering.
     pub preview: Option<String>,
     /// Immutable artifact recording this entry's origin or construction.
     pub provenance_ref: Option<BlobRef>,
