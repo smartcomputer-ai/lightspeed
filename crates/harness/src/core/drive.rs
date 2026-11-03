@@ -13776,6 +13776,43 @@ mod tests {
         });
     }
 
+    /// The hold before a failure only writes steering down. A session over its
+    /// compaction threshold must not get a provider call between the failed turn
+    /// and the failed run: with the provider down, that call alone can outlast the
+    /// retry budget before anyone hears about the failure.
+    #[test]
+    fn a_failing_run_writes_steering_down_without_compacting_first() {
+        let mut logged = LoggedDrive::open(standalone_compaction_config(Some(10), Some(4)), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        let mut result = generation_result(
+            &request,
+            LlmGenerationStatus::Failed,
+            LlmFinish::Failed,
+            Vec::new(),
+            Vec::new(),
+        );
+        result.facts.context_token_estimate = Some(TokenEstimate {
+            tokens: 1_000,
+            quality: crate::TokenEstimateQuality::ProviderCounted,
+        });
+        logged.resume(result);
+
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert!(
+            !logged.log.iter().any(|entry| matches!(
+                entry.event,
+                CoreAgentEvent::Context(ContextEvent::CompactionRequested { .. })
+            )),
+            "{:?}",
+            event_kinds(&logged.log)
+        );
+        assert_eq!(steering_in_context(&logged.drive), 1);
+        let failure = logged.last_run().failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+    }
+
     fn provider_mcp_tool() -> ToolSpec {
         let mut tool = native_inject_mcp_tool("mcp_crm", crate::RemoteMcpApprovalPolicy::Never);
         if let ToolKind::RemoteMcp(remote) = &mut tool.kind {

@@ -1015,6 +1015,12 @@ fn high_watermark_compaction_proposal(
         .active
         .as_ref()
         .and_then(|run| run.turns.values().next_back());
+    // A failed turn only waits for its steering to be written down before the run
+    // ends. It needs no room, and with the provider down a compaction would hold
+    // that failure back for its whole retry budget.
+    if latest.is_some_and(|turn| turn.status == crate::TurnStatus::Failed) {
+        return Ok(None);
+    }
     let overflow = latest.is_some_and(|turn| {
         matches!(
             turn.outcome,
