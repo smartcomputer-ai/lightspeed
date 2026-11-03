@@ -17,7 +17,7 @@ use environments::{
     PutEnvironmentProviderBinding,
 };
 use harness::{
-    BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
+    BlobRef, event_kind,
     session::{
         EventSeq, SessionId, SessionPosition, StoredEvent, StoredJoins, UncommittedStoredEvent,
     },
@@ -567,8 +567,8 @@ async fn pg_live_fork_point_is_judged_under_the_source_lock() {
 
     // The append lands a run that opens at the fork point and stays open.
     let opened = [
-        ("lightspeed.core.run.accepted", 2_i64),
-        ("lightspeed.core.run.started", 3_i64),
+        (event_kind::RUN_ACCEPTED, 2_i64),
+        (event_kind::RUN_STARTED, 3_i64),
     ];
     for (kind, seq) in opened {
         sqlx::query(
@@ -1286,7 +1286,7 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
                 )
             })
             .collect::<Vec<_>>();
-        events.push(lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND));
+        events.push(lifecycle_event(20, event_kind::LIFECYCLE_CLOSED));
         store
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
@@ -1586,7 +1586,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
                     10,
                     serde_json::json!({ "content_ref": config_blob.as_str() }),
                 ),
-                lifecycle_event(11, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(11, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -1611,7 +1611,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
             }),
             events: vec![
                 ref_event(21, serde_json::json!({ "content_ref": fork_only.as_str() })),
-                lifecycle_event(22, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(22, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -1635,7 +1635,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
                     31,
                     serde_json::json!({ "content_ref": config_blob.as_str() }),
                 ),
-                lifecycle_event(32, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(32, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await

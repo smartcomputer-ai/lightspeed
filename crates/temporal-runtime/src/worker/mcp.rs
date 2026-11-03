@@ -355,7 +355,7 @@ impl NativeMcpRuntime {
                 .call
                 .tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "mcp.find_tools") =>
+                .is_some_and(|id| id.as_str() == harness::MCP_FIND_TOOLS_TOOL_ID) =>
             {
                 self.find_tools(targets, arguments).await
             }
@@ -366,7 +366,7 @@ impl NativeMcpRuntime {
                 .call
                 .tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "mcp.call") =>
+                .is_some_and(|id| id.as_str() == harness::MCP_CALL_TOOL_ID) =>
             {
                 let object = arguments
                     .as_object()

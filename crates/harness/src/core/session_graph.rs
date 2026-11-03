@@ -171,7 +171,7 @@ mod tests {
         state.lifecycle.config = Some(config());
         let events = core_agent_clone_opening_events(&state, 10).expect("clone opening events");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event.kind, "lightspeed.core.lifecycle.opened");
+        assert_eq!(events[0].event.kind, crate::event_kind::LIFECYCLE_OPENED);
         assert_eq!(events[0].observed_at_ms, 10);
     }
 
@@ -193,7 +193,7 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(
             events[1].event.kind,
-            "lightspeed.core.workflow_tool_config.managed_bindings_admitted"
+            crate::event_kind::WORKFLOW_TOOL_CONFIG_MANAGED_BINDINGS_ADMITTED
         );
     }
 
@@ -282,6 +282,6 @@ mod tests {
         let events = core_agent_clone_opening_events(&state, 10).expect("clone opening events");
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event.kind, "lightspeed.core.lifecycle.opened");
+        assert_eq!(events[0].event.kind, crate::event_kind::LIFECYCLE_OPENED);
     }
 }

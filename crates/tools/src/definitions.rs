@@ -180,7 +180,7 @@ pub fn resolve(
         "code.execute" => crate::code::code_execute_tool_definition()?,
         "subagent.run" => subagent_tool_definition(SubagentToolKind::Run)?,
         "subagent.spawn" => subagent_tool_definition(SubagentToolKind::Spawn)?,
-        "mcp.find_tools" => FunctionDefinition::new(
+        harness::MCP_FIND_TOOLS_TOOL_ID => FunctionDefinition::new(
             "mcp_find_tools",
             format!(
                 "Browse, search, or load full definitions for live MCP tools. Browse with no query or names; search with query (tool names, descriptions, and argument names are indexed); load full definitions with server plus up to five names. Browse and search are byte-paged and may truncate oversized hits; use server plus names when a hit asks for its full definition. Available servers: {}",
@@ -197,7 +197,7 @@ pub fn resolve(
                 "additionalProperties": false
             }),
         ),
-        "mcp.call" => FunctionDefinition::new(
+        harness::MCP_CALL_TOOL_ID => FunctionDefinition::new(
             "mcp_call",
             format!(
                 "Call a tool found on a live MCP server. Available servers: {}",

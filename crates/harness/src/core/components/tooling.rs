@@ -1388,7 +1388,10 @@ pub fn remote_mcp_call_runtime(
             approval_decision,
         });
     }
-    if !matches!(tool_id.as_str(), "mcp.find_tools" | "mcp.call") {
+    if !matches!(
+        tool_id.as_str(),
+        crate::MCP_FIND_TOOLS_TOOL_ID | crate::MCP_CALL_TOOL_ID
+    ) {
         return None;
     }
     let targets = state

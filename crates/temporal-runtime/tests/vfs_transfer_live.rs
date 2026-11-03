@@ -728,7 +728,7 @@ async fn run_content_case(
             })
             .await?;
         for entry in page.entries {
-            if entry.event.kind != "lightspeed.core.tool.call_completed" {
+            if entry.event.kind != harness::event_kind::TOOL_CALL_COMPLETED {
                 continue;
             }
             let harness::CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted { result, .. }) =

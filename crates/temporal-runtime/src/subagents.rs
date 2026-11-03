@@ -458,7 +458,7 @@ impl SubagentService {
                     .await
                     .map_err(api_projection::map_session_store_error)?;
                 for entry in page.entries {
-                    if entry.event.kind != "lightspeed.core.tool.call_completed" {
+                    if entry.event.kind != harness::event_kind::TOOL_CALL_COMPLETED {
                         continue;
                     }
                     let event = harness::CoreAgentCodec

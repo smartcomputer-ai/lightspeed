@@ -153,10 +153,10 @@ impl SessionTools {
         promise_ids: &PromiseIdAllocator,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         match call.tool_id.as_ref().map(|id| id.as_str()) {
-            Some("concurrency.cancel") => self.invoke_cancel_call(call).await,
-            Some("concurrency.detach") => self.invoke_detach_call(request.run_id, call).await,
-            Some("concurrency.sleep") => self.invoke_sleep_call(call, promise_ids).await,
-            Some("concurrency.await") => {
+            Some(harness::CANCEL_TOOL_ID) => self.invoke_cancel_call(call).await,
+            Some(harness::DETACH_TOOL_ID) => self.invoke_detach_call(request.run_id, call).await,
+            Some(harness::SLEEP_TOOL_ID) => self.invoke_sleep_call(call, promise_ids).await,
+            Some(harness::AWAIT_TOOL_ID) => {
                 failed_result(
                     self.blobs.as_ref(),
                     call.call_id.clone(),
@@ -294,7 +294,7 @@ impl SessionTools {
             .filter(|call| {
                 call.tool_id
                     .as_ref()
-                    .is_some_and(|id| id.as_str() == "concurrency.await")
+                    .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -330,7 +330,7 @@ impl SessionTools {
                     !call
                         .tool_id
                         .as_ref()
-                        .is_some_and(|id| id.as_str() == "concurrency.await")
+                        .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
                 })
                 .cloned()
                 .collect(),
@@ -1711,7 +1711,7 @@ impl CoreAgentTools for SessionTools {
         let has_await_call = request.calls.iter().any(|call| {
             call.tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "concurrency.await")
+                .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
         });
         if has_await_call && request.calls.len() == 1 {
             return self.invoke_lone_await_batch(request).await;
@@ -1911,7 +1911,7 @@ impl SessionTools {
         if call
             .tool_id
             .as_ref()
-            .is_some_and(|id| id.as_str() == "concurrency.await")
+            .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
         {
             let prepared = async {
                 let args: AwaitArgs = self.read_tool_args(call).await?;
@@ -1958,7 +1958,7 @@ impl SessionTools {
             || call
                 .tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "concurrency.await")
+                .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
         {
             return failed_result(
                 self.blobs.as_ref(),

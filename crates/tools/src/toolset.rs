@@ -501,9 +501,9 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
     }
     if config.concurrency.enabled_or_timer() || config.builtin.environment.jobs_enabled() {
         for id in [
-            "concurrency.await",
-            "concurrency.cancel",
-            "concurrency.detach",
+            harness::AWAIT_TOOL_ID,
+            harness::CANCEL_TOOL_ID,
+            harness::DETACH_TOOL_ID,
         ] {
             add(register(
                 id,
@@ -514,7 +514,7 @@ pub fn register_toolset(config: &ToolsetConfig) -> ToolResult<RegisteredToolset>
         }
         if config.concurrency.timer {
             add(register(
-                "concurrency.sleep",
+                harness::SLEEP_TOOL_ID,
                 BuiltinSettings::default(),
                 ToolParallelism::Exclusive,
                 ToolExecutionSpec::default(),

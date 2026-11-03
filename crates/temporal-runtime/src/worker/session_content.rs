@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use harness::{
     Attachment, CodeToolEvent, ContentRef, ContextEntryKind, ContextEvent, CoreAgentCodec,
-    CoreAgentEvent, CoreAgentIoError, RunEvent, SessionId, ToolEvent,
+    CoreAgentEvent, CoreAgentIoError, RunEvent, SessionId, ToolEvent, event_kind,
     media::{MediaDescriptor, media_preview_name},
     storage::{ReadSessionEvents, SessionStore},
 };
@@ -51,13 +51,13 @@ pub(super) async fn recorded_content_attachments(
 fn records_content(kind: &str) -> bool {
     matches!(
         kind,
-        "lightspeed.core.tool.call_completed"
-            | "lightspeed.core.code_tool.call_completed"
-            | "lightspeed.core.context.entries_applied"
-            | "lightspeed.core.context.entries_replaced"
-            | "lightspeed.core.context.key_prefix_replaced"
-            | "lightspeed.core.run.accepted"
-            | "lightspeed.core.run.steering_accepted"
+        event_kind::TOOL_CALL_COMPLETED
+            | event_kind::CODE_TOOL_CALL_COMPLETED
+            | event_kind::CONTEXT_ENTRIES_APPLIED
+            | event_kind::CONTEXT_ENTRIES_REPLACED
+            | event_kind::CONTEXT_KEY_PREFIX_REPLACED
+            | event_kind::RUN_ACCEPTED
+            | event_kind::RUN_STEERING_ACCEPTED
     )
 }
 

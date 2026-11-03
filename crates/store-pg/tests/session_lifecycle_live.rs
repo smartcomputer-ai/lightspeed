@@ -1,7 +1,6 @@
 use harness::{
-    CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND, CoreAgentCodec,
-    CoreAgentEvent, CoreAgentJoins, StoredEvent, UncommittedCoreAgentEvent, WorkflowEndpointRef,
-    WorkflowToolConfigEvent,
+    CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, StoredEvent, UncommittedCoreAgentEvent,
+    WorkflowEndpointRef, WorkflowToolConfigEvent, event_kind,
     session::{EventSeq, SessionId, SessionPosition, StoredJoins, UncommittedStoredEvent},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
@@ -39,7 +38,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
         .append(AppendSessionEvents {
             session_id: parent.clone(),
             expected_head: None,
-            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(10, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .expect("append opened event");
@@ -64,7 +63,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
                     }),
                 ),
                 lifecycle_event(12, "lightspeed.test.work"),
-                lifecycle_event(13, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(13, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -104,7 +103,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
             source_session_id: parent.clone(),
             session_id: SessionId::new("managed-clone"),
             created_at_ms: 19,
-            opening_events: vec![lifecycle_event(19, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            opening_events: vec![lifecycle_event(19, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .expect_err("managed session cannot be cloned");
@@ -144,7 +143,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
             session_id: tool_only.clone(),
             expected_head: None,
             events: vec![
-                lifecycle_event(31, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
+                lifecycle_event(31, event_kind::LIFECYCLE_OPENED),
                 managed_bindings_event(32, None),
             ],
         })
@@ -211,7 +210,7 @@ async fn pg_live_delete_is_closed_only_and_preserves_fork_history() {
         .append(AppendSessionEvents {
             session_id: parent.clone(),
             expected_head: None,
-            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(10, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .expect("open parent");
@@ -228,7 +227,7 @@ async fn pg_live_delete_is_closed_only_and_preserves_fork_history() {
         .append(AppendSessionEvents {
             session_id: parent.clone(),
             expected_head: committed_head(&opened),
-            events: vec![lifecycle_event(11, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            events: vec![lifecycle_event(11, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .expect("close parent");
@@ -302,8 +301,8 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
             session_id: session_id.clone(),
             expected_head: None,
             events: vec![
-                lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
-                lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(10, event_kind::LIFECYCLE_OPENED),
+                lifecycle_event(20, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await
@@ -353,7 +352,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
         .append(AppendSessionEvents {
             session_id: session_id.clone(),
             expected_head: committed_head(&closed),
-            events: vec![lifecycle_event(30, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(30, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .expect("reopen retention root");
@@ -373,7 +372,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
         .append(AppendSessionEvents {
             session_id: session_id.clone(),
             expected_head: committed_head(&opened),
-            events: vec![lifecycle_event(40, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            events: vec![lifecycle_event(40, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .expect("close retention root again");
@@ -470,7 +469,7 @@ async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
         .append(AppendSessionEvents {
             session_id: root.clone(),
             expected_head: None,
-            events: vec![lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
+            events: vec![lifecycle_event(10, event_kind::LIFECYCLE_OPENED)],
         })
         .await
         .unwrap();
@@ -507,7 +506,7 @@ async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(1),
             }),
-            events: vec![lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            events: vec![lifecycle_event(20, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .unwrap();
@@ -522,7 +521,7 @@ async fn permanent_delete_checks_lifecycle_and_removes_retained_descendants() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(1),
             }),
-            events: vec![lifecycle_event(21, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
+            events: vec![lifecycle_event(21, event_kind::LIFECYCLE_CLOSED)],
         })
         .await
         .unwrap();
@@ -617,8 +616,8 @@ async fn soft_delete_hides_history_until_explicit_permanent_deletion() {
             session_id: root.clone(),
             expected_head: None,
             events: vec![
-                lifecycle_event(10, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND),
-                lifecycle_event(20, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND),
+                lifecycle_event(10, event_kind::LIFECYCLE_OPENED),
+                lifecycle_event(20, event_kind::LIFECYCLE_CLOSED),
             ],
         })
         .await

@@ -78,11 +78,11 @@ impl ToolCatalog {
                 definition.output_schema.as_ref(),
                 callable,
                 outer,
-                tool.id.as_str() == "mcp.call",
+                tool.id.as_str() == harness::MCP_CALL_TOOL_ID,
             );
             match tool.id.as_str() {
-                "mcp.call" => description.push_str(" Obtain the selected remote tool's inputSchema and optional outputSchema with mcp_find_tools; that outputSchema describes the server's structuredContent."),
-                "mcp.find_tools" => description.push_str(" Discovery results carry inputSchema and optional outputSchema. Remote outputSchema describes structuredContent within the MCP result envelope. Emit discovery results with text(value) if the model needs them to write a subsequent script."),
+                harness::MCP_CALL_TOOL_ID => description.push_str(" Obtain the selected remote tool's inputSchema and optional outputSchema with mcp_find_tools; that outputSchema describes the server's structuredContent."),
+                harness::MCP_FIND_TOOLS_TOOL_ID => description.push_str(" Discovery results carry inputSchema and optional outputSchema. Remote outputSchema describes structuredContent within the MCP result envelope. Emit discovery results with text(value) if the model needs them to write a subsequent script."),
                 _ => {},
             }
             definition.description = Some(description);

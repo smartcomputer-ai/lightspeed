@@ -1803,7 +1803,8 @@ mod tests {
             .filter_map(|(index, entry)| {
                 matches!(
                     entry.event.kind.as_str(),
-                    "lightspeed.core.tool.call_completed" | "lightspeed.core.workflow_tool.emitted"
+                    harness::event_kind::TOOL_CALL_COMPLETED
+                        | harness::event_kind::WORKFLOW_TOOL_EMITTED
                 )
                 .then_some(index)
             })
@@ -1851,7 +1852,7 @@ mod tests {
         assert_eq!(
             after_retry
                 .iter()
-                .filter(|entry| { entry.event.kind == "lightspeed.core.workflow_tool.emitted" })
+                .filter(|entry| { entry.event.kind == harness::event_kind::WORKFLOW_TOOL_EMITTED })
                 .count(),
             2,
             "duplicate tool-result admission must not duplicate emissions"

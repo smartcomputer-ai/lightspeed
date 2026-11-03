@@ -254,7 +254,7 @@ impl super::session_preparation::SessionPreparationService {
                 ..Default::default()
             };
             let find = tools::definitions::register(
-                "mcp.find_tools",
+                harness::MCP_FIND_TOOLS_TOOL_ID,
                 settings.clone(),
                 harness::ToolParallelism::ParallelSafe,
                 harness::ToolExecutionSpec::new(
@@ -263,7 +263,7 @@ impl super::session_preparation::SessionPreparationService {
                 ),
             );
             let call = tools::definitions::register(
-                "mcp.call",
+                harness::MCP_CALL_TOOL_ID,
                 settings,
                 harness::ToolParallelism::Exclusive,
                 harness::ToolExecutionSpec::new(

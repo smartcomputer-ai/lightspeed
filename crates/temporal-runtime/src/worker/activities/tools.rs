@@ -573,7 +573,7 @@ pub(super) async fn invoke_code_tool(
             .call
             .tool_id
             .as_ref()
-            .is_some_and(|id| id.as_str() == "concurrency.await");
+            .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID);
     if !special || request.call.remote_mcp.is_some() {
         return Ok(
             match invoke_call(

@@ -1,8 +1,7 @@
 //! Session event-log storage contract.
 
 use crate::{
-    BlobRef, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
-    CoreAgentCodec, CoreAgentEvent, SubagentLimits, WorkflowToolConfigEvent,
+    BlobRef, CoreAgentCodec, CoreAgentEvent, SubagentLimits, WorkflowToolConfigEvent, event_kind,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
 };
 use async_trait::async_trait;
@@ -1274,10 +1273,10 @@ fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
     let is_run = terminal
         || matches!(
             entry.event.kind.as_str(),
-            "lightspeed.core.run.accepted"
-                | "lightspeed.core.run.started"
-                | "lightspeed.core.run.steering_accepted"
-                | "lightspeed.core.run.cancellation_requested"
+            event_kind::RUN_ACCEPTED
+                | event_kind::RUN_STARTED
+                | event_kind::RUN_STEERING_ACCEPTED
+                | event_kind::RUN_CANCELLATION_REQUESTED
         );
     is_run.then_some(RunBoundary { run_id, terminal })
 }
@@ -1285,11 +1284,11 @@ fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
 pub fn is_terminal_run_entry(entry: &StoredSessionEntry) -> bool {
     matches!(
         entry.event.kind.as_str(),
-        "lightspeed.core.run.completed"
-            | "lightspeed.core.run.failed"
-            | "lightspeed.core.run.cancelled"
-            | "lightspeed.core.run.force_cancelled"
-            | "lightspeed.core.run.queued_cancelled"
+        event_kind::RUN_COMPLETED
+            | event_kind::RUN_FAILED
+            | event_kind::RUN_CANCELLED
+            | event_kind::RUN_FORCE_CANCELLED
+            | event_kind::RUN_QUEUED_CANCELLED
     )
 }
 
@@ -1322,11 +1321,11 @@ fn commit_uncommitted_events(
 
 pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSessionEntry) {
     match entry.event.kind.as_str() {
-        CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND => {
+        event_kind::LIFECYCLE_OPENED => {
             record.lifecycle_status = SessionLifecycleStatus::Open;
             refresh_delete_at(record);
         }
-        CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND => {
+        event_kind::LIFECYCLE_CLOSED => {
             record.lifecycle_status = SessionLifecycleStatus::Closed;
             record.closed_at_seq = Some(entry.position.seq);
             record.closed_at_ms = Some(entry.observed_at_ms);
@@ -1336,22 +1335,22 @@ pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSess
         // Activity follows the run: working from its start, waiting while it
         // is parked on approvals, working again once it leaves that park, idle
         // once it ends. A park that also held a batch ends at the batch's resume.
-        "lightspeed.core.run.started" => record.activity = SessionActivity::Working,
-        "lightspeed.core.approval.run_parked" => record.activity = SessionActivity::Waiting,
-        "lightspeed.core.approval.run_unparked"
-        | "lightspeed.core.turn.started"
-        | "lightspeed.core.turn.generation_requested"
-        | "lightspeed.core.tool.call_started"
-        | "lightspeed.core.tool.batch_resumed"
+        event_kind::RUN_STARTED => record.activity = SessionActivity::Working,
+        event_kind::APPROVAL_RUN_PARKED => record.activity = SessionActivity::Waiting,
+        event_kind::APPROVAL_RUN_UNPARKED
+        | event_kind::TURN_STARTED
+        | event_kind::TURN_GENERATION_REQUESTED
+        | event_kind::TOOL_CALL_STARTED
+        | event_kind::TOOL_BATCH_RESUMED
             if record.activity == SessionActivity::Waiting =>
         {
             record.activity = SessionActivity::Working;
         }
-        "lightspeed.core.run.completed"
-        | "lightspeed.core.run.failed"
-        | "lightspeed.core.run.cancelled"
-        | "lightspeed.core.run.force_cancelled" => record.activity = SessionActivity::Idle,
-        "lightspeed.core.workflow_tool_config.managed_bindings_admitted" => {
+        event_kind::RUN_COMPLETED
+        | event_kind::RUN_FAILED
+        | event_kind::RUN_CANCELLED
+        | event_kind::RUN_FORCE_CANCELLED => record.activity = SessionActivity::Idle,
+        event_kind::WORKFLOW_TOOL_CONFIG_MANAGED_BINDINGS_ADMITTED => {
             if matches!(
                 CoreAgentCodec.decode_event(&entry.event),
                 Ok(CoreAgentEvent::WorkflowToolConfig(
@@ -1534,7 +1533,7 @@ mod tests {
     }
 
     fn lifecycle_opened_event(at_ms: u64) -> UncommittedStoredEvent {
-        test_event(at_ms, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)
+        test_event(at_ms, event_kind::LIFECYCLE_OPENED)
     }
 
     fn managed_bindings_event(
@@ -1559,7 +1558,7 @@ mod tests {
     }
 
     fn lifecycle_closed_event(at_ms: u64) -> UncommittedStoredEvent {
-        test_event(at_ms, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)
+        test_event(at_ms, event_kind::LIFECYCLE_CLOSED)
     }
 
     fn run_event(at_ms: u64, kind: &'static str, run_id: u64) -> UncommittedStoredEvent {
@@ -2272,6 +2271,158 @@ mod tests {
         assert_eq!(list(None, Vec::new()).await.len(), 3);
     }
 
+    /// The projections read a kind from the stored envelope, so this encodes the
+    /// real events: the arm a codec change moves is the arm these assertions see.
+    fn encoded_run_event(
+        at_ms: u64,
+        run_id: crate::RunId,
+        event: CoreAgentEvent,
+    ) -> UncommittedStoredEvent {
+        CoreAgentCodec
+            .encode_uncommitted(&crate::UncommittedCoreAgentEvent {
+                observed_at_ms: at_ms,
+                joins: crate::CoreAgentJoins {
+                    run_id: Some(run_id),
+                    ..Default::default()
+                },
+                event,
+            })
+            .expect("encode run event")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn encoded_events_drive_activity_and_run_boundaries() {
+        use crate::{
+            ApprovalEvent, RunEvent, RunFailure, RunFailureKind, RunId, ToolEvent, TurnEvent,
+        };
+
+        let run_id = RunId::new(1);
+        let turn_id = crate::TurnId::new(1);
+        let batch_id = crate::ToolBatchId::new(1);
+        let started = || CoreAgentEvent::Run(RunEvent::Started { run_id });
+        let parked = || CoreAgentEvent::Approval(ApprovalEvent::RunParked { run_id });
+
+        let store = InMemorySessionStore::new();
+        let session = SessionId::new("session");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: session.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let append = async |event: CoreAgentEvent| {
+            let expected_head = store.head(&session).await.expect("head");
+            let result = store
+                .append(AppendSessionEvents {
+                    session_id: session.clone(),
+                    expected_head,
+                    events: vec![encoded_run_event(10, run_id, event)],
+                })
+                .await
+                .expect("append");
+            let activity = store
+                .load_session(&session)
+                .await
+                .expect("load")
+                .expect("exists")
+                .activity;
+            (result.entries.into_iter().next().expect("entry"), activity)
+        };
+
+        assert_eq!(append(started()).await.1, SessionActivity::Working);
+        for resuming in [
+            CoreAgentEvent::Approval(ApprovalEvent::RunUnparked { run_id }),
+            CoreAgentEvent::Turn(TurnEvent::Started { turn_id, run_id }),
+            CoreAgentEvent::Turn(TurnEvent::GenerationRequested { turn_id, run_id }),
+            CoreAgentEvent::Tool(ToolEvent::CallStarted {
+                run_id,
+                turn_id,
+                batch_id,
+                call_id: crate::ToolCallId::new("call"),
+                tool_name: crate::ToolName::new("tool"),
+                arguments_ref: crate::BlobRef::from_bytes(b"{}"),
+            }),
+            CoreAgentEvent::Tool(ToolEvent::BatchResumed {
+                run_id,
+                turn_id,
+                batch_id,
+            }),
+        ] {
+            assert_eq!(append(parked()).await.1, SessionActivity::Waiting);
+            assert_eq!(append(resuming).await.1, SessionActivity::Working);
+        }
+
+        for ending in [
+            CoreAgentEvent::Run(RunEvent::Completed {
+                run_id,
+                output: None,
+            }),
+            CoreAgentEvent::Run(RunEvent::Failed {
+                run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::ModelFailure,
+                    message_ref: None,
+                },
+            }),
+            CoreAgentEvent::Run(RunEvent::Cancelled { run_id }),
+            CoreAgentEvent::Run(RunEvent::ForceCancelled { run_id }),
+        ] {
+            assert_eq!(append(started()).await.1, SessionActivity::Working);
+            let (entry, activity) = append(ending).await;
+            assert!(is_terminal_run_entry(&entry));
+            assert_eq!(activity, SessionActivity::Idle);
+        }
+        let (queued_cancelled, activity) = append(CoreAgentEvent::Run(RunEvent::QueuedCancelled {
+            run_id,
+            requested_by: None,
+        }))
+        .await;
+        assert!(is_terminal_run_entry(&queued_cancelled));
+        assert_eq!(activity, SessionActivity::Idle);
+
+        // Each of these opens a run on its own, so a fork inside it is refused.
+        for opening in [
+            CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                run_id,
+                submission_id: None,
+                source: crate::RunSource::Input { input: Vec::new() },
+                run_config: Default::default(),
+                config_revision: 0,
+                notify_on_terminal: Vec::new(),
+                requested_by: None,
+            })),
+            started(),
+            CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+                run_id,
+                steering_id: crate::SteeringId::new(1),
+                input: Vec::new(),
+                requested_by: None,
+            }),
+            CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                run_id,
+                requested_by: None,
+            }),
+        ] {
+            let entry = StoredSessionEntry {
+                position: SessionPosition {
+                    seq: EventSeq::new(1),
+                },
+                observed_at_ms: 10,
+                joins: StoredJoins::from([("run_id".to_owned(), "1".to_owned())]),
+                event: CoreAgentCodec.encode_event(&opening).expect("encode event"),
+            };
+            assert!(matches!(
+                validate_fork_point(&session, EventSeq::new(1), &[entry], 1),
+                Err(SessionStoreError::InvalidForkPoint { .. })
+            ));
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn activity_projection_follows_the_run_and_its_approval_park() {
         let store = InMemorySessionStore::new();
@@ -2321,10 +2472,7 @@ mod tests {
         let record = step(
             &store,
             &session,
-            &[
-                CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
-                "lightspeed.core.run.accepted",
-            ],
+            &[event_kind::LIFECYCLE_OPENED, event_kind::RUN_ACCEPTED],
         )
         .await;
         assert_eq!(
@@ -2332,20 +2480,20 @@ mod tests {
             SessionActivity::Idle,
             "a queued run is not work yet"
         );
-        let record = step(&store, &session, &["lightspeed.core.run.started"]).await;
+        let record = step(&store, &session, &[event_kind::RUN_STARTED]).await;
         assert_eq!(activity(record), SessionActivity::Working);
         let record = step(
             &store,
             &session,
             &[
-                "lightspeed.core.approval.requested",
-                "lightspeed.core.approval.requested",
-                "lightspeed.core.approval.run_parked",
+                event_kind::APPROVAL_REQUESTED,
+                event_kind::APPROVAL_REQUESTED,
+                event_kind::APPROVAL_RUN_PARKED,
             ],
         )
         .await;
         assert_eq!(activity(record), SessionActivity::Waiting);
-        let record = step(&store, &session, &["lightspeed.core.approval.decided"]).await;
+        let record = step(&store, &session, &[event_kind::APPROVAL_DECIDED]).await;
         assert_eq!(
             activity(record),
             SessionActivity::Waiting,
@@ -2355,8 +2503,8 @@ mod tests {
             &store,
             &session,
             &[
-                "lightspeed.core.approval.decided",
-                "lightspeed.core.approval.run_unparked",
+                event_kind::APPROVAL_DECIDED,
+                event_kind::APPROVAL_RUN_UNPARKED,
             ],
         )
         .await;
@@ -2365,15 +2513,12 @@ mod tests {
             SessionActivity::Working,
             "an approved call may run for minutes with no further event"
         );
-        let record = step(&store, &session, &["lightspeed.core.run.cancelled"]).await;
+        let record = step(&store, &session, &[event_kind::RUN_CANCELLED]).await;
         assert_eq!(activity(record), SessionActivity::Idle);
         let record = step(
             &store,
             &session,
-            &[
-                "lightspeed.core.run.started",
-                CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
-            ],
+            &[event_kind::RUN_STARTED, event_kind::LIFECYCLE_CLOSED],
         )
         .await;
         assert_eq!(
@@ -3017,8 +3162,8 @@ mod tests {
                 expected_head: None,
                 events: vec![
                     test_event(10, "standalone.1"),
-                    run_event(11, "lightspeed.core.run.accepted", 1),
-                    run_event(12, "lightspeed.core.run.started", 1),
+                    run_event(11, event_kind::RUN_ACCEPTED, 1),
+                    run_event(12, event_kind::RUN_STARTED, 1),
                 ],
             })
             .await

@@ -2662,7 +2662,7 @@ mod tests {
         let codec = CoreAgentCodec;
         let entry = entries
             .iter_mut()
-            .find(|entry| entry.event.kind == "lightspeed.core.workflow_tool.emitted")
+            .find(|entry| entry.event.kind == crate::event_kind::WORKFLOW_TOOL_EMITTED)
             .expect("workflow-tool emission entry");
         let mut decoded = codec.decode_entry(entry).expect("decode emission");
         let CoreAgentEvent::WorkflowTool(WorkflowToolEvent::Emitted { invocation }) =
@@ -2917,7 +2917,7 @@ mod tests {
             .expect("encode managed binding event");
         assert_eq!(
             encoded.kind,
-            "lightspeed.core.workflow_tool_config.managed_bindings_admitted"
+            crate::event_kind::WORKFLOW_TOOL_CONFIG_MANAGED_BINDINGS_ADMITTED
         );
         assert_eq!(
             codec

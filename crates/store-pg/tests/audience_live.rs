@@ -345,21 +345,21 @@ async fn exercise(pool: &sqlx::PgPool) {
         }
     };
     assert_eq!(
-        append(&["lightspeed.core.run.started"]).await,
+        append(&[harness::event_kind::RUN_STARTED]).await,
         SessionActivity::Working
     );
     assert_eq!(
         append(&[
-            "lightspeed.core.approval.requested",
-            "lightspeed.core.approval.run_parked"
+            harness::event_kind::APPROVAL_REQUESTED,
+            harness::event_kind::APPROVAL_RUN_PARKED
         ])
         .await,
         SessionActivity::Waiting
     );
     assert_eq!(
         append(&[
-            "lightspeed.core.approval.decided",
-            "lightspeed.core.run.completed"
+            harness::event_kind::APPROVAL_DECIDED,
+            harness::event_kind::RUN_COMPLETED
         ])
         .await,
         SessionActivity::Idle

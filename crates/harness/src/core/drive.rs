@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const AWAIT_TOOL_ID: &str = "concurrency.await";
+pub const CANCEL_TOOL_ID: &str = "concurrency.cancel";
+pub const DETACH_TOOL_ID: &str = "concurrency.detach";
+pub const SLEEP_TOOL_ID: &str = "concurrency.sleep";
+pub const MCP_FIND_TOOLS_TOOL_ID: &str = "mcp.find_tools";
+pub const MCP_CALL_TOOL_ID: &str = "mcp.call";
 
 use crate::{
     ApprovalEvent, ApprovalId, ApprovalRequested, AwaitMode, AwaitSpec, BlobRef, CodecError,
@@ -8567,10 +8572,10 @@ mod tests {
             panic!("expected append");
         };
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].event.kind, "lightspeed.core.tool.call_completed");
+        assert_eq!(events[0].event.kind, crate::event_kind::TOOL_CALL_COMPLETED);
         assert_eq!(
             events[1].event.kind,
-            "lightspeed.core.workflow_tool.emitted"
+            crate::event_kind::WORKFLOW_TOOL_EMITTED
         );
 
         commit_action(&mut drive, resumed);
@@ -8704,16 +8709,16 @@ mod tests {
             panic!("expected joined admission append");
         };
         assert_eq!(events.len(), 3);
-        assert_eq!(events[0].event.kind, "lightspeed.core.promise.created");
-        assert_eq!(events[1].event.kind, "lightspeed.core.tool.batch_deferred");
+        assert_eq!(events[0].event.kind, crate::event_kind::PROMISE_CREATED);
+        assert_eq!(events[1].event.kind, crate::event_kind::TOOL_BATCH_DEFERRED);
         assert_eq!(
             events[2].event.kind,
-            "lightspeed.core.workflow_tool.emitted"
+            crate::event_kind::WORKFLOW_TOOL_EMITTED
         );
         assert!(
             !events
                 .iter()
-                .any(|event| { event.event.kind == "lightspeed.core.tool.call_completed" })
+                .any(|event| { event.event.kind == crate::event_kind::TOOL_CALL_COMPLETED })
         );
         commit_action(&mut drive, parked);
 
@@ -9428,11 +9433,11 @@ mod tests {
         // One append: tool completion, keyed promise, then the emitted fact
         // whose apply verifies the promise exists with the canonical source.
         assert_eq!(events.len(), 3);
-        assert_eq!(events[0].event.kind, "lightspeed.core.tool.call_completed");
-        assert_eq!(events[1].event.kind, "lightspeed.core.promise.created");
+        assert_eq!(events[0].event.kind, crate::event_kind::TOOL_CALL_COMPLETED);
+        assert_eq!(events[1].event.kind, crate::event_kind::PROMISE_CREATED);
         assert_eq!(
             events[2].event.kind,
-            "lightspeed.core.workflow_tool.emitted"
+            crate::event_kind::WORKFLOW_TOOL_EMITTED
         );
         commit_action(&mut drive, resumed);
 
@@ -9603,11 +9608,11 @@ mod tests {
             panic!("expected append");
         };
         assert_eq!(events.len(), 3);
-        assert_eq!(events[0].event.kind, "lightspeed.core.tool.call_completed");
-        assert_eq!(events[1].event.kind, "lightspeed.core.promise.created");
+        assert_eq!(events[0].event.kind, crate::event_kind::TOOL_CALL_COMPLETED);
+        assert_eq!(events[1].event.kind, crate::event_kind::PROMISE_CREATED);
         assert_eq!(
             events[2].event.kind,
-            "lightspeed.core.workflow_tool.start_requested"
+            crate::event_kind::WORKFLOW_TOOL_START_REQUESTED
         );
         commit_action(&mut drive, resumed);
 
@@ -13019,8 +13024,8 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.approval.decided",
-                "lightspeed.core.approval.run_unparked"
+                crate::event_kind::APPROVAL_DECIDED,
+                crate::event_kind::APPROVAL_RUN_UNPARKED
             ]
         );
         let run = logged.drive.state().runs.active.as_ref().expect("active");
@@ -13055,7 +13060,7 @@ mod tests {
         assert!(
             !event_kinds(&entries)
                 .iter()
-                .any(|kind| kind == "lightspeed.core.approval.run_unparked"),
+                .any(|kind| kind == crate::event_kind::APPROVAL_RUN_UNPARKED),
             "the batch still holds the run: {entries:?}"
         );
         let run = logged.drive.state().runs.active.as_ref().expect("active");
@@ -13090,9 +13095,9 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.approval.cancelled",
-                "lightspeed.core.run.force_cancelled",
-                crate::CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
+                crate::event_kind::APPROVAL_CANCELLED,
+                crate::event_kind::RUN_FORCE_CANCELLED,
+                crate::event_kind::LIFECYCLE_CLOSED,
             ]
         );
         assert_eq!(logged.last_run().run_id, batch.run_id);
@@ -13207,7 +13212,7 @@ mod tests {
             let entries = logged.admit(CoreAgentCommand::CloseSession { force: true });
             assert_eq!(
                 event_kinds(&entries)[0],
-                "lightspeed.core.context.compaction_finished"
+                crate::event_kind::CONTEXT_COMPACTION_FINISHED
             );
             let state = logged.drive.state();
             assert!(
@@ -13427,8 +13432,8 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.context.entries_applied",
-                "lightspeed.core.run.failed"
+                crate::event_kind::CONTEXT_ENTRIES_APPLIED,
+                crate::event_kind::RUN_FAILED
             ]
         );
         let results = logged
@@ -13482,9 +13487,9 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.context.entries_applied",
-                "lightspeed.core.approval.cancelled",
-                "lightspeed.core.run.failed"
+                crate::event_kind::CONTEXT_ENTRIES_APPLIED,
+                crate::event_kind::APPROVAL_CANCELLED,
+                crate::event_kind::RUN_FAILED
             ]
         );
         assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
@@ -13498,10 +13503,10 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.context.entries_applied",
-                "lightspeed.core.approval.cancelled",
-                "lightspeed.core.context.entries_applied",
-                "lightspeed.core.run.failed"
+                crate::event_kind::CONTEXT_ENTRIES_APPLIED,
+                crate::event_kind::APPROVAL_CANCELLED,
+                crate::event_kind::CONTEXT_ENTRIES_APPLIED,
+                crate::event_kind::RUN_FAILED
             ]
         );
         let next = assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
@@ -13522,8 +13527,8 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.context.entries_applied",
-                "lightspeed.core.run.failed"
+                crate::event_kind::CONTEXT_ENTRIES_APPLIED,
+                crate::event_kind::RUN_FAILED
             ]
         );
         assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
@@ -13571,9 +13576,9 @@ mod tests {
         assert_eq!(
             event_kinds(&entries),
             [
-                "lightspeed.core.context.entries_applied",
-                "lightspeed.core.run.failed",
-                "lightspeed.core.promise.cancelled"
+                crate::event_kind::CONTEXT_ENTRIES_APPLIED,
+                crate::event_kind::RUN_FAILED,
+                crate::event_kind::PROMISE_CANCELLED
             ]
         );
         assert_failed_run_leaves_a_working_session(&mut logged, |replayed| {

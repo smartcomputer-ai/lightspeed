@@ -8,8 +8,82 @@ use crate::{
 
 const CORE_AGENT_EVENT_KIND_PREFIX: &str = "lightspeed.core.";
 const CORE_AGENT_SCHEMA_VERSION: u32 = 1;
-pub const CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND: &str = "lightspeed.core.lifecycle.opened";
-pub const CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND: &str = "lightspeed.core.lifecycle.closed";
+
+/// The stored `kind` of every core agent event. Durable log rows carry these
+/// strings and store projections branch on them, so every reader names a
+/// constant here instead of spelling the string.
+pub mod event_kind {
+    pub const LIFECYCLE_OPENED: &str = "lightspeed.core.lifecycle.opened";
+    pub const LIFECYCLE_CONFIG_CHANGED: &str = "lightspeed.core.lifecycle.config_changed";
+    pub const LIFECYCLE_CLOSED: &str = "lightspeed.core.lifecycle.closed";
+
+    pub const RUN_ACCEPTED: &str = "lightspeed.core.run.accepted";
+    pub const RUN_STARTED: &str = "lightspeed.core.run.started";
+    pub const RUN_STEERING_ACCEPTED: &str = "lightspeed.core.run.steering_accepted";
+    pub const RUN_CANCELLATION_REQUESTED: &str = "lightspeed.core.run.cancellation_requested";
+    pub const RUN_COMPLETED: &str = "lightspeed.core.run.completed";
+    pub const RUN_FAILED: &str = "lightspeed.core.run.failed";
+    pub const RUN_CANCELLED: &str = "lightspeed.core.run.cancelled";
+    pub const RUN_FORCE_CANCELLED: &str = "lightspeed.core.run.force_cancelled";
+    pub const RUN_QUEUED_CANCELLED: &str = "lightspeed.core.run.queued_cancelled";
+
+    pub const APPROVAL_REQUESTED: &str = "lightspeed.core.approval.requested";
+    pub const APPROVAL_RUN_PARKED: &str = "lightspeed.core.approval.run_parked";
+    pub const APPROVAL_RUN_UNPARKED: &str = "lightspeed.core.approval.run_unparked";
+    pub const APPROVAL_DECIDED: &str = "lightspeed.core.approval.decided";
+    pub const APPROVAL_CANCELLED: &str = "lightspeed.core.approval.cancelled";
+
+    pub const TURN_STARTED: &str = "lightspeed.core.turn.started";
+    pub const TURN_PLANNED: &str = "lightspeed.core.turn.planned";
+    pub const TURN_GENERATION_REQUESTED: &str = "lightspeed.core.turn.generation_requested";
+    pub const TURN_GENERATION_COMPLETED: &str = "lightspeed.core.turn.generation_completed";
+    pub const TURN_COMPLETED: &str = "lightspeed.core.turn.completed";
+    pub const TURN_CANCELLED: &str = "lightspeed.core.turn.cancelled";
+
+    pub const CONTEXT_ENTRIES_APPLIED: &str = "lightspeed.core.context.entries_applied";
+    pub const CONTEXT_ENTRIES_REMOVED: &str = "lightspeed.core.context.entries_removed";
+    pub const CONTEXT_ENTRIES_REPLACED: &str = "lightspeed.core.context.entries_replaced";
+    pub const CONTEXT_KEYS_REMOVED: &str = "lightspeed.core.context.keys_removed";
+    pub const CONTEXT_KEY_PREFIX_REPLACED: &str = "lightspeed.core.context.key_prefix_replaced";
+    pub const CONTEXT_COMPACTION_QUEUED: &str = "lightspeed.core.context.compaction_queued";
+    pub const CONTEXT_COMPACTION_REQUESTED: &str = "lightspeed.core.context.compaction_requested";
+    pub const CONTEXT_COMPACTION_FINISHED: &str = "lightspeed.core.context.compaction_finished";
+
+    pub const ENVIRONMENT_ACTIVE_SET: &str = "lightspeed.core.environment.active_set";
+    pub const ENVIRONMENT_ACTIVE_CLEARED: &str = "lightspeed.core.environment.active_cleared";
+
+    pub const TOOL_CONFIG_TOOLS_REPLACED: &str = "lightspeed.core.tool_config.tools_replaced";
+    pub const TOOL_CONFIG_TOOLS_PATCHED: &str = "lightspeed.core.tool_config.tools_patched";
+
+    pub const TOOL_BATCH_STARTED: &str = "lightspeed.core.tool.batch_started";
+    pub const TOOL_CALL_STARTED: &str = "lightspeed.core.tool.call_started";
+    pub const TOOL_CALL_COMPLETED: &str = "lightspeed.core.tool.call_completed";
+    pub const TOOL_BATCH_DEFERRED: &str = "lightspeed.core.tool.batch_deferred";
+    pub const TOOL_BATCH_RESUMED: &str = "lightspeed.core.tool.batch_resumed";
+    pub const TOOL_BATCH_COMPLETED: &str = "lightspeed.core.tool.batch_completed";
+
+    pub const PROMISE_CREATED: &str = "lightspeed.core.promise.created";
+    pub const PROMISE_RESOLVED: &str = "lightspeed.core.promise.resolved";
+    pub const PROMISE_FAILED: &str = "lightspeed.core.promise.failed";
+    pub const PROMISE_CANCELLED: &str = "lightspeed.core.promise.cancelled";
+    pub const PROMISE_DETACHED: &str = "lightspeed.core.promise.detached";
+
+    pub const WORKFLOW_TOOL_CONFIG_MANAGED_BINDINGS_ADMITTED: &str =
+        "lightspeed.core.workflow_tool_config.managed_bindings_admitted";
+    pub const WORKFLOW_TOOL_CONFIG_SYSTEM_BINDING_ADMITTED: &str =
+        "lightspeed.core.workflow_tool_config.system_binding_admitted";
+
+    pub const CODE_TOOL_SCOPE_OPENED: &str = "lightspeed.core.code_tool.scope_opened";
+    pub const CODE_TOOL_CALL_ADMITTED: &str = "lightspeed.core.code_tool.call_admitted";
+    pub const CODE_TOOL_CALL_COMPLETED: &str = "lightspeed.core.code_tool.call_completed";
+    pub const CODE_TOOL_CALL_DEFERRED: &str = "lightspeed.core.code_tool.call_deferred";
+    pub const CODE_TOOL_SCOPE_CLOSED: &str = "lightspeed.core.code_tool.scope_closed";
+
+    pub const WORKFLOW_TOOL_EMITTED: &str = "lightspeed.core.workflow_tool.emitted";
+    pub const WORKFLOW_TOOL_DELIVERY_FAILED: &str = "lightspeed.core.workflow_tool.delivery_failed";
+    pub const WORKFLOW_TOOL_START_REQUESTED: &str = "lightspeed.core.workflow_tool.start_requested";
+    pub const WORKFLOW_TOOL_START_FAILED: &str = "lightspeed.core.workflow_tool.start_failed";
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CoreAgentCodec;
@@ -99,107 +173,97 @@ fn ensure_core_agent_event_envelope(kind: &str, version: u32) -> Result<(), Code
 fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
     match event {
         CoreAgentEvent::Lifecycle(event) => match event {
-            CoreAgentLifecycleEvent::Opened { .. } => CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND,
-            CoreAgentLifecycleEvent::ConfigChanged { .. } => {
-                "lightspeed.core.lifecycle.config_changed"
-            }
-            CoreAgentLifecycleEvent::Closed => CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
+            CoreAgentLifecycleEvent::Opened { .. } => event_kind::LIFECYCLE_OPENED,
+            CoreAgentLifecycleEvent::ConfigChanged { .. } => event_kind::LIFECYCLE_CONFIG_CHANGED,
+            CoreAgentLifecycleEvent::Closed => event_kind::LIFECYCLE_CLOSED,
         },
         CoreAgentEvent::Run(event) => match event {
-            RunEvent::Accepted(_) => "lightspeed.core.run.accepted",
-            RunEvent::Started { .. } => "lightspeed.core.run.started",
-            RunEvent::SteeringAccepted { .. } => "lightspeed.core.run.steering_accepted",
-            RunEvent::CancellationRequested { .. } => "lightspeed.core.run.cancellation_requested",
-            RunEvent::Completed { .. } => "lightspeed.core.run.completed",
-            RunEvent::Failed { .. } => "lightspeed.core.run.failed",
-            RunEvent::Cancelled { .. } => "lightspeed.core.run.cancelled",
-            RunEvent::ForceCancelled { .. } => "lightspeed.core.run.force_cancelled",
-            RunEvent::QueuedCancelled { .. } => "lightspeed.core.run.queued_cancelled",
+            RunEvent::Accepted(_) => event_kind::RUN_ACCEPTED,
+            RunEvent::Started { .. } => event_kind::RUN_STARTED,
+            RunEvent::SteeringAccepted { .. } => event_kind::RUN_STEERING_ACCEPTED,
+            RunEvent::CancellationRequested { .. } => event_kind::RUN_CANCELLATION_REQUESTED,
+            RunEvent::Completed { .. } => event_kind::RUN_COMPLETED,
+            RunEvent::Failed { .. } => event_kind::RUN_FAILED,
+            RunEvent::Cancelled { .. } => event_kind::RUN_CANCELLED,
+            RunEvent::ForceCancelled { .. } => event_kind::RUN_FORCE_CANCELLED,
+            RunEvent::QueuedCancelled { .. } => event_kind::RUN_QUEUED_CANCELLED,
         },
         CoreAgentEvent::Approval(event) => match event {
-            ApprovalEvent::Requested { .. } => "lightspeed.core.approval.requested",
-            ApprovalEvent::RunParked { .. } => "lightspeed.core.approval.run_parked",
-            ApprovalEvent::RunUnparked { .. } => "lightspeed.core.approval.run_unparked",
-            ApprovalEvent::Decided { .. } => "lightspeed.core.approval.decided",
-            ApprovalEvent::Cancelled { .. } => "lightspeed.core.approval.cancelled",
+            ApprovalEvent::Requested { .. } => event_kind::APPROVAL_REQUESTED,
+            ApprovalEvent::RunParked { .. } => event_kind::APPROVAL_RUN_PARKED,
+            ApprovalEvent::RunUnparked { .. } => event_kind::APPROVAL_RUN_UNPARKED,
+            ApprovalEvent::Decided { .. } => event_kind::APPROVAL_DECIDED,
+            ApprovalEvent::Cancelled { .. } => event_kind::APPROVAL_CANCELLED,
         },
         CoreAgentEvent::Turn(event) => match event {
-            TurnEvent::Started { .. } => "lightspeed.core.turn.started",
-            TurnEvent::Planned { .. } => "lightspeed.core.turn.planned",
-            TurnEvent::GenerationRequested { .. } => "lightspeed.core.turn.generation_requested",
-            TurnEvent::GenerationCompleted { .. } => "lightspeed.core.turn.generation_completed",
-            TurnEvent::Completed { .. } => "lightspeed.core.turn.completed",
-            TurnEvent::Cancelled { .. } => "lightspeed.core.turn.cancelled",
+            TurnEvent::Started { .. } => event_kind::TURN_STARTED,
+            TurnEvent::Planned { .. } => event_kind::TURN_PLANNED,
+            TurnEvent::GenerationRequested { .. } => event_kind::TURN_GENERATION_REQUESTED,
+            TurnEvent::GenerationCompleted { .. } => event_kind::TURN_GENERATION_COMPLETED,
+            TurnEvent::Completed { .. } => event_kind::TURN_COMPLETED,
+            TurnEvent::Cancelled { .. } => event_kind::TURN_CANCELLED,
         },
         CoreAgentEvent::Context(event) => match event {
-            ContextEvent::EntriesApplied { .. } => "lightspeed.core.context.entries_applied",
-            ContextEvent::EntriesRemoved { .. } => "lightspeed.core.context.entries_removed",
-            ContextEvent::EntriesReplaced { .. } => "lightspeed.core.context.entries_replaced",
-            ContextEvent::KeysRemoved { .. } => "lightspeed.core.context.keys_removed",
-            ContextEvent::KeyPrefixReplaced { .. } => "lightspeed.core.context.key_prefix_replaced",
-            ContextEvent::CompactionQueued { .. } => "lightspeed.core.context.compaction_queued",
-            ContextEvent::CompactionRequested { .. } => {
-                "lightspeed.core.context.compaction_requested"
-            }
-            ContextEvent::CompactionFinished { .. } => {
-                "lightspeed.core.context.compaction_finished"
-            }
+            ContextEvent::EntriesApplied { .. } => event_kind::CONTEXT_ENTRIES_APPLIED,
+            ContextEvent::EntriesRemoved { .. } => event_kind::CONTEXT_ENTRIES_REMOVED,
+            ContextEvent::EntriesReplaced { .. } => event_kind::CONTEXT_ENTRIES_REPLACED,
+            ContextEvent::KeysRemoved { .. } => event_kind::CONTEXT_KEYS_REMOVED,
+            ContextEvent::KeyPrefixReplaced { .. } => event_kind::CONTEXT_KEY_PREFIX_REPLACED,
+            ContextEvent::CompactionQueued { .. } => event_kind::CONTEXT_COMPACTION_QUEUED,
+            ContextEvent::CompactionRequested { .. } => event_kind::CONTEXT_COMPACTION_REQUESTED,
+            ContextEvent::CompactionFinished { .. } => event_kind::CONTEXT_COMPACTION_FINISHED,
         },
         CoreAgentEvent::Environment(event) => match event {
             crate::EnvironmentEvent::ActiveEnvironmentSet { .. } => {
-                "lightspeed.core.environment.active_set"
+                event_kind::ENVIRONMENT_ACTIVE_SET
             }
             crate::EnvironmentEvent::ActiveEnvironmentCleared => {
-                "lightspeed.core.environment.active_cleared"
+                event_kind::ENVIRONMENT_ACTIVE_CLEARED
             }
         },
         CoreAgentEvent::ToolConfig(event) => match event {
-            ToolConfigEvent::ToolsReplaced { .. } => "lightspeed.core.tool_config.tools_replaced",
-            ToolConfigEvent::ToolsPatched { .. } => "lightspeed.core.tool_config.tools_patched",
+            ToolConfigEvent::ToolsReplaced { .. } => event_kind::TOOL_CONFIG_TOOLS_REPLACED,
+            ToolConfigEvent::ToolsPatched { .. } => event_kind::TOOL_CONFIG_TOOLS_PATCHED,
         },
         CoreAgentEvent::Tool(event) => match event {
-            ToolEvent::BatchStarted { .. } => "lightspeed.core.tool.batch_started",
-            ToolEvent::CallStarted { .. } => "lightspeed.core.tool.call_started",
-            ToolEvent::CallCompleted { .. } => "lightspeed.core.tool.call_completed",
-            ToolEvent::BatchDeferred { .. } => "lightspeed.core.tool.batch_deferred",
-            ToolEvent::BatchResumed { .. } => "lightspeed.core.tool.batch_resumed",
-            ToolEvent::BatchCompleted { .. } => "lightspeed.core.tool.batch_completed",
+            ToolEvent::BatchStarted { .. } => event_kind::TOOL_BATCH_STARTED,
+            ToolEvent::CallStarted { .. } => event_kind::TOOL_CALL_STARTED,
+            ToolEvent::CallCompleted { .. } => event_kind::TOOL_CALL_COMPLETED,
+            ToolEvent::BatchDeferred { .. } => event_kind::TOOL_BATCH_DEFERRED,
+            ToolEvent::BatchResumed { .. } => event_kind::TOOL_BATCH_RESUMED,
+            ToolEvent::BatchCompleted { .. } => event_kind::TOOL_BATCH_COMPLETED,
         },
         CoreAgentEvent::Promise(event) => match event {
-            PromiseEvent::Created { .. } => "lightspeed.core.promise.created",
-            PromiseEvent::Resolved { .. } => "lightspeed.core.promise.resolved",
-            PromiseEvent::Failed { .. } => "lightspeed.core.promise.failed",
-            PromiseEvent::Cancelled { .. } => "lightspeed.core.promise.cancelled",
-            PromiseEvent::Detached { .. } => "lightspeed.core.promise.detached",
+            PromiseEvent::Created { .. } => event_kind::PROMISE_CREATED,
+            PromiseEvent::Resolved { .. } => event_kind::PROMISE_RESOLVED,
+            PromiseEvent::Failed { .. } => event_kind::PROMISE_FAILED,
+            PromiseEvent::Cancelled { .. } => event_kind::PROMISE_CANCELLED,
+            PromiseEvent::Detached { .. } => event_kind::PROMISE_DETACHED,
         },
         CoreAgentEvent::WorkflowToolConfig(event) => match event {
             WorkflowToolConfigEvent::ManagedBindingsAdmitted { .. } => {
-                "lightspeed.core.workflow_tool_config.managed_bindings_admitted"
+                event_kind::WORKFLOW_TOOL_CONFIG_MANAGED_BINDINGS_ADMITTED
             }
             WorkflowToolConfigEvent::SystemBindingAdmitted { .. } => {
-                "lightspeed.core.workflow_tool_config.system_binding_admitted"
+                event_kind::WORKFLOW_TOOL_CONFIG_SYSTEM_BINDING_ADMITTED
             }
         },
         CoreAgentEvent::CodeTool(event) => match event {
-            crate::CodeToolEvent::ScopeOpened { .. } => "lightspeed.core.code_tool.scope_opened",
-            crate::CodeToolEvent::CallAdmitted { .. } => "lightspeed.core.code_tool.call_admitted",
-            crate::CodeToolEvent::CallCompleted { .. } => {
-                "lightspeed.core.code_tool.call_completed"
-            }
-            crate::CodeToolEvent::CallDeferred { .. } => "lightspeed.core.code_tool.call_deferred",
-            crate::CodeToolEvent::ScopeClosed { .. } => "lightspeed.core.code_tool.scope_closed",
+            crate::CodeToolEvent::ScopeOpened { .. } => event_kind::CODE_TOOL_SCOPE_OPENED,
+            crate::CodeToolEvent::CallAdmitted { .. } => event_kind::CODE_TOOL_CALL_ADMITTED,
+            crate::CodeToolEvent::CallCompleted { .. } => event_kind::CODE_TOOL_CALL_COMPLETED,
+            crate::CodeToolEvent::CallDeferred { .. } => event_kind::CODE_TOOL_CALL_DEFERRED,
+            crate::CodeToolEvent::ScopeClosed { .. } => event_kind::CODE_TOOL_SCOPE_CLOSED,
         },
         CoreAgentEvent::WorkflowTool(event) => match event {
-            crate::WorkflowToolEvent::Emitted { .. } => "lightspeed.core.workflow_tool.emitted",
+            crate::WorkflowToolEvent::Emitted { .. } => event_kind::WORKFLOW_TOOL_EMITTED,
             crate::WorkflowToolEvent::DeliveryFailed { .. } => {
-                "lightspeed.core.workflow_tool.delivery_failed"
+                event_kind::WORKFLOW_TOOL_DELIVERY_FAILED
             }
             crate::WorkflowToolEvent::StartRequested { .. } => {
-                "lightspeed.core.workflow_tool.start_requested"
+                event_kind::WORKFLOW_TOOL_START_REQUESTED
             }
-            crate::WorkflowToolEvent::StartFailed { .. } => {
-                "lightspeed.core.workflow_tool.start_failed"
-            }
+            crate::WorkflowToolEvent::StartFailed { .. } => event_kind::WORKFLOW_TOOL_START_FAILED,
         },
     }
 }
@@ -271,6 +335,76 @@ mod tests {
         assert_eq!(encoded.version, CORE_AGENT_SCHEMA_VERSION);
 
         assert_eq!(codec.decode_event(&encoded).expect("decode event"), event);
+    }
+
+    #[test]
+    fn every_event_kind_is_a_distinct_core_kind() {
+        let kinds = [
+            event_kind::LIFECYCLE_OPENED,
+            event_kind::LIFECYCLE_CONFIG_CHANGED,
+            event_kind::LIFECYCLE_CLOSED,
+            event_kind::RUN_ACCEPTED,
+            event_kind::RUN_STARTED,
+            event_kind::RUN_STEERING_ACCEPTED,
+            event_kind::RUN_CANCELLATION_REQUESTED,
+            event_kind::RUN_COMPLETED,
+            event_kind::RUN_FAILED,
+            event_kind::RUN_CANCELLED,
+            event_kind::RUN_FORCE_CANCELLED,
+            event_kind::RUN_QUEUED_CANCELLED,
+            event_kind::APPROVAL_REQUESTED,
+            event_kind::APPROVAL_RUN_PARKED,
+            event_kind::APPROVAL_RUN_UNPARKED,
+            event_kind::APPROVAL_DECIDED,
+            event_kind::APPROVAL_CANCELLED,
+            event_kind::TURN_STARTED,
+            event_kind::TURN_PLANNED,
+            event_kind::TURN_GENERATION_REQUESTED,
+            event_kind::TURN_GENERATION_COMPLETED,
+            event_kind::TURN_COMPLETED,
+            event_kind::TURN_CANCELLED,
+            event_kind::CONTEXT_ENTRIES_APPLIED,
+            event_kind::CONTEXT_ENTRIES_REMOVED,
+            event_kind::CONTEXT_ENTRIES_REPLACED,
+            event_kind::CONTEXT_KEYS_REMOVED,
+            event_kind::CONTEXT_KEY_PREFIX_REPLACED,
+            event_kind::CONTEXT_COMPACTION_QUEUED,
+            event_kind::CONTEXT_COMPACTION_REQUESTED,
+            event_kind::CONTEXT_COMPACTION_FINISHED,
+            event_kind::ENVIRONMENT_ACTIVE_SET,
+            event_kind::ENVIRONMENT_ACTIVE_CLEARED,
+            event_kind::TOOL_CONFIG_TOOLS_REPLACED,
+            event_kind::TOOL_CONFIG_TOOLS_PATCHED,
+            event_kind::TOOL_BATCH_STARTED,
+            event_kind::TOOL_CALL_STARTED,
+            event_kind::TOOL_CALL_COMPLETED,
+            event_kind::TOOL_BATCH_DEFERRED,
+            event_kind::TOOL_BATCH_RESUMED,
+            event_kind::TOOL_BATCH_COMPLETED,
+            event_kind::PROMISE_CREATED,
+            event_kind::PROMISE_RESOLVED,
+            event_kind::PROMISE_FAILED,
+            event_kind::PROMISE_CANCELLED,
+            event_kind::PROMISE_DETACHED,
+            event_kind::WORKFLOW_TOOL_CONFIG_MANAGED_BINDINGS_ADMITTED,
+            event_kind::WORKFLOW_TOOL_CONFIG_SYSTEM_BINDING_ADMITTED,
+            event_kind::CODE_TOOL_SCOPE_OPENED,
+            event_kind::CODE_TOOL_CALL_ADMITTED,
+            event_kind::CODE_TOOL_CALL_COMPLETED,
+            event_kind::CODE_TOOL_CALL_DEFERRED,
+            event_kind::CODE_TOOL_SCOPE_CLOSED,
+            event_kind::WORKFLOW_TOOL_EMITTED,
+            event_kind::WORKFLOW_TOOL_DELIVERY_FAILED,
+            event_kind::WORKFLOW_TOOL_START_REQUESTED,
+            event_kind::WORKFLOW_TOOL_START_FAILED,
+        ];
+        assert!(
+            kinds
+                .iter()
+                .all(|kind| kind.starts_with(CORE_AGENT_EVENT_KIND_PREFIX))
+        );
+        let distinct = kinds.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(distinct.len(), kinds.len());
     }
 
     #[test]

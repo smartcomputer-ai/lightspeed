@@ -188,8 +188,8 @@ pub enum PromiseControlKind {
 impl PromiseControlKind {
     fn for_tool_id(tool_id: &ToolName) -> Option<Self> {
         match tool_id.as_str() {
-            "concurrency.cancel" => Some(Self::Cancel),
-            "concurrency.detach" => Some(Self::Detach),
+            crate::CANCEL_TOOL_ID => Some(Self::Cancel),
+            crate::DETACH_TOOL_ID => Some(Self::Detach),
             _ => None,
         }
     }

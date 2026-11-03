@@ -58,7 +58,7 @@ fn batch_requires_unit_execution(request: &ToolInvocationBatchRequest) -> bool {
             || call
                 .tool_id
                 .as_ref()
-                .is_some_and(|id| id.as_str() == "concurrency.await")
+                .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
     })
 }
 

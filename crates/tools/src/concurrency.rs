@@ -58,7 +58,10 @@ impl ConcurrencyToolsetConfig {
 pub fn is_concurrency_tool(tool_name: &ToolName) -> bool {
     matches!(
         tool_name.as_str(),
-        "concurrency.await" | "concurrency.cancel" | "concurrency.detach" | "concurrency.sleep"
+        harness::AWAIT_TOOL_ID
+            | harness::CANCEL_TOOL_ID
+            | harness::DETACH_TOOL_ID
+            | harness::SLEEP_TOOL_ID
     )
 }
 
