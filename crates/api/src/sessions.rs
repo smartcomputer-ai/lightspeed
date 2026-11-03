@@ -1692,15 +1692,25 @@ pub enum SessionEventKindView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKindView {
+    /// The context no longer fits the model and compaction did not make it fit.
+    ContextFailure,
+    /// The provider or the path to it failed the generation, including a generation
+    /// the provider cancelled unasked. A run someone cancelled has status `cancelled`
+    /// and no failure.
     ModelFailure,
     /// The provider rejected the request as invalid or larger than the model
     /// accepts. `message` is the provider's own text, unchanged; resending the
     /// same context fails the same way.
     RequestRejected,
-    ToolFailure,
-    ContextFailure,
+    /// The provider cut the response off at its output cap. Raising
+    /// `maxOutputTokens` or lowering `reasoningEffort` can help; the partial text
+    /// stays in context.
+    OutputTruncated,
+    /// The provider refused the request or filtered the response.
+    ContentFiltered,
+    /// The run needed another turn and its `maxTurns` allowed none. Its tool calls
+    /// have results and the session stays usable.
     LimitExceeded,
-    Cancelled,
     /// The harness refused a step of this run because of what the session holds.
     /// `message` is the refusal's own text. The session stays usable, and open
     /// tool calls were answered as cancelled.

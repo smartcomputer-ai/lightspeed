@@ -2217,11 +2217,18 @@ fn run_seq_from_id(id: &str) -> u64 {
 }
 
 /// The error line for a failed run. A provider rejection names the provider
-/// as the source; its message is the provider's own text, shown unchanged.
+/// as the source; its message is the provider's own text, shown unchanged. A
+/// truncated or refused response says which of the two it was.
 fn run_failure_message(kind: api::RunFailureKindView, message: &str) -> String {
     match kind {
         api::RunFailureKindView::RequestRejected => {
             format!("The provider rejected the request: {message}")
+        }
+        api::RunFailureKindView::OutputTruncated => {
+            format!("The response was cut off: {message}")
+        }
+        api::RunFailureKindView::ContentFiltered => {
+            format!("The provider refused the response: {message}")
         }
         _ => message.to_owned(),
     }
@@ -2239,6 +2246,14 @@ mod tests {
                 "prompt is too long"
             ),
             "The provider rejected the request: prompt is too long"
+        );
+        assert_eq!(
+            run_failure_message(api::RunFailureKindView::OutputTruncated, "at 100"),
+            "The response was cut off: at 100"
+        );
+        assert_eq!(
+            run_failure_message(api::RunFailureKindView::ContentFiltered, "no"),
+            "The provider refused the response: no"
         );
         assert_eq!(
             run_failure_message(api::RunFailureKindView::ModelFailure, "boom"),

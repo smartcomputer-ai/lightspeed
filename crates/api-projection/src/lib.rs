@@ -1447,7 +1447,7 @@ impl<'a> CoreAgentProjector<'a> {
         {
             return message;
         }
-        format!("{:?}", failure.kind)
+        UNREADABLE_RUN_FAILURE_MESSAGE.to_owned()
     }
 }
 
@@ -1594,14 +1594,18 @@ fn openai_annotated_span(text: &str, annotation: &Value) -> Option<String> {
     (!cited.is_empty()).then_some(cited)
 }
 
+/// Every failure the harness records carries a message. This is for a message that
+/// cannot be read back; the kind is on the event already.
+const UNREADABLE_RUN_FAILURE_MESSAGE: &str = "the run failed and its message could not be read";
+
 fn run_failure_kind_to_api(kind: RunFailureKind) -> RunFailureKindView {
     match kind {
+        RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
         RunFailureKind::ModelFailure => RunFailureKindView::ModelFailure,
         RunFailureKind::RequestRejected => RunFailureKindView::RequestRejected,
-        RunFailureKind::ToolFailure => RunFailureKindView::ToolFailure,
-        RunFailureKind::ContextFailure => RunFailureKindView::ContextFailure,
+        RunFailureKind::OutputTruncated => RunFailureKindView::OutputTruncated,
+        RunFailureKind::ContentFiltered => RunFailureKindView::ContentFiltered,
         RunFailureKind::LimitExceeded => RunFailureKindView::LimitExceeded,
-        RunFailureKind::Cancelled => RunFailureKindView::Cancelled,
         RunFailureKind::Internal => RunFailureKindView::Internal,
     }
 }
@@ -4225,6 +4229,72 @@ mod tests {
                 name: None,
             }]
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_failed_projects_its_message_and_never_the_kind_name() {
+        let blobs = InMemoryBlobStore::new();
+        harness::storage::ensure_harness_blobs(&blobs)
+            .await
+            .expect("engine blobs");
+        let projector = CoreAgentProjector::new(&blobs);
+        let failed = |kind, message_ref| {
+            CoreAgentEvent::Run(RunEvent::Failed {
+                run_id: harness::RunId::new(1),
+                failure: RunFailure { kind, message_ref },
+            })
+        };
+        for (kind, view, message_ref, message) in [
+            (
+                RunFailureKind::LimitExceeded,
+                RunFailureKindView::LimitExceeded,
+                Some(harness::turn_limit_failure_ref()),
+                harness::TURN_LIMIT_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::ModelFailure,
+                RunFailureKindView::ModelFailure,
+                Some(harness::provider_cancelled_failure_ref()),
+                harness::PROVIDER_CANCELLED_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::OutputTruncated,
+                RunFailureKindView::OutputTruncated,
+                Some(harness::output_truncated_failure_ref()),
+                harness::OUTPUT_TRUNCATED_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::ContentFiltered,
+                RunFailureKindView::ContentFiltered,
+                Some(harness::content_filtered_failure_ref()),
+                harness::CONTENT_FILTERED_FAILURE_CONTENT,
+            ),
+            (
+                RunFailureKind::Internal,
+                RunFailureKindView::Internal,
+                Some(BlobRef::from_bytes(b"never stored")),
+                UNREADABLE_RUN_FAILURE_MESSAGE,
+            ),
+            (
+                RunFailureKind::ContextFailure,
+                RunFailureKindView::ContextFailure,
+                None,
+                UNREADABLE_RUN_FAILURE_MESSAGE,
+            ),
+        ] {
+            let projected = projector
+                .project_event_kind(&failed(kind, message_ref))
+                .await
+                .expect("project run failure");
+            assert_eq!(
+                projected,
+                SessionEventKindView::RunFailed {
+                    run_id: api_run_id(harness::RunId::new(1)),
+                    kind: view,
+                    message: message.to_owned(),
+                }
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

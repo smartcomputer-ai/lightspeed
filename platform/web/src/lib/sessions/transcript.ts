@@ -75,13 +75,18 @@ export interface TranscriptRunSummary {
   durationMs?: number;
 }
 
+const RUN_FAILURE_LEADS: Record<string, string> = {
+  request_rejected: "The provider rejected the request",
+  output_truncated: "The response was cut off",
+  content_filtered: "The provider refused the response",
+};
+
 /// The line a failed run shows. A provider rejection names the provider as
-/// the source; its message is the provider's own text, shown unchanged.
+/// the source; its message is the provider's own text, shown unchanged. A
+/// truncated or refused response says which of the two it was.
 export function runFailureText(summary: Pick<TranscriptRunSummary, "error" | "failureKind">): string {
-  const detail = summary.error ? `: ${summary.error}` : "";
-  return summary.failureKind === "request_rejected"
-    ? `The provider rejected the request${detail}`
-    : `Run failed${detail}`;
+  const lead = (summary.failureKind && RUN_FAILURE_LEADS[summary.failureKind]) || "Run failed";
+  return summary.error ? `${lead}: ${summary.error}` : lead;
 }
 
 export interface TranscriptToolCall {

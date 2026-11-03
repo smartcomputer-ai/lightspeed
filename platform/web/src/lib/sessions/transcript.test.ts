@@ -1262,6 +1262,9 @@ describe("run statistics", () => {
     expect(summary).toMatchObject({ kind: "run-summary", failureKind: "request_rejected", error: message });
     expect(runFailureText(summary as TranscriptRunSummary)).toBe(`The provider rejected the request: ${message}`);
     expect(runFailureText({ failureKind: "model_failure", error: "boom" })).toBe("Run failed: boom");
+    expect(runFailureText({ failureKind: "output_truncated", error: "at 100" })).toBe("The response was cut off: at 100");
+    expect(runFailureText({ failureKind: "content_filtered", error: "no" })).toBe("The provider refused the response: no");
+    expect(runFailureText({ failureKind: "limit_exceeded", error: "out of turns" })).toBe("Run failed: out of turns");
   });
 
   it.each(["runFailed", "runCancelled"] as const)("retains statistics for %s", (type) => {

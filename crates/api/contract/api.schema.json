@@ -13595,18 +13595,33 @@
       "description": "Why a run failed, as the harness classified it.",
       "oneOf": [
         {
-          "enum": [
-            "model_failure",
-            "tool_failure",
-            "context_failure",
-            "limit_exceeded",
-            "cancelled"
-          ],
+          "const": "context_failure",
+          "description": "The context no longer fits the model and compaction did not make it fit.",
+          "type": "string"
+        },
+        {
+          "const": "model_failure",
+          "description": "The provider or the path to it failed the generation, including a generation\nthe provider cancelled unasked. A run someone cancelled has status `cancelled`\nand no failure.",
           "type": "string"
         },
         {
           "const": "request_rejected",
           "description": "The provider rejected the request as invalid or larger than the model\naccepts. `message` is the provider's own text, unchanged; resending the\nsame context fails the same way.",
+          "type": "string"
+        },
+        {
+          "const": "output_truncated",
+          "description": "The provider cut the response off at its output cap. Raising\n`maxOutputTokens` or lowering `reasoningEffort` can help; the partial text\nstays in context.",
+          "type": "string"
+        },
+        {
+          "const": "content_filtered",
+          "description": "The provider refused the request or filtered the response.",
+          "type": "string"
+        },
+        {
+          "const": "limit_exceeded",
+          "description": "The run needed another turn and its `maxTurns` allowed none. Its tool calls\nhave results and the session stays usable.",
           "type": "string"
         },
         {

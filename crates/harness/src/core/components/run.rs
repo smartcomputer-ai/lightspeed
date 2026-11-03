@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActiveToolBatch, ApprovalId, ApprovalRecord, ApprovalStatus, BlobRef, CompletedToolBatch,
     ContextEntryId, ContextEntryInput, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentState, CoreAgentStatus, DomainError, EventSeq, LlmUsage, PlanningError, PromiseId,
-    RunConfig, RunId, SteeringId, SubmissionId, ToolBatchId, ToolCallId, TurnId, TurnOutcome,
-    TurnState, TurnStatus,
+    CoreAgentState, CoreAgentStatus, DomainError, EventSeq, LlmFinish, LlmUsage, PlanningError,
+    PromiseId, RunConfig, RunId, SteeringId, SubmissionId, ToolBatchId, ToolCallId, TurnId,
+    TurnOutcome, TurnState, TurnStatus,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,14 +370,19 @@ impl RunSource {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunFailureKind {
+    /// The context no longer fits the model and compaction did not make it fit.
+    ContextFailure,
+    /// The provider or the path to it failed the generation.
     ModelFailure,
     /// The provider rejected the request as invalid or too large. The
     /// failure message is the provider's own text.
     RequestRejected,
-    ToolFailure,
-    ContextFailure,
+    /// The provider cut the generation off at its output cap.
+    OutputTruncated,
+    /// The provider refused the generation or filtered its content.
+    ContentFiltered,
+    /// The run needed another turn and its turn limit allowed none.
     LimitExceeded,
-    Cancelled,
     /// The harness refused a step of this run because of what the session holds.
     /// The message is the refusal's own text. One run was lost to it, so this
     /// usually means a harness bug or a configuration only the run could reveal.
@@ -403,6 +408,31 @@ pub const TURN_LIMIT_FAILURE_CONTENT: &str =
 
 pub fn turn_limit_failure_ref() -> BlobRef {
     BlobRef::from_bytes(TURN_LIMIT_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a generation the provider cancelled while nobody had asked
+/// for that. A cancel someone asked for ends the run as cancelled, not failed.
+pub const PROVIDER_CANCELLED_FAILURE_CONTENT: &str =
+    "the provider cancelled the generation before it finished\n";
+
+pub fn provider_cancelled_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(PROVIDER_CANCELLED_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a truncated generation whose result carried none.
+pub const OUTPUT_TRUNCATED_FAILURE_CONTENT: &str =
+    "the provider cut the response off at its output limit\n";
+
+pub fn output_truncated_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(OUTPUT_TRUNCATED_FAILURE_CONTENT.as_bytes())
+}
+
+/// Failure message of a filtered generation whose result carried none.
+pub const CONTENT_FILTERED_FAILURE_CONTENT: &str =
+    "the provider refused the request or filtered the response\n";
+
+pub fn content_filtered_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(CONTENT_FILTERED_FAILURE_CONTENT.as_bytes())
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,11 +595,27 @@ fn terminal_run_proposal(
             }))
         }
         (TurnStatus::Failed, Some(TurnOutcome::Failed { failure_ref })) => {
+            // The finish names the cause whichever status the adapter reported it with.
+            let finish = turn.facts.as_ref().map(|facts| &facts.finish);
+            let (kind, fallback) = match finish {
+                Some(LlmFinish::Length) => (
+                    RunFailureKind::OutputTruncated,
+                    output_truncated_failure_ref(),
+                ),
+                Some(LlmFinish::ContentFilter) => (
+                    RunFailureKind::ContentFiltered,
+                    content_filtered_failure_ref(),
+                ),
+                _ => (
+                    RunFailureKind::ModelFailure,
+                    crate::llm_runtime_boundary_failure_ref(),
+                ),
+            };
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
-                    kind: RunFailureKind::ModelFailure,
-                    message_ref: failure_ref.clone(),
+                    kind,
+                    message_ref: Some(failure_ref.clone().unwrap_or(fallback)),
                 },
             }))
         }
@@ -578,16 +624,21 @@ fn terminal_run_proposal(
                 run_id: active_run.run_id,
                 failure: RunFailure {
                     kind: RunFailureKind::RequestRejected,
-                    message_ref: failure_ref.clone(),
+                    message_ref: failure_ref
+                        .clone()
+                        .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
                 },
             }))
         }
+        // Only an active run gets here: a run being cancelled ends as cancelled
+        // before this planner looks. So nobody asked for this, and run status alone
+        // keeps saying whether someone cancelled.
         (TurnStatus::Cancelled, Some(TurnOutcome::Cancelled)) => {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
-                    kind: RunFailureKind::Cancelled,
-                    message_ref: None,
+                    kind: RunFailureKind::ModelFailure,
+                    message_ref: Some(provider_cancelled_failure_ref()),
                 },
             }))
         }
@@ -640,9 +691,9 @@ fn terminal_run_proposal(
 
     // The API acknowledged this steering, so a failing run writes it down first and
     // the next run sees it as history. The context planner runs next and no turn
-    // starts in between. A cancelled run drops it: the caller asked for this to stop.
-    if let Some(CoreAgentEvent::Run(Event::Failed { failure, .. })) = &kind
-        && failure.kind != RunFailureKind::Cancelled
+    // starts in between. Only a cancelled run drops it, which never comes through
+    // here: the caller asked for this to stop.
+    if matches!(&kind, Some(CoreAgentEvent::Run(Event::Failed { .. })))
         && has_unmaterialized_steering(active_run)
     {
         return Ok(None);

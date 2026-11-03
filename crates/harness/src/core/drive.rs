@@ -7297,7 +7297,7 @@ mod tests {
     /// partial text the adapter kept is still applied to the context so the
     /// user sees what was produced before the cut.
     #[test]
-    fn length_finish_fails_run_but_keeps_partial_output() {
+    fn length_finish_fails_the_run_as_truncated_but_keeps_partial_output() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
@@ -7360,7 +7360,7 @@ mod tests {
         let completed = drive.state().runs.completed.last().expect("completed run");
         assert_eq!(completed.status, RunStatus::Failed);
         let failure = completed.failure.as_ref().expect("run failure");
-        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+        assert_eq!(failure.kind, RunFailureKind::OutputTruncated);
         assert_eq!(failure.message_ref.as_ref(), Some(&failure_ref));
         assert!(
             drive
@@ -7379,7 +7379,7 @@ mod tests {
     }
 
     #[test]
-    fn content_filter_finish_fails_run_like_a_model_failure() {
+    fn content_filter_finish_fails_the_run_as_filtered() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
@@ -7439,7 +7439,7 @@ mod tests {
         let completed = drive.state().runs.completed.last().expect("completed run");
         assert_eq!(completed.status, RunStatus::Failed);
         let failure = completed.failure.as_ref().expect("run failure");
-        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+        assert_eq!(failure.kind, RunFailureKind::ContentFiltered);
         assert_eq!(failure.message_ref.as_ref(), Some(&failure_ref));
         assert!(matches!(
             drive.next_action(32, 8).expect("next"),
@@ -14335,9 +14335,38 @@ mod tests {
                 LlmFinish::Failed,
                 RunFailureKind::RequestRejected,
             ),
+            // Adapters report truncation and filtering as failed; the finish names
+            // the cause either way.
+            (
+                LlmGenerationStatus::Failed,
+                LlmFinish::Length,
+                RunFailureKind::OutputTruncated,
+            ),
             (
                 LlmGenerationStatus::Succeeded,
                 LlmFinish::Length,
+                RunFailureKind::OutputTruncated,
+            ),
+            (
+                LlmGenerationStatus::Failed,
+                LlmFinish::ContentFilter,
+                RunFailureKind::ContentFiltered,
+            ),
+            (
+                LlmGenerationStatus::Succeeded,
+                LlmFinish::ContentFilter,
+                RunFailureKind::ContentFiltered,
+            ),
+            // A cancel nobody asked for is the provider's failure, so run status
+            // alone says whether someone cancelled.
+            (
+                LlmGenerationStatus::Cancelled,
+                LlmFinish::Cancelled,
+                RunFailureKind::ModelFailure,
+            ),
+            (
+                LlmGenerationStatus::Succeeded,
+                LlmFinish::Cancelled,
                 RunFailureKind::ModelFailure,
             ),
         ] {
@@ -14355,8 +14384,10 @@ mod tests {
 
             assert!(matches!(logged.pump(), CoreAgentAction::Idle));
             assert_eq!(turns_started(&logged.log), 1, "no farewell turn");
+            assert_eq!(logged.last_run().status, RunStatus::Failed);
             let failure = logged.last_run().failure.as_ref().expect("failure");
             assert_eq!(failure.kind, expected);
+            assert!(failure.message_ref.is_some(), "{expected:?} has a message");
             assert_eq!(steering_in_context(&logged.drive), 1);
             logged.assert_replays(|_| {});
 
@@ -14653,6 +14684,101 @@ mod tests {
         assert!(matches!(logged.pump(), CoreAgentAction::Idle));
         assert_stopped_at_turn_limit(&logged);
         assert_eq!(turns_started(&logged.log), 1);
+        logged.assert_replays(|_| {});
+    }
+
+    /// A run's message is the adapter's when it sent one. The engine's constants
+    /// are for a result that came without one, so none falls back to the kind's name.
+    #[test]
+    fn a_failed_turn_keeps_the_adapters_message_and_has_one_without_it() {
+        for (status, finish, kind, fallback) in [
+            (
+                LlmGenerationStatus::Failed,
+                LlmFinish::Failed,
+                RunFailureKind::ModelFailure,
+                crate::llm_runtime_boundary_failure_ref(),
+            ),
+            (
+                LlmGenerationStatus::Rejected,
+                LlmFinish::Failed,
+                RunFailureKind::RequestRejected,
+                crate::llm_runtime_boundary_failure_ref(),
+            ),
+            (
+                LlmGenerationStatus::Failed,
+                LlmFinish::Length,
+                RunFailureKind::OutputTruncated,
+                crate::output_truncated_failure_ref(),
+            ),
+            (
+                LlmGenerationStatus::Failed,
+                LlmFinish::ContentFilter,
+                RunFailureKind::ContentFiltered,
+                crate::content_filtered_failure_ref(),
+            ),
+        ] {
+            let adapter = BlobRef::from_bytes(b"the adapter's words");
+            for (failure_ref, expected) in [
+                (Some(adapter.clone()), adapter.clone()),
+                (None, fallback.clone()),
+            ] {
+                let mut logged = LoggedDrive::open(config(), &[]);
+                logged.request_run(b"input");
+                let request = logged.until_generate();
+                let mut result = generation_result(
+                    &request,
+                    status.clone(),
+                    finish.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                result.failure_ref = failure_ref;
+                logged.resume(result);
+                assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+                let failure = logged.last_run().failure.as_ref().expect("failure");
+                assert_eq!(failure.kind, kind);
+                assert_eq!(failure.message_ref.as_ref(), Some(&expected));
+            }
+        }
+    }
+
+    #[test]
+    fn a_provider_cancel_of_an_active_run_says_so_and_a_requested_cancel_stays_cancelled() {
+        let cancelled = |request: &LlmGenerationRequest| {
+            generation_result(
+                request,
+                LlmGenerationStatus::Cancelled,
+                LlmFinish::Cancelled,
+                Vec::new(),
+                Vec::new(),
+            )
+        };
+        let mut logged = LoggedDrive::open(config(), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(cancelled(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let run = logged.last_run();
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+        assert_eq!(
+            failure.message_ref,
+            Some(crate::provider_cancelled_failure_ref())
+        );
+        logged.assert_replays(|_| {});
+
+        logged.request_run(b"next");
+        let request = logged.until_generate();
+        logged.admit(CoreAgentCommand::CancelRun {
+            run_id: request.run_id,
+            requested_by: None,
+        });
+        logged.resume(cancelled(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let run = logged.last_run();
+        assert_eq!(run.status, RunStatus::Cancelled);
+        assert!(run.failure.is_none());
         logged.assert_replays(|_| {});
     }
 
@@ -15119,6 +15245,38 @@ mod tests {
         assert_eq!(steering_in_context(&logged.drive), 1);
         let failure = logged.last_run().failure.as_ref().expect("failure");
         assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+    }
+
+    /// A generation ending for good needs no room either, however it ended.
+    #[test]
+    fn a_provider_cancel_writes_steering_down_without_compacting_first() {
+        let mut logged = LoggedDrive::open(standalone_compaction_config(Some(10), Some(4)), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        let mut result = generation_result(
+            &request,
+            LlmGenerationStatus::Cancelled,
+            LlmFinish::Cancelled,
+            Vec::new(),
+            Vec::new(),
+        );
+        result.facts.context_token_estimate = Some(TokenEstimate {
+            tokens: 1_000,
+            quality: crate::TokenEstimateQuality::ProviderCounted,
+        });
+        logged.resume(result);
+
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert!(
+            !logged.log.iter().any(|entry| matches!(
+                entry.event,
+                CoreAgentEvent::Context(ContextEvent::CompactionRequested { .. })
+            )),
+            "{:?}",
+            event_kinds(&logged.log)
+        );
+        assert_eq!(steering_in_context(&logged.drive), 1);
     }
 
     fn provider_mcp_tool() -> ToolSpec {
