@@ -494,10 +494,13 @@ impl GatewayAgentApi {
             if let Some(active_run) = loaded.state.runs.active.as_ref()
                 && active_run.run_id == run_id
             {
-                let record = active_run.approvals.get(approval_id).ok_or_else(|| {
-                    AgentApiError::not_found(format!("approval not found: {approval_id}"))
-                })?;
-                if record.status.is_terminal() {
+                // The caller saw this approval pending, so a record that is gone was
+                // decided and pruned as the run moved on.
+                if active_run
+                    .approvals
+                    .get(approval_id)
+                    .is_none_or(|record| record.status.is_terminal())
+                {
                     return Ok(());
                 }
             } else if loaded

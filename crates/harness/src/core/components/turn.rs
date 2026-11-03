@@ -493,6 +493,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                 TurnOutcome::Cancelled => TurnStatus::Cancelled,
             };
             active_run.active_turn_id = None;
+            crate::core::components::run::prune_settled_run_records(active_run);
             Ok(())
         }
         Event::Cancelled { turn_id, run_id } => {

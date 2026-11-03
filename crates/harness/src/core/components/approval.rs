@@ -172,6 +172,25 @@ pub(crate) fn pending_approval_cancellations(
     })
 }
 
+/// A decided approval has already reached what it answers: its response context, or
+/// the call of a batch that has since closed. Only a batch still open may yet read a
+/// native decision. A repeated decision after this finds nothing to decide.
+pub(crate) fn prune_terminal_approvals(run: &mut crate::ActiveRun) {
+    let crate::ActiveRun {
+        approvals,
+        tool_batches,
+        ..
+    } = run;
+    approvals.retain(|_, record| {
+        !record.status.is_terminal()
+            || matches!(
+                &record.request.continuation,
+                ApprovalContinuation::NativeMcp { batch_id, .. }
+                    if tool_batches.contains_key(batch_id)
+            )
+    });
+}
+
 pub(crate) fn apply_approval_event(
     state: &mut CoreAgentState,
     event: &ApprovalEvent,

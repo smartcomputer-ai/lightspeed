@@ -445,11 +445,35 @@ pub fn content_filtered_failure_ref() -> BlobRef {
     BlobRef::from_bytes(CONTENT_FILTERED_FAILURE_CONTENT.as_bytes())
 }
 
+/// Terminal run records state keeps. Older ones are read back from the log, and a
+/// retried submission is only recognized against these.
+pub const MAX_RETAINED_TERMINAL_RUNS: usize = 256;
+
+/// Steering batches an active run keeps. A batch that has not reached a turn stays
+/// whatever its age.
+pub const MAX_RETAINED_STEERING_BATCHES: usize = 64;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunQueueState {
     pub active: Option<ActiveRun>,
     pub queued: Vec<AcceptedRun>,
+    /// Most recently terminal last. Run ids need not be in order: a queued run can
+    /// be cancelled while an older one is still active.
     pub completed: Vec<RunRecord>,
+    /// The highest run id dropped from `completed`, so readers know the log holds
+    /// runs that state no longer does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned_through: Option<RunId>,
+}
+
+impl RunQueueState {
+    /// The run reached a terminal state and only the log still holds it.
+    pub fn is_pruned(&self, run_id: RunId) -> bool {
+        self.pruned_through.is_some_and(|through| run_id <= through)
+            && !self.completed.iter().any(|run| run.run_id == run_id)
+            && !self.queued.iter().any(|run| run.run_id == run_id)
+            && self.active.as_ref().is_none_or(|run| run.run_id != run_id)
+    }
 }
 
 pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {
@@ -1001,9 +1025,54 @@ pub(crate) fn apply_event(
                 failure: None,
                 notify_on_terminal: queued.notify_on_terminal,
             });
+            prune_terminal_run_records(&mut state.runs);
             Ok(())
         }
     }
+}
+
+/// Reduced state must not grow with the length of a run or a session, because the
+/// whole of it crosses every continue-as-new. These records are bookkeeping and no
+/// request is built from them, so dropping them changes nothing the model sees. The
+/// log still holds all of it. A turn and its completed batch go together: a tool-call
+/// turn with no batch reads as not yet started.
+pub(crate) fn prune_settled_run_records(run: &mut ActiveRun) {
+    let ActiveRun {
+        turns,
+        tool_batches,
+        completed_tool_batches,
+        ..
+    } = run;
+    let latest = turns.keys().next_back().copied();
+    turns.retain(|turn_id, _| {
+        Some(*turn_id) == latest || tool_batches.values().any(|batch| batch.turn_id == *turn_id)
+    });
+    completed_tool_batches.retain(|_, batch| turns.contains_key(&batch.turn_id));
+
+    crate::core::components::approval::prune_terminal_approvals(run);
+
+    let mut droppable = run
+        .steering
+        .len()
+        .saturating_sub(MAX_RETAINED_STEERING_BATCHES);
+    run.steering.retain(|steering| {
+        let oldest = droppable > 0;
+        droppable = droppable.saturating_sub(1);
+        !oldest || steering.consumed_by_turn_id.is_none()
+    });
+}
+
+fn prune_terminal_run_records(runs: &mut RunQueueState) {
+    let excess = runs
+        .completed
+        .len()
+        .saturating_sub(MAX_RETAINED_TERMINAL_RUNS);
+    runs.pruned_through = runs
+        .completed
+        .drain(..excess)
+        .map(|run| run.run_id)
+        .chain(runs.pruned_through)
+        .max();
 }
 
 /// Outcome of matching a submission id against runs or consumed messages
@@ -1187,6 +1256,7 @@ fn finish_active_run(
         failure,
         notify_on_terminal: active_run.notify_on_terminal,
     });
+    prune_terminal_run_records(&mut state.runs);
     Ok(())
 }
 
