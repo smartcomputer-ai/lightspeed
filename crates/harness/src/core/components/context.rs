@@ -541,7 +541,10 @@ pub(crate) fn standalone_prefix_ids(state: &CoreAgentState) -> Vec<ContextEntryI
                 recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
                     && matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
             });
-    let cut = if retry_overflow {
+    // At the entry guard the tail may be what holds the count up, and a run stopped
+    // there starts no turn that would roll it out. Only the whole window can clear it.
+    let at_entry_guard = state.context.entries.len() >= ENTRY_GUARD_LIMIT;
+    let cut = if retry_overflow || at_entry_guard {
         ids.len()
     } else {
         boundaries

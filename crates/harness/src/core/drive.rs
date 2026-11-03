@@ -16468,6 +16468,29 @@ mod tests {
         assert_eq!(compaction_requests(&logged), 1);
     }
 
+    /// Context appended after the last turn sits in the retained tail. A run stopped at
+    /// the guard starts no turn that would roll it out, so the attempt has to cover it
+    /// or every later run fails the same way.
+    #[test]
+    fn compaction_at_the_entry_guard_covers_the_retained_tail() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        for _ in 0..3 {
+            logged.request_run(b"earlier");
+            finish_run_with_answer(&mut logged);
+        }
+        fill_context_to(&mut logged, crate::ENTRY_GUARD_LIMIT);
+
+        logged.request_run(b"input");
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        finish_run_with_answer(&mut logged);
+
+        assert_eq!(logged.last_run().status, RunStatus::Completed);
+        assert_eq!(compaction_requests(&logged), 1);
+        assert!(logged.drive.state().context.entries.len() < 10);
+        logged.assert_replays(|_| {});
+    }
+
     /// A long run that gets back under the limit may meet the guard again much later,
     /// and that time is a new attempt.
     #[test]
