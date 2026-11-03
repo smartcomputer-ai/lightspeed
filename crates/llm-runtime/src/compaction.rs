@@ -1,5 +1,5 @@
 //! Bounded standalone compaction shared by native and summary adapters.
-use crate::{LlmAdapterError, LlmAdapterResult, LlmCompactionAdapter};
+use crate::{LlmAdapterError, LlmAdapterResult, LlmCompactionAdapter, media::MAX_IMAGE_SIDE};
 use harness::{
     ContextCompactionRequest, ContextCompactionResult, ContextCompactionStatus, ContextEntry,
     ContextEntryInput, ContextEntryKind, ContextEntrySource,
@@ -13,6 +13,13 @@ pub(crate) fn native_compaction_unavailable(error: &llm_clients::LlmApiError) ->
 
 const MAX_CALLS: usize = 32;
 const MAX_INPUT_TOKENS: u64 = 2_000_000;
+/// What the largest image sent to a model costs at about one token per 750
+/// pixels. Adapters send a copy capped at [`MAX_IMAGE_SIDE`] per side, so the
+/// bytes of the stored original say nothing about it.
+const IMAGE_TOKEN_CEILING: u64 = (MAX_IMAGE_SIDE as u64 * MAX_IMAGE_SIDE as u64) / 750;
+/// PDF cost follows page count, which bytes only hint at.
+const PDF_BYTES_PER_TOKEN: u64 = 8;
+const TEXT_BYTES_PER_TOKEN: u64 = 4;
 
 fn limit_error(message: &str) -> LlmAdapterError {
     LlmAdapterError::InvalidProviderRequest {
@@ -138,21 +145,30 @@ pub(crate) async fn compact(
                     .filter(|entry| !matches!(entry.kind, ContextEntryKind::Instructions))
                     .cloned(),
             );
+            // The estimate only picks a chunk size. Once no smaller cut is
+            // left the chunk goes out, and the provider's typed overflow
+            // decides whether it fits.
             let size = estimate(adapter, &part.request.context.entries).await?;
             if let Some(budget) = part.request.input_limit_tokens
                 && size > u64::from(budget).saturating_mul(4) / 5
+                && let Some(smaller) = smaller_end(&cuts, start, end)
             {
-                end = smaller_end(&cuts, start, end)?;
+                end = smaller;
                 continue;
             }
-            spent = spent.saturating_add(size);
-            if spent > MAX_INPUT_TOKENS {
+            // An estimate alone cannot refuse the first chunk: nothing has been
+            // spent yet, and a refused attempt costs nothing.
+            if spent > 0 && spent.saturating_add(size) > MAX_INPUT_TOKENS {
                 return Err(limit_error("compaction exhausted its input token budget"));
             }
             calls += 1;
             match adapter.compact_context(part).await {
                 Err(error) if is_context_limit(&error) => {
-                    end = smaller_end(&cuts, start, end)?;
+                    end = smaller_end(&cuts, start, end).ok_or_else(|| {
+                        limit_error(
+                            "the smallest complete compaction chunk exceeds the context window",
+                        )
+                    })?;
                 }
                 Err(error) => return Err(error),
                 Ok(result) => {
@@ -185,13 +201,12 @@ pub(crate) async fn compact(
                     if calls > MAX_CALLS {
                         return Err(limit_error("compaction exhausted its call budget"));
                     }
+                    let reported = result.usage.as_ref().and_then(|value| value.input_tokens);
+                    spent = spent.saturating_add(reported.map_or(size, u64::from));
+                    if spent > MAX_INPUT_TOKENS {
+                        return Err(limit_error("compaction exhausted its input token budget"));
+                    }
                     if let Some(value) = result.usage {
-                        if let Some(input) = value.input_tokens {
-                            spent = spent.saturating_sub(size).saturating_add(u64::from(input));
-                        }
-                        if spent > MAX_INPUT_TOKENS {
-                            return Err(limit_error("compaction exhausted its input token budget"));
-                        }
                         add_usage(&mut usage, value);
                     }
                     window = result.context_entries;
@@ -212,18 +227,13 @@ pub(crate) async fn compact(
     })
 }
 
-fn smaller_end(cuts: &[usize], start: usize, end: usize) -> LlmAdapterResult<usize> {
+fn smaller_end(cuts: &[usize], start: usize, end: usize) -> Option<usize> {
     let candidates: Vec<_> = cuts
         .iter()
         .copied()
         .filter(|cut| *cut > start && *cut < end)
         .collect();
-    candidates
-        .get(candidates.len() / 2)
-        .copied()
-        .ok_or_else(|| {
-            limit_error("the smallest complete compaction chunk exceeds the context window")
-        })
+    candidates.get(candidates.len() / 2).copied()
 }
 
 async fn estimate(
@@ -232,11 +242,21 @@ async fn estimate(
 ) -> LlmAdapterResult<u64> {
     let mut tokens = 0u64;
     for entry in entries {
+        let kind = entry
+            .content
+            .media_type
+            .as_deref()
+            .and_then(harness::media::media_kind);
         tokens = tokens.saturating_add(if let Some(estimate) = &entry.token_estimate {
             u64::from(estimate.tokens)
+        } else if kind == Some(harness::media::MediaKind::Image) {
+            IMAGE_TOKEN_CEILING
         } else if let Some(blobs) = adapter.blobs() {
             let bytes = blobs.read_bytes(&entry.content.content_ref).await?;
-            (bytes.len() as u64).div_ceil(2)
+            (bytes.len() as u64).div_ceil(match kind {
+                Some(_) => PDF_BYTES_PER_TOKEN,
+                None => TEXT_BYTES_PER_TOKEN,
+            })
         } else {
             256
         });
@@ -295,6 +315,7 @@ mod tests {
         BlobRef, ContentRef, ContextCompactionTask, ContextEntryId, ContextMessageRole,
         ContextSnapshot, ModelSelection, ProviderApiKind, SessionId, TokenEstimate,
         TokenEstimateQuality, ToolCallId, ToolName,
+        storage::{BlobStore, InMemoryBlobStore},
     };
     use std::sync::Mutex;
 
@@ -449,7 +470,7 @@ mod tests {
         );
     }
     #[tokio::test(flavor = "current_thread")]
-    async fn known_capacity_splits_before_sending_and_smallest_chunk_is_bounded() {
+    async fn known_capacity_splits_before_sending() {
         let adapter = BoundedAdapter {
             seen: Mutex::new(vec![]),
             reject_after_success: false,
@@ -458,10 +479,18 @@ mod tests {
         request.request.input_limit_tokens = Some(30);
         let result = compact(&adapter, request).await.unwrap();
         assert_eq!(result.calls, 3);
-        let mut request = self::request();
-        request.request.input_limit_tokens = Some(1);
-        assert!(compact(&adapter, request).await.is_err());
         assert_eq!(adapter.seen.lock().unwrap().len(), 3);
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_estimate_over_the_limit_never_refuses_the_smallest_chunk() {
+        let adapter = BoundedAdapter {
+            seen: Mutex::new(vec![]),
+            reject_after_success: false,
+        };
+        let mut request = request();
+        request.request.input_limit_tokens = Some(1);
+        let result = compact(&adapter, request).await.unwrap();
+        assert_eq!(result.calls, 6, "one chunk per entry, each sent");
     }
     #[test]
     fn chunk_boundaries_keep_parallel_tool_calls_and_results_together() {
@@ -512,7 +541,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn input_token_budget_stops_before_an_unbounded_provider_call() {
+    async fn an_estimate_alone_cannot_refuse_the_first_chunk() {
         let adapter = BoundedAdapter {
             seen: Mutex::new(vec![]),
             reject_after_success: false,
@@ -523,10 +552,265 @@ mod tests {
             .as_mut()
             .unwrap()
             .tokens = MAX_INPUT_TOKENS as u32 + 1;
+        compact(&adapter, request).await.unwrap();
+        assert!(!adapter.seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn input_token_budget_stops_a_later_chunk_once_tokens_were_spent() {
+        let adapter = BoundedAdapter {
+            seen: Mutex::new(vec![]),
+            reject_after_success: false,
+        };
+        let mut request = request();
+        request.request.context.entries[3]
+            .token_estimate
+            .as_mut()
+            .unwrap()
+            .tokens = MAX_INPUT_TOKENS as u32 + 1;
         let error = compact(&adapter, request).await.unwrap_err();
         assert!(
             matches!(error, LlmAdapterError::InvalidProviderRequest { message } if message.contains("input token budget"))
         );
-        assert!(adapter.seen.lock().unwrap().is_empty());
+    }
+
+    /// Accepts everything it is sent until it overflows on `overflow_above`
+    /// entries, and answers with a summary whose size it knows, so only the
+    /// estimate of the request itself reads the blob store.
+    struct MediaAdapter {
+        blobs: InMemoryBlobStore,
+        sent: Mutex<Vec<usize>>,
+        overflow_above: usize,
+        reported_input_tokens: Option<u32>,
+    }
+
+    impl MediaAdapter {
+        fn new() -> Self {
+            Self {
+                blobs: InMemoryBlobStore::new(),
+                sent: Mutex::new(vec![]),
+                overflow_above: usize::MAX,
+                reported_input_tokens: Some(10),
+            }
+        }
+
+        async fn text_entry(&self, id: u64, bytes: usize) -> ContextEntry {
+            let content_ref = self.blobs.put_bytes(vec![b'x'; bytes]).await.unwrap();
+            let mut entry = entry(id);
+            entry.content = ContentRef::text(content_ref);
+            entry.token_estimate = None;
+            entry
+        }
+
+        async fn pdf_entry(&self, id: u64, bytes: usize) -> ContextEntry {
+            let mut entry = self.text_entry(id, bytes).await;
+            entry.content.media_type = Some("application/pdf".into());
+            entry
+        }
+    }
+
+    #[async_trait]
+    impl LlmCompactionAdapter for MediaAdapter {
+        fn blobs(&self) -> Option<&dyn harness::storage::BlobStore> {
+            Some(&self.blobs)
+        }
+
+        async fn compact_context(
+            &self,
+            request: ContextCompactionRequest,
+        ) -> LlmAdapterResult<ContextCompactionResult> {
+            let entries = request.request.context.entries;
+            self.sent.lock().unwrap().push(entries.len());
+            if entries.len() > self.overflow_above {
+                return Err(LlmAdapterError::ContextLimit {
+                    message: "typed overflow".into(),
+                });
+            }
+            Ok(ContextCompactionResult {
+                session_id: request.session_id,
+                context_revision: request.request.context.context_revision,
+                status: ContextCompactionStatus::Succeeded,
+                failure_ref: None,
+                calls: 1,
+                usage: Some(harness::LlmUsage {
+                    input_tokens: self.reported_input_tokens,
+                    output_tokens: Some(2),
+                    total_tokens: None,
+                    reasoning_tokens: None,
+                    cached_input_tokens: None,
+                    cache_write_input_tokens: None,
+                    cache_miss_input_tokens: None,
+                }),
+                context_entries: vec![ContextEntryInput {
+                    kind: ContextEntryKind::Message {
+                        role: ContextMessageRole::User,
+                    },
+                    content: ContentRef::text(BlobRef::from_bytes(b"summary")),
+                    preview: None,
+                    origin: None,
+                    provenance_ref: None,
+                    token_estimate: Some(TokenEstimate {
+                        tokens: 1,
+                        quality: TokenEstimateQuality::Estimated,
+                    }),
+                }],
+            })
+        }
+    }
+
+    fn request_over(entries: Vec<ContextEntry>, limit: u32) -> ContextCompactionRequest {
+        let mut request = request();
+        request.request.covered_entry_ids = entries.iter().map(|entry| entry.entry_id).collect();
+        request.request.context.entries = entries;
+        request.request.input_limit_tokens = Some(limit);
+        request
+    }
+
+    /// An image whose bytes are not in the store: reading it would fail.
+    fn image_entry(id: u64, name: &[u8]) -> ContextEntry {
+        let mut entry = entry(id);
+        entry.content = ContentRef {
+            content_ref: BlobRef::from_bytes(name),
+            media_type: Some("image/png".into()),
+            provider_kind: None,
+        };
+        entry.token_estimate = None;
+        entry
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn images_cost_a_fixed_ceiling_and_their_bytes_are_not_read() {
+        let adapter = MediaAdapter::new();
+        let entries = vec![
+            image_entry(1, b"a large screenshot"),
+            adapter.text_entry(2, 400).await,
+        ];
+        assert_eq!(
+            estimate(&adapter, &entries[..1]).await.unwrap(),
+            IMAGE_TOKEN_CEILING
+        );
+        let result = compact(&adapter, request_over(entries, 200_000))
+            .await
+            .unwrap();
+        assert_eq!(result.calls, 1, "the whole prefix fits at once");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn images_of_one_tool_turn_stay_one_chunk_on_a_small_window() {
+        let adapter = MediaAdapter::new();
+        let tool_source = ContextEntrySource::Tool {
+            run_id: harness::RunId::new(1),
+            turn_id: harness::TurnId::new(1),
+            batch_id: None,
+        };
+        let mut call = entry(1);
+        call.kind = ContextEntryKind::ToolCall {
+            call_id: ToolCallId::new("a"),
+            name: ToolName::new("tool"),
+        };
+        call.source = tool_source.clone();
+        let mut result = entry(2);
+        result.kind = ContextEntryKind::ToolResult {
+            call_id: ToolCallId::new("a"),
+            is_error: false,
+        };
+        result.source = tool_source.clone();
+        let mut first = image_entry(3, b"first");
+        first.source = tool_source.clone();
+        let mut second = image_entry(4, b"second");
+        second.source = tool_source;
+        let compacted = compact(
+            &adapter,
+            request_over(vec![call, result, first, second], 2_000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(compacted.calls, 1);
+        assert_eq!(*adapter.sent.lock().unwrap(), vec![4]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn text_counts_a_quarter_of_its_bytes_and_a_chunk_that_fits_is_not_refused() {
+        let adapter = MediaAdapter::new();
+        let entries = vec![adapter.text_entry(1, 400 * 1024).await];
+        assert_eq!(
+            estimate(&adapter, &entries).await.unwrap(),
+            100 * 1024,
+            "a quarter of the bytes"
+        );
+        compact(&adapter, request_over(entries, 200_000))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pdfs_are_estimated_from_their_bytes_and_split_from_neighbours() {
+        let adapter = MediaAdapter::new();
+        let pdf = adapter.pdf_entry(1, 1600 * 1024).await;
+        assert_eq!(
+            estimate(&adapter, std::slice::from_ref(&pdf))
+                .await
+                .unwrap(),
+            200 * 1024,
+            "an eighth of the bytes"
+        );
+        let text = adapter.text_entry(2, 400).await;
+        let result = compact(&adapter, request_over(vec![pdf, text], 200_000))
+            .await
+            .unwrap();
+        assert_eq!(result.calls, 2, "the estimate splits, then both go out");
+        assert_eq!(*adapter.sent.lock().unwrap(), vec![1, 2]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_oversized_single_chunk_goes_out_and_the_provider_accepts_it() {
+        let adapter = MediaAdapter::new();
+        let entries = vec![adapter.text_entry(1, 8 * 1024 * 1024).await];
+        let result = compact(&adapter, request_over(entries, 200_000))
+            .await
+            .unwrap();
+        assert_eq!(result.calls, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_provider_confirmed_overflow_of_the_smallest_chunk_still_fails() {
+        let mut adapter = MediaAdapter::new();
+        adapter.overflow_above = 0;
+        let entries = vec![adapter.text_entry(1, 400).await];
+        let error = compact(&adapter, request_over(entries, 200_000))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LlmAdapterError::InvalidProviderRequest { message } if message.contains("smallest complete compaction chunk"))
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reported_usage_enforces_the_input_budget_and_refused_attempts_do_not_count() {
+        let mut adapter = MediaAdapter::new();
+        adapter.reported_input_tokens = Some(MAX_INPUT_TOKENS as u32 + 1);
+        let entries = vec![adapter.text_entry(1, 400).await];
+        let error = compact(&adapter, request_over(entries, 200_000))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LlmAdapterError::InvalidProviderRequest { message } if message.contains("input token budget"))
+        );
+
+        // A whole prefix estimated far over the budget is refused by the
+        // provider, for free, and its halves go through.
+        let mut adapter = MediaAdapter::new();
+        adapter.overflow_above = 2;
+        let mut first = adapter.text_entry(1, 400).await;
+        first.token_estimate = Some(TokenEstimate {
+            tokens: MAX_INPUT_TOKENS as u32,
+            quality: TokenEstimateQuality::Estimated,
+        });
+        let second = adapter.text_entry(2, 400).await;
+        let third = adapter.text_entry(3, 400).await;
+        let mut request = request_over(vec![first, second, third], 200_000);
+        request.request.input_limit_tokens = None;
+        let result = compact(&adapter, request).await.unwrap();
+        assert_eq!(result.calls, 3);
     }
 }
