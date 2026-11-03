@@ -175,6 +175,16 @@ Later packages add their own entries.
   toolset changes. Before, it failed at the first turn. A queued run admitted against
   an older toolset still reaches FailRun.
 
+- **Dead surface removal breaks replay and stored state until the purge.** Removing the
+  rollover patch makes every dev Temporal history that carries its marker fail replay.
+  `RunRecord.submission_digest` is now required, so a stored checkpoint holding `null` no longer
+  decodes, and the checkpoint constant is only bumped at the end of the branch in `format-guards`.
+  Purge dev Temporal histories and sessions before running this branch against existing state.
+- **A duplicate code tool result now rejects instead of no-ops.** The host drops results for
+  non-pending calls, so nothing known reaches the reducer's rejection. If something ever does,
+  `ResumeCodeToolCall` goes through `apply_internal` and fails the workflow rather than the call.
+  The earlier digest made an identical joined redelivery a no-op.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -511,3 +521,65 @@ Open after review:
   speculation.
 - `admission_failures` grows by one for each overtaken resume claim, as it does for any rejected
   command. The list has no bound.
+
+### `dead-surface-removal` (H-26, H-44)
+
+Landed:
+
+- `9b0978e5` (H-26): deleted `ToolCallStatus::Observed`, `TurnOutcome::ContextUpdateRequired`,
+  `ContextEvent::StateReplaced` with `ContextRewriteReason`, `ContextRemovalReason::Pruned`, its
+  view and client handling, `CoreAgentJoins.correlation_id` and `CorrelationId`,
+  `ActiveRun.output` and `failure`, `LlmRequest.provider_response_id`, `ToolCallExecutionPolicy`,
+  `RunConfig.provider_params`, `ContextCompactionTask.params`, both `validate_provider_params`, the
+  code tool digest, wire reader and redelivery branch, close without cancel and `cancel_requested`,
+  the rollover patch, `legacy_max_steps_per_input`, `run_submissions`, `v1()`, the unreachable
+  `initialized` return, `gap` and `EventLogGap` with their CLI and web branches, `activationText`,
+  compaction aliases, alternate `api_kind` spellings, the `payload.kind` run boundary fallback, the
+  media-only envelope, and three dead `api_projection` functions. Public API, workflow contract and
+  TypeScript consumers regenerated.
+- `606396df` (H-44): deleted the `CachedBlobStore` family, `read_tool_emissions` and its projection,
+  `CoreAgentDrive.head` with the workflow's copy and `CreateOrLoadSessionResult.head`,
+  `FsSessionStore`, `FsVfsCatalogStore`, `FsStore`, `ToolCallSummary`, the `ReplaceSessionConfig`
+  admission arm, and the smaller items on the brief. The store trait's error-returning and
+  checkpoint defaults are required. `sibling_tool_ids` replaces `sibling_calls`.
+
+Calls:
+
+- `submission_id` and `submission_digest` stay two fields on `RunRecord`, with the digest required
+  and computed for every run, rather than one `Option<RunSubmission>`. The package reads
+  `run.submission_id` directly, and a digest with no id is harmless.
+- `ContextCompactionTask.params` goes as well as the run config field, since nothing populates it.
+  `LlmRequest.params` stays as direct adapter input with its doc corrected.
+- The four runner-driven OpenAI live suites use a test client wrapper,
+  `unstored_openai_responses_client`, which sets `store` and `stream` to false.
+- `CreateOrLoadSessionResult.head` goes too: with the workflow's copy gone it had no reader, and
+  `core_state.reduced_to` carries the same position.
+- `CheckpointReduction` keeps its struct with the one field, so the format change stays with the
+  checkpoint constant bump in `format-guards`.
+- `race_activity_with_admissions` keeps its fallback with a comment saying it is defensive, and the
+  continuation `version` guard stays, as the brief rules.
+
+Deviations:
+
+- Not deleted, per the package ruling: the `RunFailureKind` variants, `StepLimitReached` with
+  `steps_taken` and `next_action_unbounded`, `FsBlobStore`, and `read_all_session_entries`.
+- Several items were already gone from earlier packages: `CommandRejectionKind::Other`,
+  `validate_active_context_api_kind`, `let _ = config`, and the validators on removal reasons.
+- `WorkflowWake` was left alone: the brief removes it only if the timer code is touched.
+- The OpenAI Completions compaction live suite lost its `store: false`. The field was on the removed
+  task params, which that adapter never read, so behaviour does not change.
+
+Verified: `cargo check --workspace --all-targets --locked`, `cargo test --lib` for `harness`,
+`store-pg`, `store-fs`, `temporal-workflow` and `temporal-runtime`, `cargo test` for `api`,
+`api-projection` and `test-support`, `npm run typecheck`, and the affected web and SDK tests. No
+live test ran. The live suites only compile against the new client wrapper and the always-cancelling
+close.
+
+Open, for the docs package:
+
+- `docs/documentation/integrating-and-extending/api-and-typescript.md` still checks `gap` in a
+  sample and tells readers to check it.
+- `docs/documentation/integrating-and-extending/workflow-tools.md` still names
+  `read_tool_emissions`.
+- `docs/roadmap/later/pNNN-local-runtime-without-temporal.md` and
+  `docs/roadmap/p185-external-harness-sessions.md` describe `store-fs` as it was.
