@@ -264,14 +264,7 @@ fn call_activity<'a>(
     request: &ToolInvocationBatchRequest,
     index: usize,
 ) -> impl CancellableFuture<Output = CallActivityOutcome> + use<'a> {
-    let call = &request.calls[index];
-    // The harness materialized the native MCP routing facts on the call when
-    // it built this dispatch; the workflow only selects the execution class.
-    let execution = if call.remote_mcp.is_some() {
-        ToolExecutionSpec::new(harness::ToolExecutionClass::RemoteInteractive, false)
-    } else {
-        call_execution_spec(state, call.tool_id.as_ref())
-    };
+    let execution = call_execution_spec(state, request.calls[index].tool_id.as_ref());
     let call_request = request
         .call_request(index, execution)
         .expect("group indices come from this batch request");
@@ -447,7 +440,10 @@ pub(super) fn boundary_call_status(error: &ActivityExecutionError) -> ToolCallSt
     }
 }
 
-fn call_execution_spec(state: &CoreAgentState, tool_name: Option<&ToolName>) -> ToolExecutionSpec {
+pub(super) fn call_execution_spec(
+    state: &CoreAgentState,
+    tool_name: Option<&ToolName>,
+) -> ToolExecutionSpec {
     tool_name
         .and_then(|id| state.tooling.tools.get(id))
         .map(|tool| tool.execution)
@@ -674,6 +670,27 @@ mod tests {
             execution_groups(&state, &request),
             vec![vec![0, 1], vec![2], vec![3]]
         );
+    }
+
+    #[test]
+    fn native_mcp_calls_take_their_execution_from_the_admitted_binding() {
+        let mut state = state_with_tools(vec![
+            (
+                harness::MCP_FIND_TOOLS_TOOL_ID,
+                ToolParallelism::ParallelSafe,
+            ),
+            (harness::MCP_CALL_TOOL_ID, ToolParallelism::Exclusive),
+        ]);
+        let remote = harness::ToolExecutionClass::RemoteInteractive;
+        for (id, retry_safe) in [
+            (harness::MCP_FIND_TOOLS_TOOL_ID, true),
+            (harness::MCP_CALL_TOOL_ID, false),
+        ] {
+            let id = ToolName::new(id);
+            let spec = ToolExecutionSpec::new(remote, retry_safe);
+            state.tooling.tools.get_mut(&id).expect("tool").execution = spec;
+            assert_eq!(call_execution_spec(&state, Some(&id)), spec);
+        }
     }
 
     #[test]

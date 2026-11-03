@@ -804,21 +804,10 @@ pub(super) async fn run_dispatch_loop(
                 }
             };
             let execution = ctx.state(|state| {
-                let call = &batch.calls[0];
-                if call.remote_mcp.is_some() {
-                    harness::ToolExecutionSpec::new(
-                        harness::ToolExecutionClass::RemoteInteractive,
-                        false,
-                    )
-                } else {
-                    state
-                        .core_state
-                        .tooling
-                        .tools
-                        .get(call.tool_id.as_ref().expect("admitted tool"))
-                        .map(|tool| tool.execution)
-                        .unwrap_or_default()
-                }
+                tool_batches::call_execution_spec(
+                    &state.core_state,
+                    batch.calls[0].tool_id.as_ref(),
+                )
             });
             let request = batch
                 .call_request(0, execution)

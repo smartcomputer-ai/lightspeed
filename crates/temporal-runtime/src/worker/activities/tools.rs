@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 
 use harness::{
     PromiseControlArgumentCallFacts, PromiseControlArgumentFacts, PromiseControlArgumentRequest,
-    PromiseControlKind, ToolBatchOutcome, ToolCallStatus, ToolExecutionClass, ToolInvocationResult,
-    storage::BlobStore,
+    PromiseControlKind, ToolBatchOutcome, ToolCallStatus, ToolInvocationResult, storage::BlobStore,
 };
 use temporalio_sdk::activities::ActivityError;
 use tools::concurrency::{CancelArgs, DetachArgs};
@@ -131,15 +130,14 @@ enum NativeMcpCallOutcome {
     },
 }
 
-/// Execute one native MCP call under the remote operation deadline. Tool-level
+/// Execute one native MCP call under its class operation deadline. Tool-level
 /// failures and an elapsed deadline become an ordinary terminal failed result;
 /// only blob-store failures fail the activity.
 async fn invoke_native_mcp_call(
     deps: &ToolActivityDeps,
     request: &harness::ToolInvocationCallRequest,
 ) -> Result<NativeMcpCallOutcome, ActivityError> {
-    let deadline =
-        temporal_workflow::tool_call_operation_timeout(ToolExecutionClass::RemoteInteractive);
+    let deadline = temporal_workflow::tool_call_operation_timeout(request.execution.class);
     let started = std::time::Instant::now();
     let stamp = |mut result: ToolInvocationResult| {
         result.duration_ms = Some(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
@@ -528,7 +526,7 @@ mod tests {
     use harness::{
         BlobRef, CoreAgentIoError, CoreAgentTools, PromiseControlArgumentCall,
         RemoteMcpApprovalPolicy, RemoteMcpCallRuntime, RemoteMcpCallTarget, RunId, SessionId,
-        ToolBatchId, ToolCallId, ToolExecutionSpec, ToolInvocationBatchRequest,
+        ToolBatchId, ToolCallId, ToolExecutionClass, ToolExecutionSpec, ToolInvocationBatchRequest,
         ToolInvocationBatchResult, ToolInvocationRequest, ToolName, TurnId,
         storage::InMemoryBlobStore,
     };

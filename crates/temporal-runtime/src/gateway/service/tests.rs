@@ -577,6 +577,12 @@ fn declared_mcp_attachment_materializes_remote_tool() {
     assert_eq!(spec.allowed_tools, Some(vec!["lookup_customer".to_owned()]));
     assert_eq!(spec.approval, harness::RemoteMcpApprovalPolicy::Never);
     assert_eq!(spec.defer_loading, Some(true));
+    // The workflow selects activity options from this alone: a remote call that
+    // may have had an effect is never retried.
+    assert_eq!(
+        tool.execution,
+        harness::ToolExecutionSpec::new(harness::ToolExecutionClass::RemoteInteractive, false)
+    );
 }
 
 #[test]

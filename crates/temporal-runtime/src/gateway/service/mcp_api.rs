@@ -176,7 +176,10 @@ pub(super) fn mcp_tool_from_config_attachment(
     let auth_ref = auth_ref_for_server(record, grant)?;
     Ok(harness::ToolSpec {
         name: tool_name,
-        execution: harness::ToolExecutionSpec::default(),
+        execution: harness::ToolExecutionSpec::new(
+            harness::ToolExecutionClass::RemoteInteractive,
+            false,
+        ),
         kind: harness::ToolKind::RemoteMcp(harness::RemoteMcpToolSpec {
             server_id: record.server_id.as_str().to_owned(),
             record_revision: record.revision,
