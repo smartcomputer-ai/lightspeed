@@ -289,7 +289,7 @@ impl CoreAgentDrive {
                         approval_id,
                         run_id: batch.run_id,
                         subject,
-                        continuation: crate::ApprovalContinuation::NativeMcp { call_id },
+                        continuation: crate::ApprovalContinuation::NativeMcp { batch_id, call_id },
                     },
                 }),
             ));
@@ -971,7 +971,7 @@ pub(crate) fn tool_invocation_request(
                 });
             // Native MCP routing is decided here, once per dispatch, including
             // the run-owned approval decision, if any.
-            let remote_mcp = crate::remote_mcp_call_runtime(state, call);
+            let remote_mcp = crate::remote_mcp_call_runtime(state, batch_id, call);
             ToolInvocationRequest {
                 builtin: call
                     .tool_id
@@ -13426,6 +13426,78 @@ mod tests {
             .iter()
             .map(|call| call.call_id.as_str())
             .collect()
+    }
+
+    /// `decision` answered `call_m` in the first batch; the next turn calls the same
+    /// id again, and its dispatch must carry no decision.
+    fn reused_native_call_id_after(
+        decision: crate::ApprovalDecision,
+    ) -> (LoggedDrive, ToolInvocationBatchRequest) {
+        let (mut logged, first) = native_approval_parked();
+        logged.admit(CoreAgentCommand::DecideApproval(
+            crate::ApprovalDecisionCommand {
+                approval_id: crate::ApprovalId::new("approval_1"),
+                run_id: first.run_id,
+                decision,
+                note: None,
+                decided_by: None,
+                response: None,
+            },
+        ));
+        // The same batch keeps its decision across the re-dispatch.
+        let redispatch = logged.until_tools();
+        assert_eq!(redispatch.batch_id, first.batch_id);
+        assert_eq!(
+            injected_decision(&redispatch.calls[0]),
+            Some(decision == crate::ApprovalDecision::Approved)
+        );
+        let done = logged
+            .drive
+            .resume_tool_call(
+                redispatch.batch_id,
+                per_call_result(
+                    &redispatch.calls[0].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                72,
+            )
+            .expect("decided call");
+        logged.commit(done);
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_m", "mcp_echo__hello")],
+        ));
+        let second = logged.until_tools();
+        assert_ne!(second.batch_id, first.batch_id);
+        (logged, second)
+    }
+
+    #[test]
+    fn a_later_batch_reusing_a_native_call_id_asks_for_its_own_decision() {
+        for decision in [
+            crate::ApprovalDecision::Approved,
+            crate::ApprovalDecision::Rejected,
+        ] {
+            let (mut logged, second) = reused_native_call_id_after(decision);
+            assert_eq!(injected_decision(&second.calls[0]), None);
+            // The same call id asks again, and the reducer takes the new request.
+            let parked = logged
+                .drive
+                .request_native_mcp_approvals(
+                    second.batch_id,
+                    vec![native_mcp_approval(&second.calls[0].call_id)],
+                    73,
+                )
+                .expect("the reused id parks again");
+            logged.commit(parked);
+            let run = logged.drive.state().runs.active.as_ref().expect("active");
+            assert_eq!(run.status, RunStatus::Parked);
+            assert_eq!(run.pending_approvals().count(), 1);
+            logged.assert_replays(|_| {});
+        }
     }
 
     fn approve_only_approval(logged: &mut LoggedDrive, run_id: RunId) {

@@ -1354,6 +1354,7 @@ fn initial_tool_call_state(
 
 pub fn remote_mcp_call_runtime(
     state: &CoreAgentState,
+    batch_id: ToolBatchId,
     call: &ObservedToolCall,
 ) -> Option<crate::RemoteMcpCallRuntime> {
     let tool_id = call.tool_id.as_ref()?;
@@ -1365,16 +1366,19 @@ pub fn remote_mcp_call_runtime(
         .and_then(|run| {
             run.approvals.values().find_map(|record| {
                 let crate::ApprovalContinuation::NativeMcp {
+                    batch_id: approval_batch_id,
                     call_id: approval_call_id,
                 } = &record.request.continuation
                 else {
                     return None;
                 };
-                (approval_call_id == call_id).then_some(match record.status {
-                    crate::ApprovalStatus::Approved => Some(true),
-                    crate::ApprovalStatus::Rejected => Some(false),
-                    crate::ApprovalStatus::Pending | crate::ApprovalStatus::Cancelled => None,
-                })
+                (*approval_batch_id == batch_id && approval_call_id == call_id).then_some(
+                    match record.status {
+                        crate::ApprovalStatus::Approved => Some(true),
+                        crate::ApprovalStatus::Rejected => Some(false),
+                        crate::ApprovalStatus::Pending | crate::ApprovalStatus::Cancelled => None,
+                    },
+                )
             })
         })
         .flatten();

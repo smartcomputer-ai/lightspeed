@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ApprovalId, BlobRef, ContextEntryInput, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
-    CoreAgentState, CoreAgentStatus, DomainError, RunId, RunStatus, ToolCallId,
+    CoreAgentState, CoreAgentStatus, DomainError, RunId, RunStatus, ToolBatchId, ToolCallId,
 };
 
 pub const MAX_APPROVAL_NOTE_BYTES: usize = 2_000;
@@ -59,8 +59,15 @@ pub enum ApprovalSubject {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ApprovalContinuation {
-    OpenAiMcp { provider_request_id: String },
-    NativeMcp { call_id: ToolCallId },
+    OpenAiMcp {
+        provider_request_id: String,
+    },
+    /// Provider call ids are unique only within a batch, so the batch is part
+    /// of what a decision answers: a later call reusing the id asks again.
+    NativeMcp {
+        batch_id: ToolBatchId,
+        call_id: ToolCallId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
