@@ -55,7 +55,6 @@ fn records_content(kind: &str) -> bool {
             | "lightspeed.core.code_tool.call_completed"
             | "lightspeed.core.context.entries_applied"
             | "lightspeed.core.context.entries_replaced"
-            | "lightspeed.core.context.state_replaced"
             | "lightspeed.core.context.key_prefix_replaced"
             | "lightspeed.core.run.accepted"
             | "lightspeed.core.run.steering_accepted"
@@ -115,7 +114,6 @@ impl RecordedAttachments {
             CoreAgentEvent::Context(
                 ContextEvent::EntriesApplied { entries, .. }
                 | ContextEvent::EntriesReplaced { entries, .. }
-                | ContextEvent::StateReplaced { entries, .. }
                 | ContextEvent::KeyPrefixReplaced { entries, .. },
             ) => {
                 for entry in entries {
@@ -141,9 +139,9 @@ mod tests {
 
     use harness::{
         AcceptedRunEvent, BlobRef, CodeToolOrigin, ContextEntry, ContextEntryId,
-        ContextEntrySource, ContextRemovalReason, ContextRewriteReason, FileAttachment, RunId,
-        RunSource, SteeringId, StoredEvent, ToolBatchId, ToolCallId, ToolCallResult,
-        ToolCallStatus, ToolInvocationResult, TurnId,
+        ContextEntrySource, ContextRemovalReason, FileAttachment, RunId, RunSource, SteeringId,
+        StoredEvent, ToolBatchId, ToolCallId, ToolCallResult, ToolCallStatus, ToolInvocationResult,
+        TurnId,
         session::UncommittedStoredEvent,
         storage::{
             AppendSessionEvents, BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore,
@@ -280,12 +278,7 @@ mod tests {
             stored(CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision: 1,
                 entry_ids: vec![ContextEntryId::new(1)],
-                reason: ContextRemovalReason::Pruned,
-            })),
-            stored(CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision: 2,
-                entries: Vec::new(),
-                reason: ContextRewriteReason::ProviderCompacted,
+                reason: ContextRemovalReason::ProviderCompacted,
             })),
         ]);
         let (sessions, session_id) = history(events).await;
@@ -325,7 +318,6 @@ mod tests {
         let steering = media(b"steering", "steering.png");
         let replaced = media(b"replaced", "replacement.png");
         let keyed = media(b"keyed", "keyed.png");
-        let state = media(b"state", "state.png");
         let (sessions, session_id) = history(vec![
             stored(CoreAgentEvent::Run(RunEvent::Accepted(AcceptedRunEvent {
                 run_id: RunId::new(1),
@@ -353,11 +345,6 @@ mod tests {
                 key_prefix: harness::ContextEntryKey::new("test"),
                 entries: vec![context_entry(&keyed, 2)],
             })),
-            stored(CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision: 2,
-                entries: vec![context_entry(&state, 3)],
-                reason: ContextRewriteReason::PolicyChanged,
-            })),
         ])
         .await;
 
@@ -365,8 +352,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(attachments.len(), 5);
-        for descriptor in [accepted, steering, replaced, keyed, state] {
+        assert_eq!(attachments.len(), 4);
+        for descriptor in [accepted, steering, replaced, keyed] {
             assert!(attachments.contains(&Attachment::Media(descriptor)));
         }
     }

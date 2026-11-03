@@ -92,9 +92,6 @@ pub(super) fn observe_rollover_delay(
         return;
     }
 
-    // The normal continue-as-new decision runs before this observer. Do not
-    // call `ctx.patched` here: diagnostics must not alter patch-marker command
-    // ordering for existing workflow histories.
     let blockers = ctx.state(|state| {
         let awaiting_safe_checkpoint = wait_loop::workflow_state_allows_continue_as_new(state)
             && !state.execution_has_rollover_checkpoint;

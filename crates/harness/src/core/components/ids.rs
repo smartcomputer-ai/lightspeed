@@ -2,9 +2,7 @@ use crate::string_id::string_id;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-pub use crate::session::{
-    CorrelationId, EventSeq, SessionId, StringIdError, validate_general_string_id,
-};
+pub use crate::session::{EventSeq, SessionId, StringIdError, validate_general_string_id};
 
 const TOOL_NAME_MAX_LEN: usize = 64;
 

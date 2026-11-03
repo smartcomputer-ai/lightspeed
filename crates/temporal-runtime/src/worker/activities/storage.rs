@@ -85,7 +85,6 @@ pub(super) async fn create_or_load_session(
     let result = CreateOrLoadSessionResult {
         record,
         core_state,
-        run_submissions: reduced.run_submissions,
         head,
         fresh_session,
         replayed_event_count,
@@ -255,8 +254,7 @@ struct PreparedAttachments {
 }
 
 /// Materialize typed result attachments. Only media is model input; file
-/// references become completion metadata. Accept the former media-only envelope
-/// for already persisted workflow results.
+/// references become completion metadata.
 async fn prepare_payload_context(
     deps: &StorageActivityDeps,
     payload_ref: &BlobRef,
@@ -272,24 +270,12 @@ async fn prepare_payload_context(
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return Ok(PreparedAttachments::default());
     };
-    let attachments: Vec<Attachment> = if let Some(listed) = payload
+    let attachments = payload
         .get("attachments")
         .and_then(serde_json::Value::as_array)
-    {
-        listed
-            .iter()
-            .filter_map(|item| serde_json::from_value(item.clone()).ok())
-            .collect()
-    } else {
-        payload
-            .get("media")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|item| serde_json::from_value(item.clone()).ok())
-            .map(Attachment::Media)
-            .collect()
-    };
+        .into_iter()
+        .flatten()
+        .filter_map(|item| serde_json::from_value::<Attachment>(item.clone()).ok());
     let mut prepared = PreparedAttachments::default();
     for attachment in attachments {
         match attachment {
@@ -1089,7 +1075,6 @@ mod tests {
                 updated_at_ms: 1,
             },
             core_state: Some(harness::CoreAgentState::new()),
-            run_submissions: Default::default(),
             head: None,
             fresh_session: true,
             replayed_event_count: 0,
@@ -1296,13 +1281,13 @@ mod tests {
             .expect("pdf");
         let missing = harness::BlobRef::from_bytes(b"never stored");
         let describe = |blob_ref: &harness::BlobRef, media_type: &str, name: &str| {
-            json!({
+            json!({"kind": "media", "data": {
                 "handle": harness::media::media_handle(blob_ref),
                 "content_ref": blob_ref,
                 "media_type": media_type,
                 "kind": if media_type == "application/pdf" { "document" } else { "image" },
                 "name": name,
-            })
+            }})
         };
         let payload = deps
             .blobs
@@ -1310,7 +1295,7 @@ mod tests {
                 serde_json::to_vec(&json!({
                     "status": "completed",
                     "output": "see the render",
-                    "media": [
+                    "attachments": [
                         describe(&pdf, "application/pdf", "report.pdf"),
                         describe(&missing, "image/png", "gone.png"),
                         describe(&png, "image/svg+xml", "vector.svg"),
@@ -1395,18 +1380,19 @@ mod tests {
                     .put_bytes(vec![0x89, b'P', b'N', b'G', promise, index])
                     .await
                     .expect("png");
-                media.push(json!({
+                media.push(json!({"kind": "media", "data": {
                     "handle": harness::media::media_handle(&blob),
                     "content_ref": blob,
                     "media_type": "image/png",
                     "kind": "image",
                     "name": format!("p{promise}-{index}.png"),
-                }));
+                }}));
             }
             let payload = deps
                 .blobs
                 .put_bytes(
-                    serde_json::to_vec(&json!({"status": "completed", "media": media})).unwrap(),
+                    serde_json::to_vec(&json!({"status": "completed", "attachments": media}))
+                        .unwrap(),
                 )
                 .await
                 .expect("payload");

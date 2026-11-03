@@ -20,9 +20,6 @@ pub(super) async fn initialize(
             expected_workflow_id
         );
     }
-    if ctx.state(|state| state.initialized) {
-        return Ok(());
-    }
     let observed_at_ms = workflow_time_ms(ctx);
     // the activity reduces the durable log internally and returns compact
     // state. The full event log no longer crosses the activity boundary, so this
@@ -51,14 +48,12 @@ pub(super) async fn initialize(
         is_fresh_session,
         args.workflow_tools.as_ref(),
     )?;
-    let run_submissions = loaded.run_submissions;
     let head = loaded.head;
     ctx.state_mut(|state| {
         state.universe_id = Some(args.universe_id);
         state.session_id = Some(args.session_id.clone());
         state.core_state = core_state;
         state.head = head;
-        state.run_submissions = run_submissions;
         if let Some(continuation) = args.continuation_state.as_ref() {
             state.admission_failures = continuation.admission_failures.clone();
             state.ready = continuation.ready;

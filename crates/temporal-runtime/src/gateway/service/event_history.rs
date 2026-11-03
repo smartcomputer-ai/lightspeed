@@ -68,7 +68,6 @@ pub(super) async fn read(
         events,
         next_cursor: (after > 0).then_some(EventCursor { seq: after + 1 }),
         complete: after == 0,
-        gap: None,
         head_cursor: Some(EventCursor { seq: head }),
     })
 }
@@ -130,7 +129,6 @@ mod tests {
                 joins: CoreAgentJoins::default(),
                 event: CoreAgentEvent::CodeTool(harness::CodeToolEvent::ScopeClosed {
                     execution_id: "execution-hidden".to_owned(),
-                    cancel: false,
                 }),
             })
             .unwrap();

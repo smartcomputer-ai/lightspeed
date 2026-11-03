@@ -234,7 +234,6 @@ async fn freeform_patches_normalize_for_execution_and_replay_original_call_types
         covered_entry_ids: Vec::new(),
         tools: Vec::new(),
         input_limit_tokens: None,
-        params: None,
     };
     let compact = serde_json::to_value(
         materialize_compact_request(blobs.as_ref(), &task)

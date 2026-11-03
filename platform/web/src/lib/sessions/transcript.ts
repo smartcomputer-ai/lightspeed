@@ -293,7 +293,6 @@ export function applyEvents(
         break;
       case "contextEntriesApplied":
       case "contextKeyPrefixReplaced":
-      case "contextStateReplaced":
         applyItems(next, kind.entries);
         break;
       case "runAccepted":

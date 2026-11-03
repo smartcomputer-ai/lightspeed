@@ -728,13 +728,6 @@ export type SessionEventKindView =
     }
   | {
       baseRevision: number;
-      entries: ContextEntryView[];
-      reason: string;
-      revision: number;
-      type: "contextStateReplaced";
-    }
-  | {
-      baseRevision: number;
       revision: number;
       trigger: string;
       type: "contextCompactionRequested";
@@ -2871,7 +2864,6 @@ export interface EventCursor {
  * via the `definition` "EventJoinsView".
  */
 export interface EventJoinsView {
-  correlationId?: string | null;
   runId?: string | null;
   submissionId?: string | null;
   toolBatchId?: string | null;
@@ -4535,12 +4527,6 @@ export interface ContextAppendResponse {
  * via the `definition` "ContextAppendResult".
  */
 export interface ContextAppendResult {
-  activationText?: string | null;
-  /**
-   * True when `activation_text` was cut off at the server-side length cap.
-   * The committed context entry always holds the full text.
-   */
-  activationTextTruncated?: boolean;
   entry?: ContextEntryInputView | null;
   failure?: InputAdmissionFailureView | null;
   key: string;
@@ -6438,7 +6424,6 @@ export interface SessionEventsReadResponse {
    * begin inside a run or tool batch; clients must retain continuation state.
    */
   events?: SessionEventView[];
-  gap?: EventLogGap | null;
   /**
    * Backward reads fence the head before reading. The initial backward
    * page's head is the starting `after` cursor for live forward reads.
@@ -6451,15 +6436,6 @@ export interface SessionEventsReadResponse {
    * continuation to advance a forward live cursor.
    */
   nextCursor?: EventCursor | null;
-}
-/**
- * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
- * via the `definition` "EventLogGap".
- */
-export interface EventLogGap {
-  nextCursor?: EventCursor | null;
-  requestedAfter?: EventCursor | null;
-  retainedAfter?: EventCursor | null;
 }
 /**
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema

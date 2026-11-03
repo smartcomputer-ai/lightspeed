@@ -4,7 +4,6 @@
   },
   "observed_at_ms": 1700000000000,
   "joins": {
-    "correlation_id": "corr-1",
     "run_id": "1",
     "tool_batch_id": "3",
     "turn_id": "2"

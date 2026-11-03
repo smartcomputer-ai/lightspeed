@@ -176,7 +176,6 @@
     },
     "codeTools": {
       "closeRequest": {
-        "cancel_pending": true,
         "execution_id": "execution:vector"
       },
       "invokeRequest": {
@@ -216,7 +215,6 @@
             "status": "succeeded"
           }
         },
-        "cancel_requested": true,
         "closed": true,
         "execution_id": "execution:vector"
       },

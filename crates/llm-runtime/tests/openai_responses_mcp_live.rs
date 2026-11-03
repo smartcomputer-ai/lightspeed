@@ -16,7 +16,7 @@ use support::{
     openai_responses_live_client as live_client, openai_responses_live_model as live_model,
 };
 
-use support::retrying_openai_responses_client;
+use support::unstored_openai_responses_client;
 
 const MCP_TEST_SERVER_URL: &str = "https://mcpplaygroundonline.com/mcp-stateless-server";
 const MCP_TEST_TOOL: &str = "which_protocol_era";
@@ -48,7 +48,7 @@ async fn openai_responses_live_core_session_uses_public_remote_mcp() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                retrying_openai_responses_client(live_client()),
+                unstored_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -207,12 +207,6 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(1),
         model_override: None,
         max_output_tokens: None,
-        provider_params: Some(support::openai_params(
-            &llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            },
-        )),
         tool_choice: None,
     }
 }

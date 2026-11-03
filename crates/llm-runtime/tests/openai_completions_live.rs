@@ -79,7 +79,6 @@ fn generation_request(entries: Vec<ContextEntry>) -> LlmGenerationRequest {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: Some(openai_completions_params(&OpenAiCompletionsParams {
                 store: Some(false),

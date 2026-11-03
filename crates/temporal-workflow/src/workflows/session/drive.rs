@@ -396,12 +396,6 @@ fn history_boundary_outcome(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> Option<DriveOutcome> {
-    if !ctx.patched(wait_loop::ACTIVE_RUN_ROLLOVER_PATCH) {
-        // Old executions did not branch here. The patch marker keeps replay
-        // deterministic; once execution reaches new history, the SDK records
-        // the marker and active-run rollover becomes eligible.
-        return None;
-    }
     // Pending preparation may need the current turn and its tool batch to finish
     // before it can publish. Let the driver reach that boundary instead of
     // yielding forever.
@@ -489,7 +483,10 @@ pub(super) async fn append_events(
         .resume_appended(appended.entries)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
-        apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
+        for entry in &entries {
+            harness::apply_event(&mut state.core_state, entry)
+                .map_err(|error| anyhow::anyhow!("apply session entry: {error}"))?;
+        }
         state.queue_emissions_for_entries(&entries)?;
         state.queue_promise_cancellations_for_entries(&entries);
         state.head = appended.head;
@@ -689,24 +686,6 @@ pub(super) fn drive_from_state(
     Ok(CoreAgentDrive::from_replayed(session_id, core_state, head))
 }
 
-fn apply_entries(
-    state: &mut CoreAgentState,
-    entries: &[CoreAgentEntry],
-    run_submissions: &mut BTreeMap<u64, Option<SubmissionId>>,
-) -> anyhow::Result<()> {
-    let mut reduced = crate::ReducedSession {
-        core_state: std::mem::take(state),
-        run_submissions: std::mem::take(run_submissions),
-        replayed_event_count: 0,
-    };
-    for entry in entries {
-        crate::accumulate_session_entry(&mut reduced, entry)?;
-    }
-    *state = reduced.core_state;
-    *run_submissions = reduced.run_submissions;
-    Ok(())
-}
-
 fn vfs_skill_discovery_enabled(state: &CoreAgentState) -> bool {
     state
         .lifecycle
@@ -823,7 +802,7 @@ fn environment_attachment_catalog_matches(state: &CoreAgentState, origin: Option
 }
 
 /// The directory belongs to the attachment feature, independently of selection.
-/// Legacy selection-bound directories are removed until the next refresh.
+/// It is removed when that feature is off, until the next refresh.
 pub(super) fn invalid_environment_attachment_catalog_command(
     state: &CoreAgentState,
 ) -> Option<CoreAgentCommand> {

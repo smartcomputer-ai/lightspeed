@@ -28,9 +28,9 @@ use harness::{
     ANTHROPIC_MESSAGES_SERVER_TOOL_USE_PROVIDER_KIND, ANTHROPIC_MESSAGES_TEXT_BLOCKS_PROVIDER_KIND,
     CompactionPolicy, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
     ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
-    ContextMessageRole, ContextRemovalReason, ContextRewriteReason, CoreAgentCodec, CoreAgentEntry,
-    CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus,
-    EventSeq, LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
+    ContextMessageRole, ContextRemovalReason, CoreAgentCodec, CoreAgentEntry, CoreAgentEvent,
+    CoreAgentJoins, CoreAgentLifecycleEvent, CoreAgentState, CoreAgentStatus, EventSeq,
+    LlmGenerationStatus, ModelSelection, OPENAI_RESPONSES_MCP_CALL_PROVIDER_KIND,
     OPENAI_RESPONSES_MESSAGE_PROVIDER_KIND, OPENAI_RESPONSES_WEB_SEARCH_CALL_PROVIDER_KIND,
     ObservedToolCall, ProviderApiKind, RunEvent, RunFailure, RunFailureKind, RunId, RunSource,
     RunStatus, SessionConfig, SessionId, SteeringId, ToolBatchId, ToolCallStatus, ToolChoice,
@@ -1046,19 +1046,6 @@ impl<'a> CoreAgentProjector<'a> {
                         entries: projected,
                     })
                 }
-                ContextEvent::StateReplaced {
-                    base_revision,
-                    entries,
-                    reason,
-                } => {
-                    let projected = self.project_context_event_entries(entries).await?;
-                    Ok(SessionEventKindView::ContextStateReplaced {
-                        base_revision: *base_revision,
-                        revision: context_event_revision(*base_revision)?,
-                        entries: projected,
-                        reason: context_rewrite_reason_to_api(reason).to_owned(),
-                    })
-                }
                 ContextEvent::CompactionRequested {
                     base_revision,
                     trigger,
@@ -1849,52 +1836,6 @@ pub fn decode_stored_entry(
         .map_err(|error| AgentApiError::internal(error.to_string()))
 }
 
-pub fn replay_core_agent_state(
-    entries: &[CoreAgentEntry],
-) -> Result<CoreAgentState, AgentApiError> {
-    let mut state = CoreAgentState::new();
-    for entry in entries {
-        harness::apply_event(&mut state, entry)
-            .map_err(|error| AgentApiError::internal(error.to_string()))?;
-    }
-    Ok(state)
-}
-
-pub fn input_text(input: &[InputItem]) -> Result<String, AgentApiError> {
-    let mut parts = Vec::new();
-    for item in input {
-        match item {
-            InputItem::Text { text, .. } => {
-                let text = text.trim();
-                if !text.is_empty() {
-                    parts.push(text);
-                }
-            }
-            InputItem::TextRef { .. } => {
-                return Err(AgentApiError::invalid_request(
-                    "session/runs/start textRef input requires blob store resolution",
-                ));
-            }
-            InputItem::Media { .. } => {
-                return Err(AgentApiError::invalid_request(
-                    "session/runs/start media input requires blob store resolution",
-                ));
-            }
-            InputItem::Catalog { .. } => {
-                return Err(AgentApiError::invalid_request(
-                    "catalog items are context, not conversation: publish them with session/context/append",
-                ));
-            }
-        }
-    }
-    if parts.is_empty() {
-        return Err(AgentApiError::invalid_request(
-            "session/runs/start input must contain at least one non-empty text item",
-        ));
-    }
-    Ok(parts.join("\n\n"))
-}
-
 pub fn event_page_limit(limit: Option<u32>) -> Result<usize, AgentApiError> {
     let limit = limit.unwrap_or(DEFAULT_EVENT_PAGE_LIMIT);
     if limit == 0 || limit > MAX_EVENT_PAGE_LIMIT {
@@ -2051,16 +1992,7 @@ fn tool_event_revision(base_revision: u64) -> Result<u64, AgentApiError> {
 
 fn context_removal_reason_to_api(reason: &ContextRemovalReason) -> &'static str {
     match reason {
-        ContextRemovalReason::Pruned => "pruned",
         ContextRemovalReason::ProviderCompacted => "providerCompacted",
-    }
-}
-
-fn context_rewrite_reason_to_api(reason: &ContextRewriteReason) -> &'static str {
-    match reason {
-        ContextRewriteReason::Pruned => "pruned",
-        ContextRewriteReason::PolicyChanged => "policyChanged",
-        ContextRewriteReason::ProviderCompacted => "providerCompacted",
     }
 }
 
@@ -2180,10 +2112,6 @@ pub fn event_joins_to_api(joins: &CoreAgentJoins) -> EventJoinsView {
             .submission_id
             .as_ref()
             .map(|submission_id| submission_id.as_str().to_owned()),
-        correlation_id: joins
-            .correlation_id
-            .as_ref()
-            .map(|correlation_id| correlation_id.as_str().to_owned()),
     }
 }
 
@@ -2233,7 +2161,7 @@ pub fn core_run_status_to_api_status(status: RunStatus) -> ApiRunStatus {
 
 pub fn core_tool_status_to_api_status(status: ToolCallStatus) -> ToolItemStatus {
     match status {
-        ToolCallStatus::Observed | ToolCallStatus::Accepted => ToolItemStatus::Requested,
+        ToolCallStatus::Accepted => ToolItemStatus::Requested,
         ToolCallStatus::Pending => ToolItemStatus::Running,
         ToolCallStatus::Succeeded => ToolItemStatus::Succeeded,
         ToolCallStatus::Failed => ToolItemStatus::Failed,
@@ -2582,25 +2510,6 @@ fn tool_parallelism_to_api(parallelism: ToolParallelism) -> ToolParallelismView 
     }
 }
 
-pub fn session_config_for_api_model(
-    default_config: &SessionConfig,
-    model: Option<ModelConfig>,
-) -> Result<SessionConfig, AgentApiError> {
-    let Some(model) = model else {
-        return Ok(default_config.clone());
-    };
-    let mut config = default_config.clone();
-    config.model = ModelSelection {
-        api_kind: api_kind_from_str(&model.api_kind)?,
-        provider_id: model.provider_id,
-        model: model.model,
-    };
-    config
-        .validate()
-        .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
-    Ok(config)
-}
-
 pub fn api_kind_to_str(api_kind: &ProviderApiKind) -> &'static str {
     match api_kind {
         ProviderApiKind::OpenAiResponses => "openai:responses",
@@ -2611,15 +2520,9 @@ pub fn api_kind_to_str(api_kind: &ProviderApiKind) -> &'static str {
 
 pub fn api_kind_from_str(value: &str) -> Result<ProviderApiKind, AgentApiError> {
     match value {
-        "openai:responses" | "openai_responses" | "openAiResponses" => {
-            Ok(ProviderApiKind::OpenAiResponses)
-        }
-        "anthropic:messages" | "anthropic_messages" | "anthropicMessages" => {
-            Ok(ProviderApiKind::AnthropicMessages)
-        }
-        "openai:completions" | "openai_completions" | "openAiCompletions" => {
-            Ok(ProviderApiKind::OpenAiCompletions)
-        }
+        "openai:responses" => Ok(ProviderApiKind::OpenAiResponses),
+        "anthropic:messages" => Ok(ProviderApiKind::AnthropicMessages),
+        "openai:completions" => Ok(ProviderApiKind::OpenAiCompletions),
         _ => Err(AgentApiError::invalid_request(format!(
             "unsupported provider api kind: {value}"
         ))),
@@ -3553,7 +3456,7 @@ mod tests {
         assert_eq!(
             context_compaction_to_api(&state).unwrap().effective_mode,
             "providerTriggered",
-            "plain legacy summaries do not force a native transition"
+            "plain summaries do not force a native transition"
         );
         state.context.entries[0].kind = ContextEntryKind::ProviderOpaque;
         let view = context_compaction_to_api(&state).unwrap();
@@ -4138,7 +4041,7 @@ mod tests {
                 run_id: RunId::new(id),
                 status: RunStatus::Completed,
                 submission_id: None,
-                submission_digest: None,
+                submission_digest: 0,
                 source: RunSource::Input { input: Vec::new() },
                 first_seq: EventSeq::new(id * 2 - 1),
                 terminal_seq: EventSeq::new(id * 2),
@@ -4332,24 +4235,6 @@ mod tests {
                 base_revision: 7,
                 revision: 8,
                 entry_ids: vec!["item_11".to_owned(), "item_12".to_owned()],
-                reason: "providerCompacted".to_owned(),
-            }
-        );
-
-        let replaced = projector
-            .project_event_kind(&CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision: 8,
-                entries: Vec::new(),
-                reason: ContextRewriteReason::ProviderCompacted,
-            }))
-            .await
-            .expect("project provider-compacted rewrite");
-        assert_eq!(
-            replaced,
-            SessionEventKindView::ContextStateReplaced {
-                base_revision: 8,
-                revision: 9,
-                entries: Vec::new(),
                 reason: "providerCompacted".to_owned(),
             }
         );
@@ -5199,39 +5084,16 @@ mod tests {
     }
 
     #[test]
-    fn input_text_joins_non_empty_text_items() {
-        let text = input_text(&[
-            InputItem::Text {
-                provenance_ref: None,
-                origin: None,
-                text: " first ".to_owned(),
-            },
-            InputItem::Text {
-                provenance_ref: None,
-                origin: None,
-                text: "".to_owned(),
-            },
-            InputItem::Text {
-                provenance_ref: None,
-                origin: None,
-                text: "second".to_owned(),
-            },
-        ])
-        .expect("valid input");
-
-        assert_eq!(text, "first\n\nsecond");
-    }
-
-    #[test]
-    fn input_text_rejects_unresolved_text_refs() {
-        let error = input_text(&[InputItem::TextRef {
-            provenance_ref: None,
-            origin: None,
-            blob_ref: BlobRef::from_bytes(b"hello").as_str().to_owned(),
-        }])
-        .expect_err("text refs require store resolution");
-
-        assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+    fn api_kinds_have_one_spelling() {
+        for kind in [
+            ProviderApiKind::OpenAiResponses,
+            ProviderApiKind::AnthropicMessages,
+            ProviderApiKind::OpenAiCompletions,
+        ] {
+            let spelled = api_kind_to_str(&kind);
+            assert_eq!(api_kind_from_str(spelled).unwrap(), kind);
+            assert!(api_kind_from_str(&spelled.replace(':', "_")).is_err());
+        }
     }
 
     fn entry(seq: u64, entries: Vec<ContextEntry>) -> CoreAgentEntry {
@@ -5450,8 +5312,6 @@ mod tests {
             parked_tool_batch: None,
             tool_batches: BTreeMap::new(),
             completed_tool_batches: BTreeMap::new(),
-            output: None,
-            failure: None,
             notify_on_terminal: Vec::new(),
         };
         let approval_id = harness::ApprovalId::new("approval_1");

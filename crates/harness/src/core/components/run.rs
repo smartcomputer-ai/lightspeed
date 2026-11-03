@@ -118,8 +118,6 @@ pub struct ActiveRun {
     pub parked_tool_batch: Option<ParkedToolBatch>,
     pub tool_batches: BTreeMap<ToolBatchId, ActiveToolBatch>,
     pub completed_tool_batches: BTreeMap<ToolBatchId, CompletedToolBatch>,
-    pub output: Option<crate::ContentRef>,
-    pub failure: Option<RunFailure>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notify_on_terminal: Vec<RunTerminalNotifyIntent>,
 }
@@ -159,8 +157,7 @@ pub struct RunRecord {
     /// Digest of the accepted submission payload, kept after the full input is
     /// dropped so duplicate submissions can still be checked for equality
     /// against completed runs.
-    #[serde(default)]
-    pub submission_digest: Option<u64>,
+    pub submission_digest: u64,
     /// Accepted source retained as scalar metadata and CAS references only;
     /// resolved content never enters reducer state.
     pub source: RunSource,
@@ -493,30 +490,26 @@ fn terminal_run_proposal(
         return Ok(None);
     };
     let kind = match (&turn.status, turn.outcome.as_ref()) {
-        (
-            TurnStatus::Completed,
-            Some(TurnOutcome::ContextUpdateRequired | TurnOutcome::ContextLimit { .. }),
-        ) if !state.context.compaction.is_pending()
-            && active_run.context_recovery.recovered_turn_id != Some(turn.turn_id)
-            && (state.lifecycle.config.as_ref().is_none_or(|config| {
-                matches!(
-                    config.context.compaction,
-                    None | Some(crate::CompactionPolicy::Disabled)
-                )
-            }) || active_run.context_recovery.attempts
-                >= crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
-                || crate::core::components::context::standalone_prefix_ids(state).is_empty()) =>
+        (TurnStatus::Completed, Some(TurnOutcome::ContextLimit { failure_ref }))
+            if !state.context.compaction.is_pending()
+                && active_run.context_recovery.recovered_turn_id != Some(turn.turn_id)
+                && (state.lifecycle.config.as_ref().is_none_or(|config| {
+                    matches!(
+                        config.context.compaction,
+                        None | Some(crate::CompactionPolicy::Disabled)
+                    )
+                }) || active_run.context_recovery.attempts
+                    >= crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
+                    || crate::core::components::context::standalone_prefix_ids(state)
+                        .is_empty()) =>
         {
             Some(CoreAgentEvent::Run(Event::Failed {
                 run_id: active_run.run_id,
                 failure: RunFailure {
                     kind: RunFailureKind::ContextFailure,
-                    message_ref: match &turn.outcome {
-                        Some(TurnOutcome::ContextLimit { failure_ref }) => failure_ref
-                            .clone()
-                            .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
-                        _ => Some(crate::llm_runtime_boundary_failure_ref()),
-                    },
+                    message_ref: failure_ref
+                        .clone()
+                        .or_else(|| Some(crate::llm_runtime_boundary_failure_ref())),
                 },
             }))
         }
@@ -562,7 +555,6 @@ fn terminal_run_proposal(
             TurnStatus::Completed,
             Some(
                 TurnOutcome::ToolCallsQueued
-                | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
@@ -571,7 +563,6 @@ fn terminal_run_proposal(
             TurnStatus::Failed | TurnStatus::Cancelled,
             Some(
                 TurnOutcome::ToolCallsQueued
-                | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
@@ -762,8 +753,6 @@ pub(crate) fn apply_event(
                 parked_tool_batch: None,
                 tool_batches: BTreeMap::new(),
                 completed_tool_batches: BTreeMap::new(),
-                output: None,
-                failure: None,
             });
             Ok(())
         }
@@ -888,10 +877,11 @@ pub(crate) fn apply_event(
                 )));
             };
             let queued = state.runs.queued.remove(position);
-            let submission_digest = queued
-                .submission_id
-                .as_ref()
-                .map(|_| submission_digest_for_accepted_run(&queued));
+            let submission_digest = request_run_submission_digest(
+                &source_request_equivalent(&queued.source),
+                &queued.run_config,
+                &queued.notify_on_terminal,
+            );
             state.runs.completed.push(RunRecord {
                 run_id: queued.run_id,
                 status: RunStatus::Cancelled,
@@ -973,17 +963,15 @@ pub(crate) fn match_existing_run_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         // Completed runs keep only a digest of their accepted source/config.
-        // A record without a digest cannot be compared and is treated as a
-        // retry, which is the safe behavior for retried clients.
-        return Some(match completed.submission_digest {
-            Some(digest)
-                if digest
-                    != request_run_submission_digest(source, run_config, notify_on_terminal) =>
+        return Some(
+            if completed.submission_digest
+                == request_run_submission_digest(source, run_config, notify_on_terminal)
             {
+                SubmissionMatch::Identical
+            } else {
                 SubmissionMatch::Different
-            }
-            _ => SubmissionMatch::Identical,
-        });
+            },
+        );
     }
     None
 }
@@ -1009,14 +997,6 @@ fn submission_digest_json<T: Serialize>(payload: &T) -> u64 {
         hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash
-}
-
-fn submission_digest_for_accepted_run(run: &AcceptedRun) -> u64 {
-    request_run_submission_digest(
-        &source_request_equivalent(&run.source),
-        &run.run_config,
-        &run.notify_on_terminal,
-    )
 }
 
 pub(crate) fn source_request_equivalent(source: &RunSource) -> RunRequestSource {
@@ -1083,19 +1063,11 @@ fn finish_active_run(
         .active
         .take()
         .expect("active run checked before take");
-    let submission_digest = active_run.submission_id.as_ref().map(|_| {
-        let accepted = AcceptedRun {
-            run_id: active_run.run_id,
-            submission_id: active_run.submission_id.clone(),
-            source: active_run.source.clone(),
-            run_config: active_run.run_config.clone(),
-            config_revision: active_run.config_revision,
-            first_seq: active_run.first_seq,
-            accepted_at_ms: active_run.accepted_at_ms,
-            notify_on_terminal: active_run.notify_on_terminal.clone(),
-        };
-        submission_digest_for_accepted_run(&accepted)
-    });
+    let submission_digest = request_run_submission_digest(
+        &source_request_equivalent(&active_run.source),
+        &active_run.run_config,
+        &active_run.notify_on_terminal,
+    );
     state.runs.completed.push(RunRecord {
         run_id: active_run.run_id,
         status,

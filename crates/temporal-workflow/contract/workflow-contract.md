@@ -83,9 +83,9 @@ for the session to commit the result and its effects. Calls can overlap while
 the outer joined invocation remains parked. Retrying an identical request joins
 the original call or retrieves its result; conflicting identity reuse is rejected.
 
-`close_code_tool_scope` accepts `CloseCodeToolScopeRequest` and closes new admission.
-`cancel_pending` requests cleanup of admitted operations, without undoing
-completed effects. Dropping an Update client wait does not cancel the operation.
+`close_code_tool_scope` accepts `CloseCodeToolScopeRequest`, closes new admission and
+cancels admitted operations, without undoing completed effects. Dropping an
+Update client wait does not cancel the operation.
 Read `code_tool_scope_report` with `CodeToolScopeReportRequest` for a fresh authoritative
 snapshot, including results that finish after scope closure. Reports contain
 result references and attachments, never raw session effects or model context.

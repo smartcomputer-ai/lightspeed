@@ -126,7 +126,6 @@ async fn fixture(api: ProviderApiKind, case: &str, code_mode: bool) -> Value {
         reasoning_effort: None,
         parallel_tool_use: Some(true),
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: None,
     };

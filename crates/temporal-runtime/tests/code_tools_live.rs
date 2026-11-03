@@ -115,7 +115,7 @@ async fn code_tool_updates_execute_parallel_dependent_joined_and_submit_wait_cal
         let denied = InvokeCodeToolRequest { execution_id: fixture.execution_id.clone(), request_id: "guessed".to_owned(),
             binding_id: "guessed-admin-tool".to_owned(), arguments_ref: BlobRef::from_bytes(b"{}") };
         assert_eq!(fixture.bridge.invoke(denied, Default::default()).await?.unwrap_err().kind, CodeToolRejectionKind::PermissionDenied);
-        let report = fixture.bridge.close_scope(CloseCodeToolScopeRequest { execution_id: fixture.execution_id.clone(), cancel_pending: false }, Default::default()).await??;
+        let report = fixture.bridge.close_scope(CloseCodeToolScopeRequest { execution_id: fixture.execution_id.clone() }, Default::default()).await??;
         assert!(report.closed);
         assert_eq!(report.calls.len(), 8);
         assert!(report.calls.values().all(|call| call.status.is_terminal()));
@@ -196,7 +196,6 @@ async fn code_tool_failure_preserves_siblings_and_scope_cancellation_reports_out
                 .close_scope(
                     CloseCodeToolScopeRequest {
                         execution_id: fixture.execution_id.clone(),
-                        cancel_pending: true,
                     },
                     Default::default(),
                 )
@@ -207,7 +206,7 @@ async fn code_tool_failure_preserves_siblings_and_scope_cancellation_reports_out
         let recovered = abandoned.get_result(Default::default()).await??;
         assert_eq!(recovered.status, CodeToolCallStatus::Cancelled);
         let report = fixture.report().await?;
-        assert!(report.closed && report.cancel_requested);
+        assert!(report.closed);
         assert_eq!(report.calls.len(), 2);
         assert_eq!(
             fixture
@@ -271,7 +270,7 @@ async fn forced_session_close_settles_code_tool_updates_and_completes_workflow()
         let state = fixture.state().await?;
         assert_eq!(state.lifecycle.status, harness::CoreAgentStatus::Closed);
         let scope = &state.code_tools.scopes[&fixture.execution_id];
-        assert!(scope.closed && scope.cancel_requested);
+        assert!(scope.closed);
         assert!(scope.calls.values().all(|call| call.status.is_terminal()));
         assert_eq!(fixture.generations.load(Ordering::SeqCst), 1);
         Ok(())

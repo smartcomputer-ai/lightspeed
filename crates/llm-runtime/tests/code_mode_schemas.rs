@@ -161,7 +161,6 @@ async fn descriptions_match_call_results_without_changing_provider_input_contrac
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         };

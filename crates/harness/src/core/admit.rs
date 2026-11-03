@@ -50,11 +50,10 @@ pub fn admit_command(
             observed_at_ms,
         )
         .map_err(command_rejection_from_domain),
-        CoreAgentCommand::CloseCodeToolScope {
-            execution_id,
-            cancel,
-        } => crate::close_code_tool_scope_proposals(state, execution_id, cancel)
-            .map_err(command_rejection_from_domain),
+        CoreAgentCommand::CloseCodeToolScope { execution_id } => {
+            crate::close_code_tool_scope_proposals(state, execution_id)
+                .map_err(command_rejection_from_domain)
+        }
         CoreAgentCommand::OpenSession { mut config } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(

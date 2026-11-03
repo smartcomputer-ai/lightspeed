@@ -148,10 +148,11 @@ pub(super) async fn process_pending(
     for (origin, outcome) in completions {
         if ctx.state(|state| {
             harness::code_tool_call(&state.core_state, &origin)
-                .is_some_and(|call| call.status.is_terminal())
+                .is_some_and(|call| !matches!(call.status, CodeToolCallStatus::Pending))
         }) {
-            // Forced run termination records an unavailable outcome. A late
-            // activity reply cannot resurrect the run or reapply its effects.
+            // Only a pending call takes a result. Forced run termination records
+            // an unavailable outcome, and a late activity reply cannot resurrect
+            // the run or reapply its effects.
             ctx.state_mut(|state| {
                 state.code_tools.inflight.remove(&key(&origin));
             });
@@ -211,7 +212,6 @@ pub(super) async fn process_pending(
                     ctx,
                     CoreAgentCommand::CloseCodeToolScope {
                         execution_id: request.execution_id,
-                        cancel: request.cancel_pending,
                     },
                 )
                 .await?
@@ -228,21 +228,13 @@ pub(super) async fn process_pending(
             .scopes
             .values()
             .filter(|scope| {
-                !scope.cancel_requested
-                    && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec)
+                !scope.closed && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec)
             })
             .map(|scope| scope.spec.execution_id.clone())
             .collect::<Vec<_>>()
     });
     for execution_id in expired {
-        apply_internal(
-            ctx,
-            CoreAgentCommand::CloseCodeToolScope {
-                execution_id,
-                cancel: true,
-            },
-        )
-        .await?;
+        apply_internal(ctx, CoreAgentCommand::CloseCodeToolScope { execution_id }).await?;
     }
     reconcile_waits(ctx).await
 }
@@ -614,8 +606,7 @@ pub(super) fn has_immediate_work(state: &AgentSessionWorkflow) -> bool {
     !state.code_tools.pending.is_empty()
         || !state.code_tools.completions.is_empty()
         || state.core_state.code_tools.scopes.values().any(|scope| {
-            (!scope.cancel_requested
-                && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec))
+            (!scope.closed && !harness::code_tool_scope_is_live(&state.core_state, &scope.spec))
                 || scope.calls.values().any(|call| {
                     matches!(call.status, CodeToolCallStatus::Waiting { .. })
                         && harness::code_tool_wake(&state.core_state, &call.spec.origin, 0)
@@ -743,7 +734,7 @@ fn scope_cancelled(state: &AgentSessionWorkflow, origin: &CodeToolOrigin) -> boo
         .code_tools
         .scopes
         .get(&origin.execution_id)
-        .is_some_and(|scope| scope.cancel_requested)
+        .is_some_and(|scope| scope.closed)
 }
 fn queue_completion(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
@@ -1087,7 +1078,6 @@ mod tests {
                     max_in_flight: 3,
                 },
                 closed: false,
-                cancel_requested: false,
                 calls,
             },
         );

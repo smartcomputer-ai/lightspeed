@@ -470,14 +470,13 @@ export interface ChatActivation {
   triggerPrefixes?: string[];
 }
 /**
- * Close admission immediately. Cancellation additionally requests cleanup of
- * admitted work; closing a scope does not roll back any completed effects.
+ * Close admission immediately and cancel admitted work. Closing a scope does
+ * not roll back any completed effects.
  *
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "CloseCodeToolScopeRequest".
  */
 export interface CloseCodeToolScopeRequest {
-  cancel_pending: boolean;
   execution_id: string;
 }
 /**
@@ -624,7 +623,6 @@ export interface CodeToolScopeReport {
   calls: {
     [k: string]: CodeToolCallOutcome;
   };
-  cancel_requested: boolean;
   closed: boolean;
   execution_id: string;
 }

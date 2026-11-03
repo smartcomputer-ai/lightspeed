@@ -144,7 +144,6 @@ fn intent_request(
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: params.as_ref().map(anthropic_params),
     }

@@ -311,7 +311,7 @@ fn managed_session_creation_exposes_targets_and_completion_contracts() {
 }
 
 #[test]
-fn managed_session_creation_rejects_legacy_receiver_shortcut_and_tool_targets() {
+fn managed_session_creation_rejects_receiver_shortcut_and_tool_targets() {
     for forbidden in ["receiver", "targetRequirement"] {
         let mut tool = json!({
             "definition": {
@@ -2159,8 +2159,6 @@ impl AgentApiService for TestService {
                     status: ContextAppendStatus::Applied,
                     entry: None,
                     failure: None,
-                    activation_text: None,
-                    activation_text_truncated: false,
                 })
                 .collect(),
         }))

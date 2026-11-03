@@ -382,7 +382,6 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(3),
         model_override: None,
         max_output_tokens: None,
-        provider_params: None,
         tool_choice: None,
     }
 }

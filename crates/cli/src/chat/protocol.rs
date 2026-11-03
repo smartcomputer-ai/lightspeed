@@ -152,10 +152,6 @@ pub(crate) enum ChatEvent {
         compactions: Vec<ChatCompactionView>,
     },
     StatusChanged(ChatStatus),
-    GapObserved {
-        requested_from: u64,
-        retained_from: u64,
-    },
     Reconnecting {
         from: u64,
         reason: String,

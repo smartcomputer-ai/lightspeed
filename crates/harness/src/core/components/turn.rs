@@ -218,7 +218,6 @@ pub enum TurnOutcome {
         output: Option<crate::ContentRef>,
     },
     ToolCallsQueued,
-    ContextUpdateRequired,
     ContextLimit {
         failure_ref: Option<BlobRef>,
     },
@@ -487,7 +486,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             turn.status = match outcome {
                 TurnOutcome::FinalOutput { .. }
                 | TurnOutcome::ToolCallsQueued
-                | TurnOutcome::ContextUpdateRequired
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested => TurnStatus::Completed,
                 TurnOutcome::Failed { .. } | TurnOutcome::Rejected { .. } => TurnStatus::Failed,

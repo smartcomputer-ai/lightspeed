@@ -258,9 +258,8 @@ impl OpenAiResponsesLlmAdapter {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: Some(CompactionPolicy::Disabled),
-            params: task.params.clone(),
+            params: None,
         };
         let mut native = self.materialize_create_request(&intent).await?;
         native.tools = None;
@@ -408,9 +407,8 @@ async fn materialize_request_with_catalog(
     catalog: &mut crate::tool_catalog::ToolCatalog,
 ) -> LlmAdapterResult<oai::CreateResponseRequest> {
     let mut params = openai_responses_params(request.params.as_ref())?;
-    // Materialize intent fields into provider params. Explicit per-run
-    // provider params win: derived values never overwrite fields the params
-    // body already sets.
+    // Materialize intent fields into provider params. Params set directly on
+    // the request win: derived values never overwrite fields the body sets.
     if let Some(effort) = request.reasoning_effort.as_deref() {
         let derived = openai_reasoning_from_effort(effort)?;
         if params.reasoning.is_none() {
@@ -449,7 +447,7 @@ async fn materialize_request_with_catalog(
         model: Some(request.model.model.clone()),
         input: Some(oai::ResponseInput::Items(input_items)),
         instructions,
-        previous_response_id: request.provider_response_id.clone(),
+        previous_response_id: None,
         tools: non_empty(tools),
         tool_choice: catalog
             .tool_choice(request.tool_choice.as_ref())?
@@ -2037,7 +2035,6 @@ mod tests {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         }
@@ -2195,7 +2192,6 @@ mod tests {
             tool_name: ToolName::new("read_file"),
         });
         request.output_limit = Some(2048);
-        request.provider_response_id = Some("resp_prev".to_string());
         request.compaction = Some(CompactionPolicy::ProviderTriggered {
             compact_threshold_tokens: Some(120_000),
         });
@@ -2231,7 +2227,6 @@ mod tests {
                 "model": "gpt-5.1",
                 "input": [{ "role": "user", "content": "Read Cargo.toml" }],
                 "instructions": "Be precise.",
-                "previous_response_id": "resp_prev",
                 "tools": [{
                     "type": "function",
                     "name": "read_file",
@@ -3064,7 +3059,6 @@ mod tests {
                     token_estimate: None,
                 },
                 target_tokens: Some(128),
-                params: None,
             },
         };
 
@@ -3934,7 +3928,6 @@ mod tests {
                 reasoning_effort: None,
                 parallel_tool_use: None,
                 processing_tier: None,
-                provider_response_id: None,
                 compaction: None,
                 params: None,
             },

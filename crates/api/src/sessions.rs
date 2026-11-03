@@ -357,25 +357,13 @@ pub struct ContextConfig {
 pub enum CompactionPolicy {
     Disabled,
     ProviderTriggered {
-        #[serde(
-            default,
-            alias = "compact_threshold_tokens",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         compact_threshold_tokens: Option<u32>,
     },
     ProviderStandalone {
-        #[serde(
-            default,
-            alias = "compact_threshold_tokens",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         compact_threshold_tokens: Option<u32>,
-        #[serde(
-            default,
-            alias = "target_tokens",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         target_tokens: Option<u32>,
     },
 }
@@ -895,12 +883,6 @@ pub struct ContextAppendResult {
     pub entry: Option<ContextEntryInputView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<InputAdmissionFailureView>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activation_text: Option<String>,
-    /// True when `activation_text` was cut off at the server-side length cap.
-    /// The committed context entry always holds the full text.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub activation_text_truncated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1333,8 +1315,6 @@ pub struct SessionEventsReadResponse {
     /// No more events in the requested direction at the time of this read.
     /// This does not imply that the session is closed.
     pub complete: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gap: Option<EventLogGap>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1362,14 +1342,6 @@ pub struct EventCursor {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub struct EventLogGap {
-    pub requested_after: Option<EventCursor>,
-    pub retained_after: Option<EventCursor>,
-    pub next_cursor: Option<EventCursor>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct SessionEventView {
     pub cursor: EventCursor,
     pub session_id: SessionId,
@@ -1391,8 +1363,6 @@ pub struct EventJoinsView {
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submission_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub correlation_id: Option<String>,
 }
 
 /// Bounded lifecycle telemetry for a session-owned code tool execution.
@@ -1625,12 +1595,6 @@ pub enum SessionEventKindView {
         key_prefix: String,
         entries: Vec<ContextEntryView>,
     },
-    ContextStateReplaced {
-        base_revision: u64,
-        revision: u64,
-        entries: Vec<ContextEntryView>,
-        reason: String,
-    },
     ContextCompactionRequested {
         base_revision: u64,
         revision: u64,
@@ -1792,20 +1756,6 @@ mod compaction_wire_tests {
             let decoded: CompactionPolicy = serde_json::from_value(value.clone()).unwrap();
             assert_eq!(decoded, expected);
             assert_eq!(serde_json::to_value(decoded).unwrap(), value);
-        }
-    }
-
-    #[test]
-    fn legacy_compaction_fields_remain_readable() {
-        for mode in ["providerTriggered", "providerStandalone"] {
-            let mut legacy = json!({"mode": mode, "compact_threshold_tokens": 250000});
-            let mut canonical = json!({"mode": mode, "compactThresholdTokens": 250000});
-            if mode == "providerStandalone" {
-                legacy["target_tokens"] = json!(100000);
-                canonical["targetTokens"] = json!(100000);
-            }
-            let decoded: CompactionPolicy = serde_json::from_value(legacy).unwrap();
-            assert_eq!(serde_json::to_value(decoded).unwrap(), canonical);
         }
     }
 }

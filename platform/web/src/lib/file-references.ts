@@ -50,7 +50,6 @@ export async function findFileReference(
   const recorded: ToolAttachmentView[] = [];
   for (;;) {
     const page = await readPage(before);
-    if (page.gap) throw new Error("File reference history is unavailable");
     recorded.push(...(page.events ?? []).flatMap((event) => event.kind.type === "toolCallCompleted"
       ? (event.kind.attachments ?? []).filter((item) => item.handle === handle) : []));
     if (page.complete) return filesFromAttachments(recorded).get(handle) ?? null;

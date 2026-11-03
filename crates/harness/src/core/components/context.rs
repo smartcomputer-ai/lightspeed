@@ -72,14 +72,6 @@ pub enum Event {
         key_prefix: ContextEntryKey,
         entries: Vec<ContextEntry>,
     },
-    /// Replaces the full active context state for explicit prune or policy
-    /// rewrites. Replacement entries must be active entries from the current
-    /// state; new materialization uses `EntriesApplied`.
-    StateReplaced {
-        base_revision: u64,
-        entries: Vec<ContextEntry>,
-        reason: ContextRewriteReason,
-    },
     /// Replaces active entries in place, by id. Each replacement keeps the
     /// entry's id, position, key, source, and kind (so tool-call pairing
     /// holds); the replaced content stays in the event log.
@@ -203,15 +195,6 @@ impl ContextSnapshot {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextRemovalReason {
-    Pruned,
-    ProviderCompacted,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextRewriteReason {
-    Pruned,
-    PolicyChanged,
     ProviderCompacted,
 }
 
@@ -535,13 +518,7 @@ pub(crate) fn standalone_prefix_ids(state: &CoreAgentState) -> Vec<ContextEntryI
             .and_then(|run| run.turns.values().next_back())
             .is_some_and(|turn| {
                 recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
-                    && matches!(
-                        turn.outcome,
-                        Some(
-                            crate::TurnOutcome::ContextLimit { .. }
-                                | crate::TurnOutcome::ContextUpdateRequired
-                        )
-                    )
+                    && matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
             });
     let cut = if retry_overflow {
         ids.len()
@@ -1022,12 +999,8 @@ fn high_watermark_compaction_proposal(
         return Ok(None);
     }
     let overflow = latest.is_some_and(|turn| {
-        matches!(
-            turn.outcome,
-            Some(
-                crate::TurnOutcome::ContextUpdateRequired | crate::TurnOutcome::ContextLimit { .. }
-            )
-        ) && recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
+        matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
+            && recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
     });
     let enabled = !matches!(
         config.context.compaction,
@@ -1433,16 +1406,6 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             bump_context_revision(state)?;
             Ok(())
         }
-        Event::StateReplaced {
-            base_revision,
-            entries,
-            reason: _,
-        } => {
-            validate_base_revision(state, *base_revision)?;
-            replace_context_state(state, entries)?;
-            bump_context_revision(state)?;
-            Ok(())
-        }
         Event::EntriesReplaced {
             base_revision,
             entries,
@@ -1503,13 +1466,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             }
             if let Some(run) = state.runs.active.as_mut()
                 && let Some(turn) = run.turns.values().next_back()
-                && matches!(
-                    turn.outcome,
-                    Some(
-                        crate::TurnOutcome::ContextLimit { .. }
-                            | crate::TurnOutcome::ContextUpdateRequired
-                    )
-                )
+                && matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
             {
                 run.context_recovery.attempts += 1;
                 run.context_recovery.recovered_turn_id = Some(turn.turn_id);
@@ -2075,95 +2032,6 @@ fn context_entry_input_from_active(entry: &ContextEntry) -> ContextEntryInput {
         provenance_ref: entry.provenance_ref.clone(),
         token_estimate: entry.token_estimate.clone(),
     }
-}
-
-fn replace_context_state(
-    state: &mut CoreAgentState,
-    entries: &[ContextEntry],
-) -> Result<(), DomainError> {
-    validate_replacement_entries(state, entries)?;
-    validate_rewrite_preserves_unconsumed_entries(state, entries)?;
-
-    if let Some(last) = entries.last() {
-        state.id_cursors.last_context_item_id = last
-            .entry_id
-            .as_u64()
-            .max(state.id_cursors.last_context_item_id);
-    }
-    state.context.entries = entries.to_vec();
-    Ok(())
-}
-
-fn validate_rewrite_preserves_unconsumed_entries(
-    state: &CoreAgentState,
-    replacement_entries: &[ContextEntry],
-) -> Result<(), DomainError> {
-    let replacement_ids = replacement_entries
-        .iter()
-        .map(|entry| entry.entry_id)
-        .collect::<BTreeSet<_>>();
-    for entry in &state.context.entries {
-        if !replacement_ids.contains(&entry.entry_id) {
-            validate_entry_is_not_unconsumed_active_run_input(state, entry.entry_id)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_replacement_entries(
-    state: &CoreAgentState,
-    entries: &[ContextEntry],
-) -> Result<(), DomainError> {
-    let mut seen_ids = BTreeSet::new();
-    let mut seen_keys = BTreeSet::new();
-    let mut previous_entry_id = None;
-
-    for entry in entries {
-        if !seen_ids.insert(entry.entry_id) {
-            return Err(DomainError::InvariantViolation(format!(
-                "duplicate replacement context entry id {}",
-                entry.entry_id
-            )));
-        }
-        if let Some(previous_entry_id) = previous_entry_id
-            && entry.entry_id <= previous_entry_id
-        {
-            return Err(DomainError::InvariantViolation(format!(
-                "replacement context entry id {} must be greater than previous entry id {}",
-                entry.entry_id, previous_entry_id
-            )));
-        }
-        previous_entry_id = Some(entry.entry_id);
-
-        // Superseded catalog versions legitimately share their key.
-        if let Some(key) = entry.key.as_ref()
-            && !is_supersedable_catalog_kind(&entry.kind)
-            && !seen_keys.insert(key.clone())
-        {
-            return Err(DomainError::InvariantViolation(format!(
-                "duplicate replacement context key {}",
-                key
-            )));
-        }
-
-        match entry_by_id(state, entry.entry_id) {
-            Some(existing) if existing != entry => {
-                return Err(DomainError::InvariantViolation(format!(
-                    "replacement context entry {} changes existing entry payload",
-                    entry.entry_id
-                )));
-            }
-            Some(_) => {}
-            None => {
-                return Err(DomainError::InvariantViolation(format!(
-                    "replacement context entry {} is not an active entry",
-                    entry.entry_id
-                )));
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

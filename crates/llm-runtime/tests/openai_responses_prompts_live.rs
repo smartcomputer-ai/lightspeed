@@ -23,7 +23,7 @@ mod support;
 
 use support::{env_or_dotenv_var, openai_responses_live_client as live_client};
 
-use support::retrying_openai_responses_client;
+use support::unstored_openai_responses_client;
 
 const LIVE_PROMPT_MARKER: &str = "LIVE-PROMPT-AXIS-8642";
 
@@ -200,7 +200,7 @@ async fn openai_responses_live_uses_vfs_prompt_instructions() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                retrying_openai_responses_client(live_client()),
+                unstored_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -333,12 +333,6 @@ fn run_config() -> RunConfig {
         max_tool_rounds: None,
         model_override: None,
         max_output_tokens: None,
-        provider_params: Some(support::openai_params(
-            &llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            },
-        )),
         tool_choice: None,
     }
 }

@@ -882,7 +882,6 @@ mod tests {
             scope: Some(CodeToolScopeReport {
                 execution_id: "code-output-test".into(),
                 closed: true,
-                cancel_requested: false,
                 bindings: Default::default(),
                 calls: calls
                     .into_iter()
@@ -1282,7 +1281,6 @@ mod tests {
             scope: Some(CodeToolScopeReport {
                 execution_id: "code-test".into(),
                 closed: true,
-                cancel_requested: true,
                 bindings: Default::default(),
                 calls: [(
                     "call-1".into(),

@@ -1251,12 +1251,11 @@ pub fn tool_batch_deferred_proposals(
             "tool batch deferral requires at least one pending call".into(),
         ));
     }
-    if batch.calls.iter().any(|call_state| {
-        matches!(
-            call_state.status,
-            ToolCallStatus::Observed | ToolCallStatus::Accepted
-        )
-    }) {
+    if batch
+        .calls
+        .iter()
+        .any(|call_state| call_state.status == ToolCallStatus::Accepted)
+    {
         return Err(DomainError::InvariantViolation(
             "tool batch deferral requires all invocable calls to be pending".into(),
         ));
@@ -2402,13 +2401,12 @@ mod tests {
         BlobRef, CommandRejectionDetails, CommandRejectionKind, CompactionPolicy,
         ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntry,
         ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
-        ContextRewriteReason, CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts,
-        ModelSelection, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall,
-        ProviderApiKind, RunConfig, RunFailureKind, RunId, RunRequestCommand, RunRequestSource,
-        RunStatus, SessionConfig, TokenEstimate, TokenEstimateQuality, ToolBatchOutcome,
-        ToolChoice, ToolEffect, ToolInvocationResult, ToolKind, ToolName, ToolParallelism,
-        ToolSpec, WorkflowEndpointRef, WorkflowToolDefinition, WorkflowToolId,
-        WorkflowToolInvocation,
+        CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts, ModelSelection,
+        OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, RunConfig,
+        RunFailureKind, RunId, RunRequestCommand, RunRequestSource, RunStatus, SessionConfig,
+        TokenEstimate, TokenEstimateQuality, ToolBatchOutcome, ToolChoice, ToolEffect,
+        ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec, WorkflowEndpointRef,
+        WorkflowToolDefinition, WorkflowToolId, WorkflowToolInvocation,
     };
 
     fn config() -> SessionConfig {
@@ -2477,7 +2475,7 @@ mod tests {
     }
 
     #[test]
-    fn input_origin_survives_run_and_steering_replay_and_legacy_events() {
+    fn input_origin_survives_run_and_steering_replay_and_may_be_absent() {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("origin-test"),
             CoreAgentState::new(),
@@ -2528,7 +2526,7 @@ mod tests {
             .unwrap();
         }
         assert_eq!(&replayed, drive.state());
-        // Old event payloads and checkpoints omit origin. They still replay as unknown.
+        // An unknown origin is simply absent from the payload, and replays as unknown.
         fn remove_origin(value: &mut serde_json::Value) {
             match value {
                 serde_json::Value::Object(map) => {
@@ -2545,15 +2543,15 @@ mod tests {
                 _ => {}
             }
         }
-        let mut legacy = checkpoint;
+        let mut unknown = checkpoint;
         for entry in &log {
             let mut stored = CoreAgentCodec.encode_entry(entry).unwrap();
             remove_origin(&mut stored.event.payload);
-            crate::apply_event(&mut legacy, &CoreAgentCodec.decode_entry(&stored).unwrap())
+            crate::apply_event(&mut unknown, &CoreAgentCodec.decode_entry(&stored).unwrap())
                 .unwrap();
         }
         assert!(
-            legacy
+            unknown
                 .context
                 .entries
                 .iter()
@@ -4596,7 +4594,7 @@ mod tests {
             CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision,
                 entry_ids: vec![entry_id],
-                reason: ContextRemovalReason::Pruned,
+                reason: ContextRemovalReason::ProviderCompacted,
             }),
             30,
         )
@@ -4624,7 +4622,7 @@ mod tests {
             CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision,
                 entry_ids: vec![entry_id],
-                reason: ContextRemovalReason::Pruned,
+                reason: ContextRemovalReason::ProviderCompacted,
             }),
             30,
         )
@@ -5899,7 +5897,7 @@ mod tests {
             CoreAgentEvent::Context(ContextEvent::EntriesRemoved {
                 base_revision: 0,
                 entry_ids: vec![entry_id],
-                reason: ContextRemovalReason::Pruned,
+                reason: ContextRemovalReason::ProviderCompacted,
             }),
             30,
         )
@@ -5955,28 +5953,6 @@ mod tests {
             panic!("expected rejected command");
         };
         assert_eq!(rejection.kind, CommandRejectionKind::UnknownReference);
-    }
-
-    #[test]
-    fn state_replacement_cannot_introduce_new_context_entries() {
-        let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
-        open_session(&mut drive);
-        let base_revision = drive.state().context.revision;
-
-        let error = commit_core_event_result(
-            &mut drive,
-            CoreAgentEvent::Context(ContextEvent::StateReplaced {
-                base_revision,
-                entries: vec![context_edit_entry(1, None, b"new")],
-                reason: ContextRewriteReason::PolicyChanged,
-            }),
-            20,
-        )
-        .expect_err("replacement cannot introduce new entries");
-
-        assert!(matches!(error, CoreAgentDriveError::Domain(_)));
-        assert!(drive.state().context.entries.is_empty());
     }
 
     /// Steering admitted while a turn is generating stays unmaterialized
@@ -8276,7 +8252,6 @@ mod tests {
         commit_action(&mut drive, complete_run);
         let completed = drive.state().runs.completed.last().expect("completed run");
         assert_eq!(completed.status, RunStatus::Completed);
-        assert!(completed.submission_digest.is_some());
 
         let duplicate =
             request_run_with_submission(&mut drive, "retry_1", BlobRef::from_bytes(b"x"))
@@ -11520,16 +11495,14 @@ mod tests {
             },
         ));
         assert!(matches!(
-            drive
-                .admit_command(
-                    CoreAgentCommand::CompleteCodeToolCall {
-                        origin: second.origin,
-                        result
-                    },
-                    100
-                )
-                .unwrap(),
-            CoreAgentAction::Idle
+            drive.admit_command(
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: second.origin,
+                    result
+                },
+                100
+            ),
+            Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
         ));
         let mut result =
             promise_tool_result(&request, &format!("promise_{}", request.promise_id_base))
@@ -11593,15 +11566,9 @@ mod tests {
     }
 
     #[test]
-    fn code_tool_completion_compacts_payloads_preserves_retry_identity_and_replays_legacy_records()
-    {
+    fn code_tool_completion_stores_a_compact_result_and_replays() {
         let (mut drive, parent) = code_tool_fixture();
         let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
-        let mut legacy_replayed = CoreAgentDrive::from_replayed(
             drive.session_id().clone(),
             drive.state().clone(),
             drive.head().cloned(),
@@ -11664,57 +11631,21 @@ mod tests {
             .iter()
             .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
             .collect();
-        replayed.resume_appended(stored_log.clone()).unwrap();
+        replayed.resume_appended(stored_log).unwrap();
         assert_eq!(replayed.state(), drive.state());
-        let mut legacy_log = stored_log;
-        let legacy_completion = legacy_log
-            .iter_mut()
-            .find(|entry| entry.event.kind == "lightspeed.core.code_tool.call_completed")
-            .unwrap();
-        legacy_completion.event.payload["code_tool"]["call_completed"]["result"] =
-            serde_json::to_value(&result).unwrap();
-        legacy_replayed.resume_appended(legacy_log).unwrap();
-        assert_eq!(legacy_replayed.state(), drive.state());
 
-        // Both old snapshots and old events must fingerprint the discarded
-        // fields before projecting them away.
-        let mut legacy_snapshot = serde_json::to_value(drive.state()).unwrap();
-        legacy_snapshot["code_tools"]["scopes"]["execution-1"]["calls"]["compact"]["status"]["result"] =
-            serde_json::to_value(&result).unwrap();
-        let restored: CoreAgentState = serde_json::from_value(legacy_snapshot).unwrap();
-        assert_eq!(&restored, drive.state());
-        for replay in [&mut drive, &mut replayed, &mut legacy_replayed] {
-            assert!(matches!(
-                replay
-                    .admit_command(
-                        CoreAgentCommand::CompleteCodeToolCall {
-                            origin: call.origin.clone(),
-                            result: result.clone(),
-                        },
-                        100,
-                    )
-                    .unwrap(),
-                CoreAgentAction::Idle
-            ));
-            let mut changed_effect = result.clone();
-            changed_effect.effects[0]
-                .data
-                .insert("diagnostic".into(), "changed".into());
-            let mut changed_context = result.clone();
-            changed_context.model_visible_context_entries.clear();
-            for changed in [changed_effect, changed_context] {
-                assert!(matches!(
-                    replay.admit_command(
-                        CoreAgentCommand::CompleteCodeToolCall {
-                            origin: call.origin.clone(),
-                            result: changed,
-                        },
-                        100,
-                    ),
-                    Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
-                ));
-            }
-        }
+        // Completing a call twice is refused: the host drops a result for a call
+        // that is no longer pending before it reaches the reducer.
+        assert!(matches!(
+            drive.admit_command(
+                CoreAgentCommand::CompleteCodeToolCall {
+                    origin: call.origin,
+                    result,
+                },
+                100,
+            ),
+            Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
+        ));
     }
 
     #[test]
@@ -11772,17 +11703,17 @@ mod tests {
                         .start_requests
                         .contains_key(&invocation)
             );
+            // A joined call is now waiting and a submit call is complete: neither
+            // takes a second result.
             assert!(matches!(
-                drive
-                    .admit_command(
-                        CoreAgentCommand::CompleteCodeToolCall {
-                            origin: call.origin.clone(),
-                            result: repeated_result
-                        },
-                        100
-                    )
-                    .unwrap(),
-                CoreAgentAction::Idle
+                drive.admit_command(
+                    CoreAgentCommand::CompleteCodeToolCall {
+                        origin: call.origin.clone(),
+                        result: repeated_result
+                    },
+                    100
+                ),
+                Err(CoreAgentDriveError::Command(CommandError::Rejected(_)))
             ));
         }
         assert!(matches!(
@@ -11860,25 +11791,10 @@ mod tests {
             },
         ));
         assert!(matches!(
-            drive
-                .admit_command(
-                    CoreAgentCommand::ResumeCodeToolCall {
-                        origin: joined.origin.clone(),
-                        result: result.clone(),
-                        claim_observed_at_ms: 100,
-                    },
-                    100,
-                )
-                .unwrap(),
-            CoreAgentAction::Idle
-        ));
-        let mut changed_resume = result;
-        changed_resume.effects = vec![crate::promise_cancel_effect(&promises[1])];
-        assert!(matches!(
             drive.admit_command(
                 CoreAgentCommand::ResumeCodeToolCall {
                     origin: joined.origin,
-                    result: changed_resume,
+                    result,
                     claim_observed_at_ms: 100,
                 },
                 100,
@@ -11959,7 +11875,6 @@ mod tests {
             &mut drive,
             CoreAgentCommand::CloseCodeToolScope {
                 execution_id: "execution-1".into(),
-                cancel: true,
             },
         );
         assert!(
@@ -12268,7 +12183,6 @@ mod tests {
             &mut drive,
             CoreAgentCommand::CloseCodeToolScope {
                 execution_id: "execution-1".into(),
-                cancel: true,
             },
         ));
         let result = promise_tool_result(
@@ -12409,7 +12323,7 @@ mod tests {
             let log = code_tool_commit(&mut drive, command);
             assert!(drive.state().runs.active.is_none());
             let scope = &drive.state().code_tools.scopes["execution-1"];
-            assert!(scope.closed && scope.cancel_requested);
+            assert!(scope.closed);
             for origin in [&pending.origin, &joined.origin] {
                 let crate::CodeToolCallStatus::Completed { result } =
                     &crate::code_tool_call(drive.state(), origin).unwrap().status
@@ -12490,7 +12404,6 @@ mod tests {
                 &mut drive,
                 CoreAgentCommand::CloseCodeToolScope {
                     execution_id: "execution-1".into(),
-                    cancel: true,
                 },
             );
             assert!(!drive.state().promises.promises.contains_key(&reply_id));

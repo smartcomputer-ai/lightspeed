@@ -7567,16 +7567,6 @@
       },
       "ContextAppendResult": {
         "properties": {
-          "activationText": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "activationTextTruncated": {
-            "description": "True when `activation_text` was cut off at the server-side length cap.\nThe committed context entry always holds the full text.",
-            "type": "boolean"
-          },
           "entry": {
             "anyOf": [
               {
@@ -10987,12 +10977,6 @@
       },
       "EventJoinsView": {
         "properties": {
-          "correlationId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "runId": {
             "type": [
               "string",
@@ -11021,41 +11005,6 @@
             "type": [
               "string",
               "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "EventLogGap": {
-        "properties": {
-          "nextCursor": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventCursor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "requestedAfter": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventCursor"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "retainedAfter": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventCursor"
-              },
-              {
-                "type": "null"
-              }
             ]
           }
         },
@@ -15432,41 +15381,6 @@
                 "minimum": 0,
                 "type": "integer"
               },
-              "entries": {
-                "items": {
-                  "$ref": "#/components/schemas/ContextEntryView"
-                },
-                "type": "array"
-              },
-              "reason": {
-                "type": "string"
-              },
-              "revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "type": {
-                "const": "contextStateReplaced",
-                "type": "string"
-              }
-            },
-            "required": [
-              "type",
-              "baseRevision",
-              "revision",
-              "entries",
-              "reason"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "baseRevision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
               "revision": {
                 "format": "uint64",
                 "minimum": 0,
@@ -15963,16 +15877,6 @@
               "$ref": "#/components/schemas/SessionEventView"
             },
             "type": "array"
-          },
-          "gap": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EventLogGap"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "headCursor": {
             "anyOf": [

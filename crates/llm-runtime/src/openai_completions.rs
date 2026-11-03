@@ -306,12 +306,6 @@ async fn materialize_request_with_catalog(
     request: &LlmRequest,
     catalog: &mut crate::tool_catalog::ToolCatalog,
 ) -> LlmAdapterResult<oai_c::CreateCompletionRequest> {
-    if request.provider_response_id.is_some() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: "Chat Completions has no provider response continuation; provider_response_id must be empty"
-                .to_owned(),
-        });
-    }
     if matches!(
         request.compaction,
         Some(CompactionPolicy::ProviderTriggered { .. })
@@ -1690,7 +1684,6 @@ mod tests {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         }
@@ -1897,7 +1890,6 @@ mod tests {
             request_fingerprint: "sha256:deepseek-compact".to_owned(),
             context: deepseek_request.context,
             target_tokens: Some(128),
-            params: None,
         };
         let compact = materialize_compact_request(&blobs, &task)
             .await
@@ -2738,7 +2730,6 @@ mod tests {
             )])
             .context,
             target_tokens: Some(256),
-            params: None,
         };
         let materialized = materialize_compact_request(&blobs, &task)
             .await

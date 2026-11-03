@@ -292,7 +292,6 @@ export function sessionRoutes(store: DemoStore): Hono {
         nextCursor: lower > 0 ? { seq: lower + 1 } : null,
         complete: lower === 0,
         headCursor: { seq: head },
-        gap: null,
       });
     }
     return c.json(await waitForEvents(found.session, after, Math.min(limit, 500), Math.min(waitMs, 30_000), c.req.raw.signal));

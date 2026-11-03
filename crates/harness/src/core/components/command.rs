@@ -161,7 +161,6 @@ pub enum CoreAgentCommand {
     },
     CloseCodeToolScope {
         execution_id: String,
-        cancel: bool,
     },
     CloseSession {
         /// Force-cancel the active run and drop queued runs before closing

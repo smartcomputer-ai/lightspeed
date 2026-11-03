@@ -407,7 +407,6 @@ describe("session transcript traces", () => {
     const events = [
       event(1, { type: "contextEntriesApplied", entries: [compacted] }),
       event(2, { type: "contextKeyPrefixReplaced", entries: [compacted] }),
-      event(3, { type: "contextStateReplaced", entries: [compacted] }),
     ];
     const state = applyEvents(emptyTranscript(), events);
     const streamed = events.reduce((previous, next) => applyEvents(previous, [next]), emptyTranscript());
@@ -672,7 +671,7 @@ describe("session transcript traces", () => {
     };
     const state = applyEvents(emptyTranscript(), [
       event(1, {
-        type: "contextStateReplaced",
+        type: "contextEntriesApplied",
         entries: [
           item("tool", { type: "toolCall", callId: "call", name: "grep" }, {
             display: {
@@ -1163,7 +1162,7 @@ describe("run statistics", () => {
     const state = applyEvents(emptyTranscript(), [
       event(1, { type: "runStarted" }),
       event(2, { type: "contextEntriesApplied", entries }),
-      event(3, { type: "contextStateReplaced", entries }),
+      event(3, { type: "contextKeyPrefixReplaced", entries }),
       event(4, { type: "runCompleted" }),
     ]);
     expect(state.entries.at(-1)).toMatchObject({ toolCalls: 1 });

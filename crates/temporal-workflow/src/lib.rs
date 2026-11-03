@@ -63,8 +63,7 @@ pub use config::{
     tool_batch_activity_options, tool_call_activity_options, tool_call_operation_timeout,
 };
 pub use rehydrate::{
-    ReducedSession, RehydrateError, accumulate_session_entry, reduce_session_entries,
-    reduce_session_entries_from,
+    ReducedSession, RehydrateError, reduce_session_entries, reduce_session_entries_from,
 };
 pub use temporal_helpers::connect_temporal;
 pub use types::{

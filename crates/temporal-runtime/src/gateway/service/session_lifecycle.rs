@@ -164,7 +164,6 @@ impl GatewayAgentApi {
             delete_after_close_ms,
             session_config,
             workflow_tools,
-            legacy_max_steps_per_input: None,
             continue_as_new_history_threshold: self.continue_as_new_history_threshold,
             close_on_terminal,
             auto_reject_approvals,

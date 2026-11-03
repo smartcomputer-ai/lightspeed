@@ -2185,7 +2185,7 @@ mod tests {
     }
 
     #[test]
-    fn routed_keys_survive_session_rotation_and_legacy_activity_payloads_load() {
+    fn routed_keys_survive_session_rotation_and_requests_load_without_optional_fields() {
         let mut state = ready(fresh());
         let route = RoutedSession {
             session_id: ids::bot_keyed_session_id(&state.config.bot_id, "telegram:12345"),
@@ -2219,11 +2219,11 @@ mod tests {
             );
             wire.as_object_mut().unwrap().remove("session_key");
             wire.as_object_mut().unwrap().remove("session_label");
-            let legacy: super::super::BotEnsureSessionRequest =
+            let minimal: super::super::BotEnsureSessionRequest =
                 serde_json::from_value(wire).unwrap();
-            assert_eq!(legacy.session_id, session_id);
-            assert_eq!(legacy.session_key, None);
-            assert_eq!(legacy.session_label, None);
+            assert_eq!(minimal.session_id, session_id);
+            assert_eq!(minimal.session_key, None);
+            assert_eq!(minimal.session_label, None);
             state.bump_routed_generation(&route.session_id);
         }
         let main = super::super::ensure_request(
@@ -2442,13 +2442,13 @@ mod tests {
         let json = serde_json::to_string(&carry).unwrap();
         let decoded: BotControllerCarry = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, carry);
-        let mut legacy = serde_json::to_value(&carry).unwrap();
-        legacy["extra_sessions"][0]
+        let mut unkeyed = serde_json::to_value(&carry).unwrap();
+        unkeyed["extra_sessions"][0]
             .as_object_mut()
             .unwrap()
             .remove("session_key");
-        let legacy: BotControllerCarry = serde_json::from_value(legacy).unwrap();
-        assert_eq!(legacy.extra_sessions[0].session_key, None);
+        let unkeyed: BotControllerCarry = serde_json::from_value(unkeyed).unwrap();
+        assert_eq!(unkeyed.extra_sessions[0].session_key, None);
         let next = ControllerState::new(
             BotControllerArgs {
                 config: state.config.clone(),
@@ -2477,15 +2477,15 @@ mod tests {
 
         let empty: BotControllerCarry = serde_json::from_str("{}").unwrap();
         assert_eq!(empty, BotControllerCarry::default());
-        let legacy = ControllerState::new(
+        let from_empty = ControllerState::new(
             BotControllerArgs {
                 config: config(),
                 carry: Some(empty),
             },
             NOW,
         );
-        assert_eq!(legacy.main_generation, 1);
-        assert_eq!(legacy.run_day, "2025-08-30");
+        assert_eq!(from_empty.main_generation, 1);
+        assert_eq!(from_empty.run_day, "2025-08-30");
     }
 
     #[test]

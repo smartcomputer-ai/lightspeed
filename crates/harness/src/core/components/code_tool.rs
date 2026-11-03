@@ -10,8 +10,8 @@ use crate::{
     AwaitMode, AwaitSpec, BlobRef, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins,
     CoreAgentState, DomainError, PromiseEvent, PromiseOwnership, PromiseStatus, RunStatus,
     SessionId, ToolBatchSuspension, ToolCallId, ToolCallStatus, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationResult, ToolName, WakeReason, WorkflowToolCompletion,
-    WorkflowToolInvocation, WorkflowToolInvocationId,
+    ToolInvocationBatchResult, ToolInvocationResult, ToolName, WakeReason, WorkflowToolInvocation,
+    WorkflowToolInvocationId,
 };
 
 pub const MAX_CODE_TOOL_SCOPES_PER_RUN: usize = 32;
@@ -47,7 +47,6 @@ pub(crate) fn interrupt_code_tools_for_run(state: &mut CoreAgentState, run_id: c
             .get_mut(&id)
             .expect("scope was collected above");
         scope.closed = true;
-        scope.cancel_requested = true;
         for call in scope
             .calls
             .values_mut()
@@ -113,7 +112,6 @@ pub struct CodeToolCall {
 /// Durable code tool outcome. Effect carriers are admitted as their own domain
 /// events, and model-context projections do not belong to a code tool caller.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "CodeToolCallResultWire")]
 pub struct CodeToolCallResult {
     pub call_id: ToolCallId,
     pub status: ToolCallStatus,
@@ -127,20 +125,10 @@ pub struct CodeToolCallResult {
     pub output_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
-    // Plain hexadecimal, not a BlobRef: the original activity result need not
-    // be stored. Include every field so changed effects cannot pass as retries.
-    invocation_result_digest: String,
-}
-
-impl CodeToolCallResult {
-    fn matches_invocation_result(&self, result: &ToolInvocationResult) -> bool {
-        self.invocation_result_digest == invocation_result_digest(result)
-    }
 }
 
 impl From<ToolInvocationResult> for CodeToolCallResult {
     fn from(result: ToolInvocationResult) -> Self {
-        let invocation_result_digest = invocation_result_digest(&result);
         Self {
             call_id: result.call_id,
             status: result.status,
@@ -150,42 +138,7 @@ impl From<ToolInvocationResult> for CodeToolCallResult {
             duration_ms: result.duration_ms,
             output_bytes: result.output_bytes,
             truncated: result.truncated,
-            invocation_result_digest,
         }
-    }
-}
-
-fn invocation_result_digest(result: &ToolInvocationResult) -> String {
-    let bytes = serde_json::to_vec(result).expect("tool invocation results are serializable");
-    hex::encode(Sha256::digest(bytes))
-}
-
-/// Read earlier code tool event/snapshot records before discarding their full
-/// context and effects. Compact records already carry the original digest.
-#[derive(Deserialize)]
-struct CodeToolCallResultWire {
-    #[serde(default)]
-    invocation_result_digest: Option<String>,
-    #[serde(flatten)]
-    result: ToolInvocationResult,
-}
-
-impl TryFrom<CodeToolCallResultWire> for CodeToolCallResult {
-    type Error = &'static str;
-
-    fn try_from(wire: CodeToolCallResultWire) -> Result<Self, Self::Error> {
-        let mut result = Self::from(wire.result);
-        if let Some(digest) = wire.invocation_result_digest {
-            if digest.len() != 64
-                || !digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
-                return Err("invalid code tool invocation result digest");
-            }
-            result.invocation_result_digest = digest;
-        }
-        Ok(result)
     }
 }
 
@@ -208,7 +161,6 @@ pub struct CodeToolScope {
     pub toolset_revision: u64,
     pub spec: CodeToolScopeSpec,
     pub closed: bool,
-    pub cancel_requested: bool,
     pub calls: BTreeMap<String, CodeToolCall>,
 }
 
@@ -237,7 +189,6 @@ pub enum CodeToolEvent {
     },
     ScopeClosed {
         execution_id: String,
-        cancel: bool,
     },
 }
 
@@ -580,63 +531,8 @@ pub fn complete_code_tool_call_proposals(
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let call =
         code_tool_call(state, &origin).ok_or_else(|| invalid("unknown code tool request"))?;
-    validate_result(call, &result)?;
-    // A joined preparation outcome records a wait, not its acknowledgement.
-    // Redelivery of that same admitted effect is still idempotent, including
-    // after the reply has completed the call.
-    if !matches!(call.status, CodeToolCallStatus::Pending)
-        && result.status == ToolCallStatus::Succeeded
-        && result.effects.len() == 1
-        && state
-            .workflow_tools
-            .binding_for_tool_name(&call.spec.tool_id)
-            .is_some_and(|binding| {
-                matches!(binding.completion, WorkflowToolCompletion::Joined { .. })
-            })
-        && let Some(invocation) =
-            super::workflow_tool::invocation_from_emit_effect(&result.effects[0])?
-        && invocation.tool_call_id == call.call_id
-        && state
-            .workflow_tools
-            .emissions
-            .get(&invocation.invocation_id)
-            .or_else(|| {
-                state
-                    .workflow_tools
-                    .start_requests
-                    .get(&invocation.invocation_id)
-            })
-            == Some(&invocation)
-    {
-        let deadline =
-            super::workflow_tool::completion_deadline_from_emit_effect(&result.effects[0])?;
-        if invocation
-            .completion_promises
-            .as_ref()
-            .is_some_and(|promises| {
-                promises.values().all(|id| {
-                    state
-                        .promises
-                        .promises
-                        .get(id)
-                        .is_some_and(|promise| promise.deadline_ms == deadline)
-                })
-            })
-        {
-            return Ok(Vec::new());
-        }
-    }
-    if let CodeToolCallStatus::Completed { result: existing } = &call.status {
-        return if existing.matches_invocation_result(&result) {
-            Ok(Vec::new())
-        } else {
-            Err(invalid(
-                "code tool completion conflicts with the recorded outcome",
-            ))
-        };
-    }
     if !matches!(call.status, CodeToolCallStatus::Pending) {
-        return Err(invalid("code tool request is already waiting"));
+        return Err(invalid("code tool request is not pending"));
     }
     validate_result(call, &result)?;
     let scope = &state.code_tools.scopes[&origin.execution_id];
@@ -731,7 +627,7 @@ pub fn code_tool_wake(
     let CodeToolCallStatus::Waiting { suspension } = &call.status else {
         return None;
     };
-    if scope.cancel_requested || validate_live_parent(state, &scope.spec).is_err() {
+    if scope.closed || validate_live_parent(state, &scope.spec).is_err() {
         return Some(WakeReason::Cancelled);
     }
     let spec = suspension.spec();
@@ -826,12 +722,8 @@ pub fn resume_code_tool_call_proposals(
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let call =
         code_tool_call(state, &origin).ok_or_else(|| invalid("unknown code tool request"))?;
-    if let CodeToolCallStatus::Completed { result: existing } = &call.status {
-        return if existing.matches_invocation_result(&result) {
-            Ok(Vec::new())
-        } else {
-            Err(invalid("code tool resume conflicts with recorded result"))
-        };
+    if call.status.is_terminal() {
+        return Err(invalid("code tool request already completed"));
     }
     validate_result(call, &result)?;
     let wake = code_tool_wake(state, &origin, claim_observed_at_ms);
@@ -900,46 +792,40 @@ pub fn resume_code_tool_call_proposals(
 pub fn close_code_tool_scope_proposals(
     state: &CoreAgentState,
     execution_id: String,
-    cancel: bool,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let scope = state
         .code_tools
         .scopes
         .get(&execution_id)
         .ok_or_else(|| invalid("unknown code tool execution scope"))?;
-    if scope.closed && (!cancel || scope.cancel_requested) {
+    if scope.closed {
         return Ok(Vec::new());
     }
     let mut proposals = vec![CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
-        CoreAgentEvent::CodeTool(CodeToolEvent::ScopeClosed {
-            execution_id,
-            cancel,
-        }),
+        CoreAgentEvent::CodeTool(CodeToolEvent::ScopeClosed { execution_id }),
     )];
-    if cancel {
-        for call in scope.calls.values() {
-            if let CodeToolCallStatus::Waiting {
-                suspension: ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
-            } = &call.status
-            {
-                for joined in calls {
-                    if state
-                        .promises
-                        .promises
-                        .get(&joined.promise_id)
-                        .is_some_and(|promise| {
-                            promise.status == PromiseStatus::Pending
-                                && promise.ownership == PromiseOwnership::Runtime
-                        })
-                    {
-                        proposals.push(CoreAgentEventProposal::new(
-                            joins(state, &call.spec.origin)?,
-                            CoreAgentEvent::Promise(PromiseEvent::Cancelled {
-                                promise_id: joined.promise_id.clone(),
-                            }),
-                        ));
-                    }
+    for call in scope.calls.values() {
+        if let CodeToolCallStatus::Waiting {
+            suspension: ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
+        } = &call.status
+        {
+            for joined in calls {
+                if state
+                    .promises
+                    .promises
+                    .get(&joined.promise_id)
+                    .is_some_and(|promise| {
+                        promise.status == PromiseStatus::Pending
+                            && promise.ownership == PromiseOwnership::Runtime
+                    })
+                {
+                    proposals.push(CoreAgentEventProposal::new(
+                        joins(state, &call.spec.origin)?,
+                        CoreAgentEvent::Promise(PromiseEvent::Cancelled {
+                            promise_id: joined.promise_id.clone(),
+                        }),
+                    ));
                 }
             }
         }
@@ -964,8 +850,8 @@ pub fn code_tool_request(
         return Err(invalid("code tool request is not pending"));
     }
     let scope = &state.code_tools.scopes[execution_id];
-    if scope.cancel_requested {
-        return Err(invalid("code tool scope is cancelling"));
+    if scope.closed {
+        return Err(invalid("code tool scope is closed"));
     }
     validate_live_parent(state, &scope.spec)?;
     if scope.toolset_revision != state.tooling.revision {
@@ -1038,7 +924,6 @@ pub(crate) fn apply_code_tool_event(
                     toolset_revision: state.tooling.revision,
                     spec: scope.clone(),
                     closed: false,
-                    cancel_requested: false,
                     calls: BTreeMap::new(),
                 },
             );
@@ -1146,17 +1031,13 @@ pub(crate) fn apply_code_tool_event(
                 suspension: suspension.clone(),
             };
         }
-        CodeToolEvent::ScopeClosed {
-            execution_id,
-            cancel,
-        } => {
-            let scope = state
+        CodeToolEvent::ScopeClosed { execution_id } => {
+            state
                 .code_tools
                 .scopes
                 .get_mut(execution_id)
-                .ok_or_else(|| invalid("unknown code tool execution scope"))?;
-            scope.closed = true;
-            scope.cancel_requested |= cancel;
+                .ok_or_else(|| invalid("unknown code tool execution scope"))?
+                .closed = true;
         }
     }
     Ok(())

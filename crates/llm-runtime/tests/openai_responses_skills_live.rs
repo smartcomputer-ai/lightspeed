@@ -30,7 +30,7 @@ use support::{
     openai_responses_live_client as live_client, openai_responses_live_model as live_model,
 };
 
-use support::retrying_openai_responses_client;
+use support::unstored_openai_responses_client;
 
 const LIVE_MARKER: &str = "LIVE-SKILL-MATRIX-7392";
 
@@ -214,7 +214,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                retrying_openai_responses_client(live_client()),
+                unstored_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -374,12 +374,6 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(3),
         model_override: None,
         max_output_tokens: None,
-        provider_params: Some(support::openai_params(
-            &llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            },
-        )),
         tool_choice: None,
     }
 }

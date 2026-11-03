@@ -147,10 +147,6 @@ const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 /// the cap are clamped, not rejected. The gateway HTTP request timeout must
 /// stay above this cap.
 const DEFAULT_EVENTS_WAIT_CAP: Duration = Duration::from_secs(30);
-/// Cap on `activationText` returned per `session/context/append` entry. The committed
-/// context blob is authoritative; activation text only needs enough of the
-/// head for trigger matching.
-const ACTIVATION_TEXT_MAX_BYTES: usize = 4096;
 /// `session/list` page size when the request does not specify one.
 const DEFAULT_SESSION_LIST_LIMIT: usize = 50;
 /// Server-side cap for `session/list` page sizes; larger requests are clamped.
@@ -368,11 +364,12 @@ fn existing_run_submission(
         .find(|run| run.submission_id.as_ref() == Some(submission_id))
     {
         let digest = harness::request_run_submission_digest(source, run_config, notify_on_terminal);
-        return Some(match completed.submission_digest {
-            Some(existing) if existing != digest => ExistingRunSubmission::Reject,
-            _ => ExistingRunSubmission::ReturnRun {
+        return Some(if completed.submission_digest == digest {
+            ExistingRunSubmission::ReturnRun {
                 run_id: completed.run_id,
-            },
+            }
+        } else {
+            ExistingRunSubmission::Reject
         });
     }
     None
@@ -384,75 +381,20 @@ fn duplicate_submission_error(submission_id: &SubmissionId) -> AgentApiError {
     ))
 }
 
-async fn context_append_result(
-    store: &dyn BlobStore,
+fn context_append_result(
     key: String,
     status: ContextAppendStatus,
     input: &ContextEntryInput,
-    submitted_text: Option<&str>,
-) -> Result<ContextAppendResult, AgentApiError> {
+) -> ContextAppendResult {
     let entry = project_context_entry_inputs(std::slice::from_ref(input))
         .into_iter()
         .next();
-    let activation_text = if context_append_entry_has_activation_text(input) {
-        // The submitted text is reused when it produced this exact entry so
-        // plain-text appends do not pay a blob read per response entry.
-        match submitted_text {
-            Some(text) => Some(text.to_owned()),
-            None => Some(
-                store
-                    .read_text(&input.content.content_ref)
-                    .await
-                    .map_err(map_input_blob_store_error)?,
-            ),
-        }
-    } else {
-        None
-    };
-    let (activation_text, activation_text_truncated) = match activation_text {
-        Some(text) => {
-            let (text, truncated) = capped_activation_text(text);
-            (Some(text), truncated)
-        }
-        None => (None, false),
-    };
-    Ok(ContextAppendResult {
+    ContextAppendResult {
         key,
         status,
         entry,
         failure: None,
-        activation_text,
-        activation_text_truncated,
-    })
-}
-
-fn capped_activation_text(text: String) -> (String, bool) {
-    if text.len() <= ACTIVATION_TEXT_MAX_BYTES {
-        return (text, false);
     }
-    let mut end = ACTIVATION_TEXT_MAX_BYTES;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    (text[..end].to_owned(), true)
-}
-
-fn context_append_entry_has_activation_text(input: &ContextEntryInput) -> bool {
-    matches!(
-        &input.kind,
-        ContextEntryKind::Message {
-            role: ContextMessageRole::User
-        }
-    ) && input.preview.is_none()
-        && input
-            .content
-            .media_type
-            .as_deref()
-            .map(|media_type| {
-                let media_type = media_type.trim().to_ascii_lowercase();
-                media_type.is_empty() || media_type == "text/plain"
-            })
-            .unwrap_or(true)
 }
 
 fn context_append_failed_result(
@@ -464,8 +406,6 @@ fn context_append_failed_result(
         status: ContextAppendStatus::Failed,
         entry: None,
         failure: Some(failure),
-        activation_text: None,
-        activation_text_truncated: false,
     }
 }
 
@@ -2601,7 +2541,6 @@ impl AgentApiService for GatewayAgentApi {
                 next_cursor: page.next_after.map(event_cursor),
                 head_cursor,
                 complete: page.complete,
-                gap: None,
             }));
         }
     }
@@ -2801,10 +2740,6 @@ impl AgentApiService for GatewayAgentApi {
             Ready {
                 key: ContextEntryKey,
                 input: ContextEntryInput,
-                /// Submitted text kept in hand so the response does not
-                /// re-read the blob it was just written from. Only valid for
-                /// the entry it produced (checked via `content_ref`).
-                text: Option<String>,
             },
             Failed(ContextAppendResult),
         }
@@ -2833,13 +2768,7 @@ impl AgentApiService for GatewayAgentApi {
                 )));
             }
             match context_entry_input_from_api(self.store.as_ref(), &entry.item).await {
-                Ok(input) => {
-                    let text = match &entry.item {
-                        InputItem::Text { text, .. } => Some(text.trim().to_owned()),
-                        _ => None,
-                    };
-                    prepared.push(PreparedAppend::Ready { key, input, text });
-                }
+                Ok(input) => prepared.push(PreparedAppend::Ready { key, input }),
                 Err(error) if matches!(entry.item, InputItem::Media { .. }) => {
                     prepared.push(PreparedAppend::Failed(context_append_failed_result(
                         key.as_str().to_owned(),
@@ -2861,23 +2790,18 @@ impl AgentApiService for GatewayAgentApi {
         for prepared in prepared {
             match prepared {
                 PreparedAppend::Failed(result) => ordered.push(PreparedAppend::Failed(result)),
-                PreparedAppend::Ready { key, input, text } => {
+                PreparedAppend::Ready { key, input } => {
                     if let Some(active) = harness::current_context_entry(&loaded.state, &key)
                         .filter(|active| active_context_entry_matches_input(active, &input))
                     {
-                        let effective = active_entry_input(active);
-                        let text = text
-                            .filter(|_| effective.content.content_ref == input.content.content_ref);
                         ordered.push(PreparedAppend::Ready {
                             key,
-                            input: effective,
-                            text,
+                            input: active_entry_input(active),
                         });
                     } else {
                         ordered.push(PreparedAppend::Ready {
                             key: key.clone(),
                             input: input.clone(),
-                            text,
                         });
                         pending.push((key, input));
                     }
@@ -2907,37 +2831,24 @@ impl AgentApiService for GatewayAgentApi {
         for item in ordered {
             match item {
                 PreparedAppend::Failed(result) => response_results.push(result),
-                PreparedAppend::Ready { key, input, text } => {
+                PreparedAppend::Ready { key, input } => {
                     let result = match outcomes.get(&key) {
-                        Some(ContextAppendWaitOutcome::Applied { entry }) => {
-                            let text = text
-                                .as_deref()
-                                .filter(|_| entry.content.content_ref == input.content.content_ref);
-                            context_append_result(
-                                self.store.as_ref(),
-                                key.as_str().to_owned(),
-                                ContextAppendStatus::Applied,
-                                entry,
-                                text,
-                            )
-                            .await?
-                        }
+                        Some(ContextAppendWaitOutcome::Applied { entry }) => context_append_result(
+                            key.as_str().to_owned(),
+                            ContextAppendStatus::Applied,
+                            entry,
+                        ),
                         Some(ContextAppendWaitOutcome::Failed { failure }) => {
                             context_append_failed_result(
                                 key.as_str().to_owned(),
                                 input_admission_failure_from_workflow(failure),
                             )
                         }
-                        None => {
-                            context_append_result(
-                                self.store.as_ref(),
-                                key.as_str().to_owned(),
-                                ContextAppendStatus::Unchanged,
-                                &input,
-                                text.as_deref(),
-                            )
-                            .await?
-                        }
+                        None => context_append_result(
+                            key.as_str().to_owned(),
+                            ContextAppendStatus::Unchanged,
+                            &input,
+                        ),
                     };
                     response_results.push(result);
                 }

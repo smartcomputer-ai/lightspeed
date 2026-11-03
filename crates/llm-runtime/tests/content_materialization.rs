@@ -64,7 +64,6 @@ async fn text_with_provenance_is_unchanged_across_all_provider_apis() {
                 reasoning_effort: None,
                 parallel_tool_use: None,
                 processing_tier: None,
-                provider_response_id: None,
                 compaction: None,
                 params: None,
             };

@@ -15,7 +15,7 @@ mod support;
 
 use support::{env_or_dotenv_var, openai_responses_live_client as live_client};
 
-use support::retrying_openai_responses_client;
+use support::unstored_openai_responses_client;
 
 const LIVE_MARKER: &str = "LIGHTSPEED-COMPACTION-LIVE-87421";
 
@@ -53,7 +53,7 @@ async fn openai_responses_live_harness_prunes_and_reuses_provider_compaction() {
         LlmAdapterRegistry::new().with_generation_adapter(
             ProviderApiKind::OpenAiResponses,
             Arc::new(OpenAiResponsesLlmAdapter::new(
-                retrying_openai_responses_client(live_client()),
+                unstored_openai_responses_client(live_client()),
                 blobs.clone(),
             )),
         ),
@@ -339,7 +339,7 @@ async fn live_runner(session_id: &SessionId) -> (SessionRunner, Arc<InMemoryBlob
         .expect("create session");
 
     let adapter = Arc::new(OpenAiResponsesLlmAdapter::new(
-        retrying_openai_responses_client(live_client()),
+        unstored_openai_responses_client(live_client()),
         blobs.clone(),
     ));
     let llm = Arc::new(LlmRuntime::new(
@@ -419,13 +419,6 @@ fn run_config() -> RunConfig {
         max_tool_rounds: Some(0),
         model_override: None,
         max_output_tokens: None,
-        provider_params: Some(support::openai_params(
-            &llm_runtime::OpenAiResponsesParams {
-                store: Some(false),
-                stream: Some(false),
-                ..llm_runtime::OpenAiResponsesParams::default()
-            },
-        )),
         tool_choice: None,
     }
 }

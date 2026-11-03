@@ -396,7 +396,6 @@ mod tests {
                     token_estimate: None,
                 },
                 target_tokens: None,
-                params: None,
                 tools: vec![],
                 input_limit_tokens: None,
                 covered_entry_ids: (1..=6).map(ContextEntryId::new).collect(),

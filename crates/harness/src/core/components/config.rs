@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ProviderParams, ToolChoice,
-};
+use crate::{CoreAgentState, DomainError, ModelSelection, ProviderApiKind, ToolChoice};
 
 const MIN_OPENAI_RESPONSES_COMPACT_THRESHOLD: u32 = 1000;
 const MIN_ANTHROPIC_MESSAGES_COMPACT_THRESHOLD: u32 = 50_000;
@@ -728,8 +726,7 @@ pub enum CompactionPolicy {
 // ---------------------------------------------------------------------------
 
 /// Per-run overrides carried on run requests. Not part of [`SessionConfig`]:
-/// session-level defaults live in [`GenerationConfig`] and [`LimitsConfig`];
-/// this is the runs/start escape hatch, including raw provider params.
+/// session-level defaults live in [`GenerationConfig`] and [`LimitsConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunConfig {
     /// Input capacity resolved outside the reducer for this run’s effective model.
@@ -747,8 +744,6 @@ pub struct RunConfig {
     pub reasoning_effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_tier: Option<ModelProcessingTier>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_params: Option<ProviderParams>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -784,7 +779,6 @@ impl RunConfig {
                 "processing tier is supported only by the built-in openai provider".to_owned(),
             ));
         }
-        validate_provider_params(self.provider_params.as_ref(), api_kind)?;
         Ok(())
     }
 }
@@ -1219,27 +1213,6 @@ pub fn validate_tool_choice_for_tools(
             tool_name
         )))
     }
-}
-
-fn validate_provider_params(
-    params: Option<&ProviderParams>,
-    api_kind: &ProviderApiKind,
-) -> Result<(), DomainError> {
-    let Some(params) = params else {
-        return Ok(());
-    };
-    if &params.api_kind != api_kind {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "provider params api kind {:?} do not match provider api kind {:?}",
-            params.api_kind, api_kind
-        )));
-    }
-    if !params.body.is_object() {
-        return Err(DomainError::ProviderCompatibility(
-            "provider params body must be a JSON object".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_context_config(

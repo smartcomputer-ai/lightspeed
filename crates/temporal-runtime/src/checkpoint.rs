@@ -27,14 +27,12 @@ const CHECKPOINT_READ_PAGE: usize = 512;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct CheckpointReduction {
     core_state: harness::CoreAgentState,
-    run_submissions: std::collections::BTreeMap<u64, Option<harness::SubmissionId>>,
 }
 
 impl From<CheckpointReduction> for ReducedSession {
     fn from(value: CheckpointReduction) -> Self {
         Self {
             core_state: value.core_state,
-            run_submissions: value.run_submissions,
             replayed_event_count: 0,
         }
     }
@@ -297,7 +295,6 @@ pub(crate) async fn write_checkpoint(
     };
     let bytes = serde_json::to_vec(&CheckpointReduction {
         core_state: reduced.core_state.clone(),
-        run_submissions: reduced.run_submissions.clone(),
     })?;
     anyhow::ensure!(
         bytes.len() as u64 <= DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES,
@@ -467,7 +464,6 @@ mod tests {
         .expect("read full log");
         let full = reduce_session_entries(&all).expect("full replay");
         assert_eq!(checkpointed.reduced.core_state, full.core_state);
-        assert_eq!(checkpointed.reduced.run_submissions, full.run_submissions);
     }
 
     fn terminal_run(id: u64, first_seq: u64, terminal_seq: u64) -> harness::RunRecord {
@@ -475,7 +471,7 @@ mod tests {
             run_id: harness::RunId::new(id),
             status: harness::RunStatus::Completed,
             submission_id: None,
-            submission_digest: None,
+            submission_digest: 0,
             source: harness::RunSource::Input { input: Vec::new() },
             first_seq: EventSeq::new(first_seq),
             terminal_seq: EventSeq::new(terminal_seq),

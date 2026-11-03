@@ -35,12 +35,6 @@ pub struct AgentSessionArgs {
     /// immutable creation fact on the first append.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_tools: Option<ManagedSessionWorkflowTools>,
-    /// Legacy cutover field accepted from workflows started before active-run
-    /// rollover support.
-    /// Hosted drive ignores it, and continuation/new-session payloads never
-    /// serialize it.
-    #[serde(default, rename = "max_steps_per_input", skip_serializing)]
-    pub legacy_max_steps_per_input: Option<u32>,
     pub continue_as_new_history_threshold: Option<u32>,
     #[serde(default)]
     pub close_on_terminal: bool,
@@ -66,15 +60,6 @@ pub struct AgentSessionContinuationState {
 
 impl AgentSessionContinuationState {
     pub const VERSION: u32 = 1;
-
-    pub fn v1(admission_failures: Vec<AgentAdmissionFailure>) -> Self {
-        Self {
-            version: Self::VERSION,
-            ready: false,
-            operation_outcomes: crate::SessionOperationReceipts::default(),
-            admission_failures,
-        }
-    }
 }
 
 /// Compose the Temporal workflow id for a session:
@@ -204,7 +189,6 @@ pub struct AgentActiveRunSummary {
     pub run_id: u64,
     pub status: RunStatus,
     pub submission_id: Option<SubmissionId>,
-    pub output: Option<harness::ContentRef>,
     pub active_turn_id: Option<u64>,
     pub active_tool_batch_id: Option<u64>,
 }
@@ -234,8 +218,8 @@ pub struct PendingEmission {
     pub receiver_workflow_id: String,
     pub envelope: EmissionEnvelope,
     /// Delivery attempts so far. Pushed workflow-tool invocation envelopes
-    /// retry independently; other bodies keep the legacy single-attempt,
-    /// drop-on-missing semantics.
+    /// retry independently; other bodies get one attempt and drop if the
+    /// target is missing.
     #[serde(default)]
     pub attempts: u32,
     /// Earliest workflow time this entry may be (re)sent; `0` is immediate.
@@ -543,10 +527,6 @@ pub struct CreateOrLoadSessionResult {
     /// Replayed reduced agent state. `None` for a freshly created session with
     /// no persisted events yet (the workflow then opens a new session).
     pub core_state: Option<CoreAgentState>,
-    /// `run_id` -> originating submission id, reconstructed from accepted-run
-    /// events. Empty for a fresh session.
-    #[serde(default)]
-    pub run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     /// Current durable log head after replay.
     pub head: Option<SessionPosition>,
     /// True only when the authoritative durable head was empty at bootstrap.
@@ -773,7 +753,7 @@ mod tests {
 
     #[test]
     fn split_workflow_id_rejects_non_composed_ids() {
-        // Legacy ids were the bare session id; they must not silently parse.
+        // A bare session id must not silently parse.
         assert_eq!(split_workflow_id("session_mybot"), None);
         assert_eq!(split_workflow_id("not-a-uuid/session_mybot"), None);
         assert_eq!(

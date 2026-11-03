@@ -77,7 +77,6 @@ fn intent_request(fingerprint: &str, entries: Vec<ContextEntry>) -> LlmRequest {
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        provider_response_id: None,
         compaction: None,
         params: None,
     }
@@ -324,7 +323,6 @@ async fn assert_hosted_web_replay(
         .entries
         .push(user_entry(request.context.entries.len() as u64 + 1, prompt));
     request.tool_choice = Some(ToolChoice::Auto);
-    request.provider_response_id = None;
     request.output_limit = Some(512);
     let followup = adapter
         .generate(generation_request(2, request))
@@ -1277,7 +1275,6 @@ async fn check_adapter_context_compaction(model: ModelSelection, native: bool) {
                 token_estimate: None,
             },
             target_tokens: Some(300),
-            params: None,
         },
     };
 
@@ -1611,7 +1608,6 @@ async fn anthropic_messages_live_adapter_continues_after_an_image_edit() {
                 token_estimate: None,
             },
             target_tokens: Some(300),
-            params: None,
         },
     };
     let strict_compacted = strict

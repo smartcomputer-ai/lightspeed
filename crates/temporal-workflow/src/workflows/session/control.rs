@@ -49,9 +49,9 @@ where
         };
         debug_assert!(admissions_pending);
         if !admissions::drain_pending_admissions(ctx, drive).await? {
-            // Left queued on purpose (pending compaction); nothing to re-plan
-            // and the wait condition would fire again immediately, so fall
-            // back to awaiting the activity alone.
+            // The wait condition matches what the drain admits, so this is
+            // defensive: nothing to re-plan, and waiting again would fire
+            // immediately, so fall back to awaiting the activity alone.
             let result = activity.await;
             return Ok(Raced::Completed(result));
         }

@@ -227,7 +227,7 @@ fn close_on_terminal_requires_idle_open_session_with_completed_run() {
         run_id: RunId::new(1),
         status: RunStatus::Completed,
         submission_id: None,
-        submission_digest: None,
+        submission_digest: 0,
         source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
@@ -388,31 +388,21 @@ fn a_deferred_toolset_waits_out_a_parked_batch_without_spinning_the_loop() {
     ));
 }
 
-#[test]
-fn legacy_step_limit_decodes_but_is_never_serialized() {
-    let args = agent_session_args_with_close_on_terminal(false);
-    let mut encoded = serde_json::to_value(&args).expect("serialize workflow args");
-    assert!(encoded.get("max_steps_per_input").is_none());
-
-    encoded
-        .as_object_mut()
-        .expect("workflow args object")
-        .insert("max_steps_per_input".to_owned(), serde_json::json!(128));
-    let decoded: AgentSessionArgs =
-        serde_json::from_value(encoded).expect("decode legacy workflow args");
-    assert_eq!(decoded.legacy_max_steps_per_input, Some(128));
-    assert!(
-        serde_json::to_value(decoded)
-            .expect("re-serialize legacy workflow args")
-            .get("max_steps_per_input")
-            .is_none()
-    );
+fn continuation_state(
+    admission_failures: Vec<AgentAdmissionFailure>,
+) -> AgentSessionContinuationState {
+    AgentSessionContinuationState {
+        version: AgentSessionContinuationState::VERSION,
+        ready: false,
+        operation_outcomes: crate::SessionOperationReceipts::default(),
+        admission_failures,
+    }
 }
 
 #[test]
 fn continuation_state_round_trips_admission_failure_correlation() {
     let rejection = harness::CommandRejection::context_revision_conflict(3, 4);
-    let continuation = AgentSessionContinuationState::v1(vec![AgentAdmissionFailure {
+    let continuation = continuation_state(vec![AgentAdmissionFailure {
         preparation_error: None,
         submission_id: Some(SubmissionId::new("submit_rejected")),
         correlation_token: Some("admit_test".to_owned()),
@@ -478,7 +468,6 @@ fn agent_session_args_with_close_on_terminal(close_on_terminal: bool) -> AgentSe
             model: "gpt-test".to_owned(),
         }),
         workflow_tools: None,
-        legacy_max_steps_per_input: None,
         continue_as_new_history_threshold: None,
         close_on_terminal,
         auto_reject_approvals: false,
@@ -618,7 +607,6 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
                     native_call_ref: None,
                 },
                 status: harness::ToolCallStatus::Pending,
-                execution_policy: None,
                 result: None,
             }],
         },
@@ -650,8 +638,6 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
         }),
         tool_batches,
         completed_tool_batches: std::collections::BTreeMap::new(),
-        output: None,
-        failure: None,
         notify_on_terminal: Vec::new(),
     });
     workflow
@@ -913,7 +899,7 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
         run_id: RunId::new(1),
         status: RunStatus::Completed,
         submission_id: None,
-        submission_digest: None,
+        submission_digest: 0,
         source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
@@ -1169,7 +1155,7 @@ fn terminal_run_with_notify_intent_queues_emission() {
         run_id: RunId::new(3),
         status: RunStatus::Completed,
         submission_id: None,
-        submission_digest: None,
+        submission_digest: 0,
         source: harness::RunSource::Input { input: Vec::new() },
         first_seq: EventSeq::new(1),
         terminal_seq: EventSeq::new(1),
@@ -2300,7 +2286,7 @@ fn accepted_submission_skips_new_policy_observations_even_after_config_is_remove
 #[test]
 fn continuations_require_explicit_preparation_state() {
     for ready in [false, true] {
-        let mut current = AgentSessionContinuationState::v1(Vec::new());
+        let mut current = continuation_state(Vec::new());
         current.ready = ready;
         let wire = serde_json::to_value(&current).unwrap();
         assert_eq!(

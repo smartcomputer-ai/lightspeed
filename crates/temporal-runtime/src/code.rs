@@ -422,7 +422,6 @@ impl CodeRunner {
                     .close_scope(
                         CloseCodeToolScopeRequest {
                             execution_id: execution_id.to_owned(),
-                            cancel_pending: true,
                         },
                         Default::default(),
                     )
@@ -641,7 +640,6 @@ mod tests {
         CodeToolScopeReport {
             execution_id: "code-test".into(),
             closed: false,
-            cancel_requested: false,
             bindings: [
                 ("binding-a".into(), ToolName::new("mcp.read")),
                 ("binding-b".into(), ToolName::new("timer_sleep")),

@@ -1009,21 +1009,6 @@ impl ChatSessionDriver {
                 .await
                 .map_err(api_error)?;
 
-            if let Some(gap) = page.result.gap.as_ref() {
-                emit(ChatEvent::GapObserved {
-                    requested_from: gap
-                        .requested_after
-                        .map(|cursor| cursor.seq.saturating_add(1))
-                        .unwrap_or_default(),
-                    retained_from: gap
-                        .retained_after
-                        .map(|cursor| cursor.seq.saturating_add(1))
-                        .unwrap_or_default(),
-                });
-                needs_snapshot = true;
-                saw_activity = true;
-            }
-
             for event in &page.result.events {
                 needs_snapshot |= event_needs_snapshot(&event.kind);
                 saw_activity = true;
@@ -1191,7 +1176,6 @@ impl ChatSessionDriver {
             | SessionEventKindView::ContextEntriesReplaced { .. }
             | SessionEventKindView::ContextKeysRemoved { .. }
             | SessionEventKindView::ContextKeyPrefixReplaced { .. }
-            | SessionEventKindView::ContextStateReplaced { .. }
             | SessionEventKindView::ContextCompactionRequested { .. }
             | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::SkillCatalogSet { .. }
@@ -1790,7 +1774,6 @@ fn event_needs_snapshot(kind: &SessionEventKindView) -> bool {
             | SessionEventKindView::ContextEntriesReplaced { .. }
             | SessionEventKindView::ContextKeysRemoved { .. }
             | SessionEventKindView::ContextKeyPrefixReplaced { .. }
-            | SessionEventKindView::ContextStateReplaced { .. }
             | SessionEventKindView::ContextCompactionFinished { .. }
             | SessionEventKindView::RunCompleted { .. }
             | SessionEventKindView::RunFailed { .. }
@@ -2185,7 +2168,6 @@ fn print_event(event: &ChatEvent, show_stats: bool) -> Result<()> {
         }
         ChatEvent::ToolChainsChanged { .. }
         | ChatEvent::CompactionsChanged { .. }
-        | ChatEvent::GapObserved { .. }
         | ChatEvent::Reconnecting { .. } => {}
         ChatEvent::StatusChanged(status) => {
             eprintln!("status: {}", status.status);
@@ -3327,19 +3309,11 @@ mod tests {
             }
         ));
         assert!(event_needs_snapshot(
-            &SessionEventKindView::ContextStateReplaced {
-                base_revision: 1,
-                revision: 2,
-                entries: Vec::new(),
-                reason: "pruned".into(),
-            }
-        ));
-        assert!(event_needs_snapshot(
             &SessionEventKindView::ContextEntriesRemoved {
                 base_revision: 2,
                 revision: 3,
                 entry_ids: Vec::new(),
-                reason: "pruned".into(),
+                reason: "providerCompacted".into(),
             }
         ));
         assert!(event_needs_snapshot(

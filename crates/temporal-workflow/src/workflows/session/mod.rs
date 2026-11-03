@@ -86,7 +86,6 @@ pub struct AgentSessionWorkflow {
     cancelled_workflow_executions: BTreeSet<String>,
     pending_promise_cancellations: Vec<PendingPromiseCancellation>,
     promise_source_polls: BTreeMap<String, PromiseSourcePoll>,
-    run_submissions: BTreeMap<u64, Option<SubmissionId>>,
     cancelling_watchdog: Option<CancellingWatchdog>,
     admission_failures: Vec<AgentAdmissionFailure>,
     execution_has_rollover_checkpoint: bool,
@@ -120,7 +119,6 @@ impl Default for AgentSessionWorkflow {
             cancelled_workflow_executions: BTreeSet::new(),
             pending_promise_cancellations: Vec::new(),
             promise_source_polls: BTreeMap::new(),
-            run_submissions: BTreeMap::new(),
             cancelling_watchdog: None,
             admission_failures: Vec::new(),
             execution_has_rollover_checkpoint: false,
@@ -348,12 +346,11 @@ fn continuation_args(
     args: &AgentSessionArgs,
 ) -> AgentSessionArgs {
     let mut next = args.clone();
-    next.legacy_max_steps_per_input = None;
-    next.continuation_state = Some(ctx.state(|state| {
-        let mut continuation = AgentSessionContinuationState::v1(state.admission_failures.clone());
-        continuation.ready = state.ready;
-        continuation.operation_outcomes = state.operation_outcomes.clone();
-        continuation
+    next.continuation_state = Some(ctx.state(|state| AgentSessionContinuationState {
+        version: AgentSessionContinuationState::VERSION,
+        ready: state.ready,
+        operation_outcomes: state.operation_outcomes.clone(),
+        admission_failures: state.admission_failures.clone(),
     }));
     next
 }

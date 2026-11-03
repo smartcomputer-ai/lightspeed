@@ -220,7 +220,6 @@ export function readEvents(
     nextCursor: events.at(-1)?.cursor ?? null,
     headCursor: session.events.at(-1)?.cursor ?? null,
     complete: pending.length <= limit,
-    gap: null,
   };
 }
 

@@ -214,7 +214,6 @@ impl AgentSessionWorkflow {
                     run_id: run.run_id.as_u64(),
                     status: run.status,
                     submission_id: run.submission_id.clone(),
-                    output: run.output.clone(),
                     active_turn_id: run.active_turn_id.map(|id| id.as_u64()),
                     active_tool_batch_id: run.active_tool_batch_id.map(|id| id.as_u64()),
                 }),
@@ -237,11 +236,7 @@ impl AgentSessionWorkflow {
                 .map(|run| AgentCompletedRunSummary {
                     run_id: run.run_id.as_u64(),
                     status: run.status,
-                    submission_id: self
-                        .run_submissions
-                        .get(&run.run_id.as_u64())
-                        .cloned()
-                        .flatten(),
+                    submission_id: run.submission_id.clone(),
                     output: run.output.clone(),
                     failure_message_ref: run
                         .failure
@@ -271,8 +266,7 @@ fn terminal_run_id_for_event(event: &CoreAgentEvent) -> Option<harness::RunId> {
 }
 
 /// Bounded independent retry for pushed tool-invocation delivery.
-/// Other emission bodies keep the legacy single-attempt, drop-on-missing
-/// semantics.
+/// Other emission bodies get one attempt and drop if the target is missing.
 const MAX_TOOL_INVOCATION_DELIVERY_ATTEMPTS: u32 = 5;
 const TOOL_INVOCATION_RETRY_BACKOFF_MS: u64 = 2_000;
 

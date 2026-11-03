@@ -760,20 +760,13 @@ pub struct CompletedToolBatch {
 pub struct ToolCallState {
     pub call: ObservedToolCall,
     pub status: ToolCallStatus,
-    pub execution_policy: Option<ToolCallExecutionPolicy>,
     pub result: Option<ToolCallResult>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolCallExecutionPolicy {
-    pub invokes_client_effect: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "contract", derive(schemars::JsonSchema))]
 pub enum ToolCallStatus {
-    Observed,
     Accepted,
     Unavailable,
     Pending,
@@ -962,20 +955,6 @@ fn decide_active_tool_batch_invocations(
     for call_state in &batch.calls {
         if call_state.status != ToolCallStatus::Accepted {
             continue;
-        }
-        let Some(policy) = call_state.execution_policy.as_ref() else {
-            return Err(DomainError::InvariantViolation(format!(
-                "accepted tool call {} is missing execution policy",
-                call_state.call.call_id
-            ))
-            .into());
-        };
-        if !policy.invokes_client_effect {
-            return Err(DomainError::InvariantViolation(format!(
-                "accepted tool call {} does not invoke a client effect",
-                call_state.call.call_id
-            ))
-            .into());
         }
         let joins = CoreAgentJoins {
             run_id: Some(batch.run_id),
@@ -1354,41 +1333,24 @@ fn initial_tool_call_state(
     turn_id: TurnId,
     call: &ObservedToolCall,
 ) -> ToolCallState {
-    let execution_policy = initial_tool_call_execution_policy(state, turn_id, call);
-    let status = if execution_policy.is_some() {
-        ToolCallStatus::Accepted
-    } else {
-        ToolCallStatus::Unavailable
-    };
-    let result = if status == ToolCallStatus::Unavailable {
-        Some(unavailable_tool_result(call))
-    } else {
-        None
-    };
-    ToolCallState {
-        call: call.clone(),
-        status,
-        execution_policy,
-        result,
-    }
-}
-
-fn initial_tool_call_execution_policy(
-    state: &CoreAgentState,
-    turn_id: TurnId,
-    call: &ObservedToolCall,
-) -> Option<ToolCallExecutionPolicy> {
     let invokes_client_effect = call
         .tool_id
         .as_ref()
         .and_then(|tool_id| planned_tool_for_turn(state, turn_id, tool_id))
         .is_some_and(|tool| tool.invokes_client_effect());
-    if !invokes_client_effect {
-        return None;
+    if invokes_client_effect {
+        ToolCallState {
+            call: call.clone(),
+            status: ToolCallStatus::Accepted,
+            result: None,
+        }
+    } else {
+        ToolCallState {
+            call: call.clone(),
+            status: ToolCallStatus::Unavailable,
+            result: Some(unavailable_tool_result(call)),
+        }
     }
-    Some(ToolCallExecutionPolicy {
-        invokes_client_effect: true,
-    })
 }
 
 pub fn remote_mcp_call_runtime(
@@ -1892,12 +1854,11 @@ fn defer_tool_batch(
             }
         }
     }
-    if batch.calls.iter().any(|call_state| {
-        matches!(
-            call_state.status,
-            ToolCallStatus::Observed | ToolCallStatus::Accepted
-        )
-    }) {
+    if batch
+        .calls
+        .iter()
+        .any(|call_state| call_state.status == ToolCallStatus::Accepted)
+    {
         return Err(DomainError::InvariantViolation(
             "tool batch deferral requires all invocable calls to be pending".into(),
         ));
@@ -1957,22 +1918,14 @@ fn start_tool_call(
     tool_name: &ToolName,
     arguments_ref: &BlobRef,
 ) -> Result<(), DomainError> {
-    let policy = {
-        let active_run = crate::core::components::run::active_run_ref(state, run_id)?;
-        tool_call_execution_policy_for_start(
-            active_run,
-            turn_id,
-            batch_id,
-            call_id,
-            tool_name,
-            arguments_ref,
-        )?
-    };
-    if !policy.invokes_client_effect {
-        return Err(DomainError::InvariantViolation(
-            "tool call start requires a client-effect tool".into(),
-        ));
-    }
+    validate_tool_call_start(
+        crate::core::components::run::active_run_ref(state, run_id)?,
+        turn_id,
+        batch_id,
+        call_id,
+        tool_name,
+        arguments_ref,
+    )?;
     let active_run = crate::core::components::run::active_run_mut(state, run_id)?;
     if active_run.status != RunStatus::Active {
         return Err(DomainError::InvariantViolation(
@@ -2035,14 +1988,14 @@ fn start_tool_call(
     Ok(())
 }
 
-fn tool_call_execution_policy_for_start(
+fn validate_tool_call_start(
     active_run: &ActiveRun,
     turn_id: TurnId,
     batch_id: ToolBatchId,
     call_id: &ToolCallId,
     tool_name: &ToolName,
     arguments_ref: &BlobRef,
-) -> Result<ToolCallExecutionPolicy, DomainError> {
+) -> Result<(), DomainError> {
     if active_run.active_tool_batch_id != Some(batch_id) {
         return Err(DomainError::InvariantViolation(
             "tool call start does not match active tool batch".into(),
@@ -2081,12 +2034,7 @@ fn tool_call_execution_policy_for_start(
             "tool call already has a result".into(),
         ));
     }
-    call_state.execution_policy.clone().ok_or_else(|| {
-        DomainError::InvariantViolation(format!(
-            "accepted tool call {} is missing execution policy",
-            call_id
-        ))
-    })
+    Ok(())
 }
 
 fn complete_tool_call(
@@ -2140,7 +2088,7 @@ fn complete_tool_call(
     let cancellable = result.status == ToolCallStatus::Cancelled
         && matches!(
             call_state.status,
-            ToolCallStatus::Observed | ToolCallStatus::Accepted | ToolCallStatus::Pending
+            ToolCallStatus::Accepted | ToolCallStatus::Pending
         );
     if call_state.status != ToolCallStatus::Pending && !cancellable {
         return Err(DomainError::InvariantViolation(

@@ -1152,14 +1152,14 @@ mod tests {
         session.config = Some(api::SessionConfig {
             model: Some(api::ModelConfig {
                 provider_id: "anthropic".to_owned(),
-                api_kind: "anthropic_messages".to_owned(),
+                api_kind: "anthropic:messages".to_owned(),
                 model: "claude-opus-5".to_owned(),
             }),
             ..Default::default()
         });
         assert_eq!(
             pinned_provider_route(&session),
-            Some(("anthropic", "anthropic_messages"))
+            Some(("anthropic", "anthropic:messages"))
         );
     }
 }

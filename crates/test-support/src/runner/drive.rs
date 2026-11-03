@@ -1295,7 +1295,6 @@ mod tests {
             max_tool_rounds: None,
             model_override: None,
             max_output_tokens: None,
-            provider_params: None,
             reasoning_effort: None,
             processing_tier: None,
             tool_choice: None,

@@ -341,8 +341,6 @@ mod tests {
             parked_tool_batch: None,
             tool_batches: BTreeMap::new(),
             completed_tool_batches: BTreeMap::new(),
-            output: None,
-            failure: None,
             notify_on_terminal: Vec::new(),
         });
         state

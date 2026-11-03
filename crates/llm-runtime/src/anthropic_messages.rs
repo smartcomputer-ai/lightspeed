@@ -478,9 +478,9 @@ async fn materialize_request_with_catalog(
         });
     }
     let mut params = anthropic_messages_params(request.params.as_ref())?;
-    // Materialize the intent reasoning effort into provider params. Explicit
-    // per-run provider params win: derived values never overwrite fields the
-    // params body already sets.
+    // Materialize the intent reasoning effort into provider params. Params set
+    // directly on the request win: derived values never overwrite fields the
+    // body sets.
     if let Some(effort) = request.reasoning_effort.as_deref() {
         let derived = anthropic_thinking_from_effort(effort, &request.model.model)?;
         if params.thinking.is_none() && params.output_config.is_none() {
@@ -496,13 +496,6 @@ async fn materialize_request_with_catalog(
         // invalidates the thinking produced after it; the binding policy
         // decides whether the session continues without that reasoning.
         default_anthropic_block_binding(thinking, thinking_prefix_mismatch);
-    }
-    if request.provider_response_id.is_some() {
-        return Err(LlmAdapterError::InvalidProviderRequest {
-            message: "Anthropic Messages has no provider response continuation; \
-                      provider_response_id must be empty"
-                .to_owned(),
-        });
     }
     let signed_compaction = has_signed_compaction(blobs, &request.context.entries).await?;
     if params.extra.contains_key("context_management") || params.extra.contains_key("compaction") {
@@ -614,9 +607,8 @@ async fn materialize_compact_request_with_binding(
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: Some(CompactionPolicy::Disabled),
-            params: task.params.clone(),
+            params: None,
         };
         let mut native = materialize_create_request_with_inventory(
             blobs,
@@ -2347,7 +2339,6 @@ mod tests {
                         token_estimate: None,
                     },
                     target_tokens: Some(128),
-                    params: None,
                     tools: vec![],
                     input_limit_tokens: None,
                     covered_entry_ids: vec![],
@@ -2437,7 +2428,6 @@ mod tests {
             reasoning_effort: None,
             parallel_tool_use: None,
             processing_tier: None,
-            provider_response_id: None,
             compaction: None,
             params: None,
         }
@@ -3651,16 +3641,6 @@ mod tests {
     async fn materialize_create_request_rejects_unsupported_intents() {
         let blobs = InMemoryBlobStore::new();
 
-        let mut continuation = intent_request(Vec::new());
-        continuation.provider_response_id = Some("msg_prev".to_string());
-        let error = materialize_create_request(&blobs, &continuation)
-            .await
-            .expect_err("continuation must fail");
-        assert!(matches!(
-            error,
-            LlmAdapterError::InvalidProviderRequest { .. }
-        ));
-
         let mut oversized_thinking = intent_request(Vec::new());
         oversized_thinking.output_limit = Some(1024);
         oversized_thinking.params = Some(anthropic_params(&AnthropicMessagesParams {
@@ -4450,7 +4430,6 @@ mod tests {
             covered_entry_ids: vec![],
             target_tokens: None,
             input_limit_tokens: None,
-            params: None,
         };
         let compact = materialize_compact_request(&blobs, &task).await.unwrap();
         let normal = materialize_create_request(&blobs, &generation)
@@ -4563,7 +4542,6 @@ mod tests {
                     token_estimate: None,
                 },
                 target_tokens: Some(128),
-                params: None,
             },
         };
 
@@ -5365,7 +5343,6 @@ mod tests {
                 token_estimate: None,
             },
             target_tokens: None,
-            params: None,
         };
 
         let native = materialize_compact_request(&blobs, &task("claude-opus-5-5"))

@@ -1,8 +1,8 @@
 use crate::{
     ApprovalEvent, CodecError, ContextEvent, CoreAgentEntry, CoreAgentEvent, CoreAgentJoins,
-    CoreAgentLifecycleEvent, CorrelationId, PromiseEvent, RunEvent, RunId, StoredEvent,
-    SubmissionId, ToolBatchId, ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId,
-    UncommittedCoreAgentEvent, WorkflowToolConfigEvent,
+    CoreAgentLifecycleEvent, PromiseEvent, RunEvent, RunId, StoredEvent, SubmissionId, ToolBatchId,
+    ToolCallId, ToolConfigEvent, ToolEvent, TurnEvent, TurnId, UncommittedCoreAgentEvent,
+    WorkflowToolConfigEvent,
     session::{StoredJoins, StoredSessionEntry, UncommittedStoredEvent},
 };
 
@@ -39,11 +39,6 @@ impl CoreAgentCodec {
         );
         insert_string(&mut encoded, "tool_call_id", joins.tool_call_id.as_ref());
         insert_string(&mut encoded, "submission_id", joins.submission_id.as_ref());
-        insert_string(
-            &mut encoded,
-            "correlation_id",
-            joins.correlation_id.as_ref(),
-        );
         encoded
     }
 
@@ -54,7 +49,6 @@ impl CoreAgentCodec {
             tool_batch_id: parse_numeric(joins, "tool_batch_id")?.map(ToolBatchId::new),
             tool_call_id: parse_string_id(joins, "tool_call_id", ToolCallId::try_new)?,
             submission_id: parse_string_id(joins, "submission_id", SubmissionId::try_new)?,
-            correlation_id: parse_string_id(joins, "correlation_id", CorrelationId::try_new)?,
         })
     }
 
@@ -143,7 +137,6 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
             ContextEvent::EntriesReplaced { .. } => "lightspeed.core.context.entries_replaced",
             ContextEvent::KeysRemoved { .. } => "lightspeed.core.context.keys_removed",
             ContextEvent::KeyPrefixReplaced { .. } => "lightspeed.core.context.key_prefix_replaced",
-            ContextEvent::StateReplaced { .. } => "lightspeed.core.context.state_replaced",
             ContextEvent::CompactionQueued { .. } => "lightspeed.core.context.compaction_queued",
             ContextEvent::CompactionRequested { .. } => {
                 "lightspeed.core.context.compaction_requested"
@@ -262,8 +255,8 @@ fn codec_failure(error: impl std::fmt::Display) -> CodecError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, CorrelationId, EventSeq, RunId,
-        SessionPosition, ToolBatchId, ToolEvent, TurnId,
+        CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, EventSeq, RunId, SessionPosition,
+        ToolBatchId, ToolEvent, TurnId,
     };
 
     use super::*;
@@ -344,7 +337,6 @@ mod tests {
                 run_id: Some(RunId::new(1)),
                 turn_id: Some(TurnId::new(2)),
                 tool_batch_id: Some(ToolBatchId::new(3)),
-                correlation_id: Some(CorrelationId::new("corr-1")),
                 ..CoreAgentJoins::default()
             },
             event: CoreAgentEvent::Tool(ToolEvent::BatchCompleted {

@@ -430,8 +430,12 @@ mod tests {
             receipts.insert(outcome);
             assert!(receipts.outcomes.len() <= SessionOperationReceipts::CAPACITY);
         }
-        let mut continuation = crate::AgentSessionContinuationState::v1(Vec::new());
-        continuation.operation_outcomes = receipts;
+        let continuation = crate::AgentSessionContinuationState {
+            version: crate::AgentSessionContinuationState::VERSION,
+            ready: false,
+            operation_outcomes: receipts,
+            admission_failures: Vec::new(),
+        };
         let restored: crate::AgentSessionContinuationState =
             serde_json::from_slice(&serde_json::to_vec(&continuation).unwrap()).unwrap();
         let receipts = restored.operation_outcomes;

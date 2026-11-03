@@ -59,8 +59,7 @@ it("rejects malformed handles without reading, and returns null for unknown hand
   expect(read).not.toHaveBeenCalled();
   expect(await findFileReference(handle, read)).toBeNull();
 });
-it("rejects history gaps and nonadvancing cursors", async () => {
-  await expect(findFileReference(handle, async () => ({ events: [], gap: {}, complete: false }))).rejects.toThrow("unavailable");
+it("rejects nonadvancing cursors", async () => {
   const read = vi.fn().mockResolvedValue({ events: [], complete: false, nextCursor: { seq: 10 } });
   await expect(findFileReference(handle, read)).rejects.toThrow("did not advance");
 });

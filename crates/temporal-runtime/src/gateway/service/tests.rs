@@ -1244,11 +1244,11 @@ fn existing_run_submission_rejects_completed_duplicate_with_different_input() {
         run_id: RunId::new(7),
         status: RunStatus::Completed,
         submission_id: Some(submission_id.clone()),
-        submission_digest: Some(harness::request_run_submission_digest(
+        submission_digest: harness::request_run_submission_digest(
             &original_source,
             &run_config,
             &[],
-        )),
+        ),
         source: harness::RunSource::Input {
             input: original_input,
         },
@@ -2774,16 +2774,7 @@ async fn text_inputs_preserve_generic_provenance_at_all_input_boundaries() {
                 provenance_ref: Some(source.to_string())
             }]
         );
-        let result = context_append_result(
-            &store,
-            "note".into(),
-            ContextAppendStatus::Applied,
-            &append,
-            None,
-        )
-        .await
-        .unwrap();
-        assert_eq!(result.activation_text.as_deref(), Some(text));
+        let result = context_append_result("note".into(), ContextAppendStatus::Applied, &append);
         assert_eq!(
             result.entry.unwrap().provenance_ref,
             Some(source.to_string())

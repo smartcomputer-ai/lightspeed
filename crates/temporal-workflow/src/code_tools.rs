@@ -51,13 +51,12 @@ pub struct InvokeCodeToolRequest {
     pub arguments_ref: BlobRef,
 }
 
-/// Close admission immediately. Cancellation additionally requests cleanup of
-/// admitted work; closing a scope does not roll back any completed effects.
+/// Close admission immediately and cancel admitted work. Closing a scope does
+/// not roll back any completed effects.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloseCodeToolScopeRequest {
     pub execution_id: String,
-    pub cancel_pending: bool,
 }
 
 /// Read an authoritative snapshot, including after a runner loses its waiters.
@@ -71,7 +70,6 @@ pub struct CodeToolScopeReportRequest {
 pub struct CodeToolScopeReport {
     pub execution_id: String,
     pub closed: bool,
-    pub cancel_requested: bool,
     /// Exposed names keyed by the opaque handles accepted by invoke requests.
     pub bindings: BTreeMap<String, ToolName>,
     /// Requests are keyed by execution-local request id, never arrival order.
@@ -83,7 +81,6 @@ impl From<&harness::CodeToolScope> for CodeToolScopeReport {
         Self {
             execution_id: scope.spec.execution_id.clone(),
             closed: scope.closed,
-            cancel_requested: scope.cancel_requested,
             bindings: scope
                 .spec
                 .bindings

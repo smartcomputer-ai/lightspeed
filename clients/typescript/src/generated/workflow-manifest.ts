@@ -181,7 +181,6 @@ export const WORKFLOW_CONTRACT_MANIFEST =
     },
     "codeTools": {
       "closeRequest": {
-        "cancel_pending": true,
         "execution_id": "execution:vector"
       },
       "invokeRequest": {
@@ -221,7 +220,6 @@ export const WORKFLOW_CONTRACT_MANIFEST =
             "status": "succeeded"
           }
         },
-        "cancel_requested": true,
         "closed": true,
         "execution_id": "execution:vector"
       },

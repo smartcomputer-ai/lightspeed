@@ -1947,7 +1947,7 @@ mod tests {
     }
 
     #[test]
-    fn session_identity_preserves_quoted_keys_and_does_not_guess_legacy_keys() {
+    fn session_identity_preserves_quoted_keys_and_does_not_guess_missing_keys() {
         let bot = BotId::new("triage");
         let key = "chat:\"ops\"\nSession kind: main";
         let id = crate::ids::bot_keyed_session_id(&bot, key);
@@ -1976,7 +1976,7 @@ mod tests {
             "guidance follows the emit grant"
         );
 
-        let legacy = bot_instructions(
+        let unkeyed = bot_instructions(
             &bot,
             BotSessionInstructions {
                 session_id: &id,
@@ -1986,9 +1986,9 @@ mod tests {
             None,
             true,
         );
-        assert!(legacy.contains("Session kind: keyed"));
-        assert!(!legacy.contains("Routing key:"));
-        assert!(legacy.contains("original routing key is unavailable"));
+        assert!(unkeyed.contains("Session kind: keyed"));
+        assert!(!unkeyed.contains("Routing key:"));
+        assert!(unkeyed.contains("original routing key is unavailable"));
     }
 
     #[test]

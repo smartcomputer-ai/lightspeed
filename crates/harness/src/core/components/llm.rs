@@ -29,12 +29,11 @@ pub struct ModelSelection {
     pub model: String,
 }
 
-/// Opaque provider request parameters.
+/// Opaque provider request parameters for one adapter call.
 ///
-/// The reducer and planners never read into `body`; it is carried through the
-/// session log verbatim and parsed only by the runtime adapter that
-/// materializes the wire request. Validation against the adapter's schema
-/// happens at the admission boundary, before the params enter the log.
+/// Durable session state never holds these. The reducer and planners leave
+/// `LlmRequest::params` empty; only code calling an adapter directly sets it,
+/// and the adapter parses `body` when it materializes the wire request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderParams {
     pub api_kind: ProviderApiKind,
@@ -62,9 +61,8 @@ pub struct ProviderCompatibility {
 /// Transient generation intent planned by the core.
 ///
 /// This is rebuilt from reduced state when a generation action is emitted; it is
-/// not stored in the durable turn log or reduced turn state. Provider-specific
-/// request settings travel opaquely in `params`; runtime adapters materialize
-/// the provider-native wire request from this intent.
+/// not stored in the durable turn log or reduced turn state. Runtime adapters
+/// materialize the provider-native wire request from this intent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub model: ModelSelection,
@@ -90,11 +88,6 @@ pub struct LlmRequest {
     /// Neutral provider processing class inherited from the session/profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_tier: Option<crate::ModelProcessingTier>,
-    /// Provider continuity token (e.g. OpenAI Responses `previous_response_id`)
-    /// threaded from prior generation facts. Currently always `None`; adapters
-    /// must tolerate absence.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_response_id: Option<String>,
     /// Session compaction policy at planning time, so adapters can lower
     /// provider-managed compaction (e.g. OpenAI `context_management`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,8 +126,7 @@ pub struct ContextCompactionRequest {
 
 /// Deterministic compaction intent planned by the core.
 ///
-/// Like [`LlmRequest`], provider-specific settings stay opaque in `params`;
-/// adapters that do not support standalone compaction must fail the request.
+/// Adapters that do not support standalone compaction must fail the request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContextCompactionTask {
     pub model: ModelSelection,
@@ -148,8 +140,6 @@ pub struct ContextCompactionTask {
     pub tools: Vec<ToolSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub params: Option<ProviderParams>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,16 +176,6 @@ pub(crate) fn build_llm_request(
         crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
     let tools = active_tools(state, &model.api_kind)?;
     crate::validate_tool_choice_for_tools(&state.tooling.tools, generation.tool_choice.as_ref())?;
-    let params = active_run.run_config.provider_params.clone();
-    if let Some(params) = params.as_ref()
-        && params.api_kind != model.api_kind
-    {
-        return Err(DomainError::ProviderCompatibility(format!(
-            "provider params api kind {:?} do not match model api kind {:?}",
-            params.api_kind, model.api_kind
-        ))
-        .into());
-    }
     let compaction = config.context.compaction.clone();
     let code_mode = code_mode_presentation(state, &tools);
     let request_fingerprint = request_fingerprint(
@@ -203,7 +183,6 @@ pub(crate) fn build_llm_request(
         &context,
         &tools,
         &generation,
-        params.as_ref(),
         active_run.run_id,
         turn_id,
     )?;
@@ -229,9 +208,8 @@ pub(crate) fn build_llm_request(
         reasoning_effort: generation.reasoning_effort,
         parallel_tool_use: generation.parallel_tool_use,
         processing_tier: generation.processing_tier,
-        provider_response_id: None,
         compaction,
-        params,
+        params: None,
     })
 }
 
@@ -345,11 +323,6 @@ pub(crate) fn build_context_compaction_task(
         entries: crate::core::components::context::context_entries_by_id(state, &ids)?,
         token_estimate: None,
     };
-    let params = state
-        .runs
-        .active
-        .as_ref()
-        .and_then(|run| run.run_config.provider_params.clone());
     let tools = active_tools(state, &model.api_kind)?;
     context.token_estimate =
         crate::core::components::context::combined_token_estimate(&context.entries);
@@ -358,7 +331,6 @@ pub(crate) fn build_context_compaction_task(
         &model,
         &context,
         target_tokens,
-        params.as_ref(),
         &tools,
         input_limit_tokens,
     )?;
@@ -370,7 +342,6 @@ pub(crate) fn build_context_compaction_task(
         covered_entry_ids,
         tools,
         input_limit_tokens,
-        params,
     })
 }
 
@@ -440,11 +411,10 @@ fn request_fingerprint(
     context: &ContextSnapshot,
     tools: &[ToolSpec],
     generation: &GenerationConfig,
-    params: Option<&ProviderParams>,
     run_id: RunId,
     turn_id: TurnId,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(model, context, tools, generation, params, run_id, turn_id))
+    let encoded = serde_json::to_vec(&(model, context, tools, generation, run_id, turn_id))
         .map_err(|error| {
             PlanningError::Rejected(format!("failed to fingerprint request: {error}"))
         })?;
@@ -490,19 +460,11 @@ fn compaction_request_fingerprint(
     model: &ModelSelection,
     context: &ContextSnapshot,
     target_tokens: Option<u32>,
-    params: Option<&ProviderParams>,
     tools: &[ToolSpec],
     input_limit_tokens: Option<u32>,
 ) -> Result<String, PlanningError> {
-    let encoded = serde_json::to_vec(&(
-        model,
-        context,
-        target_tokens,
-        params,
-        tools,
-        input_limit_tokens,
-    ))
-    .map_err(|error| {
+    let encoded = serde_json::to_vec(&(model, context, target_tokens, tools, input_limit_tokens))
+        .map_err(|error| {
         PlanningError::Rejected(format!("failed to fingerprint compaction request: {error}"))
     })?;
     let digest = Sha256::digest(encoded);
@@ -781,7 +743,6 @@ mod tests {
             &context,
             &first_tools,
             &generation,
-            None,
             RunId::new(1),
             TurnId::new(1),
         )
@@ -791,7 +752,6 @@ mod tests {
             &context,
             &second_tools,
             &generation,
-            None,
             RunId::new(1),
             TurnId::new(1),
         )

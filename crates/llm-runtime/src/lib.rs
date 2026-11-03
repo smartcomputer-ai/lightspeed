@@ -33,7 +33,7 @@ pub use openai_responses::{OpenAiResponsesApi, OpenAiResponsesLlmAdapter};
 pub use params::{
     AnthropicMessagesParams, AnthropicThinkingConfig, OpenAiCompletionsParams,
     OpenAiReasoningConfig, OpenAiResponsesParams, OpenAiServiceTier, PROVIDER_PARAMS_VERSION,
-    ThinkingPrefixMismatch, validate_provider_params,
+    ThinkingPrefixMismatch,
 };
 pub use provider_keys::{
     ModelProviderResolver, NoStoredModelProviders, NoStoredProviderKeys, ProviderAuthScheme,

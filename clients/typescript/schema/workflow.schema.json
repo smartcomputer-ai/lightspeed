@@ -441,18 +441,14 @@
     },
     "CloseCodeToolScopeRequest": {
       "additionalProperties": false,
-      "description": "Close admission immediately. Cancellation additionally requests cleanup of\nadmitted work; closing a scope does not roll back any completed effects.",
+      "description": "Close admission immediately and cancel admitted work. Closing a scope does\nnot roll back any completed effects.",
       "properties": {
-        "cancel_pending": {
-          "type": "boolean"
-        },
         "execution_id": {
           "type": "string"
         }
       },
       "required": [
-        "execution_id",
-        "cancel_pending"
+        "execution_id"
       ],
       "type": "object"
     },
@@ -801,9 +797,6 @@
           "description": "Requests are keyed by execution-local request id, never arrival order.",
           "type": "object"
         },
-        "cancel_requested": {
-          "type": "boolean"
-        },
         "closed": {
           "type": "boolean"
         },
@@ -814,7 +807,6 @@
       "required": [
         "execution_id",
         "closed",
-        "cancel_requested",
         "bindings",
         "calls"
       ],

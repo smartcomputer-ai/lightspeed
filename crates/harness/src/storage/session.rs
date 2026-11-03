@@ -1337,15 +1337,7 @@ fn run_boundary(entry: &StoredSessionEntry) -> Option<RunBoundary> {
     let run_id = entry
         .joins
         .get("run_id")
-        .and_then(|value| value.parse::<u64>().ok())
-        .or_else(|| {
-            entry
-                .event
-                .payload
-                .get("kind")
-                .and_then(|kind| kind.get("run_id"))
-                .and_then(serde_json::Value::as_u64)
-        })?;
+        .and_then(|value| value.parse::<u64>().ok())?;
     let terminal = is_terminal_run_entry(entry);
     let is_run = terminal
         || matches!(
