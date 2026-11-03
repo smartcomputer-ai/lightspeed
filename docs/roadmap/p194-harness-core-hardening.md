@@ -792,3 +792,22 @@ Open:
   a pushed resolution can wait out one activity. The race wake predicates are unchanged by design.
 - Not fixed, bounded: a due deadline held behind a compaction queues another `ResolvePromise` each pass,
   and the extras are no-ops once the first lands.
+
+Review of this package:
+
+- `cb81ac95` closes a hole in H-02. A blocked rollover now keeps driving when the outer loop cannot clear
+  the blocker, but a watchdog left by a finished cancel and a start backoff whose promise had ended were
+  only cleared on an outer pass, and neither makes the drive yield. A queued run after a cancel, or a long
+  run with no transport work, could then pass the threshold for its whole length and reach the server's
+  history limit. Both are now cleared at each commit, with a state-level test. A cancelling run's watchdog
+  also arms at the commit rather than the next pass, which only blocks rollover for that cancel.
+- Checked and found sound: no `select!` is left and the arm orders match the package; every arm commits its
+  own result and no other resume reaches the loop top; every `outer_loop_can_clear_now` term is consumed by
+  a pass, so a yield from the top of the drive cannot repeat; promise status only changes in `append_events`,
+  so the per-entry cancel queue misses no terminal; the bottom-of-pass check rolls over after a no-op
+  operation; the workflow contract exporter leaves no diff.
+- Left alone, already there before this package: a cancel landing while a call's result is being appended
+  can let the next pending call in a batch be scheduled before the drain abandons it, and code tool requests
+  still wait for the outer loop while a run keeps generating, since `transport_work_due` does not list them.
+- Still unverified: Docker was down again, so nothing here has run against Temporal. The risky note above
+  stands, and the same-activation order is still shown only by harness tests.
