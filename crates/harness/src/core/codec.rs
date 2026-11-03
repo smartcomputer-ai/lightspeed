@@ -90,10 +90,12 @@ pub struct CoreAgentCodec;
 
 impl CoreAgentCodec {
     pub fn encode_event(&self, event: &CoreAgentEvent) -> Result<StoredEvent, CodecError> {
+        let mut payload = serde_json::to_value(event).map_err(codec_failure)?;
+        replace_nul_in_json(&mut payload);
         Ok(StoredEvent::new(
             core_agent_event_envelope_kind(event),
             CORE_AGENT_SCHEMA_VERSION,
-            serde_json::to_value(event).map_err(codec_failure)?,
+            payload,
         ))
     }
 
@@ -153,6 +155,31 @@ impl CoreAgentCodec {
             joins: self.encode_joins(&event.joins),
             event: self.encode_event(&event.event)?,
         })
+    }
+}
+
+/// A session log cannot hold U+0000: Postgres refuses it in jsonb and in text. A preview
+/// of what a model wrote or a caller's label is not worth a run, so the durable format
+/// replaces it with U+FFFD. State only ever applies committed entries, so the log, live
+/// state and replay all see the same replacement.
+fn replace_nul(text: &str) -> String {
+    text.replace('\0', "\u{FFFD}")
+}
+
+fn replace_nul_in_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::String(text) if text.contains('\0') => *text = replace_nul(text),
+        serde_json::Value::Array(values) => values.iter_mut().for_each(replace_nul_in_json),
+        serde_json::Value::Object(object) => {
+            if object.keys().any(|key| key.contains('\0')) {
+                *object = std::mem::take(object)
+                    .into_iter()
+                    .map(|(key, value)| (replace_nul(&key), value))
+                    .collect();
+            }
+            object.values_mut().for_each(replace_nul_in_json);
+        }
+        _ => {}
     }
 }
 
@@ -335,6 +362,26 @@ mod tests {
         assert_eq!(encoded.version, CORE_AGENT_SCHEMA_VERSION);
 
         assert_eq!(codec.decode_event(&encoded).expect("decode event"), event);
+    }
+
+    #[test]
+    fn nul_is_replaced_in_every_string_value_and_key_at_any_depth() {
+        let mut value = serde_json::json!({
+            "plain": "untouched",
+            "text": "a\0b\0",
+            "key\0": 1,
+            "list": ["\0", { "nested\0key": "nested\0value" }, 2, null],
+        });
+        replace_nul_in_json(&mut value);
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "plain": "untouched",
+                "text": "a\u{FFFD}b\u{FFFD}",
+                "key\u{FFFD}": 1,
+                "list": ["\u{FFFD}", { "nested\u{FFFD}key": "nested\u{FFFD}value" }, 2, null],
+            })
+        );
     }
 
     #[test]

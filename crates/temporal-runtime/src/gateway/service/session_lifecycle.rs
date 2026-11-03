@@ -245,6 +245,9 @@ impl GatewayAgentApi {
             access,
         } = params;
         validate_caller_metadata(&metadata)?;
+        if let Some(display_name) = &display_name {
+            input::reject_nul("displayName", display_name)?;
+        }
         let workflow_tools = trusted_workflow_tools;
         let client_supplied_id = session_id.is_some();
         let session_id = match session_id {

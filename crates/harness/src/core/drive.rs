@@ -14291,6 +14291,62 @@ mod tests {
         next
     }
 
+    /// Postgres cannot store U+0000. Whichever route it arrives by, the log carries
+    /// U+FFFD instead, and the live drive and a replay of that log hold the same text.
+    #[test]
+    fn a_nul_never_reaches_the_log_and_the_log_still_replays() {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        logged.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("client.catalog"),
+            entry: ContextEntryInput {
+                kind: ContextEntryKind::Catalog {
+                    title: "cat\0alog".to_owned(),
+                },
+                preview: Some("cat\0alog".to_owned()),
+                ..message_input(ContextMessageRole::User, BlobRef::from_bytes(b"body"))
+            },
+        });
+        logged.admit(request_run_command(
+            None,
+            vec![ContextEntryInput {
+                preview: Some("[image: a\0.png]".to_owned()),
+                origin: Some("a\0".to_owned()),
+                ..message_input(ContextMessageRole::User, BlobRef::from_bytes(b"input"))
+            }],
+            run_config(),
+        ));
+        let request = logged.until_generate();
+        logged.resume(generation_result(
+            &request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::Stop,
+            vec![ContextEntryInput {
+                preview: Some("ELF\0\u{1}".to_owned()),
+                ..message_input(
+                    ContextMessageRole::Assistant,
+                    BlobRef::from_bytes(b"answer"),
+                )
+            }],
+            Vec::new(),
+        ));
+        logged.pump();
+
+        let stored = logged
+            .log
+            .iter()
+            .map(|entry| {
+                serde_json::to_string(&CoreAgentCodec.encode_entry(entry).unwrap()).unwrap()
+            })
+            .collect::<String>();
+        assert!(!stored.contains("\\u0000"), "NUL reached the log: {stored}");
+        assert!(stored.contains("cat\u{FFFD}alog"), "{stored}");
+        assert!(stored.contains("[image: a\u{FFFD}.png]"), "{stored}");
+        assert!(stored.contains("\"a\u{FFFD}\""), "{stored}");
+        assert!(stored.contains("ELF\u{FFFD}"), "{stored}");
+        logged.assert_replays(|_| {});
+    }
+
     /// A proposed append is only a proposal: the state moves when committed entries
     /// come back. So when the store refuses one, the events can be dropped and the run
     /// failed from the state as it was, with the failure on the very next position.

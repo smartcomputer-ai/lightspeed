@@ -27,6 +27,7 @@ fn optional_nullable_delete_after_close_ms_schema(
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionStartParams {
     pub session_id: Option<SessionId>,
+    /// Cannot contain NUL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Descriptive key/value metadata, applied only when the session is
@@ -62,6 +63,7 @@ pub struct SessionStartParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ManagedSessionStartParams {
     pub session_id: Option<SessionId>,
+    /// Cannot contain NUL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// Descriptive key/value metadata with the same bounds as
@@ -1155,7 +1157,7 @@ pub enum SessionLifecycleStatus {
 #[serde(rename_all = "camelCase")]
 pub struct SessionRenameParams {
     pub session_id: SessionId,
-    /// New display name; absent clears it.
+    /// New display name; absent clears it. Cannot contain NUL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
 }

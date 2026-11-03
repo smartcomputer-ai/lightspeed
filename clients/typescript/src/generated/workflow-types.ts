@@ -245,12 +245,12 @@ export type RunStatus = "active" | "parked" | "cancelling" | "completed" | "fail
 /**
  * Stable identifier for a promise: a session-scoped counter rendered as
  * `promise_<n>`, the same convention as `run_<n>`, so the model copies a
- * short handle rather than a digest. The harness hands every tool batch a
- * base one past the session cursor (`ToolInvocationBatchRequest::
- * promise_id_base`); the executor numbers the promises it creates from
- * that base, and the reducer accepts a creation only at or above the
- * batch's base and never twice. Producer correlation lives on
- * `PromiseSource`, not in the id.
+ * short handle rather than a digest. The harness hands every dispatch of a
+ * tool batch a base above the session cursor (`ToolInvocationBatchRequest::
+ * promise_id_base`); the executor numbers the promises it creates from that
+ * base. Proposal building accepts a creation only at or above the batch's
+ * base, and neither it nor the reducer accepts one twice. Producer correlation
+ * lives on `PromiseSource`, not in the id.
  *
  * This interface was referenced by `LightspeedWorkflowContract`'s JSON-Schema
  * via the `definition` "PromiseId".

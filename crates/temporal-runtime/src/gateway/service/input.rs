@@ -91,6 +91,9 @@ async fn media_message_input(
     kind: MediaKind,
     name: Option<&str>,
 ) -> Result<ContextEntryInput, AgentApiError> {
+    if let Some(name) = name {
+        reject_nul("media name", name)?;
+    }
     let mime = mime
         .split(';')
         .next()
@@ -204,6 +207,7 @@ pub(super) async fn context_entry_input_from_api(
                     "session/context/append catalog items need a title",
                 ));
             }
+            reject_nul("catalog title", title)?;
             let text = text.trim();
             if text.is_empty() {
                 return Err(empty_context_append_item_error());
@@ -261,6 +265,17 @@ pub(super) fn empty_run_input_error() -> AgentApiError {
     )
 }
 
+/// Postgres cannot store U+0000. The session log replaces it, but a caller's own field
+/// is better refused here, where the caller hears why.
+pub(super) fn reject_nul(field: &str, value: &str) -> Result<(), AgentApiError> {
+    if value.contains('\0') {
+        return Err(AgentApiError::invalid_request(format!(
+            "{field} cannot contain a NUL character"
+        )));
+    }
+    Ok(())
+}
+
 fn input_origin_from_api(item: &InputItem) -> Result<Option<String>, AgentApiError> {
     let origin = match item {
         InputItem::Text { origin, .. }
@@ -274,6 +289,9 @@ fn input_origin_from_api(item: &InputItem) -> Result<Option<String>, AgentApiErr
         return Err(AgentApiError::invalid_request(
             "origin must contain 1–200 bytes and cannot be blank",
         ));
+    }
+    if let Some(origin) = origin {
+        reject_nul("origin", origin)?;
     }
     Ok(origin.clone())
 }

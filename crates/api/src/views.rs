@@ -409,7 +409,7 @@ pub enum RunStatus {
 pub enum InputItem {
     Text {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Application-supplied display provenance (1–200 nonblank bytes).
+        /// Application-supplied display provenance (1–200 nonblank bytes, no NUL).
         /// The platform uses `user:<id>` for direct human input and `event` for
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
@@ -422,7 +422,7 @@ pub enum InputItem {
     },
     TextRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Application-supplied display provenance (1–200 nonblank bytes).
+        /// Application-supplied display provenance (1–200 nonblank bytes, no NUL).
         /// The platform uses `user:<id>` for direct human input and `event` for
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
@@ -435,7 +435,7 @@ pub enum InputItem {
     },
     Media {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        /// Application-supplied display provenance (1–200 nonblank bytes).
+        /// Application-supplied display provenance (1–200 nonblank bytes, no NUL).
         /// The platform uses `user:<id>` for direct human input and `event` for
         /// bot deliveries; other values are allowed. Omitted means unknown.
         /// This metadata is not an authorization identity or model input text.
@@ -443,6 +443,7 @@ pub enum InputItem {
         blob_ref: String,
         mime: String,
         kind: MediaKind,
+        /// Shown as the item's preview; cannot contain NUL.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
     },
@@ -455,6 +456,7 @@ pub enum InputItem {
     /// context rewrite or beyond a per-key cap.
     Catalog {
         /// Short name shown as the catalog's heading, e.g. "Bot directory".
+        /// Cannot contain NUL.
         title: String,
         /// The catalog body, plain text or Markdown.
         text: String,

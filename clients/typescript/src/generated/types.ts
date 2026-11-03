@@ -866,7 +866,7 @@ export type RunViewSource = {
 export type InputItem =
   | {
       /**
-       * Application-supplied display provenance (1–200 nonblank bytes).
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
        * The platform uses `user:<id>` for direct human input and `event` for
        * bot deliveries; other values are allowed. Omitted means unknown.
        * This metadata is not an authorization identity or model input text.
@@ -883,7 +883,7 @@ export type InputItem =
   | {
       blobRef: string;
       /**
-       * Application-supplied display provenance (1–200 nonblank bytes).
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
        * The platform uses `user:<id>` for direct human input and `event` for
        * bot deliveries; other values are allowed. Omitted means unknown.
        * This metadata is not an authorization identity or model input text.
@@ -900,9 +900,12 @@ export type InputItem =
       blobRef: string;
       kind: MediaKind;
       mime: string;
+      /**
+       * Shown as the item's preview; cannot contain NUL.
+       */
       name?: string | null;
       /**
-       * Application-supplied display provenance (1–200 nonblank bytes).
+       * Application-supplied display provenance (1–200 nonblank bytes, no NUL).
        * The platform uses `user:<id>` for direct human input and `event` for
        * bot deliveries; other values are allowed. Omitted means unknown.
        * This metadata is not an authorization identity or model input text.
@@ -917,6 +920,7 @@ export type InputItem =
       text: string;
       /**
        * Short name shown as the catalog's heading, e.g. "Bot directory".
+       * Cannot contain NUL.
        */
       title: string;
       type: "catalog";
@@ -8107,6 +8111,9 @@ export interface ManagedSessionStartParams {
    * the profile.
    */
   deleteAfterCloseMs?: number | null;
+  /**
+   * Cannot contain NUL.
+   */
   displayName?: string | null;
   /**
    * Descriptive key/value metadata with the same bounds as
@@ -8578,7 +8585,7 @@ export interface SessionReadParams {
  */
 export interface SessionRenameParams {
   /**
-   * New display name; absent clears it.
+   * New display name; absent clears it. Cannot contain NUL.
    */
   displayName?: string | null;
   sessionId: string;
@@ -8618,6 +8625,9 @@ export interface SessionStartParams {
    * the profile.
    */
   deleteAfterCloseMs?: number | null;
+  /**
+   * Cannot contain NUL.
+   */
   displayName?: string | null;
   /**
    * Descriptive key/value metadata, applied only when the session is

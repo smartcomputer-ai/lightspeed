@@ -80,6 +80,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           ]
         },
         "displayName": {
+          "description": "Cannot contain NUL.",
           "type": [
             "string",
             "null"
@@ -2336,7 +2337,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "displayName": {
-          "description": "New display name; absent clears it.",
+          "description": "New display name; absent clears it. Cannot contain NUL.",
           "type": [
             "string",
             "null"
@@ -2635,7 +2636,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2668,7 +2669,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2704,13 +2705,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; cannot contain NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2737,7 +2739,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -2842,7 +2844,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2875,7 +2877,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2911,13 +2913,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; cannot contain NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -2944,7 +2947,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -3102,7 +3105,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3135,7 +3138,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3171,13 +3174,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; cannot contain NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3204,7 +3208,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {
@@ -3596,7 +3600,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
             {
               "properties": {
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3629,7 +3633,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3665,13 +3669,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "name": {
+                  "description": "Shown as the item's preview; cannot contain NUL.",
                   "type": [
                     "string",
                     "null"
                   ]
                 },
                 "origin": {
-                  "description": "Application-supplied display provenance (1–200 nonblank bytes).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
+                  "description": "Application-supplied display provenance (1–200 nonblank bytes, no NUL).\nThe platform uses `user:<id>` for direct human input and `event` for\nbot deliveries; other values are allowed. Omitted means unknown.\nThis metadata is not an authorization identity or model input text.",
                   "type": [
                     "string",
                     "null"
@@ -3698,7 +3703,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "string"
                 },
                 "title": {
-                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".",
+                  "description": "Short name shown as the catalog's heading, e.g. \"Bot directory\".\nCannot contain NUL.",
                   "type": "string"
                 },
                 "type": {

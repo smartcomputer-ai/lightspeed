@@ -109,6 +109,16 @@ impl AgentCallArgs {
                 ),
             });
         }
+        // The label names the child session, in a text column that cannot hold NUL.
+        if self
+            .label
+            .as_deref()
+            .is_some_and(|label| label.contains('\0'))
+        {
+            return Err(ToolError::InvalidRequest {
+                message: "label cannot contain a NUL character".to_owned(),
+            });
+        }
         Ok(())
     }
 }
@@ -315,6 +325,20 @@ fn agent_call_input_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_label_with_a_nul_is_a_tool_error_the_model_can_correct() {
+        let args: AgentCallArgs = serde_json::from_value(json!({
+            "agent": "reviewer",
+            "input": "x",
+            "label": "review\u{0}er"
+        }))
+        .expect("decode");
+        assert!(matches!(
+            args.validate(),
+            Err(ToolError::InvalidRequest { .. })
+        ));
+    }
 
     #[test]
     fn args_reject_blank_agent_and_input_and_unknown_fields() {

@@ -2490,6 +2490,52 @@ async fn input_origin_rejects_blank_and_oversized_values() {
     }
 }
 
+/// Every field below reaches a jsonb column, and a display name reaches a text column,
+/// and neither can hold U+0000. The caller is told here rather than having the log
+/// quietly change what it sent.
+#[tokio::test(flavor = "current_thread")]
+async fn a_nul_in_a_callers_own_field_is_an_invalid_request() {
+    let store = harness::storage::InMemoryBlobStore::new();
+    let image = store.put_bytes(b"png".to_vec()).await.unwrap();
+    let text_with_origin = InputItem::Text {
+        provenance_ref: None,
+        text: "hello".into(),
+        origin: Some("a\0".to_owned()),
+    };
+    let media_with_name = InputItem::Media {
+        origin: None,
+        blob_ref: image.as_str().to_owned(),
+        mime: "image/png".to_owned(),
+        kind: api::MediaKind::Image,
+        name: Some("a\0.png".to_owned()),
+    };
+    for item in [&text_with_origin, &media_with_name] {
+        let error = run_input_from_api(&store, std::slice::from_ref(item))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        assert!(error.message.contains("NUL"), "{error:?}");
+    }
+    let catalog = InputItem::Catalog {
+        title: "cat\0alog".to_owned(),
+        text: "body".to_owned(),
+    };
+    for item in [&text_with_origin, &media_with_name, &catalog] {
+        let error = context_entry_input_from_api(&store, item)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, AgentApiErrorKind::InvalidRequest, "{error:?}");
+        assert!(error.message.contains("NUL"), "{error:?}");
+    }
+    assert_eq!(
+        input::reject_nul("displayName", "bad\0name")
+            .unwrap_err()
+            .kind,
+        AgentApiErrorKind::InvalidRequest
+    );
+    input::reject_nul("displayName", "fine \u{FFFD} name").expect("only NUL is refused");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn skill_list_reads_latest_structured_provenance() {
     let blobs = harness::storage::InMemoryBlobStore::new();

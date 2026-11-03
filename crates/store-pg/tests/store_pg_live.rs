@@ -1179,6 +1179,117 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "requires PostgreSQL and object storage"]
+async fn pg_live_a_value_postgres_cannot_hold_is_a_data_rejection_and_writes_nothing() {
+    let store = live_store("data-rejection", 1024).await;
+    let session_id = SessionId::new("session-nul");
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: session_id.clone(),
+            display_name: None,
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create");
+
+    // jsonb refuses it, with 22P05.
+    let error = store
+        .append(AppendSessionEvents {
+            session_id: session_id.clone(),
+            expected_head: None,
+            events: vec![ref_event(2, serde_json::json!({ "preview": "a\0b" }))],
+        })
+        .await
+        .expect_err("jsonb cannot hold NUL");
+    assert!(
+        matches!(error, SessionStoreError::DataRejected { .. }),
+        "{error:?}"
+    );
+    assert!(error.is_data_rejection());
+    assert_eq!(store.head(&session_id).await.expect("head"), None);
+
+    // text refuses it, with 22021, here and when a session is created.
+    let error = store
+        .set_session_display_name(&session_id, Some("a\0b".to_owned()))
+        .await
+        .expect_err("text cannot hold NUL");
+    assert!(
+        matches!(error, SessionStoreError::DataRejected { .. }),
+        "{error:?}"
+    );
+    let error = store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: SessionId::new("session-nul-name"),
+            display_name: Some("a\0b".to_owned()),
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect_err("text cannot hold NUL");
+    assert!(
+        matches!(error, SessionStoreError::DataRejected { .. }),
+        "{error:?}"
+    );
+
+    // What the session codec encodes always fits, NUL or not.
+    let mut drive =
+        harness::CoreAgentDrive::from_replayed(session_id.clone(), harness::CoreAgentState::new());
+    let content_ref = put_blob(&store, "catalog body").await;
+    let commands = [
+        harness::CoreAgentCommand::OpenSession {
+            config: harness::SessionConfig {
+                model: harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiCompletions,
+                    provider_id: "openai".to_owned(),
+                    model: "gpt-test".to_owned(),
+                },
+                generation: Default::default(),
+                limits: Default::default(),
+                context: Default::default(),
+                features: Default::default(),
+            },
+        },
+        harness::CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: harness::ContextEntryKey::new("client.catalog"),
+            entry: harness::ContextEntryInput {
+                kind: harness::ContextEntryKind::Catalog {
+                    title: "cat\0alog".to_owned(),
+                },
+                content: harness::ContentRef::text(content_ref),
+                preview: Some("cat\0alog".to_owned()),
+                origin: None,
+                provenance_ref: None,
+                token_estimate: None,
+            },
+        },
+    ];
+    for command in commands {
+        let harness::CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } = drive.admit_command(command, 3).expect("admit")
+        else {
+            panic!("expected an append");
+        };
+        let appended = store
+            .append(AppendSessionEvents {
+                session_id: session_id.clone(),
+                expected_head,
+                events,
+            })
+            .await
+            .expect("an encoded event commits");
+        drive.resume_appended(appended.entries).expect("resume");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_put_of_existing_content_touches_without_rewriting() {
     let store = live_store("touch", 8).await;

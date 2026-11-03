@@ -2409,6 +2409,9 @@ impl AgentApiService for GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
+        if let Some(display_name) = &params.display_name {
+            input::reject_nul("displayName", display_name)?;
+        }
         let record = self
             .store
             .set_session_display_name(&session_id, params.display_name)
