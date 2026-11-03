@@ -112,6 +112,8 @@ impl<'a> CoreAgentProjector<'a> {
         };
 
         let session = SessionView {
+            // Store facts only: session/read adds what Temporal says.
+            execution_failure: None,
             access: params.access.clone(),
             id: params.session_id.as_str().to_owned(),
             display_name: params.record.display_name.clone(),

@@ -861,6 +861,7 @@ mod tests {
             .find(|run| matches!(run.status, RunStatus::Running | RunStatus::Parked))
             .cloned();
         SessionView {
+            execution_failure: None,
             access: api::ResourceAccessSummary {
                 visibility: api::Visibility::Universe,
                 created_by: Some(api::Attribution::Local),

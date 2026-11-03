@@ -1707,11 +1707,13 @@ async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<
                 // A drop is advisory: the session reads normally and the
                 // workflow keeps running until the authorized reply below.
                 assert_eq!(status.fatal_error, None);
-                api.read_session(api::SessionReadParams {
-                    session_id: session_id.as_str().to_owned(),
-                    run_limit: None,
-                })
-                .await?;
+                let session = api
+                    .read_session(api::SessionReadParams {
+                        session_id: session_id.as_str().to_owned(),
+                        run_limit: None,
+                    })
+                    .await?;
+                assert_eq!(session.result.session.execution_failure, None);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(200)).await;

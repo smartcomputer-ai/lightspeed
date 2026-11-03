@@ -1796,6 +1796,29 @@ fn session_status_serializes_as_string_enum() {
 }
 
 #[test]
+fn session_execution_failure_serializes_camel_case_and_is_omitted_when_absent() {
+    for (failure, wire) in [
+        (SessionExecutionFailureView::Failed, "failed"),
+        (SessionExecutionFailureView::Terminated, "terminated"),
+        (SessionExecutionFailureView::TimedOut, "timedOut"),
+        (SessionExecutionFailureView::Missing, "missing"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(failure).expect("serialize"),
+            json!(wire)
+        );
+    }
+    let mut session = test_session("session_1".to_owned(), SessionStatus::Idle);
+    let healthy = serde_json::to_value(&session).expect("serialize session");
+    assert!(healthy.get("executionFailure").is_none());
+    session.status = SessionStatus::Error;
+    session.execution_failure = Some(SessionExecutionFailureView::TimedOut);
+    let dead = serde_json::to_value(&session).expect("serialize session");
+    assert_eq!(dead["status"], json!("error"));
+    assert_eq!(dead["executionFailure"], json!("timedOut"));
+}
+
+#[test]
 fn run_lifecycle_statuses_keep_cancelling_distinct() {
     assert_eq!(
         serde_json::to_value(RunStatus::Cancelling).expect("serialize status"),
@@ -3298,6 +3321,7 @@ fn test_workspace(workspace_id: String, revision: u64) -> VfsWorkspaceView {
 fn test_session(id: SessionId, status: SessionStatus) -> SessionView {
     let retention = test_session_retention(&id);
     SessionView {
+        execution_failure: None,
         access: test_access_summary(),
         activity: SessionActivity::Idle,
         metadata: Default::default(),

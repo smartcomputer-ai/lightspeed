@@ -4,6 +4,7 @@ import type {
   Attribution,
   ResourceAccessSummary,
   SessionActivity,
+  SessionExecutionFailureView,
   ContextEntryView,
   ContextCompactionView,
   RunSummaryView,
@@ -482,6 +483,8 @@ export interface SessionView {
   updatedAtMs: number;
   closedAtMs?: number | null;
   status: "notLoaded" | "idle" | "active" | "closed" | "error";
+  /// Set on a read when the session is open but its workflow has stopped.
+  executionFailure?: SessionExecutionFailureView | null;
   retention: SessionRetention;
   managed: boolean;
   activeEnvironmentId?: string | null;

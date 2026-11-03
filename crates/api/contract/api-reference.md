@@ -68,7 +68,7 @@ Creates a session with immutable lifecycle and workflow-tool declarations using 
 
 **Read a session**
 
-Returns current state plus a bounded newest-first run-summary page. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
+Returns stored state plus a bounded newest-first run-summary page, and needs no worker. An open session whose execution has stopped reports executionFailure. Follow nextRunCursor with session/runs/list when hasOlderRuns is true; use session/events/read for the transcript.
 
 - Access: `{"kind":"universe","action":"read"}`
 - Group: `session`

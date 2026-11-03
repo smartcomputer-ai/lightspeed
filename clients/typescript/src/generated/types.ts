@@ -372,6 +372,14 @@ export type ToolChoice =
       type: "specific";
     };
 /**
+ * How an open session's workflow execution stopped. A session that closed
+ * normally never reports one.
+ *
+ * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
+ * via the `definition` "SessionExecutionFailureView".
+ */
+export type SessionExecutionFailureView = "failed" | "terminated" | "timedOut" | "missing";
+/**
  * Completion contract for one workflow-tool invocation. Joined tools park
  * the original call on one runtime-owned reply; Promises exposes handles for
  * model-controlled concurrency.
@@ -2029,6 +2037,13 @@ export interface SessionView {
   configRevision: number;
   createdAtMs: number;
   displayName?: string | null;
+  /**
+   * Set by `session/read` when the session is still open but its workflow
+   * execution has stopped, in which case `status` is `error`. Nothing is
+   * running and the rest of the view is the stored log. Lists do not check
+   * the execution, so a list and a read of the same session can differ.
+   */
+  executionFailure?: SessionExecutionFailureView | null;
   id: string;
   /**
    * True only when immutable lifecycle ownership was admitted with a

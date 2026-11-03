@@ -304,6 +304,97 @@ async fn temporal_live_session_lifecycle_list_and_closed_only_delete() -> anyhow
     run_with_live_worker(activities, run_lifecycle_delete_live_client).await
 }
 
+/// `session/read` is served from the store and asks the Temporal server, not a
+/// worker, whether the execution is alive. The worker is gone for all of this.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_session_read_needs_no_worker_and_reports_a_dead_execution()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    let started = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let captured = started.clone();
+    let activities = fake_worker_activities().await?;
+    run_with_live_worker(activities, |client, task_queue, session_id| async move {
+        let store = pg_store_from_env().await?;
+        support::live::seed_agent_default(&store, &openai_live_model()).await?;
+        let api = GatewayAgentApi::builder(client.clone(), store)
+            .with_task_queue(task_queue)
+            .build();
+        api.start_session(SessionStartParams {
+            access: None,
+            metadata: Default::default(),
+            session_id: Some(session_id.as_str().to_owned()),
+            display_name: None,
+            config: None,
+            profile: None,
+            delete_after_close_ms: None,
+        })
+        .await?;
+        captured.replace(Some((client, api, session_id)));
+        Ok(())
+    })
+    .await?;
+    let (client, api, session_id) = started.take().expect("session started");
+
+    temporal_runtime::gateway::request_context::with_request_context(
+        support::live::local_request_context().await?,
+        async {
+            let running = read_session_view(&api, &session_id).await?;
+            assert_eq!(running.status, SessionStatus::Idle);
+            assert_eq!(running.execution_failure, None);
+
+            live_workflow_handle(&client, &session_id)?
+                .terminate(WorkflowTerminateOptions::default())
+                .await?;
+            let dead = read_session_view(&api, &session_id).await?;
+            assert_eq!(dead.status, SessionStatus::Error);
+            assert_eq!(
+                dead.execution_failure,
+                Some(api::SessionExecutionFailureView::Terminated)
+            );
+
+            // A list stays on the stored projection, so it does not notice.
+            let listed = api
+                .list_sessions(SessionListParams {
+                    limit: Some(100),
+                    ..Default::default()
+                })
+                .await?;
+            let row = listed
+                .result
+                .sessions
+                .iter()
+                .find(|session| session.id == session_id.as_str())
+                .expect("listed");
+            assert_eq!(row.lifecycle_status, SessionLifecycleStatus::Open);
+
+            // Force close reconciles the store, and a closed row skips the check.
+            api.close_session(api::SessionCloseParams {
+                session_id: session_id.as_str().to_owned(),
+                force: true,
+            })
+            .await?;
+            let closed = read_session_view(&api, &session_id).await?;
+            assert_eq!(closed.status, SessionStatus::Closed);
+            assert_eq!(closed.execution_failure, None);
+
+            let missing = api
+                .read_session(SessionReadParams {
+                    session_id: format!("{}-missing", session_id.as_str()),
+                    run_limit: None,
+                })
+                .await
+                .expect_err("no row and no execution");
+            assert_eq!(missing.kind, AgentApiErrorKind::NotFound);
+            Ok(())
+        },
+    )
+    .await
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn temporal_live_continue_as_new_completes_later_fake_run() -> anyhow::Result<()> {

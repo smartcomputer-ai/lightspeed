@@ -618,6 +618,44 @@ impl GatewayAgentApi {
         }
     }
 
+    /// Ask the Temporal server what became of a session's workflow execution.
+    /// This is an RPC to the server, so unlike a query it needs no worker.
+    pub(crate) async fn execution_liveness(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<ExecutionLiveness, AgentApiError> {
+        match self
+            .workflow_handle(session_id)
+            .describe(WorkflowDescribeOptions::default())
+            .await
+        {
+            Ok(description) => Ok(ExecutionLiveness::from_status(description.status())),
+            Err(WorkflowInteractionError::NotFound(_)) => Ok(ExecutionLiveness::Missing),
+            Err(error) => Err(map_workflow_interaction_error(error)),
+        }
+    }
+
+    /// How an open session's execution stopped, for `session/read`. The read
+    /// is served from the store, so a server that cannot answer leaves it
+    /// without the check instead of failing it.
+    pub(super) async fn open_session_execution_failure(
+        &self,
+        session_id: &SessionId,
+    ) -> Option<api::SessionExecutionFailureView> {
+        match self.execution_liveness(session_id).await {
+            Ok(liveness) => liveness.open_session_failure(),
+            Err(error) => {
+                tracing::warn!(
+                    target: "temporal_runtime",
+                    session_id = %session_id,
+                    error = %error,
+                    "could not check the session's workflow execution"
+                );
+                None
+            }
+        }
+    }
+
     /// Distinguish a workflow that does not exist from one that exists but is no
     /// longer running (e.g. failed during bootstrap and closed). Used to turn a
     /// raw `NotFound` from a signal/query into a typed
@@ -627,52 +665,33 @@ impl GatewayAgentApi {
         &self,
         session_id: &SessionId,
     ) -> AgentApiError {
-        match self
-            .workflow_handle(session_id)
-            .describe(WorkflowDescribeOptions::default())
-            .await
-        {
-            Ok(description) => {
-                if matches!(description.status(), WorkflowExecutionStatus::Running) {
-                    // Running but the interaction missed it: keep not-found
-                    // semantics; the caller will typically retry/poll.
-                    AgentApiError::not_found("agent workflow not found")
-                } else if self.session_is_closed(session_id).await.unwrap_or(false) {
-                    AgentApiError::rejected(format!("session is not open: {session_id}"))
-                } else {
-                    session_bootstrap_failed_error(session_id, None)
-                }
-            }
-            // Truly absent: there is no execution for this session id.
-            Err(WorkflowInteractionError::NotFound(_)) => match self
-                .session_is_closed(session_id)
-                .await
-            {
-                Ok(true) => AgentApiError::rejected(format!("session is not open: {session_id}")),
-                _ => AgentApiError::not_found("agent workflow not found"),
-            },
-            Err(error) => map_workflow_interaction_error(error),
+        let liveness = match self.execution_liveness(session_id).await {
+            Ok(liveness) => liveness,
+            Err(error) => return error,
+        };
+        // Running but the interaction missed it: keep not-found semantics; the
+        // caller will typically retry/poll.
+        if liveness == ExecutionLiveness::Running {
+            return AgentApiError::not_found("agent workflow not found");
         }
-    }
-
-    async fn session_is_closed(&self, session_id: &SessionId) -> Result<bool, AgentApiError> {
-        self.load_session_state(session_id)
+        let row = self
+            .load_session_state(session_id)
             .await
-            .map(|loaded| loaded.state.lifecycle.status == CoreAgentStatus::Closed)
-    }
-
-    /// True only when a workflow execution exists and is currently running.
-    /// Absent, completed, failed, and terminated executions all report false.
-    pub(super) async fn workflow_is_running(&self, session_id: &SessionId) -> bool {
-        match self
-            .workflow_handle(session_id)
-            .describe(WorkflowDescribeOptions::default())
-            .await
-        {
-            Ok(description) => {
-                matches!(description.status(), WorkflowExecutionStatus::Running)
+            .map(|loaded| loaded.state.lifecycle.status);
+        match (row, liveness) {
+            (Ok(CoreAgentStatus::Closed), _) => {
+                AgentApiError::rejected(format!("session is not open: {session_id}"))
             }
-            Err(_) => false,
+            // No row and no execution that failed: the session never existed
+            // or was deleted after it ended, which is not a bootstrap problem.
+            (Err(error), liveness)
+                if is_not_found(&error)
+                    && liveness != ExecutionLiveness::Terminal(ExecutionTerminalKind::Failed) =>
+            {
+                error
+            }
+            (_, ExecutionLiveness::Missing) => AgentApiError::not_found("agent workflow not found"),
+            _ => session_bootstrap_failed_error(session_id, None),
         }
     }
 
@@ -733,6 +752,60 @@ impl GatewayAgentApi {
     }
 }
 
+/// What the Temporal server knows about a session's workflow execution, by
+/// workflow id: the latest run, across rollovers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutionLiveness {
+    Running,
+    Terminal(ExecutionTerminalKind),
+    /// No execution exists, or a finished one has passed namespace retention.
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExecutionTerminalKind {
+    Completed,
+    Failed,
+    Canceled,
+    Terminated,
+    TimedOut,
+}
+
+impl ExecutionLiveness {
+    fn from_status(status: WorkflowExecutionStatus) -> Self {
+        match status {
+            WorkflowExecutionStatus::Completed => Self::Terminal(ExecutionTerminalKind::Completed),
+            WorkflowExecutionStatus::Failed => Self::Terminal(ExecutionTerminalKind::Failed),
+            WorkflowExecutionStatus::Canceled => Self::Terminal(ExecutionTerminalKind::Canceled),
+            WorkflowExecutionStatus::Terminated => {
+                Self::Terminal(ExecutionTerminalKind::Terminated)
+            }
+            WorkflowExecutionStatus::TimedOut => Self::Terminal(ExecutionTerminalKind::TimedOut),
+            // Only a status that says the execution ended counts as ended. A
+            // rollover has a running successor and a pause can be undone.
+            _ => Self::Running,
+        }
+    }
+
+    /// The failure to report for a session the store still has open. Closing a
+    /// session is the only clean way out of its workflow, so an execution that
+    /// completed or was canceled under an open row stopped short of that.
+    fn open_session_failure(self) -> Option<api::SessionExecutionFailureView> {
+        use api::SessionExecutionFailureView as View;
+        match self {
+            Self::Running => None,
+            Self::Missing => Some(View::Missing),
+            Self::Terminal(ExecutionTerminalKind::Failed) => Some(View::Failed),
+            Self::Terminal(ExecutionTerminalKind::TimedOut) => Some(View::TimedOut),
+            Self::Terminal(
+                ExecutionTerminalKind::Completed
+                | ExecutionTerminalKind::Canceled
+                | ExecutionTerminalKind::Terminated,
+            ) => Some(View::Terminated),
+        }
+    }
+}
+
 pub(super) fn session_bootstrap_failed_error(
     session_id: &SessionId,
     reason: Option<&str>,
@@ -776,6 +849,34 @@ fn require_universe_workflow_reference(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_ended_execution_reports_an_open_session_failure() {
+        use api::SessionExecutionFailureView as View;
+        for (status, expected) in [
+            (WorkflowExecutionStatus::Running, None),
+            (WorkflowExecutionStatus::ContinuedAsNew, None),
+            (WorkflowExecutionStatus::Paused, None),
+            (WorkflowExecutionStatus::Unspecified, None),
+            (WorkflowExecutionStatus::Unknown, None),
+            (WorkflowExecutionStatus::Failed, Some(View::Failed)),
+            (WorkflowExecutionStatus::TimedOut, Some(View::TimedOut)),
+            (WorkflowExecutionStatus::Terminated, Some(View::Terminated)),
+            // Under a row that is still open these did not end cleanly either.
+            (WorkflowExecutionStatus::Completed, Some(View::Terminated)),
+            (WorkflowExecutionStatus::Canceled, Some(View::Terminated)),
+        ] {
+            assert_eq!(
+                ExecutionLiveness::from_status(status).open_session_failure(),
+                expected,
+                "{status:?}"
+            );
+        }
+        assert_eq!(
+            ExecutionLiveness::Missing.open_session_failure(),
+            Some(View::Missing)
+        );
+    }
 
     #[test]
     fn workflow_references_stay_inside_the_callers_universe() {

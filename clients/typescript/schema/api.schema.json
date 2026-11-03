@@ -15981,6 +15981,31 @@
       ],
       "type": "object"
     },
+    "SessionExecutionFailureView": {
+      "description": "How an open session's workflow execution stopped. A session that closed\nnormally never reports one.",
+      "oneOf": [
+        {
+          "const": "failed",
+          "description": "The execution failed; its error is in the workflow history and the log.",
+          "type": "string"
+        },
+        {
+          "const": "terminated",
+          "description": "The execution was ended from outside, or ended without closing the\nsession.",
+          "type": "string"
+        },
+        {
+          "const": "timedOut",
+          "description": "The execution ran past a Temporal timeout.",
+          "type": "string"
+        },
+        {
+          "const": "missing",
+          "description": "Temporal has no execution for this session, for example because a dead\none has passed namespace retention.",
+          "type": "string"
+        }
+      ]
+    },
     "SessionJobCancelEntryView": {
       "properties": {
         "error": {
@@ -17167,6 +17192,17 @@
             "string",
             "null"
           ]
+        },
+        "executionFailure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SessionExecutionFailureView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set by `session/read` when the session is still open but its workflow\nexecution has stopped, in which case `status` is `error`. Nothing is\nrunning and the rest of the view is the stored log. Lists do not check\nthe execution, so a list and a read of the same session can differ."
         },
         "id": {
           "type": "string"

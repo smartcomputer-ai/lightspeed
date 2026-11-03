@@ -10,6 +10,12 @@ pub struct SessionView {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
     pub status: SessionStatus,
+    /// Set by `session/read` when the session is still open but its workflow
+    /// execution has stopped, in which case `status` is `error`. Nothing is
+    /// running and the rest of the view is the stored log. Lists do not check
+    /// the execution, so a list and a read of the same session can differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_failure: Option<SessionExecutionFailureView>,
     /// What the session is doing now: idle, working on a run, or waiting for
     /// an approval. Lists carry the same value.
     pub activity: SessionActivity,
@@ -131,6 +137,23 @@ pub enum SessionStatus {
     Active,
     Closed,
     Error,
+}
+
+/// How an open session's workflow execution stopped. A session that closed
+/// normally never reports one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SessionExecutionFailureView {
+    /// The execution failed; its error is in the workflow history and the log.
+    Failed,
+    /// The execution was ended from outside, or ended without closing the
+    /// session.
+    Terminated,
+    /// The execution ran past a Temporal timeout.
+    TimedOut,
+    /// Temporal has no execution for this session, for example because a dead
+    /// one has passed namespace retention.
+    Missing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

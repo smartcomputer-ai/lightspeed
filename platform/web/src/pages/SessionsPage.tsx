@@ -146,6 +146,12 @@ import { ListPane } from "@/components/list-pane";
 /// linkage); detail = live transcript (long-poll tail) with a composer.
 const SESSION_LIST_REFRESH_MS = 5_000;
 const INLINE_SUBAGENT_LIMIT = 5;
+const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]>, string> = {
+  failed: "This session's workflow failed.",
+  terminated: "This session's workflow was stopped.",
+  timedOut: "This session's workflow timed out.",
+  missing: "This session's workflow no longer exists.",
+};
 
 export function SessionsPage({ admin }: { admin: boolean }) {
   const { universe, slug, isLoading } = useActiveUniverse();
@@ -2010,6 +2016,11 @@ export function SessionDetail({
   return (
     <>
       <ProviderReadinessBanner universeId={universeId} slug={slug} model={modelFromConfig(session.data?.config)} enabled={Boolean(session.data)} />
+      {session.data?.executionFailure && (
+        <div role="alert" className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          {EXECUTION_FAILURE_TEXT[session.data.executionFailure]} Its history is intact, but nothing is running and new messages will fail.
+        </div>
+      )}
       {!embedded && (
         <>
         <header className="flex h-12 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b px-4">
@@ -2047,6 +2058,10 @@ export function SessionDetail({
             {closed ? (
               <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 Closed
+              </span>
+            ) : session.data?.executionFailure ? (
+              <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
+                Stopped
               </span>
             ) : activityLabel(session.data?.activity) && (
               <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">

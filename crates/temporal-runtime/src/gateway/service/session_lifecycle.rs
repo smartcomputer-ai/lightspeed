@@ -22,15 +22,7 @@ impl SessionLifecycleIo for GatewayAgentApi {
     }
 
     async fn is_running(&self, session_id: &SessionId) -> Result<bool, AgentApiError> {
-        match self
-            .workflow_handle(session_id)
-            .describe(WorkflowDescribeOptions::default())
-            .await
-        {
-            Ok(description) => Ok(description.status() == WorkflowExecutionStatus::Running),
-            Err(WorkflowInteractionError::NotFound(_)) => Ok(false),
-            Err(error) => Err(map_workflow_interaction_error(error)),
-        }
+        Ok(self.execution_liveness(session_id).await? == ExecutionLiveness::Running)
     }
 
     async fn retry_setup(&self, session_id: &SessionId) -> Result<(), AgentApiError> {

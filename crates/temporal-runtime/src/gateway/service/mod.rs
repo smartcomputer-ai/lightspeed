@@ -70,6 +70,7 @@ use skills::skill_list_response;
 #[cfg(test)]
 use tools::skills::SkillMetadata;
 use vfs_api::{commit_vfs_snapshot, read_vfs_snapshot, vfs_workspace_view};
+pub(crate) use workflow::ExecutionLiveness;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -2353,20 +2354,33 @@ impl AgentApiService for GatewayAgentApi {
         let session_id = SessionId::try_new(params.session_id).map_err(|error| {
             AgentApiError::invalid_request(format!("invalid session id: {error}"))
         })?;
-        if let Some(status) = self.query_status_optional(&session_id).await?
-            && let Some(error) = status.fatal_error
-        {
-            return Err(AgentApiError::internal(format!(
-                "agent workflow reported error: {error}"
-            )));
-        }
         let limit = match params.run_limit {
             Some(0) => return Err(AgentApiError::invalid_request("runLimit must be positive")),
             Some(limit) => (limit as usize).min(MAX_RUN_SUMMARY_LIMIT),
             None => DEFAULT_RUN_SUMMARY_LIMIT,
         };
-        let (session, next_run_cursor, has_older_runs) =
-            self.project_session_page_by_id(&session_id, limit).await?;
+        let (mut session, mut next_run_cursor, mut has_older_runs) =
+            match self.project_session_page_by_id(&session_id, limit).await {
+                Err(error) if is_not_found(&error) => {
+                    return Err(self
+                        .classify_workflow_interaction_not_found(&session_id)
+                        .await);
+                }
+                page => page?,
+            };
+        if session.status != api::SessionStatus::Closed
+            && let Some(failure) = self.open_session_execution_failure(&session_id).await
+        {
+            // A closing workflow commits the close and then completes, so a dead
+            // execution behind an open row can just mean the row was read first.
+            // Anything it committed before ending is in the store by now.
+            (session, next_run_cursor, has_older_runs) =
+                self.project_session_page_by_id(&session_id, limit).await?;
+            if session.status != api::SessionStatus::Closed {
+                session.status = api::SessionStatus::Error;
+                session.execution_failure = Some(failure);
+            }
+        }
         tracing::debug!(
             session_id = %session_id,
             summary_page_size = session.runs.len(),
@@ -2623,7 +2637,10 @@ impl AgentApiService for GatewayAgentApi {
 
         // Force path. Prefer the live workflow: it cancels active work,
         // appends the close, observes closed+quiescent, and exits itself.
-        if self.workflow_is_running(&session_id).await {
+        if matches!(
+            self.execution_liveness(&session_id).await,
+            Ok(ExecutionLiveness::Running)
+        ) {
             let signalled = self
                 .submit_core_command(&session_id, CoreAgentCommand::CloseSession { force: true })
                 .await

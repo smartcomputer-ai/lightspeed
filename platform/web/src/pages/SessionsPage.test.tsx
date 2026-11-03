@@ -679,6 +679,23 @@ it.each([false, true])("keeps a backend-loaded run mounted through history prepe
 });
 
 
+describe("dead session execution", () => {
+  it("says the workflow stopped instead of showing the stored activity", async () => {
+    mocks.session = { id: "session", managed: false, status: "error", activity: "working", executionFailure: "timedOut" } as SessionView;
+    await show("session");
+    const alert = container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("This session's workflow timed out.");
+    expect(container.textContent).toContain("Stopped");
+  });
+
+  it("stays quiet for a healthy session", async () => {
+    mocks.session = { id: "session", managed: false, status: "idle", activity: "idle" } as SessionView;
+    await show("session");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).not.toContain("Stopped");
+  });
+});
+
 describe("session action permissions", () => {
   it("invites whoever can write to an empty session, and tells a reader it is empty", async () => {
     await show("session");
