@@ -41,6 +41,7 @@ export const WORKFLOW_CONTRACT_VECTORS = WORKFLOW_CONTRACT_MANIFEST.vectors;
 const EMISSION_ID = /^(?:emission|wti):sha256:[0-9a-f]{64}$/;
 const INVOCATION_ID = /^wti:sha256:[0-9a-f]{64}$/;
 const BLOB_REF = /^sha256:[0-9a-f]{64}$/;
+const PROMISE_ID = /^promise_(?:0|[1-9][0-9]{0,19})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
 const textEncoder = new TextEncoder();
@@ -116,7 +117,11 @@ export function sourceResolutionEnvelope(
   const universeId = normalizeUniverseId(input.universeId);
   requireNonEmpty(input.producerWorkflowId, "producerWorkflowId");
   requireNonEmpty(input.holderWorkflowId, "holderWorkflowId");
-  requireNonEmpty(input.promiseId, "promiseId");
+  // The holder logs and drops an envelope it cannot decode, so this is the only
+  // place the plugin can hear about a bad id.
+  if (!PROMISE_ID.test(input.promiseId)) {
+    throw new TypeError("promiseId has an invalid format");
+  }
   parseResolution(input.resolution);
   return {
     emission_id: emissionId.sourceResolution(
@@ -287,10 +292,7 @@ function parseBody(value: unknown): void {
       requireOptionalBlobRef(body, "failure_message_ref");
       return;
     case "source_resolution":
-      requireNonEmpty(
-        requireString(body, "promise_id"),
-        "source_resolution.promise_id",
-      );
+      requirePattern(body, "promise_id", PROMISE_ID);
       parseResolution(body.resolution);
       return;
     case "tool_invocation":
@@ -306,10 +308,7 @@ function parseBody(value: unknown): void {
         requireString(body, "completion_key"),
         "cancellation.completion_key",
       );
-      requireNonEmpty(
-        requireString(body, "promise_id"),
-        "cancellation.promise_id",
-      );
+      requirePattern(body, "promise_id", PROMISE_ID);
       return;
     default:
       throw new TypeError(`unknown emission body kind: ${kind}`);
