@@ -136,13 +136,9 @@ pub(super) async fn process_pending_tool_batch_resumes(
         match admit_and_append_command(ctx, &mut drive, command, None).await? {
             CommandAdmissionResult::Accepted => {}
             CommandAdmissionResult::Rejected(failure) => {
-                // A rejected resume must never fail the session loop: that
-                // turns one bad batch result into a permanently wedged
-                // workflow (the 2026-07-06 incident shape). Record it and
-                // continue; if the run is now stuck in `cancelling`, the
-                // watchdog forces it terminal. Only a reducer refusal, which
-                // cannot pass on a later attempt, returns an error above, and
-                // that one fails the run.
+                // Only a claim that events overtook is rejected, and the satisfied
+                // await claims again from the state they left. A resume that cannot
+                // pass on any attempt returns an error above and fails the run.
                 record_admission_failure(ctx, failure);
             }
         }

@@ -919,8 +919,13 @@ pub fn admit_command(
         }
         CoreAgentCommand::ResumeToolBatch(command) => {
             require_open(state)?;
-            crate::core::drive::resume_tool_batch_proposals(state, command, observed_at_ms)
-                .map_err(command_rejection_from_domain)
+            if let Some(message) =
+                crate::core::drive::overtaken_resume_claim(state, &command, observed_at_ms)
+            {
+                return reject(CommandRejectionKind::Conflict, message);
+            }
+            crate::core::drive::resume_tool_batch_proposals(state, command)
+                .map_err(CommandError::Domain)
         }
         CoreAgentCommand::ReplaceTools {
             expected_revision,

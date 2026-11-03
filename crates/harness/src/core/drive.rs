@@ -1425,10 +1425,45 @@ fn tool_batch_result_proposals_inner(
     tool_call_completed_proposals(state, session_id, result)
 }
 
+/// Why a resume claim no longer holds, when it names the parked batch. Events can
+/// overtake a claim while the host prepares its output, and the host then claims
+/// again from the state they left. Nothing else about a resume passes on a later
+/// attempt: [`resume_tool_batch_proposals`] refuses that for good.
+pub(crate) fn overtaken_resume_claim(
+    state: &CoreAgentState,
+    command: &ResumeToolBatchCommand,
+    observed_at_ms: u64,
+) -> Option<String> {
+    let active_run = state.runs.active.as_ref()?;
+    let parked = active_run.parked_tool_batch.as_ref()?;
+    if active_run.run_id != command.run_id || parked.batch_id != command.batch_id {
+        return None;
+    }
+    if state.code_tools.scopes.values().any(|scope| {
+        crate::code_tool_parent(state, &scope.spec).is_ok_and(|parent| {
+            parent.run_id == command.run_id && parent.tool_batch_id == command.batch_id
+        }) && scope.calls.values().any(|call| !call.status.is_terminal())
+    }) {
+        return Some(
+            "outer tool batch cannot resume before its code tool calls are reconciled".to_owned(),
+        );
+    }
+    if command.claim_observed_at_ms > observed_at_ms {
+        return Some("tool batch resume claim is observed in the future".to_owned());
+    }
+    match await_wake(state, command.claim_observed_at_ms) {
+        None => Some("tool batch resume claim has no satisfied wake".to_owned()),
+        Some(actual) if actual != command.claim => Some(format!(
+            "tool batch resume claim {:?} does not match current wake {:?}",
+            command.claim, actual
+        )),
+        Some(_) => None,
+    }
+}
+
 pub fn resume_tool_batch_proposals(
     state: &CoreAgentState,
     command: ResumeToolBatchCommand,
-    observed_at_ms: u64,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
@@ -1441,31 +1476,6 @@ pub fn resume_tool_batch_proposals(
     };
     if parked.batch_id != command.batch_id {
         return Ok(Vec::new());
-    }
-    if state.code_tools.scopes.values().any(|scope| {
-        crate::code_tool_parent(state, &scope.spec).is_ok_and(|parent| {
-            parent.run_id == command.run_id && parent.tool_batch_id == command.batch_id
-        }) && scope.calls.values().any(|call| !call.status.is_terminal())
-    }) {
-        return Err(DomainError::InvariantViolation(
-            "outer tool batch cannot resume before its code tool calls are reconciled".to_owned(),
-        ));
-    }
-    if command.claim_observed_at_ms > observed_at_ms {
-        return Err(DomainError::InvariantViolation(
-            "tool batch resume claim is observed in the future".to_owned(),
-        ));
-    }
-    let Some(actual) = await_wake(state, command.claim_observed_at_ms) else {
-        return Err(DomainError::InvariantViolation(
-            "tool batch resume claim has no satisfied wake".to_owned(),
-        ));
-    };
-    if actual != command.claim {
-        return Err(DomainError::InvariantViolation(format!(
-            "tool batch resume claim {:?} does not match current wake {:?}",
-            command.claim, actual
-        )));
     }
     let result = match (&parked.suspension, command.output) {
         (
@@ -8839,7 +8849,6 @@ mod tests {
                     additional_context: Vec::new(),
                 },
             },
-            100,
         )
         .expect("cancel parked Joined batch");
         assert!(matches!(
@@ -13709,6 +13718,59 @@ mod tests {
                 "lightspeed.core.promise.cancelled"
             ]
         );
+        assert_failed_run_leaves_a_working_session(&mut logged, |replayed| {
+            insert_wait_promise(replayed, run_id)
+        });
+    }
+
+    /// A claim events overtook passes once the host claims again. Anything else
+    /// wrong with a resume is wrong on every attempt, and the satisfied await keeps
+    /// issuing it, so it has to reach the path that fails the run.
+    #[test]
+    fn a_resume_refused_for_good_fails_the_run_and_an_overtaken_claim_is_only_rejected() {
+        let mut logged = LoggedDrive::open(config(), &["await"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_wait", "await")],
+        ));
+        let batch = logged.until_tools();
+        let run_id = batch.run_id;
+        let parked = park_on_wait_promise(&mut logged.drive, &batch);
+        let deferred = logged
+            .drive
+            .resume_tool_batch_outcome(parked, 80)
+            .expect("defer");
+        logged.commit(deferred);
+
+        let overtaken = resume_tool_batch_command_with_claim(&batch, WakeReason::Terminal);
+        let rejection = rejection_of(
+            logged
+                .drive
+                .admit_command(overtaken, 91)
+                .expect_err("the wake is a timeout now"),
+        );
+        assert_eq!(rejection.kind, CommandRejectionKind::Conflict);
+
+        let mut wrong_output = resume_tool_batch_command(&batch);
+        let CoreAgentCommand::ResumeToolBatch(command) = &mut wrong_output else {
+            unreachable!("built as a resume");
+        };
+        command.output = ToolBatchResumeOutput::JoinedWorkflowCalls {
+            additional_context: Vec::new(),
+        };
+        let refusal = logged
+            .drive
+            .admit_command(wrong_output, 91)
+            .expect_err("wrong for this suspension on every attempt");
+        assert_eq!(
+            refusal.refusal_message(),
+            Some("tool batch resume output does not match the parked suspension")
+        );
+
+        logged.admit(fail_run(run_id));
         assert_failed_run_leaves_a_working_session(&mut logged, |replayed| {
             insert_wait_promise(replayed, run_id)
         });
