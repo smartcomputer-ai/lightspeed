@@ -449,13 +449,65 @@ pub(crate) fn planned_context_entry_ids(state: &CoreAgentState) -> Vec<ContextEn
     // still sees them right after the instructions; a refreshed catalog
     // lands at the tail and supersedes the earlier version, which stays in
     // place so the rendered prefix does not move.
-    for entry in &state.context.entries {
-        if seen.insert(entry.entry_id) {
-            entry_ids.push(entry.entry_id);
-        }
-    }
+    entry_ids.extend(tool_groups_adjacent(
+        state
+            .context
+            .entries
+            .iter()
+            .filter(|entry| !seen.contains(&entry.entry_id)),
+    ));
 
     entry_ids
+}
+
+/// Arrival order, except that nothing separates a tool call from its result:
+/// providers want the answer right behind the call, and the log records what
+/// really happened. A client or bot can append while a batch runs, and a media
+/// entry can follow one result of several. Such an entry renders behind the
+/// group's last result. The calling turn's own output stays where it is, since
+/// a provider may need its reasoning between the calls.
+///
+/// Every request renders through here, so the order holds wherever it reaches a
+/// provider, and it depends on the entries alone, so it does not move once sent.
+/// A later turn's output closes a group that was never answered, which keeps an
+/// orphaned call from holding back the rest of the session.
+fn tool_groups_adjacent<'a>(
+    entries: impl Iterator<Item = &'a ContextEntry>,
+) -> Vec<ContextEntryId> {
+    let mut rendered = Vec::new();
+    let mut held = Vec::new();
+    let mut unanswered = BTreeSet::new();
+    let mut calling_turn = None;
+    for entry in entries {
+        let output_turn = match entry.source {
+            ContextEntrySource::AssistantOutput { run_id, turn_id }
+            | ContextEntrySource::Reasoning { run_id, turn_id } => Some((run_id, turn_id)),
+            _ => None,
+        };
+        if output_turn.is_some() && output_turn != calling_turn {
+            rendered.append(&mut held);
+            unanswered.clear();
+            calling_turn = output_turn;
+        }
+        let in_group = match &entry.kind {
+            ContextEntryKind::ToolCall { call_id, .. } => {
+                unanswered.insert(call_id);
+                true
+            }
+            ContextEntryKind::ToolResult { call_id, .. } => unanswered.remove(call_id),
+            _ => output_turn.is_some(),
+        };
+        if in_group || unanswered.is_empty() {
+            rendered.push(entry.entry_id);
+        } else {
+            held.push(entry.entry_id);
+        }
+        if unanswered.is_empty() {
+            rendered.append(&mut held);
+        }
+    }
+    rendered.append(&mut held);
+    rendered
 }
 
 pub(crate) fn context_entries_by_id(
@@ -959,10 +1011,13 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         )]);
     }
 
-    // Steering materializes at turn boundaries only: an in-flight turn's
-    // request is frozen at its planned context revision and the hosted
-    // runtime re-derives it from state, so context must not move under it.
-    if active_run.active_turn_id.is_some() {
+    // Steering materializes between turns only: an in-flight turn's request is
+    // frozen at its planned context revision and the hosted runtime re-derives
+    // it from state, so context must not move under it. An open batch owes its
+    // results first, so a steer lands behind them in the log as well as in the
+    // request. Tooling plans ahead of this, so a finished tool-call turn already
+    // has its batch here.
+    if active_run.active_turn_id.is_some() || active_run.active_tool_batch_id.is_some() {
         return Ok(Vec::new());
     }
     let steering_entries = missing_steering_entries(state)?;
@@ -2213,6 +2268,212 @@ fn context_entry_input_from_active(entry: &ContextEntry) -> ContextEntryInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rendered_entry(id: u64, kind: ContextEntryKind, source: ContextEntrySource) -> ContextEntry {
+        ContextEntry {
+            origin: None,
+            entry_id: ContextEntryId::new(id),
+            key: None,
+            kind,
+            source,
+            content: crate::ContentRef {
+                content_ref: BlobRef::from_bytes(b"entry"),
+                media_type: None,
+                provider_kind: None,
+            },
+            preview: None,
+            provenance_ref: None,
+            token_estimate: None,
+            supersedes: None,
+        }
+    }
+
+    fn output_source(turn: u64) -> ContextEntrySource {
+        ContextEntrySource::AssistantOutput {
+            run_id: RunId::new(1),
+            turn_id: TurnId::new(turn),
+        }
+    }
+
+    fn call(id: u64, call_id: &str, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::ToolCall {
+                call_id: crate::ToolCallId::new(call_id),
+                name: crate::ToolName::new("tool"),
+            },
+            output_source(turn),
+        )
+    }
+
+    fn result(id: u64, call_id: &str, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::ToolResult {
+                call_id: crate::ToolCallId::new(call_id),
+                is_error: false,
+            },
+            ContextEntrySource::Tool {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(turn),
+                batch_id: None,
+            },
+        )
+    }
+
+    fn user_note(id: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User,
+            },
+            ContextEntrySource::Runtime {
+                label: "note".to_owned(),
+            },
+        )
+    }
+
+    fn media(id: u64, turn: u64) -> ContextEntry {
+        ContextEntry {
+            source: ContextEntrySource::Tool {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(turn),
+                batch_id: None,
+            },
+            ..user_note(id)
+        }
+    }
+
+    fn reasoning(id: u64, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::ReasoningState,
+            ContextEntrySource::Reasoning {
+                run_id: RunId::new(1),
+                turn_id: TurnId::new(turn),
+            },
+        )
+    }
+
+    fn answer(id: u64, turn: u64) -> ContextEntry {
+        rendered_entry(
+            id,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::Assistant,
+            },
+            output_source(turn),
+        )
+    }
+
+    fn render_order(entries: Vec<ContextEntry>) -> Vec<u64> {
+        tool_groups_adjacent(entries.iter())
+            .into_iter()
+            .map(|id| id.as_u64())
+            .collect()
+    }
+
+    #[test]
+    fn a_session_with_nothing_interleaved_renders_in_arrival_order() {
+        assert_eq!(
+            render_order(vec![
+                user_note(1),
+                reasoning(2, 1),
+                call(3, "a", 1),
+                call(4, "b", 1),
+                result(5, "a", 1),
+                result(6, "b", 1),
+                media(7, 1),
+                answer(8, 2),
+            ]),
+            [1, 2, 3, 4, 5, 6, 7, 8]
+        );
+    }
+
+    #[test]
+    fn entries_arriving_inside_a_group_render_behind_its_last_result() {
+        assert_eq!(
+            render_order(vec![
+                call(1, "a", 1),
+                call(2, "b", 1),
+                user_note(3),
+                result(4, "a", 1),
+                media(5, 1),
+                user_note(6),
+                result(7, "b", 1),
+                media(8, 1),
+                answer(9, 2),
+            ]),
+            [1, 2, 4, 7, 3, 5, 6, 8, 9]
+        );
+    }
+
+    #[test]
+    fn the_calling_turns_output_stays_between_its_calls() {
+        assert_eq!(
+            render_order(vec![
+                reasoning(1, 1),
+                call(2, "a", 1),
+                reasoning(3, 1),
+                call(4, "b", 1),
+                answer(5, 1),
+                user_note(6),
+                result(7, "b", 1),
+                result(8, "a", 1),
+            ]),
+            [1, 2, 3, 4, 5, 7, 8, 6]
+        );
+    }
+
+    #[test]
+    fn a_later_turn_closes_a_group_that_was_never_answered() {
+        // The later turn's request already carried the note at its position.
+        assert_eq!(
+            render_order(vec![
+                call(1, "gone", 1),
+                user_note(2),
+                answer(3, 2),
+                call(4, "a", 3),
+                user_note(5),
+                result(6, "a", 3),
+            ]),
+            [1, 2, 3, 4, 6, 5]
+        );
+    }
+
+    #[test]
+    fn a_call_never_answered_at_the_tail_keeps_arrival_order() {
+        assert_eq!(
+            render_order(vec![call(1, "a", 1), user_note(2), user_note(3)]),
+            [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn a_result_answering_no_open_call_is_an_ordinary_entry() {
+        assert_eq!(
+            render_order(vec![
+                result(1, "compacted", 1),
+                call(2, "a", 2),
+                result(3, "compacted", 1),
+                result(4, "a", 2),
+            ]),
+            [1, 2, 4, 3]
+        );
+    }
+
+    #[test]
+    fn a_provider_reusing_a_call_id_in_a_later_turn_gets_a_new_group() {
+        assert_eq!(
+            render_order(vec![
+                call(1, "call_0", 1),
+                result(2, "call_0", 1),
+                call(3, "call_0", 2),
+                user_note(4),
+                result(5, "call_0", 2),
+            ]),
+            [1, 2, 3, 5, 4]
+        );
+    }
 
     #[test]
     fn compaction_requests_and_pending_snapshots_require_a_plan() {

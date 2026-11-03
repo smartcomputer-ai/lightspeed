@@ -6061,10 +6061,6 @@ mod tests {
         assert_eq!(rejection.kind, CommandRejectionKind::UnknownReference);
     }
 
-    /// Steering admitted while a turn is generating stays unmaterialized
-    /// until that turn completes (its request is frozen at the planned
-    /// context revision and the runtime re-derives it from state); it then
-    /// lands before the next turn, in admission order.
     #[test]
     fn steering_rejects_a_previous_run_target_and_replays_the_matching_target() {
         let mut drive =
@@ -6122,6 +6118,11 @@ mod tests {
         );
     }
 
+    /// Steering admitted while a turn is generating stays unmaterialized until
+    /// that turn and its batch complete (its request is frozen at the planned
+    /// context revision and the runtime re-derives it from state); it then
+    /// lands behind the tool results and before the next turn, in admission
+    /// order.
     #[test]
     fn steering_materializes_after_in_flight_turn_completes() {
         let session_id = SessionId::new("session-a");
@@ -6176,12 +6177,38 @@ mod tests {
 
         // The turn completes with a tool call; steering materializes after
         // the tool results, before the next turn.
-        let batch = drive_until_tool_batch_request(&mut drive, request, "await");
+        let resumed = drive
+            .resume_generation(
+                tool_call_turn(
+                    &request,
+                    LlmFinish::ToolCalls,
+                    vec![observed_call("call_wait", "await")],
+                ),
+                80,
+            )
+            .expect("tool turn");
+        commit_action(&mut drive, resumed);
+        let batch = next_tool_batch_dispatch(&mut drive, 81);
         let resumed = drive
             .resume_tool_batch(completed_tool_result(&batch), 90)
             .expect("tool result");
         commit_action(&mut drive, resumed);
         let next_request = drive_until_generate(&mut drive);
+        for entries in [
+            next_request.request.context.entries.as_slice(),
+            drive.state().context.entries.as_slice(),
+        ] {
+            assert_eq!(
+                entry_labels(entries),
+                [
+                    "input",
+                    "call:call_wait",
+                    "result:call_wait",
+                    "steer",
+                    "steer"
+                ]
+            );
+        }
         let steering_sources = next_request
             .request
             .context
@@ -6250,16 +6277,10 @@ mod tests {
             .expect("resume await");
         commit_action(&mut drive, resumed);
         let next_request = drive_until_generate(&mut drive);
-        let steering_entries = next_request
-            .request
-            .context
-            .entries
-            .iter()
-            .filter(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
-            .count();
         assert_eq!(
-            steering_entries, 1,
-            "next turn must carry the steering entry"
+            entry_labels(&next_request.request.context.entries),
+            ["input", "result:call_wait", "steer"],
+            "next turn must carry the steering entry behind the result"
         );
         let active_run = drive.state().runs.active.as_ref().expect("active");
         assert_eq!(
@@ -6669,9 +6690,29 @@ mod tests {
         let CoreAgentAction::InvokeTools { request } = pump_logged(&mut drive, &mut log) else {
             panic!("expected the tool batch");
         };
+        assert!(
+            drive.state().runs.active.as_ref().unwrap().steering[0]
+                .entry_ids
+                .is_empty()
+        );
 
-        // Materialized once the turn completed, but no request has carried it, so a
+        let action = drive
+            .resume_tool_batch(completed_tool_result(&request), 301)
+            .expect("tool result");
+        log.extend(commit_action(&mut drive, action));
+
+        // Materialized once the batch completed, but no request has carried it, so a
         // compaction planned now must stop short of it.
+        for now in 302..310 {
+            if !drive.state().runs.active.as_ref().unwrap().steering[0]
+                .entry_ids
+                .is_empty()
+            {
+                break;
+            }
+            let action = drive.next_action(now, 64).expect("next append");
+            log.extend(commit_action(&mut drive, action));
+        }
         let run = drive.state().runs.active.as_ref().unwrap();
         let steering_entry = run.steering[0].entry_ids[0];
         assert_eq!(run.steering[0].consumed_by_turn_id, None);
@@ -6680,10 +6721,6 @@ mod tests {
                 .contains(&steering_entry)
         );
 
-        let action = drive
-            .resume_tool_batch(completed_tool_result(&request), 301)
-            .expect("tool result");
-        log.extend(commit_action(&mut drive, action));
         let second = expect_generation(pump_logged(&mut drive, &mut log));
         assert_eq!(steering_entries_in(&second.request.context.entries), 1);
         assert_eq!(
@@ -13292,15 +13329,367 @@ mod tests {
                         "result {call_id} answers no open call"
                     );
                 }
-                ContextEntryKind::Message { .. }
-                    if !matches!(entry.source, ContextEntrySource::Tool { .. }) =>
-                {
+                ContextEntryKind::Message { .. } => {
                     assert!(open.is_empty(), "calls {open:?} unanswered at {entry:?}");
                 }
                 _ => {}
             }
         }
         assert!(open.is_empty(), "calls {open:?} unanswered at the end");
+    }
+
+    fn entry_labels(entries: &[ContextEntry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|entry| match (&entry.kind, &entry.source) {
+                (ContextEntryKind::ToolCall { call_id, .. }, _) => format!("call:{call_id}"),
+                (ContextEntryKind::ToolResult { call_id, .. }, _) => format!("result:{call_id}"),
+                (_, ContextEntrySource::RunInput { .. }) => "input".to_owned(),
+                (_, ContextEntrySource::Steering { .. }) => "steer".to_owned(),
+                (_, ContextEntrySource::Tool { .. }) => "media".to_owned(),
+                (_, ContextEntrySource::AssistantOutput { .. }) => "answer".to_owned(),
+                _ => "note".to_owned(),
+            })
+            .collect()
+    }
+
+    fn append_note(logged: &mut LoggedDrive, key: &str) {
+        logged.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new(key),
+            entry: message_input(
+                ContextMessageRole::User,
+                BlobRef::from_bytes(key.as_bytes()),
+            ),
+        });
+    }
+
+    fn decide_all_approvals(logged: &mut LoggedDrive, run_id: RunId, count: u64) {
+        for number in 1..=count {
+            logged.admit(CoreAgentCommand::DecideApproval(
+                crate::ApprovalDecisionCommand {
+                    approval_id: crate::ApprovalId::new(format!("approval_{number}")),
+                    run_id,
+                    decision: crate::ApprovalDecision::Approved,
+                    note: None,
+                    decided_by: None,
+                    response: None,
+                },
+            ));
+        }
+    }
+
+    /// A run dispatching one batch of `call_ids`, with a tool for them installed.
+    fn logged_batch(
+        config: SessionConfig,
+        call_ids: &[&str],
+    ) -> (LoggedDrive, ToolInvocationBatchRequest) {
+        let mut logged = LoggedDrive::open(config, &["fn_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            call_ids
+                .iter()
+                .map(|call_id| observed_call(call_id, "fn_a"))
+                .collect(),
+        ));
+        let batch = logged.until_tools();
+        (logged, batch)
+    }
+
+    fn logged_call_result(
+        logged: &mut LoggedDrive,
+        batch_id: crate::ToolBatchId,
+        result: ToolInvocationResult,
+    ) {
+        let action = logged
+            .drive
+            .resume_tool_call(batch_id, result, 80)
+            .expect("call result");
+        logged.commit(action);
+    }
+
+    fn succeeded_result(call_id: &crate::ToolCallId) -> ToolInvocationResult {
+        per_call_result(call_id, ToolCallStatus::Succeeded, Vec::new())
+    }
+
+    fn result_with_media(call_id: &crate::ToolCallId, name: &str) -> ToolInvocationResult {
+        let mut result = succeeded_result(call_id);
+        result.model_visible_context_entries.push(
+            crate::media::MediaDescriptor::new(
+                BlobRef::from_bytes(name.as_bytes()),
+                "image/png",
+                Some(name),
+            )
+            .expect("admitted descriptor")
+            .context_entry(),
+        );
+        result
+    }
+
+    #[test]
+    fn steering_during_generation_waits_for_the_results_of_the_turns_calls() {
+        let mut logged = LoggedDrive::open(config(), &["fn_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"steer");
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_a", "fn_a")],
+        ));
+
+        let batch = logged.until_tools();
+        assert_eq!(
+            entry_labels(&logged.drive.state().context.entries),
+            ["input", "call:call_a"]
+        );
+
+        // Planning again mid-batch writes nothing either, with the call still open.
+        logged.steer(batch.run_id, b"steer again");
+        assert!(matches!(logged.pump(), CoreAgentAction::InvokeTools { .. }));
+        assert_eq!(logged.drive.state().context.entries.len(), 2);
+
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            succeeded_result(&batch.calls[0].call_id),
+        );
+        let next = logged.until_generate();
+        assert_tool_calls_answered(openai_items(&next));
+        assert_eq!(
+            entry_labels(&logged.drive.state().context.entries),
+            ["input", "call:call_a", "result:call_a", "steer", "steer"]
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn steering_during_a_native_approval_wait_lands_behind_the_gated_results() {
+        let (mut logged, batch) = gated_native_dispatch(&["call_m"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                vec![native_mcp_approval(&batch.calls[0].call_id)],
+                75,
+            )
+            .expect("park");
+        logged.commit(parked);
+        logged.steer(batch.run_id, b"steer");
+
+        // The decision unparks the run with the gated call still pending.
+        decide_all_approvals(&mut logged, batch.run_id, 1);
+        let redispatch = logged.until_tools();
+        assert_eq!(
+            entry_labels(&logged.drive.state().context.entries),
+            ["input", "call:call_m"]
+        );
+
+        logged_call_result(
+            &mut logged,
+            redispatch.batch_id,
+            succeeded_result(&redispatch.calls[0].call_id),
+        );
+        let next = logged.until_generate();
+        assert_tool_calls_answered(openai_items(&next));
+        assert_eq!(
+            entry_labels(&logged.drive.state().context.entries),
+            ["input", "call:call_m", "result:call_m", "steer"]
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_context_append_during_a_batch_renders_behind_the_group_and_keeps_its_place_in_the_log() {
+        let (mut logged, batch) = logged_batch(config(), &["call_a", "call_b"]);
+        append_note(&mut logged, "client.note");
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            succeeded_result(&batch.calls[0].call_id),
+        );
+        append_note(&mut logged, "client.later");
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            succeeded_result(&batch.calls[1].call_id),
+        );
+
+        let next = logged.until_generate();
+        assert_eq!(
+            entry_labels(&logged.drive.state().context.entries),
+            [
+                "input",
+                "call:call_a",
+                "call:call_b",
+                "note",
+                "note",
+                "result:call_a",
+                "result:call_b"
+            ]
+        );
+        assert_tool_calls_answered(openai_items(&next));
+        assert_eq!(
+            entry_labels(openai_items(&next)),
+            [
+                "input",
+                "call:call_a",
+                "call:call_b",
+                "result:call_a",
+                "result:call_b",
+                "note",
+                "note"
+            ]
+        );
+
+        // The next turn extends what the last request carried: the prefix is stable.
+        let sent = openai_items(&next).to_vec();
+        logged.resume(final_turn(&next));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        logged.request_run(b"more");
+        let later = logged.until_generate();
+        assert_eq!(openai_items(&later)[..sent.len()], sent[..]);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_context_append_during_a_native_approval_wait_renders_behind_the_group() {
+        let (mut logged, batch) = gated_native_dispatch(&["call_m"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                vec![native_mcp_approval(&batch.calls[0].call_id)],
+                75,
+            )
+            .expect("park");
+        logged.commit(parked);
+        append_note(&mut logged, "client.note");
+        decide_all_approvals(&mut logged, batch.run_id, 1);
+        let redispatch = logged.until_tools();
+        logged_call_result(
+            &mut logged,
+            redispatch.batch_id,
+            succeeded_result(&redispatch.calls[0].call_id),
+        );
+
+        let next = logged.until_generate();
+        assert_eq!(
+            entry_labels(openai_items(&next)),
+            ["input", "call:call_m", "result:call_m", "note"]
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn media_of_parallel_calls_renders_behind_all_of_the_groups_results() {
+        let (mut logged, batch) = logged_batch(config(), &["call_a", "call_b"]);
+        append_note(&mut logged, "client.note");
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            result_with_media(&batch.calls[0].call_id, "a.png"),
+        );
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            result_with_media(&batch.calls[1].call_id, "b.png"),
+        );
+
+        let next = logged.until_generate();
+        assert_eq!(
+            entry_labels(&logged.drive.state().context.entries),
+            [
+                "input",
+                "call:call_a",
+                "call:call_b",
+                "note",
+                "result:call_a",
+                "media",
+                "result:call_b",
+                "media"
+            ]
+        );
+        assert_tool_calls_answered(openai_items(&next));
+        assert_eq!(
+            entry_labels(openai_items(&next)),
+            [
+                "input",
+                "call:call_a",
+                "call:call_b",
+                "result:call_a",
+                "result:call_b",
+                "note",
+                "media",
+                "media"
+            ]
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn compaction_of_a_group_with_an_append_sees_it_adjacent() {
+        let (mut logged, batch) =
+            logged_batch(standalone_compaction_config(None, None), &["call_a"]);
+        append_note(&mut logged, "client.note");
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            succeeded_result(&batch.calls[0].call_id),
+        );
+        let next = logged.until_generate();
+        logged.resume(final_turn(&next));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        logged.admit(CoreAgentCommand::CompactContext);
+        let CoreAgentAction::CompactContext { request } = logged.pump() else {
+            panic!("expected a compaction");
+        };
+        assert_eq!(
+            entry_labels(&request.request.context.entries),
+            ["input", "call:call_a", "result:call_a", "note", "answer"]
+        );
+        assert_tool_calls_answered(&request.request.context.entries);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_compaction_cut_behind_a_group_keeps_a_later_turn_and_its_input() {
+        let (mut logged, batch) =
+            logged_batch(standalone_compaction_config(None, None), &["call_a"]);
+        append_note(&mut logged, "client.note");
+        logged_call_result(
+            &mut logged,
+            batch.batch_id,
+            succeeded_result(&batch.calls[0].call_id),
+        );
+        let next = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &next,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_b", "fn_a")],
+        ));
+        let second = logged.until_tools();
+        logged_call_result(
+            &mut logged,
+            second.batch_id,
+            succeeded_result(&second.calls[0].call_id),
+        );
+        let last = logged.until_generate();
+        logged.resume(final_turn(&last));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        let state = logged.drive.state();
+        let covered = crate::core::components::context::standalone_prefix_ids(state);
+        let entries = crate::core::components::context::context_entries_by_id(state, &covered)
+            .expect("covered entries");
+        assert_eq!(
+            entry_labels(&entries),
+            ["input", "call:call_a", "result:call_a", "note"]
+        );
     }
 
     fn context_kinds(drive: &CoreAgentDrive) -> Vec<String> {
