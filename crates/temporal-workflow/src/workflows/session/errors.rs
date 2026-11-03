@@ -1,19 +1,52 @@
-use temporalio_common::error::IncomingError;
+use temporalio_common::error::{ApplicationFailure, IncomingError};
 use temporalio_sdk::ActivityExecutionError;
 
 use super::*;
 
-/// The worker's own words for an activity failure. An activity failure's top message
-/// only says that the task failed; what went wrong is in its cause chain.
-pub(super) fn activity_failure_message(error: &ActivityExecutionError) -> String {
+/// The session store refused an append because of the data in it. Nothing was written
+/// and the state did not move, so the drive can discard the events and fail the run.
+#[derive(Debug)]
+pub(super) struct StoreDataRejection {
+    pub(super) message: String,
+}
+
+impl std::fmt::Display for StoreDataRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StoreDataRejection {}
+
+fn application_failure(error: &ActivityExecutionError) -> Option<&ApplicationFailure> {
     let mut cause = error.cause();
     while let Some(incoming) = cause {
         if let IncomingError::Application(failure) = incoming {
-            return failure.to_string();
+            return Some(failure);
         }
         cause = incoming.cause();
     }
-    error.to_string()
+    None
+}
+
+/// The worker's own words for an activity failure. An activity failure's top message
+/// only says that the task failed; what went wrong is in its cause chain.
+pub(super) fn activity_failure_message(error: &ActivityExecutionError) -> String {
+    application_failure(error).map_or_else(|| error.to_string(), ToString::to_string)
+}
+
+/// Why an append failed, keeping a data rejection recognizable to the drive's failure
+/// path. Every other failure stays untyped and fatal.
+pub(super) fn append_failure(error: &ActivityExecutionError) -> anyhow::Error {
+    let message = activity_failure_message(error);
+    let rejected = application_failure(error).is_some_and(|failure| {
+        failure.type_name() == Some(crate::SESSION_DATA_REJECTED_ERROR_TYPE)
+    });
+    if rejected {
+        anyhow::Error::new(StoreDataRejection { message })
+    } else {
+        anyhow::anyhow!(message)
+    }
 }
 
 pub(super) fn record_admission_failure(

@@ -93,10 +93,27 @@ pub(super) async fn admit_and_append_command(
         CoreAgentAction::AppendEvents {
             expected_head,
             events,
-        } => {
-            append_events(ctx, drive, expected_head, events).await?;
-            Ok(CommandAdmissionResult::Accepted)
-        }
+        } => match append_events(ctx, drive, expected_head, events).await {
+            Ok(_) => Ok(CommandAdmissionResult::Accepted),
+            // The store refused what this command carries, and nothing was written.
+            // Whoever sent it can hear about it, and any run going on is not at fault.
+            Err(error) if !reissued && error.is::<errors::StoreDataRejection>() => {
+                let rejection = harness::CommandRejection::new(
+                    harness::CommandRejectionKind::Internal,
+                    error.to_string(),
+                );
+                observability::log_admission_refused(ctx, &rejection.message);
+                Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
+                    preparation_error: None,
+                    submission_id,
+                    correlation_token,
+                    kind: AgentAdmissionFailureKind::RejectedCommand,
+                    message: rejection.to_string(),
+                    rejection: Some(rejection),
+                }))
+            }
+            Err(error) => Err(error),
+        },
         CoreAgentAction::Idle | CoreAgentAction::Closed => Ok(CommandAdmissionResult::Accepted),
         other => anyhow::bail!("command admission emitted unexpected action: {other:?}"),
     }
@@ -146,13 +163,17 @@ pub(super) async fn process_pending_tool_batch_resumes(
     drive_until_idle(ctx, args, &mut drive).await
 }
 
-/// The harness's words when `error` is its refusal of a step on the drive path.
-/// Those are the only errors that say something about the work rather than about
-/// getting it stored. Everything left in an `anyhow::Error` from a store outage,
+/// The words to fail the work with when `error` is a refusal of a step on the drive
+/// path, by the harness or by the store of the events it proposed. Neither moved the
+/// state, and they are the only errors that say something about the work rather than
+/// about getting it stored. Everything left in an `anyhow::Error` from a store outage,
 /// a lost head or a log that will not load stays fatal.
-pub(super) fn harness_refusal_message(error: &anyhow::Error) -> Option<&str> {
+pub(super) fn work_refusal_message(error: &anyhow::Error) -> Option<&str> {
     if let Some(error) = error.downcast_ref::<CoreAgentDriveError>() {
         return error.refusal_message();
+    }
+    if let Some(error) = error.downcast_ref::<errors::StoreDataRejection>() {
+        return Some(&error.message);
     }
     error
         .downcast_ref::<harness::DomainError>()
@@ -178,13 +199,14 @@ pub(super) async fn drive_past_refusals(
 }
 
 /// Fail the active run with the refusal's text, or the compaction when no run is
-/// there to fail. Anything else with nothing to attach to stays fatal, and so does
-/// a refusal of this very append.
+/// there to fail. A refused append is simply dropped, and the failure starts from the
+/// state as it was. Anything else with nothing to attach to stays fatal, and so does a
+/// refusal of this very append.
 async fn fail_refused_work(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     error: anyhow::Error,
 ) -> anyhow::Result<CoreAgentDrive> {
-    let Some(message) = harness_refusal_message(&error).map(ToOwned::to_owned) else {
+    let Some(message) = work_refusal_message(&error).map(ToOwned::to_owned) else {
         return Err(error);
     };
     let mut drive = drive_from_state(ctx)?;
@@ -513,7 +535,7 @@ pub(super) async fn append_events(
             activity_options(),
         )
         .await
-        .map_err(|error| anyhow::anyhow!(errors::activity_failure_message(&error)))?;
+        .map_err(|error| errors::append_failure(&error))?;
     // These events are durable now, so nothing from here is a refusal that a failed
     // run could answer. The errors stay untyped to keep them fatal.
     let entries = drive
@@ -925,18 +947,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_harness_refusals_count_as_refusals() {
+    fn only_refusals_of_the_work_count_as_refusals() {
         let domain = harness::DomainError::InvariantViolation("the reason".to_owned());
         for error in [
             anyhow::Error::from(domain.clone()),
             CoreAgentDriveError::Domain(domain.clone()).into(),
             CoreAgentDriveError::Command(CommandError::Domain(domain.clone())).into(),
             CoreAgentDriveError::Planning(harness::PlanningError::Domain(domain.clone())).into(),
+            anyhow::Error::new(errors::StoreDataRejection {
+                message: "the reason".to_owned(),
+            }),
         ] {
-            assert_eq!(harness_refusal_message(&error), Some("the reason"));
+            assert_eq!(work_refusal_message(&error), Some("the reason"));
         }
+        let rejected_again = errors::StoreDataRejection {
+            message: "the reason".to_owned(),
+        };
         for error in [
             anyhow::anyhow!("activity failed: expected head mismatch"),
+            // How a rejection of failing the run itself comes back: fatal.
+            anyhow::anyhow!("failing the refused run: {rejected_again}"),
             // What the drive leaves behind once events are durable.
             anyhow::anyhow!("{domain}"),
             CoreAgentDriveError::Command(CommandError::Rejected(harness::CommandRejection::new(
@@ -950,7 +980,7 @@ mod tests {
             })
             .into(),
         ] {
-            assert_eq!(harness_refusal_message(&error), None, "{error}");
+            assert_eq!(work_refusal_message(&error), None, "{error}");
         }
     }
 

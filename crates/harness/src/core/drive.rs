@@ -14291,6 +14291,53 @@ mod tests {
         next
     }
 
+    /// A proposed append is only a proposal: the state moves when committed entries
+    /// come back. So when the store refuses one, the events can be dropped and the run
+    /// failed from the state as it was, with the failure on the very next position.
+    #[test]
+    fn a_rejected_append_leaves_the_state_where_it_was_and_the_run_can_still_fail() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        let before = logged.drive.state().clone();
+        let head = before.reduced_to.clone();
+
+        let proposed = logged
+            .drive
+            .resume_generation(
+                tool_call_turn(
+                    &request,
+                    LlmFinish::ToolCalls,
+                    vec![observed_call("call_a", "tool_a")],
+                ),
+                70,
+            )
+            .expect("a generation result the harness accepts");
+        let CoreAgentAction::AppendEvents { expected_head, .. } = &proposed else {
+            panic!("expected an append, got {proposed:?}");
+        };
+        assert_eq!(*expected_head, head);
+        drop(proposed);
+        assert_eq!(*logged.drive.state(), before, "nothing moved before commit");
+
+        // The workflow rebuilds its drive from the state it holds.
+        logged.drive =
+            CoreAgentDrive::from_replayed(logged.drive.session_id().clone(), before.clone());
+        let failed = logged
+            .drive
+            .admit_command(fail_run(request.run_id), 80)
+            .expect("the run can still fail");
+        let CoreAgentAction::AppendEvents { expected_head, .. } = &failed else {
+            panic!("expected an append, got {failed:?}");
+        };
+        assert_eq!(
+            *expected_head, head,
+            "the failure takes the discarded position"
+        );
+        logged.commit(failed);
+        assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
+    }
+
     #[test]
     fn failing_a_run_with_an_open_batch_answers_every_call_and_keeps_finished_ones() {
         let mut logged = LoggedDrive::open(config(), &["tool_a", "tool_b"]);

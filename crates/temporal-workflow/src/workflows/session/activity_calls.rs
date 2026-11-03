@@ -381,6 +381,27 @@ mod tests {
     }
 
     #[test]
+    fn only_the_typed_failure_reaches_the_drive_as_a_data_rejection() {
+        let rejected = errors::append_failure(&activity_error(activity_failure(
+            RetryState::NonRetryableFailure,
+            application_failure(crate::SESSION_DATA_REJECTED_ERROR_TYPE),
+        )));
+        assert!(rejected.is::<errors::StoreDataRejection>());
+        assert_eq!(rejected.to_string(), "session_data_rejected failure");
+
+        for failure in [
+            application_failure("ExpectedHeadMismatch"),
+            timeout_failure(TimeoutType::StartToClose, None),
+        ] {
+            let fatal = errors::append_failure(&activity_error(activity_failure(
+                RetryState::NonRetryableFailure,
+                failure,
+            )));
+            assert!(!fatal.is::<errors::StoreDataRejection>(), "{fatal}");
+        }
+    }
+
+    #[test]
     fn transient_exhaustion_is_recognized_at_the_top_of_the_chain() {
         let error = activity_error(activity_failure(
             RetryState::MaximumAttemptsReached,
