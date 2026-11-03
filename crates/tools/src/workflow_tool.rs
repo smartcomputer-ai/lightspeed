@@ -226,6 +226,7 @@ pub async fn invoke_workflow_tool(
 ) -> ToolResult<ToolInvocationOutput> {
     binding
         .validate()
+        .and_then(|()| binding.validate_policy())
         .map_err(|error| ToolError::InvalidRequest {
             message: format!(
                 "invalid workflow tool {} binding: {error}",

@@ -29,8 +29,10 @@ const CREATION_FINGERPRINT_DOMAIN: &str = "lightspeed.managed-session.creation.v
 const FINGERPRINT_ENCODING_VERSION: u32 = 4;
 const INVOCATION_ID_DOMAIN: &str = "lightspeed.workflow-tool.invocation.v1";
 const EXECUTION_ID_DOMAIN: &str = "lightspeed.workflow-tool.execution.v1";
-/// Diagnostic endpoint kind carried by promise sources whose producer is a
-/// system-derived started execution rather than an admitted bound receiver.
+/// Endpoint kind carried by promise sources whose producer is a system-derived
+/// started execution rather than an admitted bound receiver. It is not only
+/// descriptive: the session gives exactly these promises a recovery poll, so a
+/// bound receiver may not claim it (see [`WorkflowToolBinding::validate_policy`]).
 pub const WORKFLOW_TOOL_EXECUTION_KIND: &str = "workflow_tool.execution";
 const RESERVED_RUN_TERMINAL_SEMANTIC_TYPE: &str = "lightspeed.run.terminal.v1";
 pub const WORKFLOW_TOOL_EMIT_EFFECT_KIND: &str = "lightspeed.core.workflow_tool.emit";
@@ -439,13 +441,43 @@ impl WorkflowToolBinding {
         validate_target_completion(&definition.tool_id, &target, &completion)?;
         let binding_fingerprint =
             binding_fingerprint(session_universe_id, &definition, &target, &completion)?;
-        Ok(Self {
+        let binding = Self {
             session_universe_id,
             definition,
             target,
             completion,
             binding_fingerprint,
-        })
+        };
+        binding.validate_policy()?;
+        Ok(binding)
+    }
+
+    /// Rules for a binding about to be used, checked when one is admitted and again
+    /// when the worker acts on one. This stays out of [`Self::validate`], which runs
+    /// over recorded bindings: a log keeps replaying whatever it holds.
+    pub fn validate_policy(&self) -> Result<(), DomainError> {
+        if self
+            .bound_receiver()
+            .is_some_and(|receiver| receiver.workflow_kind == WORKFLOW_TOOL_EXECUTION_KIND)
+        {
+            return Err(DomainError::InvariantViolation(format!(
+                "workflow tool {} cannot bind a receiver of kind {WORKFLOW_TOOL_EXECUTION_KIND}, which is reserved for system-started executions",
+                self.definition.tool_id
+            )));
+        }
+        if matches!(
+            self.completion,
+            WorkflowToolCompletion::Promises {
+                deadline_after_ms: Some(0),
+                ..
+            }
+        ) {
+            return Err(DomainError::InvariantViolation(format!(
+                "workflow tool {} requires a non-zero promise deadline_after_ms",
+                self.definition.tool_id
+            )));
+        }
+        Ok(())
     }
 
     pub fn bound_receiver(&self) -> Option<&WorkflowEndpointRef> {
@@ -2207,6 +2239,58 @@ mod tests {
                 .to_string()
                 .contains("pull dispatch supports Accepted")
         );
+    }
+
+    #[test]
+    fn new_bindings_refuse_the_reserved_kind_and_a_zero_promise_deadline_while_recorded_ones_load()
+    {
+        let universe_id = Uuid::from_u128(1);
+        let promises = |deadline_after_ms| WorkflowToolCompletion::Promises {
+            reply_schema_ref: None,
+            deadline_after_ms,
+            max_promises: 1,
+            key_source: WorkflowToolCompletionKeySource::Reply,
+        };
+        let target = |workflow_kind: &str| WorkflowToolTarget::Bound {
+            receiver: WorkflowEndpointRef {
+                workflow_id: "service::approvals-1".to_owned(),
+                workflow_kind: workflow_kind.to_owned(),
+            },
+            dispatch: BoundWorkflowToolDispatch::Push,
+        };
+        let admit = |target, completion| {
+            WorkflowToolBinding::admit(
+                universe_id,
+                definition("approve", "request_approval"),
+                target,
+                completion,
+            )
+        };
+
+        let reserved = admit(target(WORKFLOW_TOOL_EXECUTION_KIND), reply_completion())
+            .expect_err("the kind selects recovery polling");
+        assert!(reserved.to_string().contains("reserved"));
+        let zero = admit(target("approvals"), promises(Some(0)))
+            .expect_err("a zero deadline is already expired");
+        assert!(zero.to_string().contains("non-zero"));
+        admit(target("approvals"), promises(Some(1))).expect("a real deadline");
+        admit(target("approvals"), promises(None)).expect("no deadline");
+
+        // A binding already in a log still passes what the reducer runs, and only the
+        // policy refuses it.
+        let mut recorded = admit(target("approvals"), promises(Some(1))).expect("binding");
+        recorded.completion = promises(Some(0));
+        recorded.binding_fingerprint = binding_fingerprint(
+            universe_id,
+            &recorded.definition,
+            &recorded.target,
+            &recorded.completion,
+        )
+        .expect("fingerprint");
+        recorded
+            .validate()
+            .expect("the reducer's validator allows it");
+        assert!(recorded.validate_policy().is_err());
     }
 
     #[test]

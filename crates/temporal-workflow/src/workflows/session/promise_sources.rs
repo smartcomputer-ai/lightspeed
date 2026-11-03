@@ -254,12 +254,83 @@ pub(super) async fn flush_pending_promise_cancellations(
     Ok(())
 }
 
+/// What the session does with one received source-resolution.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SourceResolutionGate {
+    /// Admit it, once a `Resolved` payload satisfies this schema if one is declared.
+    Admit { reply_schema_ref: Option<BlobRef> },
+    /// Nothing to do, and any reason is already recorded.
+    Drop,
+}
+
+/// Only the exact stored producer of a workflow-tool promise may settle it, and
+/// nothing outside the session settles a timer. A delivery for a terminal promise is
+/// the designed late reply. One for an absent promise can be late too, since state
+/// prunes old promises, so neither may disturb the session.
+pub(super) fn source_resolution_gate(
+    state: &mut AgentSessionWorkflow,
+    replaying: bool,
+    pending: &PendingSourceResolution,
+) -> SourceResolutionGate {
+    let promise_id = &pending.promise_id;
+    let Some(promise) = state.core_state.promises.promises.get(promise_id) else {
+        state.record_warning(
+            replaying,
+            format!("source resolution for unknown promise {promise_id} ignored"),
+        );
+        return SourceResolutionGate::Drop;
+    };
+    if promise.status.is_terminal() {
+        return SourceResolutionGate::Drop;
+    }
+    let authorized_invocation = match &promise.source {
+        harness::PromiseSource::Workflow {
+            producer_workflow_id,
+            invocation_id,
+            ..
+        } if matches!(
+            &pending.producer,
+            harness::EmissionProducer::Workflow { workflow_id, .. }
+                if workflow_id == producer_workflow_id.as_str()
+        ) =>
+        {
+            Some(invocation_id.clone())
+        }
+        _ => None,
+    };
+    let Some(invocation_id) = authorized_invocation else {
+        state.record_warning(
+            replaying,
+            format!("unauthorized producer for promise {promise_id}"),
+        );
+        return SourceResolutionGate::Drop;
+    };
+    let tools = &state.core_state.workflow_tools;
+    let reply_schema_ref = harness::WorkflowToolInvocationId::try_new(invocation_id)
+        .ok()
+        .and_then(|invocation_id| {
+            tools
+                .emissions
+                .get(&invocation_id)
+                .or_else(|| tools.start_requests.get(&invocation_id))
+        })
+        .and_then(|invocation| tools.bindings.get(&invocation.tool_id))
+        .and_then(|binding| match &binding.completion {
+            harness::WorkflowToolCompletion::Joined {
+                reply_schema_ref, ..
+            }
+            | harness::WorkflowToolCompletion::Promises {
+                reply_schema_ref, ..
+            } => reply_schema_ref.clone(),
+            harness::WorkflowToolCompletion::Accepted => None,
+        });
+    SourceResolutionGate::Admit { reply_schema_ref }
+}
+
 /// Producer-authorize and (optionally) schema-validate received
 /// source-resolutions, then converge them on the ordinary `ResolvePromise`
-/// admission funnel. Resolutions for non-workflow sources pass through
-/// unchanged; resolutions for workflow-tool promises must come from the
-/// exact stored producer, and `Resolved` payloads must satisfy the
-/// binding's immutable reply schema when one is declared.
+/// admission funnel. `Resolved` payloads must satisfy the binding's immutable
+/// reply schema when one is declared.
 pub(super) async fn process_pending_source_resolutions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
@@ -269,76 +340,17 @@ pub(super) async fn process_pending_source_resolutions(
         state.execution_has_rollover_checkpoint |= !pending.is_empty();
         pending
     });
+    let replaying = ctx.is_replaying();
     for pending in pending {
+        let gate = ctx.state_mut(|state| source_resolution_gate(state, replaying, &pending));
+        let SourceResolutionGate::Admit { reply_schema_ref } = gate else {
+            continue;
+        };
         let PendingSourceResolution {
             promise_id,
             resolution,
-            producer,
+            ..
         } = pending;
-        let (authorized, reply_schema_ref) = ctx.state(|state| {
-            let Some(promise) = state.core_state.promises.promises.get(&promise_id) else {
-                // Unknown promises fall through to ordinary admission,
-                // which rejects them with the standard funnel semantics.
-                return (true, None);
-            };
-            let harness::PromiseSource::Workflow {
-                producer_workflow_id,
-                invocation_id,
-                ..
-            } = &promise.source
-            else {
-                return (true, None);
-            };
-            let producer_matches = matches!(
-                &producer,
-                harness::EmissionProducer::Workflow { workflow_id, .. }
-                    if workflow_id == producer_workflow_id.as_str()
-            );
-            if !producer_matches {
-                return (false, None);
-            }
-            let reply_schema_ref =
-                harness::WorkflowToolInvocationId::try_new(invocation_id.clone())
-                    .ok()
-                    .and_then(|invocation_id| {
-                        state
-                            .core_state
-                            .workflow_tools
-                            .emissions
-                            .get(&invocation_id)
-                            .or_else(|| {
-                                state
-                                    .core_state
-                                    .workflow_tools
-                                    .start_requests
-                                    .get(&invocation_id)
-                            })
-                    })
-                    .and_then(|invocation| {
-                        state
-                            .core_state
-                            .workflow_tools
-                            .bindings
-                            .get(&invocation.tool_id)
-                    })
-                    .and_then(|binding| match &binding.completion {
-                        harness::WorkflowToolCompletion::Joined {
-                            reply_schema_ref, ..
-                        }
-                        | harness::WorkflowToolCompletion::Promises {
-                            reply_schema_ref, ..
-                        } => reply_schema_ref.clone(),
-                        harness::WorkflowToolCompletion::Accepted => None,
-                    });
-            (true, reply_schema_ref)
-        });
-        if !authorized {
-            record_warning(
-                ctx,
-                format!("unauthorized producer for workflow-tool promise {promise_id}"),
-            );
-            continue;
-        }
         let resolution = match (reply_schema_ref, resolution) {
             (Some(reply_schema_ref), harness::PromiseResolution::Resolved { payload_ref }) => {
                 let validation = ctx

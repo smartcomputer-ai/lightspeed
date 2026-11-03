@@ -118,9 +118,8 @@ fn duplicate_source_resolution_delivery_is_an_end_to_end_noop() {
         .queue_emission(test_universe(), envelope)
         .expect("second delivery");
 
-    // Both deliveries pass through the deferred authorization stage; a
-    // non-workflow promise source needs no producer check or reply schema,
-    // so each becomes an ordinary ResolvePromise admission.
+    // Each delivery becomes an ordinary ResolvePromise admission here, skipping the
+    // deferred authorization stage, so the harness's first writer decides.
     let pending = std::mem::take(&mut workflow.pending_source_resolutions);
     assert_eq!(pending.len(), 2);
     let admissions: Vec<_> = pending
@@ -1703,6 +1702,99 @@ fn terminal_run_with_notify_intent_queues_emission() {
         .queue_emissions_for_entries(std::slice::from_ref(&entry))
         .expect("queue no emission");
     assert!(workflow.pending_emissions.is_empty());
+}
+
+fn delivery_from(producer: &str, promise_id: &str) -> PendingSourceResolution {
+    PendingSourceResolution {
+        promise_id: harness::PromiseId::new(promise_id),
+        resolution: harness::PromiseResolution::Resolved {
+            payload_ref: Some(harness::BlobRef::from_bytes(b"forged")),
+        },
+        producer: harness::EmissionProducer::Workflow {
+            universe_id: test_universe(),
+            workflow_id: producer.to_owned(),
+        },
+    }
+}
+
+fn workflow_holding(promises: Vec<harness::Promise>) -> AgentSessionWorkflow {
+    let mut workflow = AgentSessionWorkflow::default();
+    add_promises(&mut workflow, promises);
+    workflow
+}
+
+#[test]
+fn a_late_or_unknown_source_resolution_is_a_no_op_that_never_fails_the_session() {
+    let mut workflow = workflow_holding(vec![promise("promise_1", PromiseStatus::Resolved)]);
+
+    // A pruned promise looks unknown, and its late reply still reports nothing fatal.
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from("universe/child", "promise_9"),
+        ),
+        promise_sources::SourceResolutionGate::Drop
+    );
+    assert!(
+        workflow
+            .last_warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("promise_9"))
+    );
+    assert!(workflow.fatal_error.is_none());
+    assert!(workflow.admission_failures.is_empty());
+
+    // The first writer won on a terminal promise, which is the designed path.
+    workflow.last_warning = None;
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from("universe/child", "promise_1"),
+        ),
+        promise_sources::SourceResolutionGate::Drop
+    );
+    assert!(workflow.last_warning.is_none());
+    assert!(workflow.pending_admissions.is_empty());
+}
+
+#[test]
+fn only_the_stored_producer_settles_a_promise_and_nothing_outside_settles_a_timer() {
+    let timer = promise_with_source(
+        "promise_2",
+        PromiseStatus::Pending,
+        PromiseSource::Timer { fire_at_ms: 1_000 },
+        PromiseScope::Session,
+    );
+    let mut workflow = workflow_holding(vec![promise("promise_1", PromiseStatus::Pending), timer]);
+
+    for delivery in [
+        delivery_from("universe/other", "promise_1"),
+        delivery_from("universe/child", "promise_2"),
+    ] {
+        workflow.last_warning = None;
+        assert_eq!(
+            promise_sources::source_resolution_gate(&mut workflow, false, &delivery),
+            promise_sources::SourceResolutionGate::Drop
+        );
+        assert!(
+            workflow
+                .last_warning
+                .as_deref()
+                .is_some_and(|warning| warning.contains("unauthorized producer"))
+        );
+    }
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from("universe/child", "promise_1"),
+        ),
+        promise_sources::SourceResolutionGate::Admit {
+            reply_schema_ref: None
+        }
+    );
 }
 
 fn promise(id: &str, status: PromiseStatus) -> harness::Promise {
