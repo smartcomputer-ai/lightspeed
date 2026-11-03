@@ -1513,15 +1513,63 @@ pub fn tool_runtime_boundary_failure_ref() -> BlobRef {
     BlobRef::from_bytes(TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT.as_bytes())
 }
 
-/// Model-visible content for tool calls the harness cancelled because their
-/// run was cancelled before they completed. Like
-/// [`UNAVAILABLE_TOOL_RESULT_CONTENT`], every runtime must guarantee the
-/// matching blob exists via [`crate::storage::ensure_harness_blobs`].
-pub const CANCELLED_TOOL_RESULT_CONTENT: &str =
-    "tool call cancelled: the run was cancelled before this call completed\n";
+/// Model-visible content for tool calls cancelled before they completed. It
+/// names no cause, because a run cancel, a closed code scope and a timed-out
+/// code wait all end up here. Like [`UNAVAILABLE_TOOL_RESULT_CONTENT`], every
+/// runtime must guarantee this and each blob below exists via
+/// [`crate::storage::ensure_harness_blobs`].
+pub const CANCELLED_TOOL_RESULT_CONTENT: &str = "tool call cancelled before it completed\n";
 
 pub fn cancelled_tool_result_ref() -> BlobRef {
     BlobRef::from_bytes(CANCELLED_TOOL_RESULT_CONTENT.as_bytes())
+}
+
+/// An `await` whose target failed the state check. Old promises are pruned from
+/// state, so an id the model once held can be absent without having been wrong.
+pub const AWAIT_REJECTED_CONTENT: &str =
+    "await rejected: a promise id is unknown, no longer retained or not awaitable by this run\n";
+
+pub fn await_rejected_ref() -> BlobRef {
+    BlobRef::from_bytes(AWAIT_REJECTED_CONTENT.as_bytes())
+}
+
+/// A call the harness refused because of the batch it shares, not its own
+/// arguments: retrying it alone can work.
+pub const AWAIT_BATCH_CONFLICT_CONTENT: &str = "tool call rejected: a batch may hold one await and no joined workflow tool beside it, and this call did not start\n";
+
+pub fn await_batch_conflict_ref() -> BlobRef {
+    BlobRef::from_bytes(AWAIT_BATCH_CONFLICT_CONTENT.as_bytes())
+}
+
+/// The error of a promise the host failed for its hard deadline. Hosts compare
+/// against this ref to tell that failure from a producer's own report.
+pub const PROMISE_DEADLINE_EXCEEDED_CONTENT: &str =
+    "deadline exceeded: no result arrived before this call's completion deadline\n";
+
+pub fn promise_deadline_exceeded_ref() -> BlobRef {
+    BlobRef::from_bytes(PROMISE_DEADLINE_EXCEEDED_CONTENT.as_bytes())
+}
+
+/// A joined call whose promise was cancelled while its holder was not cancelling
+/// it, so the only actor left is the receiver.
+pub const RECEIVER_CANCELLED_CONTENT: &str = "tool call cancelled by its receiver\n";
+
+pub fn receiver_cancelled_ref() -> BlobRef {
+    BlobRef::from_bytes(RECEIVER_CANCELLED_CONTENT.as_bytes())
+}
+
+/// A joined call whose receiver reported success with no payload.
+pub const EMPTY_SUCCESS_CONTENT: &str = "tool call succeeded with no output\n";
+
+pub fn empty_success_ref() -> BlobRef {
+    BlobRef::from_bytes(EMPTY_SUCCESS_CONTENT.as_bytes())
+}
+
+/// A joined call whose receiver reported failure with no error of its own.
+pub const FAILED_WITHOUT_DETAIL_CONTENT: &str = "tool call failed without detail\n";
+
+pub fn failed_without_detail_ref() -> BlobRef {
+    BlobRef::from_bytes(FAILED_WITHOUT_DETAIL_CONTENT.as_bytes())
 }
 
 /// Context entries that answer every call of the run's open tool group: the

@@ -328,6 +328,58 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
     }
 }
 
+/// What one terminal joined promise means for the call parked on it, for the
+/// model batch and for a code tool call alike.
+pub(crate) struct JoinedCallOutcome {
+    pub status: crate::ToolCallStatus,
+    pub output_ref: Option<BlobRef>,
+    pub error_ref: Option<BlobRef>,
+    /// What the model reads as the tool result.
+    pub content_ref: BlobRef,
+}
+
+/// `None` for a promise still pending that nothing is cancelling. With
+/// `cancel_pending` the holder is ending the wait itself, so a cancelled promise
+/// says nothing about its receiver.
+pub(crate) fn joined_call_outcome(
+    promise: &Promise,
+    cancel_pending: bool,
+) -> Option<JoinedCallOutcome> {
+    use crate::ToolCallStatus;
+    let failed = |status, error_ref: BlobRef| JoinedCallOutcome {
+        status,
+        output_ref: None,
+        error_ref: Some(error_ref.clone()),
+        content_ref: error_ref,
+    };
+    Some(match promise.status {
+        PromiseStatus::Resolved => JoinedCallOutcome {
+            status: ToolCallStatus::Succeeded,
+            output_ref: promise.payload_ref.clone(),
+            error_ref: None,
+            content_ref: promise
+                .payload_ref
+                .clone()
+                .unwrap_or_else(crate::empty_success_ref),
+        },
+        PromiseStatus::Failed => failed(
+            ToolCallStatus::Failed,
+            promise
+                .error_ref
+                .clone()
+                .unwrap_or_else(crate::failed_without_detail_ref),
+        ),
+        PromiseStatus::Cancelled if !cancel_pending => {
+            failed(ToolCallStatus::Cancelled, crate::receiver_cancelled_ref())
+        }
+        PromiseStatus::Cancelled | PromiseStatus::Pending if cancel_pending => failed(
+            ToolCallStatus::Cancelled,
+            crate::cancelled_tool_result_ref(),
+        ),
+        PromiseStatus::Cancelled | PromiseStatus::Pending => return None,
+    })
+}
+
 fn pending_promise_mut<'state>(
     state: &'state mut CoreAgentState,
     promise_id: &PromiseId,

@@ -675,30 +675,13 @@ pub fn code_tool_joined_result(
         .promises
         .get(&calls[0].promise_id)
         .ok_or_else(|| invalid("code tool joined promise is missing"))?;
-    let (status, output_ref, error_ref) = match promise.status {
-        PromiseStatus::Resolved => (ToolCallStatus::Succeeded, promise.payload_ref.clone(), None),
-        PromiseStatus::Failed => (
-            ToolCallStatus::Failed,
-            None,
-            Some(
-                promise
-                    .error_ref
-                    .clone()
-                    .unwrap_or_else(crate::unavailable_tool_result_ref),
-            ),
-        ),
-        PromiseStatus::Cancelled => (
-            ToolCallStatus::Cancelled,
-            None,
-            Some(crate::cancelled_tool_result_ref()),
-        ),
-        PromiseStatus::Pending if cancel_pending => (
-            ToolCallStatus::Cancelled,
-            None,
-            Some(crate::cancelled_tool_result_ref()),
-        ),
-        PromiseStatus::Pending => return Err(invalid("code tool joined promise is still pending")),
-    };
+    let crate::core::components::promise::JoinedCallOutcome {
+        status,
+        output_ref,
+        error_ref,
+        ..
+    } = crate::core::components::promise::joined_call_outcome(promise, cancel_pending)
+        .ok_or_else(|| invalid("code tool joined promise is still pending"))?;
     Ok(ToolInvocationResult {
         call_id: call.call_id.clone(),
         status,

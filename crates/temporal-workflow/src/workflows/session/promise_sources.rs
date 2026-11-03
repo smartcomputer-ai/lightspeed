@@ -198,7 +198,9 @@ pub(super) fn process_due_promise_deadlines(ctx: &mut WorkflowContext<AgentSessi
         queue_resolution(
             ctx,
             promise_id,
-            harness::PromiseResolution::Failed { error_ref: None },
+            harness::PromiseResolution::Failed {
+                error_ref: Some(harness::promise_deadline_exceeded_ref()),
+            },
         );
     }
 }

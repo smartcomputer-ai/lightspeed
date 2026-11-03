@@ -181,8 +181,7 @@ impl CoreAgentDrive {
         result: ToolInvocationBatchResult,
         observed_at_ms: u64,
     ) -> Result<CoreAgentAction, CoreAgentDriveError> {
-        let proposals =
-            tool_batch_result_proposals_for_session(&self.session_id, &self.state, result)?;
+        let proposals = tool_batch_result_proposals(&self.session_id, &self.state, result)?;
         self.append_action(proposals, observed_at_ms)
     }
 
@@ -1223,22 +1222,20 @@ pub fn tool_batch_deferred_proposals(
             .into_iter()
             .map(|result| {
                 if joined_call_ids.contains(&result.call_id) {
-                    invalid_await_tool_result(
-                        result.call_id,
-                        "Joined workflow calls cannot share a batch with await".to_owned(),
-                    )
+                    rejected_tool_result(result.call_id, crate::await_batch_conflict_ref())
                 } else {
                     result
                 }
             })
             .collect::<Vec<_>>();
         for await_call_id in pending_await_call_ids {
-            results.push(invalid_await_tool_result(
+            results.push(rejected_tool_result(
                 await_call_id,
-                "await cannot share a batch with Joined workflow calls".to_owned(),
+                crate::await_batch_conflict_ref(),
             ));
         }
         return tool_batch_result_proposals(
+            session_id,
             state,
             ToolInvocationBatchResult {
                 run_id: batch.run_id,
@@ -1251,12 +1248,13 @@ pub fn tool_batch_deferred_proposals(
     if pending_await_call_ids.len() > 1 {
         let mut results = completed_result.results;
         for call_id in pending_await_call_ids {
-            results.push(invalid_await_tool_result(
+            results.push(rejected_tool_result(
                 call_id,
-                "only one await call is allowed per tool batch".to_owned(),
+                crate::await_batch_conflict_ref(),
             ));
         }
         return tool_batch_result_proposals(
+            session_id,
             state,
             ToolInvocationBatchResult {
                 run_id: batch.run_id,
@@ -1288,10 +1286,11 @@ pub fn tool_batch_deferred_proposals(
             call_id
         )));
     }
-    if let Err(error) = validate_await_spec_for_active_run(state, active_run.run_id, &spec) {
+    if validate_await_spec_for_active_run(state, active_run.run_id, &spec).is_err() {
         let mut results = completed_result.results;
-        results.push(invalid_await_tool_result(call_id, error.to_string()));
+        results.push(rejected_tool_result(call_id, crate::await_rejected_ref()));
         return tool_batch_result_proposals(
+            session_id,
             state,
             ToolInvocationBatchResult {
                 run_id: batch.run_id,
@@ -1320,29 +1319,14 @@ pub fn tool_batch_deferred_proposals(
     Ok(proposals)
 }
 
-pub fn tool_batch_result_proposals(
-    state: &CoreAgentState,
-    result: ToolInvocationBatchResult,
-) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
-    tool_batch_result_proposals_inner(None, state, result)
-}
-
-fn tool_batch_result_proposals_for_session(
+fn tool_batch_result_proposals(
     session_id: &SessionId,
-    state: &CoreAgentState,
-    result: ToolInvocationBatchResult,
-) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
-    tool_batch_result_proposals_inner(Some(session_id), state, result)
-}
-
-fn tool_batch_result_proposals_inner(
-    session_id: Option<&SessionId>,
     state: &CoreAgentState,
     result: ToolInvocationBatchResult,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
     validate_tool_batch_result(&result)?;
     validate_result_matches_active_tool_batch(state, &result, false)?;
-    tool_call_completed_proposals(state, session_id, result)
+    tool_call_completed_proposals(state, Some(session_id), result)
 }
 
 /// Why a resume claim no longer holds, when it names the parked batch. Events can
@@ -1660,48 +1644,13 @@ fn joined_workflow_resume_result(
                 joined.promise_id
             )));
         }
-        let (status, output_ref, error_ref, content_ref) = match promise.status {
-            PromiseStatus::Resolved => (
-                ToolCallStatus::Succeeded,
-                promise.payload_ref.clone(),
-                None,
-                promise
-                    .payload_ref
-                    .clone()
-                    .unwrap_or_else(crate::unavailable_tool_result_ref),
-            ),
-            PromiseStatus::Failed => {
-                let error_ref = promise
-                    .error_ref
-                    .clone()
-                    .unwrap_or_else(crate::unavailable_tool_result_ref);
-                (
-                    ToolCallStatus::Failed,
-                    None,
-                    Some(error_ref.clone()),
-                    error_ref,
-                )
-            }
-            PromiseStatus::Cancelled => {
-                let error_ref = crate::unavailable_tool_result_ref();
-                (
-                    ToolCallStatus::Cancelled,
-                    None,
-                    Some(error_ref.clone()),
-                    error_ref,
-                )
-            }
-            PromiseStatus::Pending if cancel_pending => {
-                let error_ref = crate::unavailable_tool_result_ref();
-                (
-                    ToolCallStatus::Cancelled,
-                    None,
-                    Some(error_ref.clone()),
-                    error_ref,
-                )
-            }
-            PromiseStatus::Pending => unreachable!("terminality was checked above"),
-        };
+        let crate::core::components::promise::JoinedCallOutcome {
+            status,
+            output_ref,
+            error_ref,
+            content_ref,
+        } = crate::core::components::promise::joined_call_outcome(promise, cancel_pending)
+            .expect("terminality was checked above");
         let mut model_visible_context_entries =
             vec![ToolInvocationResult::tool_result_context_entry(
                 &joined.call_id,
@@ -1800,8 +1749,9 @@ fn validate_minted_promise_id(
     Ok(())
 }
 
-fn invalid_await_tool_result(call_id: ToolCallId, _message: String) -> ToolInvocationResult {
-    let error_ref = crate::unavailable_tool_result_ref();
+/// A call the harness answers itself, with a well-known error, because the batch
+/// it arrived in cannot proceed.
+fn rejected_tool_result(call_id: ToolCallId, error_ref: BlobRef) -> ToolInvocationResult {
     ToolInvocationResult {
         attachments: Vec::new(),
         duration_ms: None,
@@ -11995,6 +11945,8 @@ mod tests {
         );
         let result = crate::code_tool_joined_result(drive.state(), &joined.origin, true).unwrap();
         assert_eq!(result.status, ToolCallStatus::Cancelled);
+        // The closing scope cancelled the promise, not the receiver.
+        assert_eq!(result.error_ref, Some(crate::cancelled_tool_result_ref()));
         code_tool_commit(
             &mut drive,
             CoreAgentCommand::ResumeCodeToolCall {
@@ -13334,15 +13286,21 @@ mod tests {
                 ],
             ),
         });
-        let tools = ["agent_run", "agent_spawn", "tool_a", crate::SLEEP_TOOL_ID]
-            .map(test_tool_spec)
-            .into_iter()
-            .chain([native_inject_mcp_tool(
-                "mcp_echo",
-                crate::RemoteMcpApprovalPolicy::Always,
-            )])
-            .map(|tool| (tool.name.clone(), tool))
-            .collect();
+        let tools = [
+            "agent_run",
+            "agent_spawn",
+            "tool_a",
+            crate::SLEEP_TOOL_ID,
+            AWAIT_TOOL_ID,
+        ]
+        .map(test_tool_spec)
+        .into_iter()
+        .chain([native_inject_mcp_tool(
+            "mcp_echo",
+            crate::RemoteMcpApprovalPolicy::Always,
+        )])
+        .map(|tool| (tool.name.clone(), tool))
+        .collect();
         logged.admit(CoreAgentCommand::ReplaceTools {
             expected_revision: None,
             tools,
@@ -13426,6 +13384,204 @@ mod tests {
             .iter()
             .map(|call| call.call_id.as_str())
             .collect()
+    }
+
+    fn completed_results(entries: &[CoreAgentEntry]) -> BTreeMap<String, &crate::ToolCallResult> {
+        entries
+            .iter()
+            .filter_map(|entry| match &entry.event {
+                CoreAgentEvent::Tool(ToolEvent::CallCompleted { result, .. }) => {
+                    Some((result.call_id.as_str().to_owned(), result))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The call failed with `error_ref`, and the model reads that same text.
+    fn assert_failed_with(result: &crate::ToolCallResult, error_ref: BlobRef) {
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert_eq!(result.error_ref.as_ref(), Some(&error_ref));
+        assert_eq!(
+            result.model_visible_context_entries[0].content.content_ref,
+            error_ref
+        );
+    }
+
+    /// One bad model argument used to fail the whole drive here, because these paths
+    /// admitted a sibling's emission without the session identity it needs.
+    #[test]
+    fn an_await_on_an_unknown_promise_beside_a_spawn_fails_only_the_await() {
+        let (mut logged, batch) = mixed_dispatch(&["agent_spawn", AWAIT_TOOL_ID]);
+        let spawned = PromiseId::from_number(batch.promise_id_base);
+        let spawn = emitted_result(&batch, &batch.calls[0], &spawned);
+        let action = logged
+            .drive
+            .resume_tool_batch_outcome(
+                ToolBatchOutcome::Deferred {
+                    batch_id: batch.batch_id,
+                    call_id: batch.calls[1].call_id.clone(),
+                    completed_results: vec![spawn],
+                    spec: AwaitSpec {
+                        promise_ids: vec![PromiseId::from_number(99)],
+                        mode: AwaitMode::All,
+                        deadline_at_ms: None,
+                    },
+                },
+                70,
+            )
+            .expect("an invalid await is that call's failure");
+        let entries = logged.commit(action);
+        let results = completed_results(&entries);
+        assert_eq!(results["call_0"].status, ToolCallStatus::Succeeded);
+        assert_failed_with(results["call_1"], crate::await_rejected_ref());
+        assert!(
+            logged
+                .drive
+                .state()
+                .promises
+                .promises
+                .contains_key(&spawned)
+        );
+        assert!(!logged.drive.state().workflow_tools.emissions.is_empty());
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert!(run.parked_tool_batch.is_none());
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_joined_call_beside_an_await_and_a_spawn_rejects_the_first_two_alone() {
+        let (mut logged, batch) = mixed_dispatch(&["agent_run", "agent_spawn", AWAIT_TOOL_ID]);
+        let joined = PromiseId::from_number(batch.promise_id_base);
+        let spawned = PromiseId::from_number(batch.promise_id_base + 1);
+        let run_call = emitted_result(&batch, &batch.calls[0], &joined);
+        let spawn = emitted_result(&batch, &batch.calls[1], &spawned);
+        let action = logged
+            .drive
+            .resume_tool_batch_outcome(
+                ToolBatchOutcome::Deferred {
+                    batch_id: batch.batch_id,
+                    call_id: batch.calls[2].call_id.clone(),
+                    completed_results: vec![run_call, spawn],
+                    spec: AwaitSpec {
+                        promise_ids: vec![spawned.clone()],
+                        mode: AwaitMode::All,
+                        deadline_at_ms: None,
+                    },
+                },
+                70,
+            )
+            .expect("a batch conflict is those calls' failure");
+        let entries = logged.commit(action);
+        let results = completed_results(&entries);
+        assert_failed_with(results["call_0"], crate::await_batch_conflict_ref());
+        assert_eq!(results["call_1"].status, ToolCallStatus::Succeeded);
+        assert_failed_with(results["call_2"], crate::await_batch_conflict_ref());
+        let promises = &logged.drive.state().promises.promises;
+        assert!(!promises.contains_key(&joined));
+        assert!(promises.contains_key(&spawned));
+        logged.assert_replays(|_| {});
+    }
+
+    /// A logged run parked on one joined `agent_run` call.
+    fn parked_on_joined_call() -> (LoggedDrive, ToolInvocationBatchRequest, PromiseId) {
+        let (mut logged, batch) = mixed_dispatch(&["agent_run"]);
+        let promise_id = PromiseId::from_number(batch.promise_id_base);
+        let action = logged
+            .drive
+            .resume_tool_call(
+                batch.batch_id,
+                emitted_result(&batch, &batch.calls[0], &promise_id),
+                70,
+            )
+            .expect("joined result");
+        logged.commit(action);
+        (logged, batch, promise_id)
+    }
+
+    fn resume_joined(
+        logged: &mut LoggedDrive,
+        batch: &ToolInvocationBatchRequest,
+        claim: WakeReason,
+    ) -> Vec<CoreAgentEntry> {
+        logged.admit(CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
+            run_id: batch.run_id,
+            batch_id: batch.batch_id,
+            claim,
+            claim_observed_at_ms: 50,
+            output: ToolBatchResumeOutput::JoinedWorkflowCalls {
+                additional_context: Vec::new(),
+            },
+        }))
+    }
+
+    #[test]
+    fn a_joined_call_reports_why_its_promise_ended() {
+        let deadline = crate::promise_deadline_exceeded_ref();
+        for (resolution, status, content_ref) in [
+            (
+                crate::PromiseResolution::Resolved { payload_ref: None },
+                ToolCallStatus::Succeeded,
+                crate::empty_success_ref(),
+            ),
+            (
+                crate::PromiseResolution::Failed { error_ref: None },
+                ToolCallStatus::Failed,
+                crate::failed_without_detail_ref(),
+            ),
+            (
+                crate::PromiseResolution::Failed {
+                    error_ref: Some(deadline.clone()),
+                },
+                ToolCallStatus::Failed,
+                deadline.clone(),
+            ),
+            (
+                crate::PromiseResolution::Cancelled,
+                ToolCallStatus::Cancelled,
+                crate::receiver_cancelled_ref(),
+            ),
+        ] {
+            let (mut logged, batch, promise_id) = parked_on_joined_call();
+            logged.admit(CoreAgentCommand::ResolvePromise {
+                promise_id,
+                resolution,
+            });
+            let entries = resume_joined(&mut logged, &batch, WakeReason::Terminal);
+            let results = completed_results(&entries);
+            let result = results["call_0"];
+            assert_eq!(result.status, status);
+            assert_eq!(
+                result.model_visible_context_entries[0].content.content_ref,
+                content_ref
+            );
+            logged.assert_replays(|_| {});
+        }
+    }
+
+    /// A run cancel is the common way a parked join ends, and the next run reads this
+    /// text: it must not say the tool cannot be used.
+    #[test]
+    fn a_run_cancelled_while_parked_on_a_joined_call_says_it_was_cancelled() {
+        let (mut logged, batch, promise_id) = parked_on_joined_call();
+        logged.admit(CoreAgentCommand::CancelRun {
+            run_id: batch.run_id,
+            requested_by: None,
+        });
+        let entries = resume_joined(&mut logged, &batch, WakeReason::Cancelled);
+        let results = completed_results(&entries);
+        let result = results["call_0"];
+        assert_eq!(result.status, ToolCallStatus::Cancelled);
+        assert_eq!(result.error_ref, Some(crate::cancelled_tool_result_ref()));
+        assert_eq!(
+            result.model_visible_context_entries[0].content.content_ref,
+            crate::cancelled_tool_result_ref()
+        );
+        assert_eq!(
+            logged.drive.state().promises.promises[&promise_id].status,
+            PromiseStatus::Cancelled
+        );
+        logged.assert_replays(|_| {});
     }
 
     /// `decision` answered `call_m` in the first batch; the next turn calls the same

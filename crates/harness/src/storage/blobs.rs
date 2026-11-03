@@ -24,7 +24,7 @@ pub struct BlobInfo {
 /// Contents of the well-known constant blobs the deterministic core
 /// references by hash without being able to write them itself (for example
 /// [`crate::UNAVAILABLE_TOOL_RESULT_CONTENT`]).
-pub const ENGINE_BLOB_CONTENTS: [&str; 7] = [
+pub const ENGINE_BLOB_CONTENTS: [&str; 13] = [
     crate::UNAVAILABLE_TOOL_RESULT_CONTENT,
     crate::TOOL_RUNTIME_BOUNDARY_FAILURE_CONTENT,
     crate::LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT,
@@ -32,6 +32,12 @@ pub const ENGINE_BLOB_CONTENTS: [&str; 7] = [
     crate::CODE_TOOL_INTERRUPTED_CONTENT,
     crate::UNUSABLE_TOOL_CALLS_FAILURE_CONTENT,
     crate::RUN_INTERNAL_FAILURE_CONTENT,
+    crate::AWAIT_REJECTED_CONTENT,
+    crate::AWAIT_BATCH_CONFLICT_CONTENT,
+    crate::PROMISE_DEADLINE_EXCEEDED_CONTENT,
+    crate::RECEIVER_CANCELLED_CONTENT,
+    crate::EMPTY_SUCCESS_CONTENT,
+    crate::FAILED_WITHOUT_DETAIL_CONTENT,
 ];
 
 /// Refs of [`ENGINE_BLOB_CONTENTS`]. A long-running process may reference any
@@ -63,6 +69,12 @@ pub async fn ensure_harness_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStore
             crate::code_tool_interrupted_ref(),
             crate::unusable_tool_calls_failure_ref(),
             crate::run_internal_failure_ref(),
+            crate::await_rejected_ref(),
+            crate::await_batch_conflict_ref(),
+            crate::promise_deadline_exceeded_ref(),
+            crate::receiver_cancelled_ref(),
+            crate::empty_success_ref(),
+            crate::failed_without_detail_ref(),
         ]
     );
     Ok(())
@@ -693,6 +705,12 @@ mod tests {
                 crate::code_tool_interrupted_ref(),
                 crate::unusable_tool_calls_failure_ref(),
                 crate::run_internal_failure_ref(),
+                crate::await_rejected_ref(),
+                crate::await_batch_conflict_ref(),
+                crate::promise_deadline_exceeded_ref(),
+                crate::receiver_cancelled_ref(),
+                crate::empty_success_ref(),
+                crate::failed_without_detail_ref(),
             ]
         );
     }
