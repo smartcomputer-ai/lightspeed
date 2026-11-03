@@ -243,6 +243,36 @@ Later packages add their own entries.
   them, so a detached sub-agent's linked file is named in the result JSON only. It is not
   recorded on a tool completion, so the session's own final answer cannot link it onward by
   handle as it could after an await. Images do arrive as media entries.
+- **`store-rejections` has never run against Temporal or Postgres.** Docker was down. Nothing has
+  shown Temporal stopping on these non-retryable failures, a data rejection reaching FailRun, or
+  control admissions landing during scope preparation. 22P05 and 22021 come from the review's run
+  against Postgres, and the mapping is unit tested with a fake database error. Run
+  `pg_live_a_value_postgres_cannot_hold_is_a_data_rejection_and_writes_nothing`,
+  `workflow_tool_reply_schema_gates_resolutions`, `code_workflow_live` and `sessions_live` at the next
+  checkpoint.
+- **A store-rejected admission fails only that command, not the run.** The instruction said to admit
+  FailRun for a rejection while a run is active. I applied that to the drive path only. A rejected steer
+  or approval note gets `rejected` with kind Internal, because its caller can be told and the run is not
+  at fault. A rejected `ResolvePromise` has no caller, so its promise stays pending until a deadline or
+  a cancel. The ingest gate makes that unreachable unless the store misbehaves.
+- **A head conflict and a missing session now end the workflow.** They used to retry for ever, so the
+  session looked Running. A race with a direct writer now gives a visible failed workflow, which only
+  the session restart package can bring back. The review traced that race as rare, not as impossible.
+- **A log that will not reduce fails bootstrap at once.** This covers a gap in the log and an event that
+  does not decode or apply. A row whose envelope is not a stored entry still comes back from the store
+  as a plain failure and retries without limit. I left that, because the envelope has not changed and
+  telling it apart needs another store variant.
+- **The ingest gate adds an activity to most replies.** Any resolution carrying a ref now costs one
+  activity on the outer loop and a `retain_blob` write, and a joined reply reads its whole blob to check
+  UTF-8. A reply with no ref and no schema costs nothing. A fan-out of many replies waits behind them
+  one at a time, and a store outage blocks there, as it does at the append.
+- **One attempt for code tool scope preparation.** A failed inventory fetch now fails the script's scope
+  with no retry, where an outage used to wait for the server. This relies on `mcp-native-default` for
+  the negative entry that makes a second try pointless. Until then a blip fails that one script. The
+  script gets a readable error and the run continues.
+- **A model answer that is exactly a digest fails the run until `typed-blob-refs`.** Its preview looks
+  like a blob ref, so the store reports `MissingBlobs` and the run fails with that message. Before this
+  package it stalled the session. The next package stops previews counting as refs.
 
 ## Progress
 
@@ -1048,3 +1078,74 @@ Independent review of this package:
   no first-party binding claiming the reserved kind, receivers keying the deadline notice by
   invocation, and a media entry passing run input validation.
 - Still unverified: the query status mapping and the live test, because the Docker daemon is down.
+
+### `store-rejections` (H-13, H-17)
+
+What landed:
+
+- `fcaf2668` (H-13): `SessionStoreError::DataRejected` for SQLSTATE class 22, and
+  `is_data_rejection` covering it and `MissingBlobs`. `append_events` and `create_or_load_session`
+  return a non-retryable failure for everything but `Store`, a log that will not reduce and
+  `SessionBootstrapPayloadTooLarge`. Data rejections carry the type `session_data_rejected`. Fatal and
+  bootstrap errors now show the worker's message rather than "Activity task failed".
+- `31318c66` (H-13): `validate_workflow_tool_reply` is the one ingest gate, for every resolution with
+  a ref or a declared schema, and recovery polls already reach it. Malformed and missing refs fail
+  only that promise, and so does a schema that cannot be read or compiled. A joined reply must be UTF-8,
+  which closes the joined binary case left open by `promises-and-awaits`. A late reply to a settled
+  promise logs at info and an absent one keeps its warning.
+- `facb40c0` (H-13): `code_tool_prepare_scope` gets one attempt, 38 s start-to-close and 40 s
+  schedule-to-close, and runs through `preparation::await_activity`.
+- `b8ddfe87` (H-13, separate so it can be reverted): the drive path discards rejected events and admits
+  FailRun with kind Internal and the store's message. A rejection of FailRun's own append, or one with
+  no run and no compaction to fail, is fatal. Unconfirmable head conflicts, load and decode errors and
+  outages stay fatal.
+- `7e80cc7b` (H-17): `encode_event` replaces U+0000 with U+FFFD in string values and keys. The API
+  refuses NUL in origin, media name, catalog title and display name on start, managed start and rename,
+  as `invalid_request`. The contract and its consumers are regenerated for the field docs.
+
+Calls made:
+
+- See Risky calls for the admission path, ending the workflow on a head conflict, and the gate's cost.
+- A broken reply schema fails the reply. The brief left that retryable, but admission validates schemas,
+  so the only way to reach it is a bug, and one binding's bug should not block the session.
+- Other store variants such as `InvalidRetention` also became non-retryable, since only `Store` can be
+  outlasted. A deleted session seen as "disappeared after create conflict" is final too.
+- Generic `activity_options()` stays unbounded and only gained a comment, so a long outage still waits
+  rather than failing every active session. I did not rename the two same-named helpers, as the brief's
+  judge suggested: it would touch about thirty call sites for little.
+
+Deviations from the briefs:
+
+- The sub-agent label is refused in tool argument validation although the package named four fields,
+  because it reaches a text column in `subagent_prepare`, which retries without limit.
+- The approval note is not refused at the API, as the package did not list it. The codec replaces its
+  NUL.
+- Joins are not scrubbed: every id in them refuses NUL at construction.
+- Channel media names before the `bot_events.media_json` insert are not checked. That insert fails
+  synchronously with an error and does not wedge a session, so it is left for the bots work.
+- The judge's `materialize_await_result` and `prepare_joined_context` stay as they are, as it advised.
+  After the gate they only see store outages. That closes the detached follow-up stall in Risky calls.
+
+Ported as tests beside the code, each covering its main case: `repro_permappend_verify_z5u9`,
+`repro_refute_nulcodec_e9w`, `repro_nul_codec_scrub_judge_q4z`, `repro_refute_wholesys_nul_v6t` and
+`repro_replyblobwedge_refute_j8k`, in the behaviour they argued for. Not ported:
+`repro_refute_appendwedge_n5g`'s digest case, which belongs to `typed-blob-refs`, and
+`repro_refute_replyref_rootguard_j6f`, whose two facts about the root guard the malformed ref test relies
+on.
+
+Verified: `cargo test -p harness` (326 lib tests), `cargo test -p store-pg --lib` (14),
+`cargo test -p temporal-workflow --lib`, `cargo test -p api`, targeted `temporal-runtime` and `tools` tests,
+`cargo check -p temporal-workflow -p temporal-runtime --tests` and
+`cargo check --workspace --all-targets --locked`. Clippy and the full workspace suite were not run, as they
+belong to checkpoints.
+
+Written but never run, for the checkpoint: `pg_live_a_value_postgres_cannot_hold_is_a_data_rejection_and_writes_nothing`
+and the new unstored, malformed and failed-ref rows in `workflow_tool_reply_schema_gates_resolutions`.
+The Docker daemon is down. No test drives a store rejection through the workflow to a failed run. Each side
+is unit tested, and the workflow step needs Temporal.
+
+Open:
+
+- For `session-restart`: a head conflict now ends the workflow, so restart is what recovers it.
+- For `typed-blob-refs`: previews that look like refs, and `BlobRef` decoding. The gate's parse check can go
+  once a `BlobRef` cannot hold a malformed value.
