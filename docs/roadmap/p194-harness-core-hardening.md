@@ -178,12 +178,17 @@ Later packages add their own entries.
 - **Dead surface removal breaks replay and stored state until the purge.** Removing the
   rollover patch makes every dev Temporal history that carries its marker fail replay.
   `RunRecord.submission_digest` is now required, so a stored checkpoint holding `null` no longer
-  decodes, and the checkpoint constant is only bumped at the end of the branch in `format-guards`.
-  Purge dev Temporal histories and sessions before running this branch against existing state.
+  decodes. The load rejects it with a warning and replays the log, so that costs a slow load rather
+  than a stuck session, and the checkpoint constant is only bumped at the end of the branch in
+  `format-guards`. Purge dev Temporal histories and sessions before running this branch against
+  existing state.
 - **A duplicate code tool result now rejects instead of no-ops.** The host drops results for
   non-pending calls, so nothing known reaches the reducer's rejection. If something ever does,
   `ResumeCodeToolCall` goes through `apply_internal` and fails the workflow rather than the call.
-  The earlier digest made an identical joined redelivery a no-op.
+  The earlier digest made an identical joined redelivery a no-op. The review traced this: the resume
+  loop only takes waiting calls, runs on the session loop with nothing else changing their status
+  across its activity awaits, and one call's resume cannot finish another. A different result was
+  already refused this way before the change.
 
 ## Progress
 
@@ -583,3 +588,30 @@ Open, for the docs package:
   `read_tool_emissions`.
 - `docs/roadmap/later/pNNN-local-runtime-without-temporal.md` and
   `docs/roadmap/p185-external-harness-sessions.md` describe `store-fs` as it was.
+
+Review of this package:
+
+- `df4e3ea0`: removing the workflow's head copy left `AppendSessionEventsResult.head` with no
+  production reader, still crossing every append activity. It goes, and tests derive the position
+  from the entries. The storage test's notify helper also moved below that test's imports.
+- Traced and found sound: the widened host filter drops only completions, and a waiting call's
+  resume takes the separate `reconcile_waits` path, so joined and await calls still resume. Production
+  only ever closed scopes with cancel on, so `closed` and the old `cancel_requested` agreed on every
+  path, including run termination. `apply_event` sets `reduced_to` on every entry, so the drive's
+  fence equals the old head wherever the old head was right, and `validate_reduced_head` still guards
+  the load boundary. A batch's siblings dedupe through a `BTreeSet`, which stays deterministic, and the
+  call is excluded by position, so two calls to one selection tool still violate the batch rule. No
+  lifecycle path reopens a closed session or fork, so the `closed_at` resets were vacuous. Every
+  production `api_kind` source uses the canonical spelling. A completed run's id reads the same from
+  the record as from the deleted map.
+- Every item on both briefs and the package ruling is either deleted or recorded as deferred above.
+  No source, test or durable doc added by this package cites a roadmap id. Besides the `gap` and
+  `read_tool_emissions` guide mentions already listed, no durable doc names a deleted symbol.
+
+Review checks: `cargo check --workspace --all-targets --locked`, with no warnings. `cargo test --lib`
+for `harness` (303), `store-fs` (2), `store-pg` (12), `test-support` (13), `api` (103),
+`api-projection` (45), `llm-runtime` (199), `temporal-workflow` (165) and `temporal-runtime` (473, 1
+ignored). `cargo test -p api --tests` and `cargo test -p temporal-workflow --test workflow_contract`.
+`npm run check:generated` and `npm run typecheck`. The workflow contract exporter and the TypeScript
+generators leave no diff. No live test ran, so the `store_pg_live` and `session_lifecycle_live`
+edits and the always-cancelling close only compile until the checkpoint.
