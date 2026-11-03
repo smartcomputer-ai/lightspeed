@@ -189,6 +189,12 @@ Later packages add their own entries.
   loop only takes waiting calls, runs on the session loop with nothing else changing their status
   across its activity awaits, and one call's resume cannot finish another. A different result was
   already refused this way before the change.
+- **The fork lock path has not run against Postgres yet.** The Docker stack was down
+  during `forks-and-kind-constants`, and starting it was out of bounds, so
+  `pg_live_fork_point_is_judged_under_the_source_lock` and the rewritten fork path only
+  compile until the checkpoint. No production caller reaches the fork path. The one
+  production change is `read_local_segment`, which every session read uses: it moved to
+  a free function with the same SQL and binds.
 
 ## Progress
 
@@ -615,3 +621,61 @@ ignored). `cargo test -p api --tests` and `cargo test -p temporal-workflow --tes
 `npm run check:generated` and `npm run typecheck`. The workflow contract exporter and the TypeScript
 generators leave no diff. No live test ran, so the `store_pg_live` and `session_lifecycle_live`
 edits and the always-cancelling close only compile until the checkpoint.
+
+### `forks-and-kind-constants` (H-81, H-46)
+
+Landed:
+
+- `bc422f59` (H-81): `create_forked_session` in `store-pg` now judges the fork point after
+  it holds the root and source row locks. The long prefix is still read unlocked, so a
+  long session's appends do not wait on it. The head comes from the locked row, and the
+  tail since the first read is read inside the fork transaction, so a run appended in the
+  gap is seen. `safe_fork_seq` reads the head once and the log through that head, which
+  is a consistent snapshot because the log only grows. `read_all_effective_events` became
+  `read_effective_events_through`, and `read_local_segment` became a free function that
+  takes any executor. API docs, CLI help and Platform copy no longer describe history forks
+  or config-only clones. The contract and TypeScript consumers are regenerated.
+- `3d6ecfca` (H-46): `harness::event_kind` holds one constant for each of the 57 core event
+  kinds. The codec's envelope arms and every reader use them, including `RunUnparked`. Tool
+  ids that code branches on are constants too, in non-test code.
+
+Calls made:
+
+- A constant for all 57 kinds, not only those read outside the codec today. The package
+  title asks for one per kind, and a partial set would leave the codec half literal.
+- A module, `event_kind::RUN_STARTED`, rather than flat names like
+  `CORE_AGENT_RUN_STARTED_EVENT_KIND`, which reach 70 characters in match arms. The two
+  old lifecycle constants are removed so there is one convention.
+- One fork validation under the locks instead of an extra unlocked check first. A check
+  on stale entries could only refuse a fork that is valid by the time the locks are held.
+- `SLEEP_TOOL_ID`, `MCP_FIND_TOOLS_TOOL_ID` and `MCP_CALL_TOOL_ID` were added beyond the
+  package text. The brief's judge asks for ids harness branches on, and sleep sits in the
+  same match arms as the other three concurrency ids.
+
+Deviations:
+
+- Platform copy (delete dialog, retention editor, settings sheet, deleted sessions, demo
+  route, one backend comment) was reworded though the package names only Rust and CLI text.
+  The owner's option says to reword text implying forks exist, and these are the strings
+  people actually see.
+- There are no kind literals in `store-pg` source or SQL to replace. It goes through
+  `apply_lifecycle_projection`. The only non-codec literals left are two tests feeding a
+  deliberately unknown kind. The codec tests and fixtures keep the literal strings as pins
+  on the durable format.
+- The old fork-order reproduction test is not ported. It showed that the shared helpers
+  accept stale input, which stays true by design. The new live test covers the order
+  instead, by landing an append while the fork waits on the lock.
+- Effect kinds are untouched, as the brief rules.
+
+Verified: `cargo check --workspace --all-targets --locked`, `cargo test -p harness` (305),
+`cargo test -p store-pg --lib` (12), `cargo test -p tools --lib` (317), and the delete dialog's
+web test. The workflow contract exporter leaves no diff. No live test ran, because Docker was
+down; the attempt reached no database. See Risky calls.
+
+Open:
+
+- For the docs package: `sessions-and-runs.md`, `models-and-credentials.md` and
+  `private-and-shared-work.md` still mention forks. Root `README.md` line 131 lists them as
+  shipped and needs the owner's permission to change.
+- `session_events.event_kind` and its index have no reader in the Rust code. Left alone,
+  because this package does not change the schema.
