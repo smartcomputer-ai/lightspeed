@@ -1121,8 +1121,10 @@ Deviations from the briefs:
 - The approval note is not refused at the API, as the package did not list it. The codec replaces its
   NUL.
 - Joins are not scrubbed: every id in them refuses NUL at construction.
-- Channel media names before the `bot_events.media_json` insert are not checked. That insert fails
-  synchronously with an error and does not wedge a session, so it is left for the bots work.
+- Channel text and media names before the `bot_events` insert are not checked. A NUL there fails the
+  insert as a plain store error. `emit_chat_event` retries it up to 5 times, then the conversation records
+  that message as failed and carries on. The manual API returns an internal error. Neither touches a
+  session, so it is left for the bots work.
 - The judge's `materialize_await_result` and `prepare_joined_context` stay as they are, as it advised.
   After the gate they only see store outages. That closes the detached follow-up stall in Risky calls.
 
@@ -1146,6 +1148,31 @@ is unit tested, and the workflow step needs Temporal.
 
 Open:
 
-- For `session-restart`: a head conflict now ends the workflow, so restart is what recovers it.
+- For `session-restart`: a head conflict now ends the workflow, so restart is what recovers it. A
+  request to a session whose workflow failed mid-life is still answered as "failed to start (bootstrap)"
+  by `stopped_execution_not_found_error`, and this package makes that more reachable.
 - For `typed-blob-refs`: previews that look like refs, and `BlobRef` decoding. The gate's parse check can go
   once a `BlobRef` cannot hold a malformed value.
+
+Independent review of this package:
+
+- Starts at `0a48bd33`, so `fcaf2668` is its first commit.
+- A configure or profile operation appended directly, so a typed rejection took the fatal path, or failed an
+  unrelated run on the drive path. The store's root gate reads every digest-shaped string, so a caller's
+  config could reach this until `typed-blob-refs`. It is now that operation's own failure (`0b857488`).
+- The NUL test encoded its entries again before searching them, which scrubs, so it could not see a NUL an
+  append let through. It now reads the committed events. A test's doc comment was also on the wrong test
+  (`95d8962b`).
+- The channel note under Deviations said the insert fails synchronously, which had not been traced. It is
+  now traced and corrected.
+- Left, for a store that misbehaves: a code tool completion the store rejects still ends the workflow,
+  because `apply_internal` treats any refusal as fatal and `process_pending` is outside the failure path.
+  Its results hold refs the worker wrote first, and NUL is scrubbed.
+- Checked with no change: the drive holds no state between a proposal and its commit, so an admission path
+  can keep using it after a rejection; `run_preparation_loop` and `run_dispatch_loop` run beside the session loop and
+  neither appends, so racing scope preparation adds no second writer; `load_reduction` falls back to the log on any
+  checkpoint or blob failure, so a blob outage cannot read as a final reduction failure; `retain_blob` reports
+  a missing blob as `NotFound` on Postgres and on the default path; ids in joins refuse NUL at construction;
+  binary `Failed` refs on promises materialize by reference; the workflow, API and TypeScript contracts
+  regenerate with no diff.
+- Still unverified: everything live, because the Docker daemon is down.
