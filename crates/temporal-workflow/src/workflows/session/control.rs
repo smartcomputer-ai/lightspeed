@@ -81,7 +81,8 @@ pub(super) fn generation_still_wanted(
     })
 }
 
-/// The tool batch `batch_id` of `run_id` is still executing for the harness.
+/// New work of the tool batch `batch_id` of `run_id` may still start: the run is
+/// active on it, so neither a cancel nor a park has intervened.
 pub(super) fn tool_batch_still_wanted(
     state: &CoreAgentState,
     run_id: harness::RunId,
@@ -92,4 +93,81 @@ pub(super) fn tool_batch_still_wanted(
             && run.status == RunStatus::Active
             && run.active_tool_batch_id == Some(batch_id)
     })
+}
+
+/// Calls already running for the tool batch `batch_id` of `run_id` have nobody to
+/// report to: the run is gone, it moved on to another batch, or it is ending. A park
+/// is none of these, because the harness accepts a sibling's result while parked and
+/// a call whose result is thrown away would run again after the decision.
+pub(super) fn tool_batch_abandoned(
+    state: &CoreAgentState,
+    run_id: harness::RunId,
+    batch_id: harness::ToolBatchId,
+) -> bool {
+    !state.runs.active.as_ref().is_some_and(|run| {
+        run.run_id == run_id
+            && matches!(run.status, RunStatus::Active | RunStatus::Parked)
+            && run.active_tool_batch_id == Some(batch_id)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with_run(status: RunStatus, batch: Option<u64>) -> CoreAgentState {
+        let mut state = CoreAgentState::default();
+        state.runs.active = Some(harness::ActiveRun {
+            context_recovery: Default::default(),
+            run_id: harness::RunId::new(1),
+            status,
+            submission_id: None,
+            source: harness::RunSource::Input { input: Vec::new() },
+            input_entry_ids: Vec::new(),
+            input_consumed_by_turn_id: None,
+            run_config: crate::default_run_config(),
+            config_revision: 0,
+            first_seq: harness::EventSeq::new(1),
+            accepted_at_ms: 1,
+            started_at_ms: Some(1),
+            usage: None,
+            steering: Vec::new(),
+            turns: Default::default(),
+            active_turn_id: None,
+            active_tool_batch_id: batch.map(harness::ToolBatchId::new),
+            approvals: Default::default(),
+            parked_tool_batch: None,
+            tool_batches: Default::default(),
+            completed_tool_batches: Default::default(),
+            notify_on_terminal: Vec::new(),
+        });
+        state
+    }
+
+    fn abandoned(state: &CoreAgentState) -> bool {
+        tool_batch_abandoned(state, harness::RunId::new(1), harness::ToolBatchId::new(7))
+    }
+
+    #[test]
+    fn a_park_keeps_in_flight_calls_but_stops_new_ones() {
+        let parked = state_with_run(RunStatus::Parked, Some(7));
+        assert!(!abandoned(&parked));
+        assert!(!tool_batch_still_wanted(
+            &parked,
+            harness::RunId::new(1),
+            harness::ToolBatchId::new(7)
+        ));
+        assert!(!abandoned(&state_with_run(RunStatus::Active, Some(7))));
+    }
+
+    #[test]
+    fn an_ending_run_or_a_moved_batch_abandons_in_flight_calls() {
+        assert!(abandoned(&CoreAgentState::default()));
+        assert!(abandoned(&state_with_run(RunStatus::Cancelling, Some(7))));
+        assert!(abandoned(&state_with_run(RunStatus::Active, Some(8))));
+        assert!(abandoned(&state_with_run(RunStatus::Active, None)));
+        let mut other_run = state_with_run(RunStatus::Active, Some(7));
+        other_run.runs.active.as_mut().expect("run").run_id = harness::RunId::new(2);
+        assert!(abandoned(&other_run));
+    }
 }

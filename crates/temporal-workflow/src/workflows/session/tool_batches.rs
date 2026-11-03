@@ -41,8 +41,8 @@ pub(super) async fn invoke_tool_batch(
     }
     for group in execution_groups(drive.state(), &request) {
         if !control::tool_batch_still_wanted(drive.state(), request.run_id, request.batch_id) {
-            // A cancel landed while an earlier group ran; the harness has
-            // resolved the rest of the batch itself.
+            // A cancel or a park landed while an earlier group ran. The rest of
+            // the batch stays pending for the next plan to cancel or re-dispatch.
             break;
         }
         execute_call_group(ctx, drive, &request, group).await?;
@@ -155,9 +155,8 @@ async fn first_ready_call(inflight: &mut Vec<InflightCall<'_>>) -> (usize, CallA
     .await
 }
 
-/// Cancel every in-flight call (`TryCancel`) and let the futures resolve;
-/// their results are discarded — the harness already recorded the calls as
-/// cancelled.
+/// Cancel every in-flight call (`TryCancel`) and let the futures resolve; their
+/// results are discarded, because the batch they belong to is over.
 async fn abandon_inflight_calls(inflight: Vec<InflightCall<'_>>) {
     for call in inflight {
         call.activity.as_ref().get_ref().cancel();
@@ -165,6 +164,10 @@ async fn abandon_inflight_calls(inflight: Vec<InflightCall<'_>>) {
     }
 }
 
+/// Run one group of calls and commit their results as they finish. Calls that
+/// need an approval report it before any remote I/O and stay pending; the group
+/// parks once for all of them when the window drains, so ungated siblings finish
+/// first and a run parks once per dispatch however many calls are gated.
 async fn execute_call_group(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
@@ -174,7 +177,14 @@ async fn execute_call_group(
     let activity_ctx = ctx.clone();
     let mut pending = group.into_iter();
     let mut inflight: Vec<InflightCall<'_>> = Vec::new();
+    let mut gated = Vec::new();
     loop {
+        // An admission can land in any wait below, including the readiness wait
+        // inside `resume_call`, so this runs before anything new starts.
+        if control::tool_batch_abandoned(drive.state(), request.run_id, request.batch_id) {
+            abandon_inflight_calls(inflight).await;
+            return Ok(());
+        }
         // Topped-up window: at most MAX_CONCURRENT_TOOL_CALLS_PER_BATCH
         // activities execute at once, so one model turn cannot fan out
         // unbounded concurrent work.
@@ -188,11 +198,11 @@ async fn execute_call_group(
             ));
         }
         if inflight.is_empty() {
-            return Ok(());
+            break;
         }
-        // Race the window against client admissions: a steer or a
-        // queued run is admitted and execution continues; a cancel that
-        // ends this batch abandons every in-flight call.
+        // Race the window against client admissions: a steer or a queued run is
+        // admitted and execution continues; the check above then abandons every
+        // in-flight call if a cancel ended this batch.
         let ready = {
             let wait = ctx.wait_for_state(admissions::has_admissible_admissions);
             let next = first_ready_call(&mut inflight).fuse();
@@ -203,6 +213,12 @@ async fn execute_call_group(
             }
         };
         match ready {
+            Some((index, Ok(ToolInvokeCallActivityResult::NeedsApproval { subject }))) => {
+                gated.push(harness::NativeMcpApprovalRequest {
+                    call_id: request.calls[index].call_id.clone(),
+                    subject,
+                });
+            }
             Some((index, outcome)) => {
                 // A refusal here ends the run while the workflow lives on, so the
                 // siblings must not keep working for a run that is gone.
@@ -213,17 +229,15 @@ async fn execute_call_group(
             }
             None => {
                 admissions::drain_pending_admissions(ctx, drive).await?;
-                if !control::tool_batch_still_wanted(
-                    drive.state(),
-                    request.run_id,
-                    request.batch_id,
-                ) {
-                    abandon_inflight_calls(inflight).await;
-                    return Ok(());
-                }
             }
         }
     }
+    if gated.is_empty() {
+        return Ok(());
+    }
+    let park =
+        drive.request_native_mcp_approvals(request.batch_id, gated, workflow_time_ms(ctx))?;
+    drive::commit_resume(ctx, drive, park).await
 }
 
 fn start_call_activity<'a>(
@@ -271,7 +285,7 @@ fn call_activity<'a>(
 /// failure. A call that did not execute because its active environment is
 /// still provisioning waits for readiness in a dedicated heartbeated activity
 /// and is re-dispatched once. The drive then appends the durable
-/// per-call completion.
+/// per-call completion. The caller keeps approval outcomes for its one park.
 async fn resume_call(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
@@ -279,41 +293,20 @@ async fn resume_call(
     index: usize,
     outcome: Result<ToolInvokeCallActivityResult, ActivityExecutionError>,
 ) -> anyhow::Result<()> {
-    if let Ok(ToolInvokeCallActivityResult::NeedsApproval { subject }) = &outcome {
-        let action = drive.request_native_mcp_approvals(
-            request.batch_id,
-            vec![harness::NativeMcpApprovalRequest {
-                call_id: request.calls[index].call_id.clone(),
-                subject: subject.clone(),
-            }],
-            workflow_time_ms(ctx),
-        )?;
-        return match action {
-            CoreAgentAction::AppendEvents {
-                expected_head,
-                events,
-            } => drive::append_events(ctx, drive, expected_head, events)
-                .await
-                .map(|_| ()),
-            other => {
-                anyhow::bail!("native MCP approval request emitted unexpected action: {other:?}")
-            }
-        };
-    }
     let outcome = match outcome {
         Ok(ToolInvokeCallActivityResult::EnvironmentNotReady { environment_id }) => {
             match await_environment_then_redispatch(ctx, drive, request, index, environment_id)
                 .await?
             {
                 Some(outcome) => outcome,
-                // Preempted by a cancel: the harness recorded the call as
-                // cancelled; nothing to resume.
+                // Preempted by a cancel: the call stays pending until the next
+                // plan records it as cancelled, so there is nothing to resume.
                 None => return Ok(()),
             }
         }
         Ok(ToolInvokeCallActivityResult::Completed { result }) => CallOutcome::Completed(result),
         Ok(ToolInvokeCallActivityResult::NeedsApproval { .. }) => {
-            unreachable!("handled above")
+            unreachable!("execute_call_group keeps approval outcomes for its park")
         }
         Err(error) => CallOutcome::ActivityFailed(Box::new(error)),
     };
@@ -378,7 +371,7 @@ async fn await_environment_then_redispatch(
     let run_id = request.run_id;
     let batch_id = request.batch_id;
     let still_wanted =
-        |state: &CoreAgentState| control::tool_batch_still_wanted(state, run_id, batch_id);
+        |state: &CoreAgentState| !control::tool_batch_abandoned(state, run_id, batch_id);
     let activity_ctx = ctx.clone();
     let readiness = activity_ctx.execute_activity(
         WorkflowActivities::await_environment_ready,

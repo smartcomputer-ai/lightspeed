@@ -13144,6 +13144,138 @@ mod tests {
         (logged, batch)
     }
 
+    /// A logged run whose one model turn called the injected gated server with
+    /// each of `call_ids`, dispatched and not yet parked.
+    fn gated_native_dispatch(call_ids: &[&str]) -> (LoggedDrive, ToolInvocationBatchRequest) {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        let mcp = native_inject_mcp_tool("mcp_echo", crate::RemoteMcpApprovalPolicy::Always);
+        logged.admit(CoreAgentCommand::ReplaceTools {
+            expected_revision: None,
+            tools: BTreeMap::from([(mcp.name.clone(), mcp)]),
+        });
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            call_ids
+                .iter()
+                .map(|call_id| observed_call(call_id, "mcp_echo__hello"))
+                .collect(),
+        ));
+        let batch = logged.until_tools();
+        (logged, batch)
+    }
+
+    #[test]
+    fn every_gated_call_of_a_dispatch_parks_the_run_once() {
+        let (mut logged, batch) = gated_native_dispatch(&["call_m1", "call_m2"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                batch
+                    .calls
+                    .iter()
+                    .map(|call| native_mcp_approval(&call.call_id))
+                    .collect(),
+                75,
+            )
+            .expect("park");
+        let entries = logged.commit(parked);
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                crate::event_kind::APPROVAL_REQUESTED,
+                crate::event_kind::APPROVAL_REQUESTED,
+                crate::event_kind::APPROVAL_RUN_PARKED,
+            ]
+        );
+        for number in [1, 2] {
+            logged.admit(CoreAgentCommand::DecideApproval(
+                crate::ApprovalDecisionCommand {
+                    approval_id: crate::ApprovalId::new(format!("approval_{number}")),
+                    run_id: batch.run_id,
+                    decision: crate::ApprovalDecision::Approved,
+                    note: None,
+                    decided_by: None,
+                    response: None,
+                },
+            ));
+        }
+        let redispatch = logged.until_tools();
+        assert_eq!(redispatch.calls.len(), 2);
+        assert_eq!(injected_decision(&redispatch.calls[0]), Some(true));
+        assert_eq!(injected_decision(&redispatch.calls[1]), Some(true));
+        logged.assert_replays(|_| {});
+    }
+
+    /// A store does not reduce, so a second park that reached it would leave a
+    /// log no reload could get past.
+    #[test]
+    fn a_second_park_of_one_dispatch_is_refused_before_it_reaches_the_log() {
+        let (mut logged, batch) = gated_native_dispatch(&["call_m1", "call_m2"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                vec![native_mcp_approval(&batch.calls[0].call_id)],
+                75,
+            )
+            .expect("first park");
+        logged.commit(parked);
+
+        let second = logged.drive.request_native_mcp_approvals(
+            batch.batch_id,
+            vec![native_mcp_approval(&batch.calls[1].call_id)],
+            76,
+        );
+        assert!(matches!(
+            second,
+            Err(CoreAgentDriveError::Domain(
+                DomainError::InvariantViolation(_)
+            ))
+        ));
+        logged.assert_replays(|_| {});
+    }
+
+    /// The workflow keeps calls running through a park because this is accepted:
+    /// throwing the result away would only run the call again after the decision.
+    #[test]
+    fn a_sibling_result_commits_while_the_run_is_parked_on_approval() {
+        let (mut logged, batch) = gated_native_dispatch(&["call_m1", "call_m2"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                vec![native_mcp_approval(&batch.calls[0].call_id)],
+                75,
+            )
+            .expect("park");
+        logged.commit(parked);
+
+        let sibling = logged
+            .drive
+            .resume_tool_call(
+                batch.batch_id,
+                per_call_result(
+                    &batch.calls[1].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                76,
+            )
+            .expect("result while parked");
+        logged.commit(sibling);
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Parked);
+        assert_eq!(
+            run.tool_batches[&batch.batch_id].calls[1].status,
+            ToolCallStatus::Succeeded
+        );
+        logged.assert_replays(|_| {});
+    }
+
     #[test]
     fn the_last_decision_records_that_the_run_left_its_approval_park() {
         let (mut logged, batch) = native_approval_parked();
