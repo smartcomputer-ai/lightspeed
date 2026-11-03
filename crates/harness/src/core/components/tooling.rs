@@ -740,10 +740,10 @@ pub struct ActiveToolBatch {
     pub run_id: RunId,
     pub turn_id: TurnId,
     pub calls: Vec<ToolCallState>,
-    /// First promise id this batch's executors may mint: one past the
-    /// session cursor when the batch was created. Every dispatch of the
-    /// batch (including per-call re-dispatch) numbers from here, so results
-    /// applied in any order stay above every earlier batch's promises.
+    /// The lowest promise id this batch's executors may mint: one past the
+    /// session cursor when the batch was created, so results applied in any
+    /// order stay above every earlier batch's promises. A later dispatch of the
+    /// batch numbers from the session cursor when that has moved past this.
     #[serde(default)]
     pub promise_id_base: u64,
 }

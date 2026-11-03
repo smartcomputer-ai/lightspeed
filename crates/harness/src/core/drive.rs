@@ -918,13 +918,18 @@ pub fn next_tool_batch_request(
     if calls.is_empty() {
         return Ok(None);
     }
+    // Earlier dispatches of this batch may have minted already, and positions in
+    // the pending list say nothing about them.
+    let promise_id_base = batch
+        .promise_id_base
+        .max(state.id_cursors.last_promise_id.saturating_add(1));
     tool_invocation_request(
         state,
         session_id,
         batch.run_id,
         batch.turn_id,
         batch.batch_id,
-        batch.promise_id_base,
+        promise_id_base,
         &calls,
     )
     .map(Some)
@@ -13245,6 +13250,321 @@ mod tests {
             run.tool_batches[&batch.batch_id].calls[1].status,
             ToolCallStatus::Succeeded
         );
+        logged.assert_replays(|_| {});
+    }
+
+    /// A logged managed run whose one model turn made `calls`, with `agent_run`
+    /// joined, `agent_spawn` promise-bearing, `mcp_echo` gated and the rest plain.
+    fn mixed_dispatch(calls: &[&str]) -> (LoggedDrive, ToolInvocationBatchRequest) {
+        let declaration = |name: &str, completion| {
+            crate::WorkflowToolDeclaration::new(
+                WorkflowToolDefinition {
+                    tool_id: WorkflowToolId::new(name),
+                    revision: 1,
+                    semantic_type: format!("test.{name}.v1"),
+                    tool: test_tool_spec(name),
+                },
+                crate::WorkflowToolTarget::Bound {
+                    receiver: WorkflowEndpointRef {
+                        workflow_id: format!("receiver-{name}"),
+                        workflow_kind: "test.worker".to_owned(),
+                    },
+                    dispatch: crate::BoundWorkflowToolDispatch::Push,
+                },
+                completion,
+            )
+        };
+        let mut logged = LoggedDrive {
+            drive: CoreAgentDrive::from_replayed(
+                SessionId::new("session-mixed"),
+                CoreAgentState::new(),
+            ),
+            log: Vec::new(),
+        };
+        logged.admit(CoreAgentCommand::OpenManagedSession {
+            config: config(),
+            session_universe_id: uuid::Uuid::from_u128(7),
+            workflow_tools: crate::ManagedSessionWorkflowTools::v1(
+                None,
+                vec![
+                    declaration(
+                        "agent_run",
+                        crate::WorkflowToolCompletion::Joined {
+                            reply_schema_ref: None,
+                            deadline_after_ms: 60_000,
+                        },
+                    ),
+                    declaration(
+                        "agent_spawn",
+                        crate::WorkflowToolCompletion::Promises {
+                            reply_schema_ref: None,
+                            deadline_after_ms: Some(60_000),
+                            max_promises: 1,
+                            key_source: crate::WorkflowToolCompletionKeySource::Reply,
+                        },
+                    ),
+                ],
+            ),
+        });
+        let tools = ["agent_run", "agent_spawn", "tool_a", crate::SLEEP_TOOL_ID]
+            .map(test_tool_spec)
+            .into_iter()
+            .chain([native_inject_mcp_tool(
+                "mcp_echo",
+                crate::RemoteMcpApprovalPolicy::Always,
+            )])
+            .map(|tool| (tool.name.clone(), tool))
+            .collect();
+        logged.admit(CoreAgentCommand::ReplaceTools {
+            expected_revision: None,
+            tools,
+        });
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            calls
+                .iter()
+                .enumerate()
+                .map(|(index, name)| observed_call(&format!("call_{index}"), name))
+                .collect(),
+        ));
+        let batch = logged.until_tools();
+        (logged, batch)
+    }
+
+    fn timer_result(call: &crate::ToolInvocationCallRequest) -> ToolInvocationResult {
+        per_call_result(
+            &call.call.call_id,
+            ToolCallStatus::Succeeded,
+            vec![crate::promise_create_effect(
+                &PromiseId::from_number(call.promise_id_base),
+                &crate::PromiseSource::Timer {
+                    fire_at_ms: u64::MAX,
+                },
+                None,
+            )],
+        )
+    }
+
+    /// What the runtime returns for a workflow-tool call that drew this promise.
+    fn emitted_result(
+        request: &ToolInvocationBatchRequest,
+        call: &ToolInvocationRequest,
+        promise_id: &PromiseId,
+    ) -> ToolInvocationResult {
+        let binding = &call.workflow_tool.as_ref().expect("workflow tool").binding;
+        let invocation = WorkflowToolInvocation {
+            invocation_id: crate::WorkflowToolInvocationId::for_call(
+                binding.session_universe_id,
+                &request.session_id,
+                request.run_id,
+                request.turn_id,
+                request.batch_id,
+                &call.call_id,
+                &binding.binding_fingerprint,
+            ),
+            tool_id: binding.definition.tool_id.clone(),
+            semantic_type: binding.definition.semantic_type.clone(),
+            schema_revision: binding.definition.revision,
+            binding_fingerprint: binding.binding_fingerprint.clone(),
+            session_universe_id: binding.session_universe_id,
+            session_id: request.session_id.clone(),
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            tool_batch_id: request.batch_id,
+            tool_call_id: call.call_id.clone(),
+            arguments_ref: call.arguments_ref.clone(),
+            execution_context_ref: None,
+            completion_promises: Some(BTreeMap::from([(
+                crate::REPLY_COMPLETION_KEY.to_owned(),
+                promise_id.clone(),
+            )])),
+        };
+        per_call_result(
+            &call.call_id,
+            ToolCallStatus::Succeeded,
+            vec![crate::with_completion_deadline(
+                crate::workflow_tool_emit_effect(&invocation),
+                Some(60_090),
+            )],
+        )
+    }
+
+    fn pending_call_ids(request: &ToolInvocationBatchRequest) -> Vec<&str> {
+        request
+            .calls
+            .iter()
+            .map(|call| call.call_id.as_str())
+            .collect()
+    }
+
+    fn approve_only_approval(logged: &mut LoggedDrive, run_id: RunId) {
+        logged.admit(CoreAgentCommand::DecideApproval(
+            crate::ApprovalDecisionCommand {
+                approval_id: crate::ApprovalId::new("approval_1"),
+                run_id,
+                decision: crate::ApprovalDecision::Approved,
+                note: None,
+                decided_by: None,
+                response: None,
+            },
+        ));
+    }
+
+    #[test]
+    fn a_redispatch_after_approval_numbers_above_promises_already_minted() {
+        let (mut logged, first) = mixed_dispatch(&[
+            "tool_a",
+            crate::SLEEP_TOOL_ID,
+            "mcp_echo__hello",
+            crate::SLEEP_TOOL_ID,
+        ]);
+        let done = logged
+            .drive
+            .resume_tool_call(
+                first.batch_id,
+                per_call_result(
+                    &first.calls[0].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                70,
+            )
+            .expect("first call");
+        logged.commit(done);
+        let sleep = first
+            .call_request(1, Default::default())
+            .expect("first sleep");
+        let minted = logged
+            .drive
+            .resume_tool_call(first.batch_id, timer_result(&sleep), 71)
+            .expect("first sleep result");
+        logged.commit(minted);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                first.batch_id,
+                vec![native_mcp_approval(&first.calls[2].call_id)],
+                72,
+            )
+            .expect("park");
+        logged.commit(parked);
+        approve_only_approval(&mut logged, first.run_id);
+
+        let second = logged.until_tools();
+        assert_eq!(pending_call_ids(&second), ["call_2", "call_3"]);
+        assert_eq!(second.promise_id_base, sleep.promise_id_base + 1);
+        let approved = logged
+            .drive
+            .resume_tool_call(
+                second.batch_id,
+                per_call_result(
+                    &second.calls[0].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                73,
+            )
+            .expect("approved call");
+        logged.commit(approved);
+        let last_sleep = second
+            .call_request(1, Default::default())
+            .expect("last sleep");
+        let minted = logged
+            .drive
+            .resume_tool_call(second.batch_id, timer_result(&last_sleep), 74)
+            .expect("a second promise does not collide with the first");
+        logged.commit(minted);
+
+        let promises = &logged.drive.state().promises.promises;
+        assert!(promises.contains_key(&PromiseId::from_number(sleep.promise_id_base)));
+        assert!(promises.contains_key(&PromiseId::from_number(last_sleep.promise_id_base)));
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn workflow_tools_dispatched_after_per_call_siblings_number_above_them() {
+        let (mut logged, first) = mixed_dispatch(&[crate::SLEEP_TOOL_ID, "agent_spawn"]);
+        let sleep = first.call_request(0, Default::default()).expect("sleep");
+        let minted = logged
+            .drive
+            .resume_tool_call(first.batch_id, timer_result(&sleep), 70)
+            .expect("sleep result");
+        logged.commit(minted);
+
+        let residue = logged.until_tools();
+        assert_eq!(pending_call_ids(&residue), ["call_1"]);
+        assert_eq!(residue.promise_id_base, sleep.promise_id_base + 1);
+        let spawned = PromiseId::from_number(residue.promise_id_base);
+        let result = emitted_result(&residue, &residue.calls[0], &spawned);
+        let action = logged
+            .drive
+            .resume_tool_call(residue.batch_id, result, 71)
+            .expect("a workflow tool commits beside an earlier promise");
+        logged.commit(action);
+        assert!(
+            logged
+                .drive
+                .state()
+                .promises
+                .promises
+                .contains_key(&spawned)
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    /// The joined call only suspends the batch once it commits, and that happens
+    /// after the decision, so the two suspensions never have to coexist.
+    #[test]
+    fn a_joined_call_beside_a_gated_call_waits_for_the_decision_and_then_parks_the_batch() {
+        let (mut logged, first) = mixed_dispatch(&["agent_run", "mcp_echo__hello"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                first.batch_id,
+                vec![native_mcp_approval(&first.calls[1].call_id)],
+                70,
+            )
+            .expect("park");
+        logged.commit(parked);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        approve_only_approval(&mut logged, first.run_id);
+
+        let second = logged.until_tools();
+        assert_eq!(pending_call_ids(&second), ["call_0", "call_1"]);
+        let approved = logged
+            .drive
+            .resume_tool_call(
+                second.batch_id,
+                per_call_result(
+                    &second.calls[1].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                71,
+            )
+            .expect("approved call");
+        logged.commit(approved);
+
+        let residue = logged.until_tools();
+        assert_eq!(pending_call_ids(&residue), ["call_0"]);
+        let joined = PromiseId::from_number(residue.promise_id_base);
+        let result = emitted_result(&residue, &residue.calls[0], &joined);
+        let action = logged
+            .drive
+            .resume_tool_call(residue.batch_id, result, 72)
+            .expect("joined result");
+        let entries = logged.commit(action);
+        assert!(
+            event_kinds(&entries)
+                .iter()
+                .any(|kind| kind == crate::event_kind::TOOL_BATCH_DEFERRED)
+        );
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Parked);
+        assert!(run.pending_approvals().next().is_none());
         logged.assert_replays(|_| {});
     }
 

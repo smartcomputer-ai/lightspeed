@@ -115,10 +115,11 @@ pub struct ToolInvocationBatchRequest {
     /// Admitted code-mode grant, pinned before dispatching the script workflow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_mode_policy: Option<crate::CodeModeFeature>,
-    /// First promise id the executors of this dispatch may mint (see
-    /// `ActiveToolBatch::promise_id_base`). A batch-unit dispatch counts up
-    /// from here across all its calls; a per-call dispatch gets its own
-    /// slot (`base + call index`) and may create at most one promise.
+    /// First promise id the executors of this dispatch may mint: never below
+    /// the batch's own base and always above everything the session has already
+    /// minted. A batch-unit dispatch counts up from here across all its calls; a
+    /// per-call dispatch gets its own slot (`base + call index`) and may create
+    /// at most one promise.
     pub promise_id_base: u64,
     pub calls: Vec<ToolInvocationRequest>,
 }
@@ -322,8 +323,9 @@ pub struct ToolInvocationCallRequest {
     /// Admitted code-mode grant, pinned before dispatching the script workflow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_mode_policy: Option<crate::CodeModeFeature>,
-    /// The one promise id this call may mint: the batch base plus the
-    /// call's index, so sibling per-call dispatches never collide.
+    /// The one promise id this call may mint: the dispatch base plus the
+    /// call's index. Slots are unique within a dispatch, and every dispatch
+    /// numbers above what earlier ones minted, so no two calls collide.
     pub promise_id_base: u64,
     pub call: ToolInvocationRequest,
     /// Distinct tool identities of the other calls in this batch, for the
