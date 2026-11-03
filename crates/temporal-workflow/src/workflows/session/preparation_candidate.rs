@@ -147,7 +147,7 @@ impl PreparationCandidate {
 fn map_candidate_error(error: CoreAgentDriveError) -> AgentApiError {
     match error {
         CoreAgentDriveError::Command(CommandError::Rejected(rejection)) => {
-            AgentApiError::rejected(rejection.to_string())
+            crate::command_rejection_to_api_error(&rejection)
         }
         error => AgentApiError::internal(error.to_string()),
     }

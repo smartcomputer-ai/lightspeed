@@ -971,20 +971,16 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
 
 pub(crate) fn manual_compaction_requested_proposal(
     state: &CoreAgentState,
-) -> Result<CoreAgentEventProposal, DomainError> {
-    validate_standalone_compaction_can_start(state)?;
+) -> CoreAgentEventProposal {
     if !compaction_safe_boundary(state) {
-        return Ok(CoreAgentEventProposal::new(
+        return CoreAgentEventProposal::new(
             CoreAgentJoins::default(),
             CoreAgentEvent::Context(Event::CompactionQueued {
                 base_revision: state.context.revision,
             }),
-        ));
+        );
     }
-    Ok(compaction_requested_proposal(
-        state,
-        ContextCompactionTrigger::Manual,
-    ))
+    compaction_requested_proposal(state, ContextCompactionTrigger::Manual)
 }
 
 fn high_watermark_compaction_proposal(
@@ -1119,28 +1115,6 @@ fn compaction_requested_proposal(
             },
         }),
     )
-}
-
-pub(crate) fn validate_standalone_compaction_can_start(
-    state: &CoreAgentState,
-) -> Result<(), DomainError> {
-    let Some(config) = state.lifecycle.config.as_ref() else {
-        return Err(DomainError::InvariantViolation(
-            "open session is missing config".to_owned(),
-        ));
-    };
-    let _ = config;
-    if state.context.compaction.is_pending() || state.context.compaction.is_queued() {
-        return Err(DomainError::InvariantViolation(
-            "context compaction is already pending".to_owned(),
-        ));
-    }
-    if standalone_prefix_ids(state).is_empty() {
-        return Err(DomainError::InvariantViolation(
-            "no older compactable context is available".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>, DomainError> {

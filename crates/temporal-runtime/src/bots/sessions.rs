@@ -95,22 +95,10 @@ fn is_declaration_mismatch(error: &AgentApiError) -> bool {
                 .contains("managed-session controller, receiver, or tool declaration conflicts"))
 }
 
-/// The harness refused the profile's config for this session in a way no
-/// retry fixes: an invalid document, or a command rejection of the
-/// provider-compatibility kind (the rejection kind leads the message).
+/// The harness refused the profile's config for this session in a way no retry
+/// fixes. Admission classifies that refusal; a busy session stays `rejected`.
 fn is_profile_unapplicable(error: &AgentApiError) -> bool {
-    match error.kind {
-        AgentApiErrorKind::InvalidRequest => true,
-        AgentApiErrorKind::Rejected => {
-            const KIND: &str = "ProviderCompatibility";
-            error.message.starts_with(KIND)
-                && !error.message[KIND.len()..]
-                    .chars()
-                    .next()
-                    .is_some_and(|next| next.is_ascii_alphanumeric() || next == '_')
-        }
-        _ => false,
-    }
+    error.kind == AgentApiErrorKind::InvalidRequest
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -980,21 +968,19 @@ mod tests {
     }
 
     #[test]
-    fn profile_unapplicable_is_invalid_or_provider_compatibility() {
-        assert!(is_profile_unapplicable(&AgentApiError::invalid_request(
-            "bad document"
-        )));
-        assert!(is_profile_unapplicable(&AgentApiError::rejected(
-            "ProviderCompatibility: model x needs anthropic_messages"
-        )));
+    fn profile_unapplicable_follows_the_rejection_kind_and_not_its_text() {
+        use harness::{CommandRejection, CommandRejectionKind};
+        let classified = |kind| {
+            is_profile_unapplicable(&temporal_workflow::command_rejection_to_api_error(
+                &CommandRejection::new(kind, "tool_choice references missing active tool x"),
+            ))
+        };
+        assert!(classified(CommandRejectionKind::Invalid));
+        assert!(classified(CommandRejectionKind::ProviderCompatibility));
+        assert!(!classified(CommandRejectionKind::ActiveWork));
+        assert!(!classified(CommandRejectionKind::RevisionConflict));
         assert!(!is_profile_unapplicable(&AgentApiError::rejected(
-            "ActiveWork: session config can only change while no run is active"
-        )));
-        assert!(!is_profile_unapplicable(&AgentApiError::rejected(
-            "ProviderCompatibilityX: not the kind"
-        )));
-        assert!(!is_profile_unapplicable(&AgentApiError::conflict(
-            "ProviderCompatibility: wrong kind of error"
+            "ProviderCompatibility: a message cannot change the classification"
         )));
     }
 

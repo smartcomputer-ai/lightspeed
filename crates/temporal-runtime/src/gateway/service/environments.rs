@@ -44,7 +44,7 @@ impl GatewayAgentApi {
                 if status.admission_failures.len() > baseline_failures
                     && let Some(failure) = status.admission_failures.last()
                 {
-                    return Err(map_admission_failure_to_api_error(failure));
+                    return Err(failure.api_error());
                 }
                 if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(

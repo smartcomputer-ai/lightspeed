@@ -88,8 +88,9 @@ pub use types::{
     WorkflowToolExecutionCancelRequest, WorkflowToolExecutionCheckRequest, WorkflowToolRecipeV1,
     WorkflowToolRecoveryResult, WorkflowToolReplyValidationRequest,
     WorkflowToolReplyValidationResult, WorkflowToolStartActivityRequest,
-    WorkflowToolStartActivityResult, WorkflowToolStartArgs, compose_environment_job_workflow_id,
-    compose_workflow_id, split_workflow_id, workflow_tool_recipe_fingerprint,
+    WorkflowToolStartActivityResult, WorkflowToolStartArgs, command_rejection_to_api_error,
+    compose_environment_job_workflow_id, compose_workflow_id, split_workflow_id,
+    workflow_tool_recipe_fingerprint,
 };
 pub use workflows::bots;
 pub use workflows::channels;

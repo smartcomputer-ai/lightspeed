@@ -349,7 +349,7 @@ impl SessionPreparationService {
                 declaration.target.clone(),
                 declaration.completion.clone(),
             )
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            .map_err(|error| AgentApiError::invalid_request(error.message()))?;
             bindings.insert(binding.definition.tool_id.clone(), binding);
         }
         let materialized = bindings
@@ -425,7 +425,7 @@ impl SessionPreparationService {
     ) -> Result<(), AgentApiError> {
         config
             .validate()
-            .map_err(|e| AgentApiError::invalid_request(e.to_string()))?;
+            .map_err(|e| AgentApiError::invalid_request(e.message()))?;
         // Everything attached must exist before anything resolves it.
         authorization::require_resources(
             &store_pg::PgAccessStore::new(self.store.pool().clone()),

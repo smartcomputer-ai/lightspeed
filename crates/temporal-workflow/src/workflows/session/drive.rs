@@ -41,7 +41,7 @@ pub(super) async fn admit_and_append_command(
         || vfs_skill_catalog_publication_is_obsolete(drive.state(), &command)
     {
         let rejection = harness::CommandRejection::new(
-            harness::CommandRejectionKind::ActiveWork,
+            harness::CommandRejectionKind::Conflict,
             "context observation no longer matches the configured source",
         );
         return Ok(CommandAdmissionResult::Rejected(AgentAdmissionFailure {
@@ -74,7 +74,7 @@ pub(super) async fn admit_and_append_command(
             | CoreAgentDriveError::Command(CommandError::Domain(error)),
         ) if !reissued => {
             let rejection = harness::CommandRejection::new(
-                harness::CommandRejectionKind::InvariantViolation,
+                harness::CommandRejectionKind::Internal,
                 error.to_string(),
             );
             observability::log_admission_refused(ctx, &rejection.message);

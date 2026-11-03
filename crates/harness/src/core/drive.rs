@@ -3478,7 +3478,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         assert!(rejection.message.contains("run input cannot supply"));
     }
 
@@ -4111,7 +4111,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         assert!(rejection.message.contains("reserved internal prefix"));
     }
 
@@ -4134,7 +4134,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         assert!(rejection.message.contains("reserved internal prefix"));
     }
 
@@ -4265,7 +4265,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         assert!(rejection.message.contains("outside prefix"));
     }
 
@@ -4289,7 +4289,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         assert!(
             rejection
                 .message
@@ -4369,7 +4369,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         assert!(rejection.message.contains("context edit cannot supply"));
         assert!(drive.state().context.entries.is_empty());
     }
@@ -6960,7 +6960,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
     }
 
     #[test]
@@ -6986,7 +6986,7 @@ mod tests {
         let CoreAgentDriveError::Command(crate::CommandError::Rejected(rejection)) = error else {
             panic!("expected rejected command");
         };
-        assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
     }
 
     #[test]
@@ -7490,7 +7490,7 @@ mod tests {
             else {
                 panic!("expected rejected command");
             };
-            assert_eq!(rejection.kind, CommandRejectionKind::InvariantViolation);
+            assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
         }
     }
 
@@ -12465,5 +12465,88 @@ mod tests {
                 .unwrap();
             assert_eq!(replayed.state(), drive.state());
         }
+    }
+
+    fn rejection_of(error: CoreAgentDriveError) -> crate::CommandRejection {
+        match error {
+            CoreAgentDriveError::Command(CommandError::Rejected(rejection)) => rejection,
+            other => panic!("expected a command rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn caller_input_is_invalid_and_reads_without_reducer_vocabulary() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let run_config = RunConfig {
+            tool_choice: Some(ToolChoice::Specific {
+                tool_name: ToolName::new("typo"),
+            }),
+            ..RunConfig::default()
+        };
+        let rejection = rejection_of(
+            drive
+                .admit_command(
+                    request_run_command(None, user_input(BlobRef::from_bytes(b"x")), run_config),
+                    20,
+                )
+                .expect_err("dangling tool choice"),
+        );
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
+        assert_eq!(
+            rejection.to_string(),
+            "tool_choice references missing active tool typo"
+        );
+    }
+
+    #[test]
+    fn every_stale_expected_revision_is_a_revision_conflict() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        for command in [
+            CoreAgentCommand::ReplaceSessionConfig {
+                expected_revision: Some(99),
+                config: config(),
+            },
+            CoreAgentCommand::ReplaceTools {
+                expected_revision: Some(99),
+                tools: Default::default(),
+            },
+            CoreAgentCommand::RemoveContext {
+                expected_revision: Some(99),
+                key: ContextEntryKey::new("notes"),
+            },
+        ] {
+            let rejection = rejection_of(drive.admit_command(command, 20).expect_err("stale"));
+            assert_eq!(rejection.kind, CommandRejectionKind::RevisionConflict);
+        }
+    }
+
+    #[test]
+    fn a_session_that_is_not_open_refuses_by_lifecycle() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+        let rejection = rejection_of(
+            drive
+                .admit_command(CoreAgentCommand::CompactContext, 20)
+                .expect_err("not open"),
+        );
+        assert_eq!(rejection.kind, CommandRejectionKind::SessionLifecycle);
+        assert_eq!(rejection.to_string(), "session must be open");
+    }
+
+    #[test]
+    fn manual_compaction_refusals_are_about_state_and_not_input() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+        open_session(&mut drive);
+        let rejection = rejection_of(
+            drive
+                .admit_command(CoreAgentCommand::CompactContext, 20)
+                .expect_err("nothing to compact"),
+        );
+        assert_eq!(rejection.kind, CommandRejectionKind::Refused);
     }
 }

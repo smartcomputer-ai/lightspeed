@@ -88,16 +88,39 @@ fn replacements_keep_the_entry_kind_and_origin() {
 #[test]
 fn admission_failure_mapping_uses_gateway_error_kinds() {
     assert_eq!(
-        map_admission_failure_to_api_error(&failure(AgentAdmissionFailureKind::RejectedCommand))
+        failure(AgentAdmissionFailureKind::RejectedCommand)
+            .api_error()
             .kind,
         AgentApiErrorKind::Rejected
     );
-    let mut revision_conflict = failure(AgentAdmissionFailureKind::RejectedCommand);
-    revision_conflict.rejection = Some(harness::CommandRejection::context_revision_conflict(1, 2));
+    let with_rejection = |rejection| AgentAdmissionFailure {
+        rejection: Some(rejection),
+        ..failure(AgentAdmissionFailureKind::RejectedCommand)
+    };
+    use harness::CommandRejectionKind as Kind;
     assert_eq!(
-        map_admission_failure_to_api_error(&revision_conflict).kind,
+        with_rejection(harness::CommandRejection::context_revision_conflict(1, 2))
+            .api_error()
+            .kind,
         AgentApiErrorKind::Conflict
     );
+    for (kind, expected) in [
+        (Kind::Invalid, AgentApiErrorKind::InvalidRequest),
+        (
+            Kind::ProviderCompatibility,
+            AgentApiErrorKind::InvalidRequest,
+        ),
+        (Kind::RevisionConflict, AgentApiErrorKind::Conflict),
+        (Kind::Conflict, AgentApiErrorKind::Conflict),
+        (Kind::Internal, AgentApiErrorKind::Internal),
+        (Kind::ActiveWork, AgentApiErrorKind::Rejected),
+        (Kind::SessionLifecycle, AgentApiErrorKind::Rejected),
+        (Kind::Refused, AgentApiErrorKind::Rejected),
+    ] {
+        let error = with_rejection(harness::CommandRejection::new(kind, "the reason")).api_error();
+        assert_eq!(error.kind, expected);
+        assert_eq!(error.message, "the reason");
+    }
 }
 
 #[test]

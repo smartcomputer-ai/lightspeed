@@ -315,7 +315,7 @@ impl GatewayAgentApi {
                 if status.admission_failures.len() > baseline_failures
                     && let Some(failure) = status.admission_failures.last()
                 {
-                    return Err(map_admission_failure_to_api_error(failure));
+                    return Err(failure.api_error());
                 }
                 if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
@@ -364,7 +364,7 @@ impl GatewayAgentApi {
                 .rev()
                 .find(|failure| failure.submission_id.as_ref() == Some(submission_id))
             {
-                return Err(map_admission_failure_to_api_error(failure));
+                return Err(failure.api_error());
             }
             let can_return_matching_run =
                 !wait_for_admission_drain || status.pending_admissions == 0;
@@ -435,7 +435,7 @@ impl GatewayAgentApi {
                         failure.correlation_token.as_deref() == Some(correlation_token)
                     })
                 {
-                    return Err(map_admission_failure_to_api_error(failure));
+                    return Err(failure.api_error());
                 }
                 if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(
@@ -483,7 +483,7 @@ impl GatewayAgentApi {
                         failure.correlation_token.as_deref() == Some(correlation_token)
                     })
                 {
-                    return Err(map_admission_failure_to_api_error(failure));
+                    return Err(failure.api_error());
                 }
                 if let Some(error) = status.fatal_error {
                     return Err(AgentApiError::internal(format!(

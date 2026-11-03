@@ -167,6 +167,38 @@ pub enum AgentAdmissionFailureKind {
     RejectedCommand,
 }
 
+impl AgentAdmissionFailure {
+    /// What the caller of the refused command is told.
+    pub fn api_error(&self) -> api::AgentApiError {
+        if let Some(error) = &self.preparation_error {
+            return error.clone();
+        }
+        match &self.rejection {
+            Some(rejection) => command_rejection_to_api_error(rejection),
+            None => api::AgentApiError::rejected(self.message.clone()),
+        }
+    }
+}
+
+/// The one classification of a harness refusal for API callers. Input the caller
+/// must change is an invalid request, a lost race is a conflict, and a refusal by
+/// current state stays `rejected`, which is what callers may retry.
+pub fn command_rejection_to_api_error(rejection: &CommandRejection) -> api::AgentApiError {
+    use harness::CommandRejectionKind as Kind;
+    let kind = match rejection.kind {
+        Kind::Invalid | Kind::ProviderCompatibility => api::AgentApiErrorKind::InvalidRequest,
+        Kind::RevisionConflict | Kind::Conflict => api::AgentApiErrorKind::Conflict,
+        Kind::Internal => api::AgentApiErrorKind::Internal,
+        Kind::SessionLifecycle
+        | Kind::ActiveWork
+        | Kind::MissingActiveRun
+        | Kind::UnknownReference
+        | Kind::DuplicateSubmission
+        | Kind::Refused => api::AgentApiErrorKind::Rejected,
+    };
+    api::AgentApiError::new(kind, rejection.message.clone())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentActiveRunSummary {
     pub run_id: u64,

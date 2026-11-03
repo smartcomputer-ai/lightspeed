@@ -54,7 +54,7 @@ pub fn admit_command(
         CoreAgentCommand::OpenSession { mut config } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(
-                    CommandRejectionKind::CoreAgentState,
+                    CommandRejectionKind::SessionLifecycle,
                     "session can only be opened from new state",
                 );
             }
@@ -72,7 +72,7 @@ pub fn admit_command(
         } => {
             if state.lifecycle.status != CoreAgentStatus::New {
                 return reject(
-                    CommandRejectionKind::CoreAgentState,
+                    CommandRejectionKind::SessionLifecycle,
                     "session can only be opened from new state",
                 );
             }
@@ -119,7 +119,7 @@ pub fn admit_command(
                     return Ok(Vec::new());
                 }
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     format!(
                         "system workflow tool {tool_id} conflicts with an existing immutable binding"
                     ),
@@ -132,7 +132,7 @@ pub fn admit_command(
                 .find(|existing| existing.definition.tool.name == binding.definition.tool.name)
             {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     format!(
                         "system workflow tool {tool_id} name {} collides with workflow tool {}",
                         binding.definition.tool.name, existing.definition.tool_id
@@ -161,7 +161,7 @@ pub fn admit_command(
                 let actual_revision = state.lifecycle.config_revision;
                 if expected_revision != actual_revision {
                     return reject(
-                        CommandRejectionKind::InvalidConfiguration,
+                        CommandRejectionKind::RevisionConflict,
                         format!(
                             "expected config revision {}, got {}",
                             expected_revision, actual_revision
@@ -290,7 +290,7 @@ pub fn admit_command(
             let RunRequestSource::Input { input } = request.source;
             if input.is_empty() {
                 return reject(
-                    CommandRejectionKind::InvariantViolation,
+                    CommandRejectionKind::Invalid,
                     "run input must contain at least one entry",
                 );
             }
@@ -460,9 +460,21 @@ pub fn admit_command(
         }
         CoreAgentCommand::CompactContext => {
             require_open(state)?;
-            crate::core::components::context::manual_compaction_requested_proposal(state)
-                .map(|proposal| vec![proposal])
-                .map_err(command_rejection_from_domain)
+            if state.context.compaction.is_pending() || state.context.compaction.is_queued() {
+                return reject(
+                    CommandRejectionKind::ActiveWork,
+                    "context compaction is already pending",
+                );
+            }
+            if crate::core::components::context::standalone_prefix_ids(state).is_empty() {
+                return reject(
+                    CommandRejectionKind::Refused,
+                    "no older compactable context is available",
+                );
+            }
+            Ok(vec![
+                crate::core::components::context::manual_compaction_requested_proposal(state),
+            ])
         }
         CoreAgentCommand::CloseSession { force } => {
             if force && state.lifecycle.status == crate::CoreAgentStatus::Closed {
@@ -659,7 +671,7 @@ pub fn admit_command(
             }
             if record.status != ApprovalStatus::Pending {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Conflict,
                     format!("approval {} is already terminal", command.approval_id),
                 );
             }
@@ -687,14 +699,14 @@ pub fn admit_command(
                         && *approve == expected_approve => {}
                     _ => {
                         return reject(
-                            CommandRejectionKind::InvariantViolation,
+                            CommandRejectionKind::Invalid,
                             "approval response context does not match the pending continuation",
                         );
                     }
                 }
             } else if command.response.is_some() {
                 return reject(
-                    CommandRejectionKind::InvariantViolation,
+                    CommandRejectionKind::Invalid,
                     "native MCP approval decisions must not add provider response context",
                 );
             }
@@ -785,7 +797,7 @@ pub fn admit_command(
                 Some(existing) if existing == &error_ref => return Ok(Vec::new()),
                 Some(_) => {
                     return reject(
-                        CommandRejectionKind::CoreAgentState,
+                        CommandRejectionKind::Conflict,
                         format!(
                             "workflow tool invocation {invocation_id} already has a different delivery failure"
                         ),
@@ -826,7 +838,7 @@ pub fn admit_command(
                 Some(existing) if existing == &error_ref => return Ok(Vec::new()),
                 Some(_) => {
                     return reject(
-                        CommandRejectionKind::CoreAgentState,
+                        CommandRejectionKind::Conflict,
                         format!(
                             "workflow tool start intent {invocation_id} already has a different terminal failure"
                         ),
@@ -922,13 +934,13 @@ pub fn admit_command(
                 .and_then(|config| config.features.environments.as_ref())
             else {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     "active environment requires the environments feature",
                 );
             };
             if !environments.is_attached(environment_id.as_str()) {
                 return reject(
-                    CommandRejectionKind::InvalidConfiguration,
+                    CommandRejectionKind::Invalid,
                     format!("environment {environment_id} is not attached to this session"),
                 );
             }
@@ -1015,7 +1027,7 @@ fn validate_expected_tool_revision(
         let actual_revision = state.tooling.revision;
         if expected_revision != actual_revision {
             return reject(
-                CommandRejectionKind::InvalidConfiguration,
+                CommandRejectionKind::RevisionConflict,
                 format!(
                     "expected tool revision {}, got {}",
                     expected_revision, actual_revision
@@ -1056,7 +1068,10 @@ fn require_open(state: &CoreAgentState) -> Result<(), CommandError> {
     if state.lifecycle.status == CoreAgentStatus::Open {
         Ok(())
     } else {
-        reject(CommandRejectionKind::CoreAgentState, "session must be open")
+        reject(
+            CommandRejectionKind::SessionLifecycle,
+            "session must be open",
+        )
     }
 }
 
@@ -1088,16 +1103,16 @@ fn command_rejection_from_domain(error: DomainError) -> CommandError {
     let kind = match error {
         DomainError::ProviderCompatibility(_) => CommandRejectionKind::ProviderCompatibility,
         DomainError::InvariantViolation(_) | DomainError::EventOrdering(_) => {
-            CommandRejectionKind::InvariantViolation
+            CommandRejectionKind::Invalid
         }
     };
-    CommandError::Rejected(CommandRejection::new(kind, error.to_string()))
+    CommandError::Rejected(CommandRejection::new(kind, error.message()))
 }
 
 fn unknown_reference_rejection_from_domain(error: DomainError) -> CommandError {
     CommandError::Rejected(CommandRejection::new(
         CommandRejectionKind::UnknownReference,
-        error.to_string(),
+        error.message(),
     ))
 }
 

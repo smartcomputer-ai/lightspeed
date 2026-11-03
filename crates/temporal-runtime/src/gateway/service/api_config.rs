@@ -17,7 +17,7 @@ impl GatewayAgentApi {
         self.resolve_context_capacity(&mut config).await;
         config
             .validate()
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            .map_err(|error| AgentApiError::invalid_request(error.message()))?;
         self.admit_attachments(&config.features).await?;
         self.validate_workspace_attachment_targets(&config.features)
             .await?;
@@ -380,7 +380,7 @@ pub(super) fn apply_run_start_config(
     }
     run_config
         .validate_provider_compatibility(&session_config.model)
-        .map_err(|error| AgentApiError::invalid_request(error.to_string()))
+        .map_err(|error| AgentApiError::invalid_request(error.message()))
 }
 
 pub(super) fn apply_run_limits_config(run_config: &mut RunConfig, limits: RunLimitsConfig) {

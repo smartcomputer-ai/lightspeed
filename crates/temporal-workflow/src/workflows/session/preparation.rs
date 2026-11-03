@@ -283,22 +283,7 @@ pub(super) async fn apply(
         .map_err(|e| AgentApiError::internal(e.to_string()))?
     {
         CommandAdmissionResult::Accepted => Ok(()),
-        CommandAdmissionResult::Rejected(failure) => Err(admission_error(failure)),
-    }
-}
-
-fn admission_error(failure: AgentAdmissionFailure) -> AgentApiError {
-    if let Some(error) = failure.preparation_error {
-        return error;
-    }
-    if failure
-        .rejection
-        .as_ref()
-        .is_some_and(|rejection| rejection.kind == harness::CommandRejectionKind::RevisionConflict)
-    {
-        AgentApiError::conflict(failure.message)
-    } else {
-        AgentApiError::rejected(failure.message)
+        CommandAdmissionResult::Rejected(failure) => Err(failure.api_error()),
     }
 }
 

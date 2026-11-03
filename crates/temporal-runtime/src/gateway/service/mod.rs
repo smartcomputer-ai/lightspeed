@@ -2320,7 +2320,7 @@ impl AgentApiService for GatewayAgentApi {
         self.resolve_context_capacity(&mut config).await;
         config
             .validate()
-            .map_err(|error| AgentApiError::invalid_request(error.to_string()))?;
+            .map_err(|error| AgentApiError::invalid_request(error.message()))?;
         // Admission before resolution: everything attached must exist.
         self.admit_attachments(&config.features).await?;
         // Declared MCP links must resolve (catalog record, grant/policy
@@ -3385,7 +3385,7 @@ impl AgentApiService for GatewayAgentApi {
                 results.push(approval_decision_failure(
                     input.approval_id,
                     ApprovalDecisionFailureKind::InvalidNote,
-                    error.to_string(),
+                    error.message(),
                 ));
                 continue;
             }

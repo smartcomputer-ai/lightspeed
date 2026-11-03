@@ -11,6 +11,18 @@ pub enum DomainError {
     ProviderCompatibility(String),
 }
 
+impl DomainError {
+    /// The refusal in its own words, for callers that report it to someone who
+    /// did not ask about reducer internals.
+    pub fn message(&self) -> &str {
+        match self {
+            Self::InvariantViolation(message)
+            | Self::EventOrdering(message)
+            | Self::ProviderCompatibility(message) => message,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum CommandError {
     #[error("command rejected: {0}")]
@@ -20,7 +32,7 @@ pub enum CommandError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Error)]
-#[error("{kind:?}: {message}")]
+#[error("{message}")]
 pub struct CommandRejection {
     pub kind: CommandRejectionKind,
     pub message: String,
@@ -55,16 +67,23 @@ pub enum CommandRejectionDetails {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandRejectionKind {
-    CoreAgentState,
+    /// The session's lifecycle does not allow this command.
+    SessionLifecycle,
     ActiveWork,
     MissingActiveRun,
     UnknownReference,
-    InvalidConfiguration,
+    /// The caller's input is wrong and would be refused in any state.
+    Invalid,
     ProviderCompatibility,
-    InvariantViolation,
     DuplicateSubmission,
     RevisionConflict,
-    Other,
+    /// A fact this command would have to contradict is already recorded.
+    Conflict,
+    /// The input is fine, but what the session holds gives it nothing to do.
+    Refused,
+    /// The reducer refused what admission proposed. The caller did nothing
+    /// wrong: this is a harness defect that cost one command.
+    Internal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
