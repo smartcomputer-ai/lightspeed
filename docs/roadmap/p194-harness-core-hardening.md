@@ -156,7 +156,9 @@ Later packages add their own entries.
   between the two.
 - **A failed describe leaves `session/read` without the check.** The read is served from
   the store, so a Temporal outage logs a warning and reports the stored status rather
-  than failing. A session can read as healthy during an outage. Mutations still fail.
+  than failing. A session can read as healthy during an outage, and each read of an open
+  session first waits out the client's retries, about 10 s by its defaults (read from the
+  client source, not timed). Mutations still fail.
 
 ## Progress
 
@@ -261,7 +263,7 @@ Landed:
   `record_error` and `record_bootstrap_error`, every caller of which returns the error
   straight after, and it is the only field the gateway waiters and
   `wait_for_closed_session` fail fast on. `last_warning` takes the advisory setters and
-  logs. No gateway path reads it and nothing clears it. The clears on append, on
+  logs. No gateway path reads it, and only a rollover drops it. The clears on append, on
   admission failure and in bootstrap are deleted. The bot controller's and the
   environment job's own `last_error` are untouched. The stale-flag force terminate on
   close goes with this.
@@ -282,8 +284,9 @@ Calls made:
 - A closing workflow commits the close and then completes, so a dead execution behind an
   open row can mean the row was read too early. The read projects once more on that path
   only, and reports the failure only if the row is still open.
-- A row in lifecycle `New` is treated as open. Temporal accepts the start before the row
-  exists, so a row without a live execution is real.
+- A row in lifecycle `New` is treated as open when its execution ran and stopped. With no
+  execution at all it stays `notLoaded`, because a sub-agent's row is written before its
+  workflow starts. See the review follow-up below.
 - Statuses that do not say the execution ended count as running: `ContinuedAsNew`,
   `Paused`, `Unspecified`, `Unknown` and anything newer. A paused workflow used to count
   as not running, so force close now signals it first and falls back to terminate when
@@ -319,7 +322,7 @@ Live, on the hardening database and namespace, both passed:
   the worker first, then reads, terminates, reads, lists, force closes and reads again.
 - `workflow_tool_reply_requires_exact_stored_producer`, updated for `last_warning`.
 
-Other live suites wait for the checkpoint. A live fixture that writes a session row with
+Other live suites wait for the checkpoint. A live fixture that opens a session row with
 no workflow behind it and then reads it would now see `error` with `missing`. I found
 none by reading, but did not run them all.
 
@@ -334,3 +337,32 @@ Handoff:
   admission drain, `drain_pending_admissions` and the code tool dispatcher. Those leave
   `fatal_error` empty, so waiters do not fail fast on them. This was already so with
   `last_error`. `core-failrun` or H-64 is the natural place to fix it.
+
+Independent review follow-up:
+
+- `07555062`: the note that a row without a live execution is real was wrong. A sub-agent's
+  row is written before its workflow starts, so during that start, and while it keeps
+  failing and retrying, `session/read` reported `error` with `missing` and the page said
+  the workflow no longer exists. The bot sweep would have inherited this. A `New` row with
+  no execution now stays `notLoaded`. A `New` row whose execution stopped still reports it.
+  The classifier's decision table is now a pure function with a unit test, since only one
+  row had a test, a live one.
+- `048c00ab`: two descriptions corrected. `failed` pointed at "the log", which reads as
+  the session log and does not hold the error. `last_warning` said only a newer warning
+  replaces it, but a rollover drops it too. Contracts regenerated.
+- `60b52956`: the detail page read the session only on load and on run events, and a
+  workflow that dies mid-run emits none, so the banner never appeared for someone watching.
+  The page re-reads every 15 s while the status is `active`.
+
+Review checks: `cargo test -p temporal-runtime --lib` (472 passed, 1 ignored), which also
+closes the gap of not re-running it after the classifier refinement; `cargo test -p
+temporal-workflow --lib` (163 passed); `cargo test -p api -p api-projection`;
+`SessionsPage.test` (75 passed); web typecheck; `cargo check --workspace --all-targets
+--locked`. The contract exporters leave no diff. No live test was re-run for the
+follow-up: the `New` row case is covered by unit tests only, so it waits for the checkpoint.
+
+Reviewed and found sound: every `record_error` caller returns the error straight after, so
+removing the clears cannot leave a sticky `fatal_error`. Warnings log only outside replay
+and add no workflow commands. The workflow's only clean exit is closed and quiescent, so
+`completed` under an open row does mean it stopped short, once the re-read has ruled out a
+close in flight.
