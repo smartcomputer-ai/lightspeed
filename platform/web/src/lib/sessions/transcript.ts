@@ -324,6 +324,10 @@ export function applyEvents(
         setRunLabel(next, "approval required");
         next.runRevision += 1;
         break;
+      case "approvalRunUnparked":
+        setRunLabel(next, "working");
+        next.runRevision += 1;
+        break;
       case "approvalDecided":
       case "approvalCancelled":
         next.runRevision += 1;

@@ -1412,11 +1412,12 @@ pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSess
             refresh_delete_at(record);
         }
         // Activity follows the run: working from its start, waiting while it
-        // is parked on approvals, working again at its next step (a run only
-        // steps on once every approval is decided), idle once it ends.
+        // is parked on approvals, working again once it leaves that park, idle
+        // once it ends. A park that also held a batch ends at the batch's resume.
         "lightspeed.core.run.started" => record.activity = SessionActivity::Working,
         "lightspeed.core.approval.run_parked" => record.activity = SessionActivity::Waiting,
-        "lightspeed.core.turn.started"
+        "lightspeed.core.approval.run_unparked"
+        | "lightspeed.core.turn.started"
         | "lightspeed.core.turn.generation_requested"
         | "lightspeed.core.tool.call_started"
         | "lightspeed.core.tool.batch_resumed"
@@ -2437,14 +2438,14 @@ mod tests {
             &session,
             &[
                 "lightspeed.core.approval.decided",
-                "lightspeed.core.tool.batch_resumed",
+                "lightspeed.core.approval.run_unparked",
             ],
         )
         .await;
         assert_eq!(
             activity(record),
             SessionActivity::Working,
-            "the run stepped on"
+            "an approved call may run for minutes with no further event"
         );
         let record = step(&store, &session, &["lightspeed.core.run.cancelled"]).await;
         assert_eq!(activity(record), SessionActivity::Idle);

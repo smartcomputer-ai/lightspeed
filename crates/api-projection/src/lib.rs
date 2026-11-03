@@ -335,7 +335,12 @@ impl<'a> CoreAgentProjector<'a> {
             },
             entries: projected_entries,
             tool_batches: self
-                .project_tool_batches_for_run(&projection, &context_entries, params.run_id)
+                .project_tool_batches_for_run(
+                    &projection,
+                    &context_entries,
+                    params.run_id,
+                    params.status,
+                )
                 .await?,
             usage: params.usage.map(llm_usage_to_api),
             pending_approvals: self
@@ -885,6 +890,11 @@ impl<'a> CoreAgentProjector<'a> {
                         run_id: api_run_id(*run_id),
                     })
                 }
+                harness::ApprovalEvent::RunUnparked { run_id } => {
+                    Ok(SessionEventKindView::ApprovalRunUnparked {
+                        run_id: api_run_id(*run_id),
+                    })
+                }
                 harness::ApprovalEvent::Decided {
                     approval_id,
                     run_id,
@@ -1215,6 +1225,7 @@ impl<'a> CoreAgentProjector<'a> {
         projection: &CoreAgentProjection<'_>,
         context_entries: &[&ContextEntry],
         run_id: RunId,
+        run_status: ApiRunStatus,
     ) -> Result<Vec<ToolBatchView>, AgentApiError> {
         let result_by_call = self.project_tool_results_for_run(context_entries).await?;
         let effect_by_call = tool_effects_for_run(projection, run_id);
@@ -1338,6 +1349,18 @@ impl<'a> CoreAgentProjector<'a> {
                         ToolItemStatus::Running | ToolItemStatus::Requested
                     ) {
                         call.status = ToolItemStatus::Unavailable;
+                    }
+                }
+            } else if matches!(
+                run_status,
+                ApiRunStatus::Completed | ApiRunStatus::Failed | ApiRunStatus::Cancelled
+            ) {
+                // The run ended with this batch open, so a call with no completion
+                // of its own never finished, whatever result answers it in context.
+                for call in &mut batch.calls {
+                    if call.completed_at_ms.is_none() {
+                        call.status = ToolItemStatus::Cancelled;
+                        call.is_error = true;
                     }
                 }
             }
@@ -2173,11 +2196,14 @@ pub fn session_status(state: &CoreAgentState) -> ApiSessionStatus {
     }
 }
 
-/// What the session is doing now, from its state: the same value lists read
-/// from the stored projection.
+/// What the session is doing now, from its state. Lists read the stored
+/// projection, which follows the same park: waiting from `RunParked` until the
+/// run leaves it.
 pub fn session_activity(state: &CoreAgentState) -> api::SessionActivity {
     match (&state.lifecycle.status, state.runs.active.as_ref()) {
-        (CoreAgentStatus::Open, Some(run)) if run.pending_approvals().next().is_some() => {
+        (CoreAgentStatus::Open, Some(run))
+            if run.status == RunStatus::Parked && run.pending_approvals().next().is_some() =>
+        {
             api::SessionActivity::Waiting
         }
         (CoreAgentStatus::Open, Some(_)) => api::SessionActivity::Working,
@@ -5310,5 +5336,151 @@ mod tests {
             token_estimate: None,
             supersedes: None,
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_run_ended_with_its_batch_open_reports_no_pending_or_running_work() {
+        let blobs = InMemoryBlobStore::new();
+        let arguments_ref = blobs.insert_text("{}").await;
+        let run_id = RunId::new(1);
+        let turn_id = harness::TurnId::new(1);
+        let batch_id = harness::ToolBatchId::new(1);
+        let call_id = harness::ToolCallId::new("call_1");
+        let event = |seq: u64, event: CoreAgentEvent| CoreAgentEntry {
+            position: SessionPosition {
+                seq: EventSeq::new(seq),
+            },
+            observed_at_ms: seq,
+            joins: CoreAgentJoins::default(),
+            event,
+        };
+        let approval_id = harness::ApprovalId::new("approval_1");
+        let entries = [
+            event(
+                1,
+                CoreAgentEvent::Tool(ToolEvent::BatchStarted {
+                    run_id,
+                    turn_id,
+                    batch_id,
+                    toolset_revision: 0,
+                    calls: vec![harness::ObservedToolCall {
+                        call_id: call_id.clone(),
+                        tool_id: None,
+                        tool_name: harness::ToolName::new("mcp_echo__hello"),
+                        provider_kind: None,
+                        arguments_ref: arguments_ref.clone(),
+                        native_call_ref: None,
+                    }],
+                }),
+            ),
+            event(
+                2,
+                CoreAgentEvent::Approval(harness::ApprovalEvent::Requested {
+                    approval: harness::ApprovalRequested {
+                        approval_id: approval_id.clone(),
+                        run_id,
+                        subject: harness::ApprovalSubject::McpToolCall {
+                            server_id: "echo".into(),
+                            server_label: "echo".into(),
+                            tool_name: "hello".into(),
+                            arguments_ref: arguments_ref.clone(),
+                        },
+                        continuation: harness::ApprovalContinuation::NativeMcp { call_id },
+                    },
+                }),
+            ),
+            event(
+                3,
+                CoreAgentEvent::Approval(harness::ApprovalEvent::Cancelled {
+                    approval_id,
+                    run_id,
+                }),
+            ),
+            event(
+                4,
+                CoreAgentEvent::Run(harness::RunEvent::ForceCancelled { run_id }),
+            ),
+        ];
+        let source = RunSource::Input { input: Vec::new() };
+        let view = CoreAgentProjector::new(&blobs)
+            .project_run_with_metadata(ProjectRun {
+                entries: &entries,
+                run_id,
+                status: ApiRunStatus::Cancelled,
+                output: None,
+                source: &source,
+                started_at_ms: Some(1),
+                completed_at_ms: Some(4),
+                usage: None,
+            })
+            .await
+            .expect("project run");
+        assert!(view.pending_approvals.is_empty());
+        assert_eq!(view.tool_batches[0].status, ToolItemStatus::Cancelled);
+        assert_eq!(
+            view.tool_batches[0].calls[0].status,
+            ToolItemStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn activity_waits_only_while_the_run_is_parked_on_an_approval() {
+        let mut state = CoreAgentState::new();
+        state.lifecycle.status = CoreAgentStatus::Open;
+        let run_id = RunId::new(1);
+        let mut run = harness::ActiveRun {
+            context_recovery: Default::default(),
+            run_id,
+            status: RunStatus::Active,
+            submission_id: None,
+            source: RunSource::Input { input: Vec::new() },
+            input_entry_ids: Vec::new(),
+            input_consumed_by_turn_id: None,
+            run_config: Default::default(),
+            config_revision: 0,
+            first_seq: EventSeq::new(1),
+            accepted_at_ms: 1,
+            started_at_ms: Some(1),
+            usage: None,
+            steering: Vec::new(),
+            turns: BTreeMap::new(),
+            active_turn_id: None,
+            active_tool_batch_id: None,
+            approvals: BTreeMap::new(),
+            parked_tool_batch: None,
+            tool_batches: BTreeMap::new(),
+            completed_tool_batches: BTreeMap::new(),
+            output: None,
+            failure: None,
+            notify_on_terminal: Vec::new(),
+        };
+        let approval_id = harness::ApprovalId::new("approval_1");
+        run.approvals.insert(
+            approval_id.clone(),
+            harness::ApprovalRecord {
+                request: harness::ApprovalRequested {
+                    approval_id: approval_id.clone(),
+                    run_id,
+                    subject: harness::ApprovalSubject::McpToolCall {
+                        server_id: "echo".into(),
+                        server_label: "echo".into(),
+                        tool_name: "hello".into(),
+                        arguments_ref: BlobRef::from_bytes(b"{}"),
+                    },
+                    continuation: harness::ApprovalContinuation::OpenAiMcp {
+                        provider_request_id: "mcpr_1".into(),
+                    },
+                },
+                requested_at_ms: 1,
+                status: harness::ApprovalStatus::Pending,
+                note: None,
+                decided_by: None,
+            },
+        );
+        state.runs.active = Some(run);
+        // Requested but deferred behind work the same turn still has to do.
+        assert_eq!(session_activity(&state), api::SessionActivity::Working);
+        state.runs.active.as_mut().unwrap().status = RunStatus::Parked;
+        assert_eq!(session_activity(&state), api::SessionActivity::Waiting);
     }
 }

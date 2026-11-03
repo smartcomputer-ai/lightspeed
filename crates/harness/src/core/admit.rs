@@ -7,6 +7,7 @@ use crate::{
     CoreAgentStatus, DomainError, PromiseEvent, PromiseResolution, RunEvent, RunRequestSource,
     RunSource, RunStatus, ToolConfigEvent, WorkflowToolConfigEvent,
     core::components::{
+        approval::pending_approval_cancellations,
         config::{validate_config_update_for_state, validate_run_config_for_state},
         context::entries_applied_proposal,
         tooling::{open_tool_group_closing_entries, validate_tool_map},
@@ -501,6 +502,7 @@ pub fn admit_command(
             let mut proposals = Vec::new();
             if force {
                 if let Some(active_run) = state.runs.active.as_ref() {
+                    proposals.extend(pending_approval_cancellations(active_run));
                     proposals.push(CoreAgentEventProposal::new(
                         CoreAgentJoins {
                             run_id: Some(active_run.run_id),
@@ -602,18 +604,7 @@ pub fn admit_command(
                             requested_by,
                         }),
                     )];
-                    proposals.extend(active_run.pending_approvals().map(|record| {
-                        CoreAgentEventProposal::new(
-                            CoreAgentJoins {
-                                run_id: Some(run_id),
-                                ..CoreAgentJoins::default()
-                            },
-                            CoreAgentEvent::Approval(ApprovalEvent::Cancelled {
-                                approval_id: record.request.approval_id.clone(),
-                                run_id,
-                            }),
-                        )
-                    }));
+                    proposals.extend(pending_approval_cancellations(active_run));
                     return Ok(proposals);
                 }
                 return Ok(Vec::new());
@@ -726,6 +717,10 @@ pub fn admit_command(
             } else {
                 Vec::new()
             };
+            // The decision being admitted is the last one the run waits on.
+            let unparks = active_run.status == RunStatus::Parked
+                && active_run.parked_tool_batch.is_none()
+                && active_run.pending_approvals().count() == 1;
             let mut proposals = vec![CoreAgentEventProposal::new(
                 CoreAgentJoins {
                     run_id: Some(command.run_id),
@@ -739,6 +734,17 @@ pub fn admit_command(
                     decided_by: command.decided_by,
                 }),
             )];
+            if unparks {
+                proposals.push(CoreAgentEventProposal::new(
+                    CoreAgentJoins {
+                        run_id: Some(command.run_id),
+                        ..CoreAgentJoins::default()
+                    },
+                    CoreAgentEvent::Approval(ApprovalEvent::RunUnparked {
+                        run_id: command.run_id,
+                    }),
+                ));
+            }
             if !entries.is_empty() {
                 proposals.push(CoreAgentEventProposal::new(
                     CoreAgentJoins {
@@ -1083,9 +1089,9 @@ fn require_open(state: &CoreAgentState) -> Result<(), CommandError> {
 }
 
 /// The run a steering command targets: the active run while it is `Active`
-/// or `Parked`. A parked run (model-chosen `await`) accepts steering without
-/// waking; the steering materializes in the first turn after it resumes
-/// A cancelling run no longer accepts commands.
+/// or `Parked`. A parked run, waiting on approvals or a batch await, accepts
+/// steering without waking; the steering materializes at its first boundary after
+/// the park ends. A cancelling run no longer accepts commands.
 fn active_run_for_command(state: &CoreAgentState) -> Result<&crate::ActiveRun, CommandError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return reject(

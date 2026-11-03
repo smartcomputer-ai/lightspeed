@@ -16,6 +16,12 @@ pub enum ApprovalEvent {
     RunParked {
         run_id: RunId,
     },
+    /// The run is off its approval park: no approval remains and no batch holds
+    /// it parked. Its next step may be a call that is already started, so this
+    /// is the only record that the wait ended.
+    RunUnparked {
+        run_id: RunId,
+    },
     Decided {
         approval_id: ApprovalId,
         run_id: RunId,
@@ -127,7 +133,7 @@ pub fn plan_approval_next(
         || run.active_turn_id.is_some()
         || run.active_tool_batch_id.is_some()
         || run.pending_approvals().next().is_none()
-        || has_unstarted_tool_calls(run)
+        || crate::core::components::run::has_unstarted_tool_call_turn(run)
     {
         return Ok(Vec::new());
     }
@@ -140,21 +146,22 @@ pub fn plan_approval_next(
     )])
 }
 
-fn has_unstarted_tool_calls(run: &crate::ActiveRun) -> bool {
-    run.turns.iter().any(|(turn_id, turn)| {
-        turn.outcome == Some(crate::TurnOutcome::ToolCallsQueued)
-            && turn
-                .facts
-                .as_ref()
-                .is_some_and(|facts| !facts.tool_calls.is_empty())
-            && !run
-                .tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
-            && !run
-                .completed_tool_batches
-                .values()
-                .any(|batch| batch.turn_id == *turn_id)
+/// `Approval::Cancelled` for each approval the run still waits on. They need the
+/// run active, so a path ending the run puts them before its terminal event.
+pub(crate) fn pending_approval_cancellations(
+    run: &crate::ActiveRun,
+) -> impl Iterator<Item = CoreAgentEventProposal> + '_ {
+    run.pending_approvals().map(|record| {
+        CoreAgentEventProposal::new(
+            CoreAgentJoins {
+                run_id: Some(run.run_id),
+                ..CoreAgentJoins::default()
+            },
+            CoreAgentEvent::Approval(ApprovalEvent::Cancelled {
+                approval_id: record.request.approval_id.clone(),
+                run_id: run.run_id,
+            }),
+        )
     })
 }
 
@@ -233,6 +240,16 @@ pub(crate) fn apply_approval_event(
             run.status = RunStatus::Parked;
             Ok(())
         }
+        ApprovalEvent::RunUnparked { run_id } => {
+            let run = crate::core::components::run::active_run_mut(state, *run_id)?;
+            if run.status != RunStatus::Parked {
+                return Err(DomainError::InvariantViolation(
+                    "only a parked run can unpark".into(),
+                ));
+            }
+            run.status = RunStatus::Active;
+            Ok(())
+        }
         ApprovalEvent::Decided {
             approval_id,
             run_id,
@@ -255,9 +272,6 @@ pub(crate) fn apply_approval_event(
             };
             record.note = note.clone();
             record.decided_by = decided_by.clone();
-            if run.pending_approvals().next().is_none() && run.status == RunStatus::Parked {
-                run.status = RunStatus::Active;
-            }
             Ok(())
         }
         ApprovalEvent::Cancelled {
@@ -351,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn approvals_are_run_owned_single_use_and_unpark_only_as_a_set() {
+    fn approvals_are_run_owned_and_single_use_and_a_decision_does_not_unpark() {
         let mut state = active_state();
         for approval in [request(1, "mcpr_1"), request(2, "mcpr_2")] {
             apply_approval_event(&mut state, &ApprovalEvent::Requested { approval }, 7)
@@ -386,6 +400,16 @@ mod tests {
 
         apply_approval_event(&mut state, &decide(2, ApprovalDecision::Rejected), 11)
             .expect("last decision");
+        let run = state.runs.active.as_ref().expect("active run");
+        assert_eq!(run.status, RunStatus::Parked);
+        apply_approval_event(
+            &mut state,
+            &ApprovalEvent::RunUnparked {
+                run_id: RunId::new(1),
+            },
+            12,
+        )
+        .expect("unpark");
         let run = state.runs.active.as_ref().expect("active run");
         assert_eq!(run.status, RunStatus::Active);
         assert_eq!(run.approvals.len(), 2);

@@ -1510,6 +1510,11 @@ pub enum SessionEventKindView {
     ApprovalRunParked {
         run_id: RunId,
     },
+    /// No approval remains and no batch holds the run parked, so it is working
+    /// again even if no other event follows for a while.
+    ApprovalRunUnparked {
+        run_id: RunId,
+    },
     ApprovalDecided {
         run_id: RunId,
         approval_id: String,

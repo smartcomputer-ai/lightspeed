@@ -125,6 +125,7 @@ fn core_agent_event_envelope_kind(event: &CoreAgentEvent) -> &'static str {
         CoreAgentEvent::Approval(event) => match event {
             ApprovalEvent::Requested { .. } => "lightspeed.core.approval.requested",
             ApprovalEvent::RunParked { .. } => "lightspeed.core.approval.run_parked",
+            ApprovalEvent::RunUnparked { .. } => "lightspeed.core.approval.run_unparked",
             ApprovalEvent::Decided { .. } => "lightspeed.core.approval.decided",
             ApprovalEvent::Cancelled { .. } => "lightspeed.core.approval.cancelled",
         },

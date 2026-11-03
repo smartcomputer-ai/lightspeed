@@ -13029,4 +13029,166 @@ mod tests {
         let next = logged.until_generate();
         assert_tool_calls_answered(openai_items(&next));
     }
+
+    fn event_kinds(entries: &[CoreAgentEntry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap().event.kind)
+            .collect()
+    }
+
+    fn hosted_approval_request() -> crate::ObservedApprovalRequest {
+        crate::ObservedApprovalRequest {
+            subject: crate::ApprovalSubject::McpToolCall {
+                server_id: "crm".to_owned(),
+                server_label: "crm".to_owned(),
+                tool_name: "send".to_owned(),
+                arguments_ref: BlobRef::from_bytes(b"{}"),
+            },
+            continuation: crate::ApprovalContinuation::OpenAiMcp {
+                provider_request_id: "mcpr_1".to_owned(),
+            },
+        }
+    }
+
+    fn hosted_approval_decision(run_id: RunId) -> CoreAgentCommand {
+        CoreAgentCommand::DecideApproval(crate::ApprovalDecisionCommand {
+            approval_id: crate::ApprovalId::new("approval_1"),
+            run_id,
+            decision: crate::ApprovalDecision::Approved,
+            note: None,
+            decided_by: None,
+            response: Some(ContextEntryInput {
+                kind: ContextEntryKind::McpApprovalResponse {
+                    approval_request_id: "mcpr_1".to_owned(),
+                    approve: true,
+                },
+                ..message_input(ContextMessageRole::User, BlobRef::from_bytes(b"approve"))
+            }),
+        })
+    }
+
+    /// A native approval park: a turn whose one MCP call waits on a decision.
+    fn native_approval_parked() -> (LoggedDrive, ToolInvocationBatchRequest) {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        let mcp = native_inject_mcp_tool("mcp_echo", crate::RemoteMcpApprovalPolicy::Always);
+        logged.admit(CoreAgentCommand::ReplaceTools {
+            expected_revision: None,
+            tools: BTreeMap::from([(mcp.name.clone(), mcp)]),
+        });
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_m", "mcp_echo__hello")],
+        ));
+        let batch = logged.until_tools();
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                batch.batch_id,
+                vec![native_mcp_approval(&batch.calls[0].call_id)],
+                75,
+            )
+            .expect("park");
+        logged.commit(parked);
+        (logged, batch)
+    }
+
+    #[test]
+    fn the_last_decision_records_that_the_run_left_its_approval_park() {
+        let (mut logged, batch) = native_approval_parked();
+        let entries = logged.admit(CoreAgentCommand::DecideApproval(
+            crate::ApprovalDecisionCommand {
+                approval_id: crate::ApprovalId::new("approval_1"),
+                run_id: batch.run_id,
+                decision: crate::ApprovalDecision::Approved,
+                note: None,
+                decided_by: None,
+                response: None,
+            },
+        ));
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.approval.decided",
+                "lightspeed.core.approval.run_unparked"
+            ]
+        );
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Active);
+        // The approved call re-dispatches with no further event, which is why
+        // stored activity needs this one.
+        assert_eq!(logged.until_tools().batch_id, batch.batch_id);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_decision_leaves_a_run_parked_while_its_batch_is_parked() {
+        let mut logged = LoggedDrive::open(config(), &["await"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        let mut turn = tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_wait", "await")],
+        );
+        turn.facts.approval_requests = vec![hosted_approval_request()];
+        logged.resume(turn);
+        let batch = logged.until_tools();
+        insert_wait_promise(&mut logged.drive, batch.run_id);
+        let deferred = logged
+            .drive
+            .resume_tool_batch_outcome(deferred_await_outcome(&batch), 80)
+            .expect("defer");
+        logged.commit(deferred);
+
+        let entries = logged.admit(hosted_approval_decision(batch.run_id));
+        assert!(
+            !event_kinds(&entries)
+                .iter()
+                .any(|kind| kind == "lightspeed.core.approval.run_unparked"),
+            "the batch still holds the run: {entries:?}"
+        );
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Parked);
+        assert!(run.parked_tool_batch.is_some());
+
+        logged.steer(batch.run_id, b"steer");
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_eq!(
+            context_kinds(&logged.drive)
+                .iter()
+                .filter(|kind| *kind == "User")
+                .count(),
+            1,
+            "steering waits for the batch to wake"
+        );
+
+        let resumed = logged
+            .drive
+            .admit_command(resume_tool_batch_command(&batch), 92)
+            .expect("resume");
+        logged.commit(resumed);
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Active);
+        logged.assert_replays(|replayed| insert_wait_promise(replayed, batch.run_id));
+    }
+
+    #[test]
+    fn force_close_ends_pending_approvals_in_the_log() {
+        let (mut logged, batch) = native_approval_parked();
+        let entries = logged.admit(CoreAgentCommand::CloseSession { force: true });
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.approval.cancelled",
+                "lightspeed.core.run.force_cancelled",
+                crate::CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND,
+            ]
+        );
+        assert_eq!(logged.last_run().run_id, batch.run_id);
+        logged.assert_replays(|_| {});
+    }
 }

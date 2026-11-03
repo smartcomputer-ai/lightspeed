@@ -14875,6 +14875,23 @@
             "type": "object"
           },
           {
+            "description": "No approval remains and no batch holds the run parked, so it is working\nagain even if no other event follows for a while.",
+            "properties": {
+              "runId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "approvalRunUnparked",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "runId"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "approvalId": {
                 "type": "string"

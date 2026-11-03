@@ -1173,6 +1173,7 @@ impl ChatSessionDriver {
                 events.push(self.status_event("waiting for approval"));
             }
             SessionEventKindView::ApprovalDecided { .. }
+            | SessionEventKindView::ApprovalRunUnparked { .. }
             | SessionEventKindView::ApprovalCancelled { .. } => {
                 events.push(self.status_event("approval resolved"));
             }

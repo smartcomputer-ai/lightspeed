@@ -600,6 +600,10 @@ export type SessionEventKindView =
       type: "approvalRunParked";
     }
   | {
+      runId: string;
+      type: "approvalRunUnparked";
+    }
+  | {
       approvalId: string;
       decidedBy?: Attribution | null;
       decision: ApprovalDecisionKind;
