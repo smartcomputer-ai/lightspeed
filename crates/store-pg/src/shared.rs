@@ -77,9 +77,19 @@ pub(crate) fn session_store_error(action: &str, error: PgStoreError) -> SessionS
     }
 }
 
+/// Postgres reports a value it cannot store with SQLSTATE class 22, such as 22P05
+/// for a NUL in jsonb or 22021 for one in text. That is an answer about the data, so
+/// it stays apart from the failures a retry can outlast.
 pub(crate) fn session_sql_error(action: &str, error: sqlx::Error) -> SessionStoreError {
-    SessionStoreError::Store {
-        message: format!("{action}: {error}"),
+    let message = format!("{action}: {error}");
+    let data_exception = error
+        .as_database_error()
+        .and_then(|error| error.code())
+        .is_some_and(|code| code.starts_with("22"));
+    if data_exception {
+        SessionStoreError::DataRejected { message }
+    } else {
+        SessionStoreError::Store { message }
     }
 }
 
@@ -102,5 +112,79 @@ pub(crate) fn object_store_error(
 ) -> BlobStoreError {
     BlobStoreError::Store {
         message: format!("{action} '{key}': {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use std::error::Error;
+    use std::fmt;
+
+    use sqlx::error::{DatabaseError, ErrorKind};
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct Refusal(&'static str);
+
+    impl fmt::Display for Refusal {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "refused with {}", self.0)
+        }
+    }
+
+    impl Error for Refusal {}
+
+    impl DatabaseError for Refusal {
+        fn message(&self) -> &str {
+            "refused"
+        }
+
+        fn code(&self) -> Option<Cow<'_, str>> {
+            Some(Cow::Borrowed(self.0))
+        }
+
+        fn as_error(&self) -> &(dyn Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn as_error_mut(&mut self) -> &mut (dyn Error + Send + Sync + 'static) {
+            self
+        }
+
+        fn into_error(self: Box<Self>) -> Box<dyn Error + Send + Sync + 'static> {
+            self
+        }
+
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Other
+        }
+    }
+
+    fn mapped(code: &'static str) -> SessionStoreError {
+        session_sql_error(
+            "insert session event",
+            sqlx::Error::Database(Box::new(Refusal(code))),
+        )
+    }
+
+    #[test]
+    fn a_data_exception_is_a_rejection_and_keeps_its_words() {
+        for code in ["22P05", "22021"] {
+            let error = mapped(code);
+            assert!(error.is_data_rejection(), "{code}: {error:?}");
+            assert!(error.to_string().contains("insert session event"));
+            assert!(error.to_string().contains(code));
+        }
+    }
+
+    #[test]
+    fn every_other_failure_stays_a_store_failure() {
+        let unique_violation = mapped("23505");
+        assert!(matches!(unique_violation, SessionStoreError::Store { .. }));
+        let outage = session_sql_error("begin append transaction", sqlx::Error::PoolTimedOut);
+        assert!(matches!(outage, SessionStoreError::Store { .. }));
+        assert!(!outage.is_data_rejection());
     }
 }

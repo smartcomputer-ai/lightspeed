@@ -563,6 +563,11 @@ impl std::fmt::Display for SessionBootstrapPayloadTooLarge {
 
 impl std::error::Error for SessionBootstrapPayloadTooLarge {}
 
+/// Application-failure type name for an append the session store refused because of
+/// the data in it. The worker attaches it to a non-retryable `ApplicationFailure`.
+/// Nothing was written, so the session workflow can discard those events and carry on.
+pub const SESSION_DATA_REJECTED_ERROR_TYPE: &str = "session_data_rejected";
+
 /// Application-failure type name for a transient LLM provider error.
 /// The worker attaches it to a retryable `ApplicationFailure`; the session
 /// workflow recognizes it in an exhausted activity failure's cause chain and

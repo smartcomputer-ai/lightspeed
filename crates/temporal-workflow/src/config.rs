@@ -42,6 +42,9 @@ pub fn default_instructions() -> &'static str {
     "You are Lightspeed, a concise personal assistant. Use available tools when useful, then answer plainly."
 }
 
+/// Storage activities that must outlast a store outage: there is no retry limit, so
+/// a permanent failure has to reach the workflow as a non-retryable one, or it blocks
+/// the session loop for good.
 pub fn activity_options() -> ActivityOptions {
     ActivityOptions::with_start_to_close_timeout(DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT)
         .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())

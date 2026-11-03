@@ -425,8 +425,22 @@ pub enum SessionStoreError {
         blob_refs: Vec<BlobRef>,
     },
 
+    /// The store cannot hold a value it was given: Postgres answered with a data
+    /// exception (SQLSTATE class 22), such as a NUL in a text or jsonb column.
+    /// Nothing was written, and the same value is refused on every attempt.
+    #[error("session store rejected the data: {message}")]
+    DataRejected { message: String },
+
     #[error("session store failure: {message}")]
     Store { message: String },
+}
+
+impl SessionStoreError {
+    /// The data itself is what the store refused. Nothing was written, and no
+    /// retry of the same data can succeed.
+    pub fn is_data_rejection(&self) -> bool {
+        matches!(self, Self::MissingBlobs { .. } | Self::DataRejected { .. })
+    }
 }
 
 #[async_trait]

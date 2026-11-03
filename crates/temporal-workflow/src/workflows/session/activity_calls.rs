@@ -372,6 +372,15 @@ mod tests {
     }
 
     #[test]
+    fn an_activity_failure_reports_the_workers_words() {
+        let error = activity_error(activity_failure(
+            RetryState::NonRetryableFailure,
+            application_failure("anything"),
+        ));
+        assert_eq!(errors::activity_failure_message(&error), "anything failure");
+    }
+
+    #[test]
     fn transient_exhaustion_is_recognized_at_the_top_of_the_chain() {
         let error = activity_error(activity_failure(
             RetryState::MaximumAttemptsReached,

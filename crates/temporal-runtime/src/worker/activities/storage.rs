@@ -13,7 +13,10 @@ use crate::worker::{
     ReadBlobRequest, ReadBlobResult,
 };
 
-use super::{common::activity_error, state::StorageActivityDeps};
+use super::{
+    common::{activity_error, non_retryable_activity_error, session_store_failure},
+    state::StorageActivityDeps,
+};
 
 pub(super) async fn create_or_load_session(
     deps: &StorageActivityDeps,
@@ -39,14 +42,14 @@ pub(super) async fn create_or_load_session(
             .sessions
             .load_session(&request.session_id)
             .await
-            .map_err(activity_error)?
+            .map_err(session_store_failure)?
             .ok_or_else(|| {
-                activity_error(anyhow::anyhow!(
+                non_retryable_activity_error(anyhow::anyhow!(
                     "session disappeared after create conflict: {}",
                     request.session_id
                 ))
             })?,
-        Err(error) => return Err(activity_error(error)),
+        Err(error) => return Err(session_store_failure(error)),
     };
 
     // Reduce checkpoint + authoritative tail *inside the activity* and return
@@ -55,7 +58,7 @@ pub(super) async fn create_or_load_session(
     let loaded =
         crate::checkpoint::load_reduction(deps.sessions.as_ref(), deps.blobs.as_ref(), &record)
             .await
-            .map_err(activity_error)?;
+            .map_err(reduction_failure)?;
     let checkpoint_due = crate::checkpoint::checkpoint_due(&loaded);
     let reduced = loaded.reduced;
     let fresh_session = loaded.fresh_session;
@@ -92,6 +95,15 @@ pub(super) async fn create_or_load_session(
     Ok(result)
 }
 
+/// Reducing the log fails for one of two reasons. The store did not answer, which a
+/// retry can outlast, or the stored log does not decode or apply, which it cannot.
+fn reduction_failure(error: anyhow::Error) -> ActivityError {
+    match error.downcast::<SessionStoreError>() {
+        Ok(error) => session_store_failure(error),
+        Err(error) => non_retryable_activity_error(error),
+    }
+}
+
 /// Fail with a typed, diagnosable error if the compact bootstrap result would
 /// still exceed the Temporal payload budget — instead of letting Temporal
 /// reject the activity completion with an opaque `Complete result exceeds size
@@ -115,12 +127,14 @@ fn guard_bootstrap_payload_size_with_budget(
     let serialized = serde_json::to_vec(result).map_err(activity_error)?;
     let reduced_state_bytes = serialized.len() as u64;
     if reduced_state_bytes > budget_bytes {
-        return Err(activity_error(SessionBootstrapPayloadTooLarge {
-            session_id: session_id.clone(),
-            reduced_state_bytes,
-            budget_bytes,
-            replayed_event_count: result.replayed_event_count,
-        }));
+        return Err(non_retryable_activity_error(
+            SessionBootstrapPayloadTooLarge {
+                session_id: session_id.clone(),
+                reduced_state_bytes,
+                budget_bytes,
+                replayed_event_count: result.replayed_event_count,
+            },
+        ));
     }
     Ok(())
 }
@@ -540,9 +554,9 @@ pub(super) async fn append_events(
         {
             confirm_existing_append(deps.sessions.as_ref(), &request, error)
                 .await
-                .map_err(activity_error)
+                .map_err(session_store_failure)
         }
-        Err(error) => Err(activity_error(error)),
+        Err(error) => Err(session_store_failure(error)),
     }
 }
 
@@ -1016,6 +1030,20 @@ mod tests {
     /// The size guard fires with a typed error when the reduced result would
     /// exceed the budget, instead of letting Temporal reject it opaquely.
     #[test]
+    fn a_log_that_will_not_reduce_is_final_and_a_store_outage_is_not() {
+        let is_final = |error: anyhow::Error| match reduction_failure(error) {
+            ActivityError::Application(failure) => failure.is_non_retryable(),
+            other => panic!("expected application failure, got {other:?}"),
+        };
+        assert!(is_final(anyhow::anyhow!(
+            "effective session log has a gap after seq 3"
+        )));
+        assert!(!is_final(anyhow::Error::new(SessionStoreError::Store {
+            message: "connection refused".to_owned(),
+        })));
+    }
+
+    #[test]
     fn bootstrap_size_guard_rejects_oversized_result() {
         let session_id = SessionId::new("oversized");
         let result = CreateOrLoadSessionResult {
@@ -1055,6 +1083,7 @@ mod tests {
             .expect_err("oversized result should be rejected");
         match err {
             ActivityError::Application(failure) => {
+                assert!(failure.is_non_retryable());
                 let typed = failure
                     .source_error()
                     .downcast_ref::<SessionBootstrapPayloadTooLarge>()
@@ -2041,6 +2070,8 @@ mod tests {
         let ActivityError::Application(failure) = error else {
             panic!("expected application failure");
         };
+        // A conflict the log cannot confirm as this very append never clears on retry.
+        assert!(failure.is_non_retryable());
         assert!(matches!(
             failure.source_error().downcast_ref::<SessionStoreError>(),
             Some(SessionStoreError::ExpectedHeadMismatch { .. })

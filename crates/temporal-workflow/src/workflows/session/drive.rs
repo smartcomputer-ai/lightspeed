@@ -513,7 +513,7 @@ pub(super) async fn append_events(
             activity_options(),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+        .map_err(|error| anyhow::anyhow!(errors::activity_failure_message(&error)))?;
     // These events are durable now, so nothing from here is a refusal that a failed
     // run could answer. The errors stay untyped to keep them fatal.
     let entries = drive

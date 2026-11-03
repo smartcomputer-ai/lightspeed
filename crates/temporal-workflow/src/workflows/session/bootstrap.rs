@@ -38,7 +38,7 @@ pub(super) async fn initialize(
             activity_options(),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
+        .map_err(|error| anyhow::anyhow!(errors::activity_failure_message(&error)))?;
 
     let is_fresh_session = loaded.fresh_session;
     let core_state = loaded.core_state.unwrap_or_else(CoreAgentState::new);

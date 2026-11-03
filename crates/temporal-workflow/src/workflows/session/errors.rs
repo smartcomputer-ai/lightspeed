@@ -1,4 +1,20 @@
+use temporalio_common::error::IncomingError;
+use temporalio_sdk::ActivityExecutionError;
+
 use super::*;
+
+/// The worker's own words for an activity failure. An activity failure's top message
+/// only says that the task failed; what went wrong is in its cause chain.
+pub(super) fn activity_failure_message(error: &ActivityExecutionError) -> String {
+    let mut cause = error.cause();
+    while let Some(incoming) = cause {
+        if let IncomingError::Application(failure) = incoming {
+            return failure.to_string();
+        }
+        cause = incoming.cause();
+    }
+    error.to_string()
+}
 
 pub(super) fn record_admission_failure(
     ctx: &WorkflowContext<AgentSessionWorkflow>,

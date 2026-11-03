@@ -3,7 +3,7 @@ use harness::{
     CoreAgentIoError, LlmFinish, LlmGenerationFacts, LlmGenerationRequest, LlmGenerationResult,
     LlmGenerationStatus, ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult,
     ToolInvocationResult,
-    storage::{BlobStore, BlobStoreError},
+    storage::{BlobStore, BlobStoreError, SessionStoreError},
 };
 use std::time::Duration;
 
@@ -16,6 +16,30 @@ pub(super) fn activity_error(
     error: impl Into<Box<dyn std::error::Error + Send + Sync>>,
 ) -> ActivityError {
     ActivityError::application(ApplicationFailure::new(error))
+}
+
+/// A failure no retry heals: the same request gets the same answer on every attempt,
+/// so the workflow should hear it now rather than wait behind endless retries.
+pub(super) fn non_retryable_activity_error(
+    error: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+) -> ActivityError {
+    ActivityError::application(ApplicationFailure::non_retryable(error))
+}
+
+/// A session store failure as an activity failure. Only a plain store failure can be
+/// outlasted, and it is retried for as long as the outage lasts. Everything else is the
+/// store's answer about this request.
+pub(super) fn session_store_failure(error: SessionStoreError) -> ActivityError {
+    match error {
+        SessionStoreError::Store { .. } => activity_error(error),
+        error if error.is_data_rejection() => ActivityError::from(
+            ApplicationFailure::builder(error)
+                .type_name(temporal_workflow::SESSION_DATA_REJECTED_ERROR_TYPE.to_owned())
+                .non_retryable(true)
+                .build(),
+        ),
+        error => non_retryable_activity_error(error),
+    }
 }
 
 /// Run `work` as a cancellable, heartbeating activity body. The
@@ -258,4 +282,68 @@ pub(super) async fn write_error_blob(
     message: impl Into<String>,
 ) -> Result<BlobRef, BlobStoreError> {
     blobs.put_bytes(message.into().into_bytes()).await
+}
+
+#[cfg(test)]
+mod tests {
+    use harness::SessionId;
+
+    use super::*;
+
+    fn failure(error: SessionStoreError) -> ApplicationFailure {
+        match session_store_failure(error) {
+            ActivityError::Application(failure) => *failure,
+            other => panic!("expected an application failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn data_rejections_are_typed_and_final() {
+        let session_id = SessionId::new("session");
+        for error in [
+            SessionStoreError::DataRejected {
+                message: "invalid input syntax for type json".to_owned(),
+            },
+            SessionStoreError::MissingBlobs {
+                session_id: session_id.clone(),
+                blob_refs: vec![BlobRef::from_bytes(b"never stored")],
+            },
+        ] {
+            let message = error.to_string();
+            let failure = failure(error);
+            assert!(failure.is_non_retryable());
+            assert_eq!(
+                failure.type_name(),
+                Some(temporal_workflow::SESSION_DATA_REJECTED_ERROR_TYPE)
+            );
+            assert_eq!(failure.to_string(), message);
+        }
+    }
+
+    #[test]
+    fn store_answers_are_final_and_carry_no_rejection_type() {
+        let session_id = SessionId::new("session");
+        for error in [
+            SessionStoreError::SessionNotFound {
+                session_id: session_id.clone(),
+            },
+            SessionStoreError::ExpectedHeadMismatch {
+                session_id,
+                expected: None,
+                actual: None,
+            },
+        ] {
+            let failure = failure(error);
+            assert!(failure.is_non_retryable());
+            assert_eq!(failure.type_name(), None);
+        }
+    }
+
+    #[test]
+    fn an_outage_keeps_retrying() {
+        let failure = failure(SessionStoreError::Store {
+            message: "connection refused".to_owned(),
+        });
+        assert!(!failure.is_non_retryable());
+    }
 }
