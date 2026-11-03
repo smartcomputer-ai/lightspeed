@@ -224,6 +224,23 @@ Later packages add their own entries.
   and the dry run now catches it, so it ends as a normal failed run with the reducer's message. Whether a
   provider ever sends `function_call` and `mcp_approval_request` in one response is unverified, so I left
   the refusal in place rather than relax a check on a shape nobody has seen.
+- **The recovery poll treats some query errors as final from reading alone.** A rejected
+  query, a payload conversion failure and `InvalidArgument` fail the promise; everything
+  else stays Pending. That a failed or missing handler returns `InvalidArgument` and that
+  no poller returns `FailedPrecondition` come from reading and recall, not from a server.
+  `workflow_tool_start_recovery_query_meets_the_reply_schema` has never run. If the
+  mapping is wrong, a broken handler waits until the deadline or the run ends, and with no
+  deadline it polls every 60 s for as long as the run lasts.
+- **A detached follow-up can end the workflow until `store-rejections`.** The follow-up now
+  reads its payload through an activity, so an unreadable payload fails the session workflow
+  after three attempts, as an await of that promise does. Before, the raw ref failed each
+  generation instead and the session stayed up. A schema-less reply naming a missing blob
+  reaches this, and the ingest gate in that package closes it. A store outage long enough to
+  exhaust the attempts stays fatal. Do not ship between the two packages.
+- **File attachments do not reach a detached follow-up.** A run input has no field for
+  them, so a detached sub-agent's linked file is named in the result JSON only. It is not
+  recorded on a tool completion, so the session's own final answer cannot link it onward by
+  handle as it could after an await. Images do arrive as media entries.
 
 ## Progress
 
@@ -928,3 +945,89 @@ Review of this package:
 Verified: `cargo test -p harness --lib` (317 passed), `cargo test -p temporal-workflow --lib` (178 passed)
 and `--test '*'` (3 passed), `cargo test -p temporal-runtime --lib` (476 passed, 1 ignored), and
 `cargo check --workspace --all-targets --locked`.
+
+### `promises-and-awaits` (H-10, H-12, H-29, H-30, H-47, H-48)
+
+What landed:
+
+- `9957b035`, `17a61371` (H-12): `NativeMcp` is now `{ batch_id, call_id }` and
+  `remote_mcp_call_runtime` matches on both, so a later batch's reused call id asks again.
+  The batch id is stable across the pending-only re-dispatch. `OpenAiMcp` keeps its shape.
+  The second commit fixes an `api-projection` test the first one stopped compiling.
+- `7c804b05` (H-10): all three invalid-await paths pass the session id and the session-less
+  helper is gone, so a bad await stays a failed call instead of failing the drive. New
+  well-known blobs cover await rejected, deadline exceeded, receiver cancelled and empty
+  success, and the cancel text names no cause. The code and model resume paths share
+  `joined_call_outcome`.
+- `de81385a` (H-47): the gate refuses a source resolution naming a timer. A delivery for an
+  absent promise is a no-op recorded on `last_warning`, and one for a terminal promise is
+  silent. `validate_policy` refuses the reserved kind and a zero promise deadline at binding
+  admission and in the worker, never in a validator the reducer calls.
+- `deabded1` (H-48): the existing best-effort notice goes out when a promise fails with the
+  deadline error ref, derived from the applied event with no in-memory set.
+- `23cd0598` (H-30): poll results join `pending_source_resolutions` with the promise's own
+  producer, so the schema check applies. Query errors stay typed and retryable ones return
+  Pending. A sweep shares one Pending answer per execution, and polls back off from 10 s to
+  a 60 s cap.
+- `cad43559` (H-29): a detached follow-up calls `materialize_await_result` for its one
+  promise. The run input is the summary, the result ref, then the additional context.
+
+Calls made:
+
+- Two well-known blobs beyond the planned four. A batch conflict, because the await-rejected
+  text is false for a join beside an await. Failed without detail, because a bot lane and
+  channels do report `Failed` with no error ref.
+- H-48 went ahead although the review judge would have left it, because the package
+  instructions ask for it. The notice and contract wording now say the session stopped
+  waiting, which covers both causes. The workflow contract was regenerated with it.
+- The poll has its own bounded `recovery_poll_activity_options`, and an exhausted poll logs a
+  warning and asks again later rather than failing the session.
+- The recovery query has a 20 s RPC timeout, because the poll blocks the outer loop and a hung
+  query should read as a failed one.
+- `validate_workflow_tool_reply` returns `Invalid` when the payload blob is missing, because
+  routing polls through it widens exposure. The wider ingest gate stays with `store-rejections`.
+- A terminal promise's delivery is dropped with no warning at all. The instruction allowed
+  `last_warning` at most, and conversation lanes answer late routinely, so a warning would be
+  noise. The absent-promise case does warn, and the test asserts `last_warning`.
+
+Deviations from the briefs:
+
+- H-29's joined variant is not here: a `Joined` binding with no reply schema and a non-UTF-8
+  `Resolved` payload still resolves, and the raw bytes reach `read_text` as the tool result.
+  The brief routes it through the ingest gate, which `store-rejections` adds. That package
+  must return `Invalid` for this case and fail the promise, so one binary reply does not break
+  the next generation.
+- H-29's brief also lists `attachments` from the materialized result. A run input has no field
+  for them, so they are dropped. See Risky calls.
+- Ported as tests beside the code: `repro_refute_mcpidreuse_k8t`,
+  `repro_refute_awaitsibling_r2d`, `repro_refute_unavailabletext_w5k`,
+  `repro_joinedresumedrift_refute_m2q`, `repro_refute_pollschema_h4w`,
+  `repro_pollquery_race_n6f2`, `repro_execkind_managed_path_q7k2`,
+  `repro_timerforge_refute_s6b` and `repro_refute_timerresolve_m2z`, in the behaviour they
+  argued for. Each covers that repro's main case, not all of its variants. The signal-before-poll
+  order from `repro_pollquery_race_n6f2` has no direct test, because `process_due` needs Temporal;
+  only the final-or-Pending classification and the gate are unit tested.
+- Not ported: `repro_refute_detachedfollowup_raw_a8s`. It pins the raw entry staying in context
+  after a failed generation, and follow-ups no longer create that entry. Its intent is covered by
+  `a_single_promise_result_carries_its_image_and_keeps_binary_bytes_out` and the input shape
+  assertions in `detached_session_promise_resolution_produces_followup_candidate`.
+
+Verified: `cargo test -p harness` (323 passed), `cargo test -p temporal-workflow --lib` (183
+passed), `cargo test -p temporal-runtime --lib` (479 passed, 1 ignored), `cargo test -p
+api-projection --lib` (45 passed), `cargo check -p temporal-workflow -p temporal-runtime
+--tests`, and `cargo check --workspace --all-targets --locked`. The workflow contract exporter
+leaves no diff. Clippy and the full workspace suite were not run, as they belong to checkpoints.
+
+Written but never run, for the checkpoint:
+
+- `workflow_tool_start_recovery_query_meets_the_reply_schema`. The Docker daemon is down and
+  starting it is out of bounds, so no live test ran in this package.
+- No test covers `queue_detached_promise_followups` calling the activity against Temporal. The
+  unit tests cover the candidate, the input assembly and the activity separately.
+
+Open:
+
+- For `store-rejections`: the joined binary payload above, and materialization failures of a
+  follow-up, which the ingest gate should reduce to store outages.
+- For `state-pruning`: `OpenAiMcp` approval records carry no batch id, so they need their own
+  handling when pruned. The await-rejected text already says an id may be no longer retained.
