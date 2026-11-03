@@ -318,13 +318,15 @@ Later packages add their own entries.
   text. A retried submission older than the last 256 terminal runs starts a duplicate
   run. `FailWorkflowToolDelivery` and `FailWorkflowToolStart` on an unknown invocation
   id are now no-ops for any id, since invocation ids carry no cursor to tell "pruned"
-  from "never existed". A typo there is logged at info and otherwise silent.
-- **A report of an absent scope reads as closed with no calls, for any id.** The late
-  close and report had to be harmless, and the runner's cleanup loop needs an `Ok`. The
-  cost is that a report of an id that never existed looks the same, and
-  `CodeToolRejectionKind::UnknownScope` now only comes from invoke. The runner's
-  preparation still refuses it, because it requires an open scope. The workflow contract
-  text says this.
+  from "never existed". A typo there is logged and otherwise silent: at info for a start,
+  and as `last_warning` for a delivery, since a notify receiver that was given up on
+  never heard.
+- **Closing an absent scope answers closed with no calls, for any id.** A late close had
+  to be harmless. The cost is that closing an id that never existed looks the same. The
+  query still rejects an absent scope as `UnknownScope`, because the runner's lost-receipt
+  path depends on it. A runner finalizing after its scope was pruned therefore tries to
+  open it first, is refused because the parent is gone, and then closes it, which clears
+  the error. The workflow contract text says this.
 - **An update waiter whose scope left state gets `UnknownScope`, not an outcome.** It
   needs a run terminal to prune the scope in the same step while a call is still in
   flight, which takes a parent whose promise was already terminal. The usual force
@@ -347,8 +349,9 @@ Later packages add their own entries.
   through runs older than 256 in a session with millions of events will be slow, though
   it is rare and nothing on the session's own path calls it.
 - **State has settled on a higher floor than the card said for code mode.** One
-  `code_execute` per turn stays flat through turn 5,000, at about 174 KB and not near
-  35 KB. Nearly all of it is the 256 terminal promises at about 520 B each. That is 12%
+  `code_execute` per turn stays flat through turn 5,000, at about 178 KB and not near
+  35 KB. Nearly all of it is the 256 terminal promises at about 520 B each and their
+  settling order. That is 12%
   of the budget and does not grow. Lowering the window would shrink it, at the cost of
   an `await` on an older id being refused sooner.
 - **A very long run still cannot be read whole through `session/runs/read`.** It refuses
@@ -1495,9 +1498,9 @@ Calls made:
   across the boundary with no separate count.
 - `session/read` never consults the log. A session that has pruned holds at least 256 records and that page is at most
   100, so its `hasOlderRuns` is true from state alone.
-- Terminal promises are kept by highest id and not by settling time. A low id settling late can leave state at once, so
-  the receiver cancel and the detached follow-up moved to per-entry reads with the execution cancel, and not just the
-  invocation lookup the brief named.
+- Terminal promises were kept by highest id here, which the review below changed to settling order. The receiver cancel
+  and the detached follow-up moved to per-entry reads with the execution cancel, and they stay there because the
+  invocation record still goes at the boundary.
 - A notify invocation is counted by neither the worker nor admission, even when several share a batch, so the limit
   covers only work the run waits on.
 - The guard "never prune a promise the open batch references" is structural and has no code. Promise pruning only runs
@@ -1513,7 +1516,7 @@ Deviations:
   did change: one code-tool test asserted a scope still held after the run ended, and the emissions test in `storage.rs`
   asserted records still held.
 - The state bound is 24 KB in the new one-call test against the brief's 35 KB, because its turns carry no reasoning
-  entry. It is asserted below 45 KB. Code mode is about 174 KB and is asserted below 200 KB. See Risky calls.
+  entry. It is asserted below 45 KB. Code mode is about 178 KB and is asserted below 200 KB. See Risky calls.
 - `run_submissions`, named by the card, was already gone.
 - The size and growth reproductions are ported as `crates/harness/tests/state_bounds.rs`, an integration test because it
   drives whole sessions through the public API: thousands of turns in plain and code mode, provider approvals, steering,
@@ -1539,3 +1542,20 @@ Open:
 - `temporal-runtime` unit tests abort with `failed to initiate panic, error 5` when a test panics on this machine, so a
   failure shows no message. `--test-threads=1` at least names the test. It looks unrelated to this package, but I did not
   check it against an earlier commit.
+
+Independent review of this package. Turn, batch, approval, run record and scope pruning, paging across the boundary,
+per-entry host reads, H-76 and generated artifacts hold up. Tried and found no wedge: a waiting script call at a
+boundary (`blocks_parent_resume` and run-end interruption mean none reaches one), events after `BatchCompleted` in one
+append, and ids allocated from cursors rather than counts. Fixed:
+
+- `b69882ca`: promises were windowed by highest id, so a job pending while 256 newer promises settled left state the
+  moment it settled, before the model could await it. At one `code_execute` per turn that takes about 256 turns, which
+  loses a result in the kind of run this package exists for. `PromiseComponentState.settled` now holds settling order.
+- `9b36e730`: execution cancel read a pruned sibling promise as still open, so that execution was never cancelled. A
+  push notify whose delivery was given up on only reached an info log, and now sets `last_warning`.
+- `346cf28a`: the steer waiter compared `steering.len()` to a baseline, and pruning holds that count level from 64
+  batches, so an accepted steer could time out with an internal error and be retried into a double injection.
+- `bfe5a583`: the scope query answered every absent id as closed, which made the runner's lost-receipt path in
+  `finalize` dead, so a delayed prepare could open the scope again. The query rejects again; close and the cleanup loop
+  handle an absent scope themselves. Risky calls is corrected.
+- `6526b602`: the `submissionId` API doc still promised a retry always returns the original run.
