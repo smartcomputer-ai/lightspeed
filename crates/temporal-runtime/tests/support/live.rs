@@ -277,6 +277,22 @@ pub async fn fake_worker_activities_with_transient_llm_failures(
     ))
 }
 
+/// Worker whose fake LLM answers its next `refused_generations` generate calls
+/// with a result the harness refuses, then behaves normally.
+pub async fn fake_worker_activities_with_refused_generations(
+    refused_generations: usize,
+) -> anyhow::Result<WorkerActivities> {
+    let store = pg_store_from_env().await?;
+    let blobs: Arc<dyn BlobStore> = store.clone();
+    let llm = Arc::new(FakeLlm::new(blobs.clone()).with_refused_generations(refused_generations))
+        as Arc<dyn CoreAgentLlm>;
+    let tools = Arc::new(FakeTools::new(blobs)) as Arc<dyn CoreAgentTools>;
+    Ok(WorkerActivities::for_universe(
+        live_universe_id()?,
+        ActivityState::from_pg_store(store, llm, tools),
+    ))
+}
+
 /// Worker for active-run-control live tests: slow generations and/or
 /// slow tool calls so cancel/steer/queue can land mid-run, with shared
 /// counters to prove what the runtime actually executed or abandoned.

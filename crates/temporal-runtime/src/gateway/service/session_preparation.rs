@@ -385,12 +385,26 @@ impl SessionPreparationService {
         }
         let mut tools = toolset.tools;
         tools.extend(desired_mcp);
+        validate_prepared_toolset(session_config, &tools)?;
         Ok(SessionToolsetPreparation {
             source,
             declarations,
             tools,
         })
     }
+}
+
+/// What every turn's request would refuse, told to the caller while they can still
+/// change it: session start, run start and config put all prepare a toolset first.
+pub(super) fn validate_prepared_toolset(
+    config: &harness::SessionConfig,
+    tools: &BTreeMap<harness::ToolName, harness::ToolSpec>,
+) -> Result<(), AgentApiError> {
+    harness::validate_tools_for_api_kind(tools.values(), &config.model.api_kind)
+        .and_then(|()| {
+            harness::validate_tool_choice_for_tools(tools, config.generation.tool_choice.as_ref())
+        })
+        .map_err(|error| AgentApiError::invalid_request(error.message()))
 }
 
 impl SessionPreparationService {

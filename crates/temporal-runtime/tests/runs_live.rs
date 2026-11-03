@@ -14,7 +14,8 @@ use api_projection::model_to_api;
 use harness::{ModelSelection, SessionId};
 use support::live::{
     LIVE_TEST_LOCK, fake_worker_activities_for_run_control,
-    fake_worker_activities_with_parallel_tool_calls, fake_worker_activities_with_tool_rounds,
+    fake_worker_activities_with_parallel_tool_calls,
+    fake_worker_activities_with_refused_generations, fake_worker_activities_with_tool_rounds,
     fake_worker_activities_with_transient_llm_failures, final_assistant_text, live_workflow_handle,
     read_run, require_storage_live_env, run_with_live_worker, start_text_run,
     terminate_live_session, wait_for_terminal_run, wait_until,
@@ -85,6 +86,21 @@ async fn temporal_live_exhausted_llm_retries_fail_the_run_not_the_session() -> a
     let attempts = usize::try_from(LLM_RETRY_MAX_ATTEMPTS).expect("attempt budget fits usize");
     let activities = fake_worker_activities_with_transient_llm_failures(attempts).await?;
     run_with_live_worker(activities, run_llm_retry_exhaustion_live_client).await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
+async fn temporal_live_harness_refusal_fails_the_run_and_the_session_serves_the_next()
+-> anyhow::Result<()> {
+    let _lock = LIVE_TEST_LOCK.lock().await;
+    let _ = dotenvy::dotenv();
+    require_storage_live_env()?;
+
+    // The first generation's result is refused by the reducer's dry run. That used
+    // to fail the workflow for good; now the run fails with the refusal's text on
+    // the same execution and the next run completes.
+    let activities = fake_worker_activities_with_refused_generations(1).await?;
+    run_with_live_worker(activities, run_harness_refusal_live_client).await
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -936,6 +952,116 @@ async fn run_transient_llm_retry_live_client(
                 .build(),
         )
         .await;
+    Ok(())
+}
+
+async fn run_harness_refusal_live_client(
+    client: Client,
+    task_queue: String,
+    session_id: SessionId,
+) -> anyhow::Result<()> {
+    let store = pg_store_from_env().await?;
+    let model = support::live::openai_live_model();
+    support::live::seed_agent_default(&store, &model).await?;
+    let api = GatewayAgentApi::builder(client.clone(), store)
+        .with_task_queue(task_queue)
+        .build();
+
+    // A choice naming no tool is refused while the caller can still change it,
+    // before any run depends on it.
+    let dangling = SessionConfig {
+        generation: Some(api::GenerationConfig {
+            tool_choice: Some(api::ToolChoice::Specific {
+                tool_id: "typo".to_owned(),
+            }),
+            ..Default::default()
+        }),
+        ..SessionConfig::default()
+    };
+    let refused_session = SessionId::new(format!("{session_id}-dangling"));
+    let refused = api
+        .start_session(SessionStartParams {
+            access: None,
+            metadata: Default::default(),
+            session_id: Some(refused_session.as_str().to_owned()),
+            display_name: None,
+            config: Some(dangling.clone()),
+            profile: None,
+            delete_after_close_ms: None,
+        })
+        .await
+        .expect_err("session start refuses a dangling tool choice");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest, "{refused}");
+    assert!(refused.message.contains("typo"), "{refused}");
+    terminate_live_session(&client, &refused_session, "refusal live test cleanup").await;
+
+    api.start_session(SessionStartParams {
+        access: None,
+        metadata: Default::default(),
+        session_id: Some(session_id.as_str().to_owned()),
+        display_name: None,
+        config: None,
+        profile: None,
+        delete_after_close_ms: None,
+    })
+    .await?;
+    let temporal_run_id = live_workflow_handle(&client, &session_id)?
+        .describe(WorkflowDescribeOptions::default())
+        .await?
+        .run_id()
+        .to_owned();
+
+    let put = api
+        .put_session_config(api::SessionConfigPutParams {
+            session_id: session_id.as_str().to_owned(),
+            expected_config_revision: None,
+            config: dangling,
+        })
+        .await
+        .expect_err("config put refuses a dangling tool choice");
+    assert_eq!(put.kind, AgentApiErrorKind::InvalidRequest, "{put}");
+
+    let first = start_text_run(&api, &session_id, "this one is refused").await?;
+    let first = wait_for_terminal_run(&api, &session_id, &first.id).await?;
+    assert_eq!(first.status, api::RunStatus::Failed);
+    let events = api
+        .read_session_events(SessionEventsReadParams {
+            direction: Default::default(),
+            before: None,
+            session_id: session_id.as_str().to_owned(),
+            after: None,
+            limit: Some(500),
+            wait_ms: None,
+        })
+        .await?
+        .result
+        .events;
+    let failure = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            api::SessionEventKindView::RunFailed { kind, message, .. } => Some((kind, message)),
+            _ => None,
+        })
+        .expect("the run has a failure event");
+    assert_eq!(*failure.0, api::RunFailureKindView::Internal);
+    assert!(
+        failure.1.contains("duplicate approval continuation"),
+        "the failure carries the real message: {failure:?}"
+    );
+
+    let second = start_text_run(&api, &session_id, "this one works").await?;
+    let second = wait_for_terminal_run(&api, &session_id, &second.id).await?;
+    assert_eq!(second.status, api::RunStatus::Completed);
+    assert_eq!(
+        live_workflow_handle(&client, &session_id)?
+            .describe(WorkflowDescribeOptions::default())
+            .await?
+            .run_id(),
+        temporal_run_id,
+        "the same execution served both runs"
+    );
+
+    terminate_live_session(&client, &session_id, "refusal live test cleanup").await;
     Ok(())
 }
 

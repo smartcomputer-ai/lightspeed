@@ -57,9 +57,9 @@ use bootstrap::initialize;
 use clock::workflow_time_ms;
 use drive::{
     CommandAdmissionResult, DriveOutcome, admit_and_append_command, append_command,
-    drive_from_state, drive_until_idle, process_pending_tool_batch_resumes,
+    drive_from_state, drive_past_refusals, drive_until_idle, process_pending_tool_batch_resumes,
 };
-use errors::{record_admission_failure, record_bootstrap_error, record_error, record_warning};
+use errors::{fatal, record_admission_failure, record_bootstrap_error, record_warning};
 use session_state::flush_pending_emissions;
 use wait_loop::{can_continue_as_new, wait_for_workflow_work, workflow_state_should_complete};
 use watchdog::{process_cancelling_watchdog, reconcile_cancelling_watchdog};
@@ -147,12 +147,13 @@ impl AgentSessionWorkflow {
 
         let preparation_ctx = ctx.clone();
         let preparation = preparation::run_preparation_loop(preparation_ctx).fuse();
+        let dispatch_ctx = ctx.clone();
         let code_tool_dispatch = code_tools::run_dispatch_loop(ctx.clone()).fuse();
         let session = async {
             loop {
                 preparation::prepare_initial_session(ctx, &args)
                     .await
-                    .map_err(temporalio_sdk::ApplicationFailure::new)?;
+                    .map_err(|error| fatal(ctx, error, "session_setup"))?;
                 if workflow_state_should_complete(ctx) {
                     return Ok(());
                 }
@@ -161,114 +162,59 @@ impl AgentSessionWorkflow {
                 wait_for_workflow_work(ctx).await;
                 code_tools::process_pending(ctx)
                     .await
-                    .map_err(temporalio_sdk::ApplicationFailure::new)?;
-                if let Err(error) = flush_pending_emissions(ctx).await {
-                    record_error(ctx, &error, "pending_emission");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
-                if let Err(error) = promise_sources::process_pending_source_resolutions(ctx).await {
-                    record_error(ctx, &error, "promise_source_resolution");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
-                if let Err(error) = workflow_starts::process_pending_starts(ctx).await {
-                    record_error(ctx, &error, "workflow_start");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
-                if let Err(error) = promise_sources::flush_pending_promise_cancellations(ctx).await
-                {
-                    record_error(ctx, &error, "promise_cancellation");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
-                if let Err(error) = workflow_starts::process_execution_cancels(ctx).await {
-                    record_error(ctx, &error, "workflow_execution_cancel");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
-                if let Err(error) = awaits::process_satisfied_await(ctx).await {
-                    record_error(ctx, &error, "await_resolution");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
+                    .map_err(|error| fatal(ctx, error, "code_tools"))?;
+                flush_pending_emissions(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "pending_emission"))?;
+                promise_sources::process_pending_source_resolutions(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "promise_source_resolution"))?;
+                workflow_starts::process_pending_starts(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "workflow_start"))?;
+                promise_sources::flush_pending_promise_cancellations(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "promise_cancellation"))?;
+                workflow_starts::process_execution_cancels(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "workflow_execution_cancel"))?;
+                awaits::process_satisfied_await(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "await_resolution"))?;
                 promise_sources::process_due_promise_deadlines(ctx);
-                if let Err(error) = promise_sources::process_due(ctx).await {
-                    record_error(ctx, &error, "promise_source_poll");
-                    return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                        "{error}"
-                    ))
-                    .into());
-                }
-                match process_pending_tool_batch_resumes(ctx, &args).await {
-                    Ok(DriveOutcome::ContinueAsNew) => {
-                        return observability::request_continue_as_new(ctx, &args);
-                    }
-                    Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
-                    Err(error) => {
-                        record_error(ctx, &error, "tool_batch_resume");
-                        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                            "{error}"
-                        ))
-                        .into());
-                    }
+                promise_sources::process_due(ctx)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "promise_source_poll"))?;
+                let resumed = process_pending_tool_batch_resumes(ctx, &args).await;
+                let outcome = drive_past_refusals(ctx, &args, resumed)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "tool_batch_resume"))?;
+                if outcome == DriveOutcome::ContinueAsNew {
+                    return observability::request_continue_as_new(ctx, &args);
                 }
                 // After the resumes, so a resume about to land is not pre-empted by
                 // the force that exists for the case where none ever does.
-                match process_cancelling_watchdog(ctx, &args).await {
-                    Ok(DriveOutcome::ContinueAsNew) => {
-                        return observability::request_continue_as_new(ctx, &args);
-                    }
-                    Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
-                    Err(error) => {
-                        record_error(ctx, &error, "cancellation_watchdog");
-                        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                            "{error}"
-                        ))
-                        .into());
-                    }
+                let forced = process_cancelling_watchdog(ctx, &args).await;
+                let outcome = drive_past_refusals(ctx, &args, forced)
+                    .await
+                    .map_err(|error| fatal(ctx, error, "cancellation_watchdog"))?;
+                if outcome == DriveOutcome::ContinueAsNew {
+                    return observability::request_continue_as_new(ctx, &args);
                 }
                 let mut admission_drive =
-                    drive_from_state(ctx).map_err(temporalio_sdk::ApplicationFailure::new)?;
+                    drive_from_state(ctx).map_err(|error| fatal(ctx, error, "drive_rehydrate"))?;
                 admissions::drain_pending_admissions(ctx, &mut admission_drive)
                     .await
-                    .map_err(temporalio_sdk::ApplicationFailure::new)?;
+                    .map_err(|error| fatal(ctx, error, "admission"))?;
                 if wait_loop::workflow_state_needs_core_drive(ctx) {
-                    let mut drive = match drive_from_state(ctx) {
-                        Ok(drive) => drive,
-                        Err(error) => {
-                            record_error(ctx, &error, "drive_rehydrate");
-                            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                                "{error}"
-                            ))
-                            .into());
-                        }
-                    };
-                    match drive_until_idle(ctx, &args, &mut drive).await {
-                        Ok(DriveOutcome::ContinueAsNew) => {
-                            return observability::request_continue_as_new(ctx, &args);
-                        }
-                        Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
-                        Err(error) => {
-                            record_error(ctx, &error, "core_drive");
-                            return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                                "{error}"
-                            ))
-                            .into());
-                        }
+                    let mut drive = drive_from_state(ctx)
+                        .map_err(|error| fatal(ctx, error, "drive_rehydrate"))?;
+                    let driven = drive_until_idle(ctx, &args, &mut drive).await;
+                    let outcome = drive_past_refusals(ctx, &args, driven)
+                        .await
+                        .map_err(|error| fatal(ctx, error, "core_drive"))?;
+                    if outcome == DriveOutcome::ContinueAsNew {
+                        return observability::request_continue_as_new(ctx, &args);
                     }
                 }
                 if workflow_state_should_complete(ctx) {
@@ -284,7 +230,12 @@ impl AgentSessionWorkflow {
         pin_mut!(session, preparation, code_tool_dispatch);
         futures::select_biased! {
             result = session => result,
-            result = code_tool_dispatch => Err(temporalio_sdk::ApplicationFailure::new(result.err().unwrap_or_else(|| anyhow::anyhow!("code tool dispatcher stopped"))).into()),
+            result = code_tool_dispatch => {
+                let error = result
+                    .err()
+                    .unwrap_or_else(|| anyhow::anyhow!("code tool dispatcher stopped"));
+                Err(fatal(&dispatch_ctx, error, "code_tool_dispatch").into())
+            }
             _ = preparation => unreachable!()
         }
     }

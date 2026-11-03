@@ -693,7 +693,21 @@ pub(crate) fn context_entries_from_inputs(
         ContextEntryInput,
     )>,
 ) -> Result<Vec<ContextEntry>, DomainError> {
-    let mut next_entry_id = state.id_cursors.last_context_item_id;
+    context_entries_after(state, state.id_cursors.last_context_item_id, inputs)
+}
+
+/// As [`context_entries_from_inputs`], numbering after entries proposed earlier in
+/// the same append.
+fn context_entries_after(
+    state: &CoreAgentState,
+    last_entry_id: u64,
+    inputs: Vec<(
+        Option<ContextEntryKey>,
+        ContextEntrySource,
+        ContextEntryInput,
+    )>,
+) -> Result<Vec<ContextEntry>, DomainError> {
+    let mut next_entry_id = last_entry_id;
     inputs
         .into_iter()
         .map(|(key, source, entry)| {
@@ -1162,6 +1176,13 @@ fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>
 pub(crate) fn missing_steering_entries(
     state: &CoreAgentState,
 ) -> Result<Vec<ContextEntry>, DomainError> {
+    missing_steering_entries_after(state, state.id_cursors.last_context_item_id)
+}
+
+pub(crate) fn missing_steering_entries_after(
+    state: &CoreAgentState,
+    last_entry_id: u64,
+) -> Result<Vec<ContextEntry>, DomainError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };
@@ -1189,7 +1210,7 @@ pub(crate) fn missing_steering_entries(
         }
     }
 
-    context_entries_from_inputs(state, inputs)
+    context_entries_after(state, last_entry_id, inputs)
 }
 
 fn input_index(index: usize) -> Result<u32, DomainError> {

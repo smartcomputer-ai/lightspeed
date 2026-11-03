@@ -185,7 +185,7 @@ pub(crate) fn build_llm_request(
     let context =
         crate::core::components::context::planned_context_snapshot(state, model.api_kind.clone())?;
     let tools = active_tools(state, &model.api_kind)?;
-    validate_tool_choice(&tools, generation.tool_choice.as_ref())?;
+    crate::validate_tool_choice_for_tools(&state.tooling.tools, generation.tool_choice.as_ref())?;
     let params = active_run.run_config.provider_params.clone();
     if let Some(params) = params.as_ref()
         && params.api_kind != model.api_kind
@@ -395,53 +395,37 @@ fn active_tools(
     state: &CoreAgentState,
     api_kind: &ProviderApiKind,
 ) -> Result<Vec<ToolSpec>, PlanningError> {
-    let mut tools = Vec::with_capacity(state.tooling.tools.len());
-    for tool in state.tooling.tools.values() {
-        match &tool.kind {
-            ToolKind::ProviderNative(native) => {
-                if native.api_kind != *api_kind {
-                    return Err(DomainError::ProviderCompatibility(format!(
-                        "provider-native tool {} api kind {:?} does not match request api kind {:?}",
-                        tool.name, native.api_kind, api_kind
-                    ))
-                    .into());
-                }
-            }
-            ToolKind::RemoteMcp(remote) => {
-                if remote.execution == crate::RemoteMcpExecution::Provider
-                    && !remote_mcp_supported_by_provider(api_kind)
-                {
-                    return Err(DomainError::ProviderCompatibility(format!(
-                        "provider-executed MCP tool {} is not supported by request api kind {:?}; switch the server record to native execution or register a native twin",
-                        tool.name, api_kind,
-                    ))
-                    .into());
-                }
-            }
-            ToolKind::Builtin(_) | ToolKind::Function(_) => {}
-        }
-        tools.push(tool.clone());
-    }
-
-    Ok(tools)
+    validate_tools_for_api_kind(state.tooling.tools.values(), api_kind)?;
+    Ok(state.tooling.tools.values().cloned().collect())
 }
 
-fn validate_tool_choice(
-    tools: &[ToolSpec],
-    tool_choice: Option<&ToolChoice>,
-) -> Result<(), PlanningError> {
-    let Some(ToolChoice::Specific { tool_name }) = tool_choice else {
-        return Ok(());
-    };
-    if tools.iter().any(|tool| &tool.name == tool_name) {
-        Ok(())
-    } else {
-        Err(DomainError::InvariantViolation(format!(
-            "tool_choice references missing active tool {}",
-            tool_name
-        ))
-        .into())
+/// Whether requests of this API kind can carry these tools. Hosts check this while
+/// preparing a toolset, so the caller hears it before a run depends on it.
+pub fn validate_tools_for_api_kind<'a>(
+    tools: impl IntoIterator<Item = &'a ToolSpec>,
+    api_kind: &ProviderApiKind,
+) -> Result<(), DomainError> {
+    for tool in tools {
+        match &tool.kind {
+            ToolKind::ProviderNative(native) if native.api_kind != *api_kind => {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "provider-native tool {} api kind {:?} does not match request api kind {:?}",
+                    tool.name, native.api_kind, api_kind
+                )));
+            }
+            ToolKind::RemoteMcp(remote)
+                if remote.execution == crate::RemoteMcpExecution::Provider
+                    && !remote_mcp_supported_by_provider(api_kind) =>
+            {
+                return Err(DomainError::ProviderCompatibility(format!(
+                    "provider-executed MCP tool {} is not supported by request api kind {:?}; switch the server record to native execution or register a native twin",
+                    tool.name, api_kind,
+                )));
+            }
+            _ => {}
+        }
     }
+    Ok(())
 }
 
 fn remote_mcp_supported_by_provider(api_kind: &ProviderApiKind) -> bool {

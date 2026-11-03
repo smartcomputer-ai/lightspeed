@@ -105,6 +105,16 @@ pub enum CoreAgentCommand {
     ForceCancelRun {
         run_id: RunId,
     },
+    /// End the matching active run as failed, kind `Internal`, without planning.
+    /// The host admits this when the harness refuses a step of the run from
+    /// durable state, so the same state would refuse it on every later attempt.
+    /// Open calls are answered and accepted steering is written down in the same
+    /// append, so the next run gets a valid request. A run no longer active makes
+    /// this an idempotent no-op.
+    FailRun {
+        run_id: RunId,
+        message_ref: BlobRef,
+    },
     ResumeToolBatch(ResumeToolBatchCommand),
     /// Deliver a promise resolution. All transports converge here; a promise
     /// that is already terminal makes this an idempotent no-op

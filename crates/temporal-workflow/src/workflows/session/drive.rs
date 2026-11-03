@@ -87,7 +87,7 @@ pub(super) async fn admit_and_append_command(
                 rejection: Some(rejection),
             }));
         }
-        Err(error) => return Err(anyhow::anyhow!("{error}")),
+        Err(error) => return Err(error.into()),
     };
     match action {
         CoreAgentAction::AppendEvents {
@@ -102,14 +102,16 @@ pub(super) async fn admit_and_append_command(
     }
 }
 
-/// The workflow issues these again from durable state for as long as that state
-/// asks for them, with no new signal. Failing only the command would repeat a
-/// deterministic reducer refusal forever, so the refusal takes the drive's failure
-/// path instead.
+/// The workflow issues these itself from durable state, with no caller to tell.
+/// Failing only the command would repeat a deterministic reducer refusal forever,
+/// so the refusal takes the drive's failure path instead. For `FailRun`, which is
+/// that path, a refusal ends the workflow.
 pub(super) fn reissued_from_state(command: &CoreAgentCommand) -> bool {
     matches!(
         command,
-        CoreAgentCommand::ResumeToolBatch(_) | CoreAgentCommand::ForceCancelRun { .. }
+        CoreAgentCommand::ResumeToolBatch(_)
+            | CoreAgentCommand::ForceCancelRun { .. }
+            | CoreAgentCommand::FailRun { .. }
     )
 }
 
@@ -139,12 +141,104 @@ pub(super) async fn process_pending_tool_batch_resumes(
                 // workflow (the 2026-07-06 incident shape). Record it and
                 // continue; if the run is now stuck in `cancelling`, the
                 // watchdog forces it terminal. Only a reducer refusal, which
-                // cannot pass on a later attempt, returns an error above.
+                // cannot pass on a later attempt, returns an error above, and
+                // that one fails the run.
                 record_admission_failure(ctx, failure);
             }
         }
     }
     drive_until_idle(ctx, args, &mut drive).await
+}
+
+/// The harness's words when `error` is its refusal of a step on the drive path.
+/// Those are the only errors that say something about the work rather than about
+/// getting it stored. Everything left in an `anyhow::Error` from a store outage,
+/// a lost head or a log that will not load stays fatal.
+pub(super) fn harness_refusal_message(error: &anyhow::Error) -> Option<&str> {
+    if let Some(error) = error.downcast_ref::<CoreAgentDriveError>() {
+        return error.refusal_message();
+    }
+    error
+        .downcast_ref::<harness::DomainError>()
+        .map(harness::DomainError::message)
+}
+
+/// Carry on from what a drive step returned. A refusal fails only the work it was
+/// about, then the drive continues, so each pass ends a run or a compaction and the
+/// next queued run gets its turn. Nothing else is absorbed.
+pub(super) async fn drive_past_refusals(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    args: &AgentSessionArgs,
+    mut result: anyhow::Result<DriveOutcome>,
+) -> anyhow::Result<DriveOutcome> {
+    loop {
+        let error = match result {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => error,
+        };
+        let mut drive = fail_refused_work(ctx, error).await?;
+        result = drive_until_idle(ctx, args, &mut drive).await;
+    }
+}
+
+/// Fail the active run with the refusal's text, or the compaction when no run is
+/// there to fail. Anything else with nothing to attach to stays fatal, and so does
+/// a refusal of this very append.
+async fn fail_refused_work(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    error: anyhow::Error,
+) -> anyhow::Result<CoreAgentDrive> {
+    let Some(message) = harness_refusal_message(&error).map(ToOwned::to_owned) else {
+        return Err(error);
+    };
+    let mut drive = drive_from_state(ctx)?;
+    let run_id = drive.state().runs.active.as_ref().map(|run| run.run_id);
+    if run_id.is_none() && !drive.state().context.compaction.is_pending() {
+        return Err(error);
+    }
+    observability::log_step_refused(ctx, &message);
+    let message_ref = activity_calls::put_refusal_blob(ctx, &message).await;
+    if let Some(run_id) = run_id {
+        let command = CoreAgentCommand::FailRun {
+            run_id,
+            message_ref,
+        };
+        match admit_and_append_command(ctx, &mut drive, command, None)
+            .await
+            .map_err(|error| anyhow::anyhow!("failing the refused run: {error}"))?
+        {
+            CommandAdmissionResult::Accepted => {}
+            CommandAdmissionResult::Rejected(failure) => {
+                anyhow::bail!("failing the refused run: {}", failure.message)
+            }
+        }
+        record_warning(ctx, format!("run {run_id} failed: {message}"));
+    } else {
+        let action = drive
+            .resume_context_compaction(
+                harness::ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
+                    session_id: drive.session_id().clone(),
+                    context_revision: drive.state().context.revision,
+                    status: harness::ContextCompactionStatus::Failed,
+                    failure_ref: Some(message_ref),
+                    context_entries: Vec::new(),
+                },
+                workflow_time_ms(ctx),
+            )
+            .map_err(|error| anyhow::anyhow!("failing the refused compaction: {error}"))?;
+        let CoreAgentAction::AppendEvents {
+            expected_head,
+            events,
+        } = action
+        else {
+            anyhow::bail!("failing the refused compaction appended nothing: {action:?}");
+        };
+        append_events(ctx, &mut drive, expected_head, events).await?;
+        record_warning(ctx, format!("context compaction failed: {message}"));
+    }
+    Ok(drive)
 }
 
 pub(super) async fn drive_until_idle(
@@ -393,7 +487,11 @@ pub(super) async fn append_events(
         )
         .await
         .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let entries = drive.resume_appended(appended.entries)?;
+    // These events are durable now, so nothing from here is a refusal that a failed
+    // run could answer. The errors stay untyped to keep them fatal.
+    let entries = drive
+        .resume_appended(appended.entries)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     ctx.state_mut(|state| -> anyhow::Result<()> {
         apply_entries(&mut state.core_state, &entries, &mut state.run_submissions)?;
         state.queue_emissions_for_entries(&entries)?;
@@ -405,7 +503,8 @@ pub(super) async fn append_events(
             state.pending_toolsets.clear();
         }
         Ok(())
-    })?;
+    })
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
     // Invalidation uses only recorded source identity. It performs no discovery,
     // including when selection changed in a tool result during an active run.
     if let Some(command) = invalid_environment_prompt_command(drive.state()) {
@@ -812,6 +911,44 @@ pub(super) fn environment_catalog_publication_is_obsolete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_harness_refusals_count_as_refusals() {
+        let domain = harness::DomainError::InvariantViolation("the reason".to_owned());
+        for error in [
+            anyhow::Error::from(domain.clone()),
+            CoreAgentDriveError::Domain(domain.clone()).into(),
+            CoreAgentDriveError::Command(CommandError::Domain(domain.clone())).into(),
+            CoreAgentDriveError::Planning(harness::PlanningError::Domain(domain.clone())).into(),
+        ] {
+            assert_eq!(harness_refusal_message(&error), Some("the reason"));
+        }
+        for error in [
+            anyhow::anyhow!("activity failed: expected head mismatch"),
+            // What the drive leaves behind once events are durable.
+            anyhow::anyhow!("{domain}"),
+            CoreAgentDriveError::Command(CommandError::Rejected(harness::CommandRejection::new(
+                harness::CommandRejectionKind::ActiveWork,
+                "busy",
+            )))
+            .into(),
+            CoreAgentDriveError::Codec(harness::CodecError::Unsupported {
+                kind: "lightspeed.core.unknown".to_owned(),
+                version: 1,
+            })
+            .into(),
+        ] {
+            assert_eq!(harness_refusal_message(&error), None, "{error}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_of_fail_run_does_not_become_a_rejected_command() {
+        assert!(reissued_from_state(&CoreAgentCommand::FailRun {
+            run_id: harness::RunId::new(1),
+            message_ref: BlobRef::from_bytes(b"the reason"),
+        }));
+    }
 
     #[test]
     fn detached_session_promise_resolution_produces_followup_candidate() {

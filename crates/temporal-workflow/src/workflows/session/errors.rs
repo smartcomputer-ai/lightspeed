@@ -26,6 +26,16 @@ pub(super) fn record_error(
     observability::log_workflow_failure(ctx, error_class, &message);
 }
 
+/// [`record_error`] for the failure the workflow returns next.
+pub(super) fn fatal(
+    ctx: &WorkflowContext<AgentSessionWorkflow>,
+    error: anyhow::Error,
+    error_class: &'static str,
+) -> temporalio_sdk::ApplicationFailure {
+    record_error(ctx, &error, error_class);
+    temporalio_sdk::ApplicationFailure::new(error)
+}
+
 /// Record a failure that occurred during session bootstrap (rehydration). This
 /// is surfaced distinctly from ordinary run errors so the gateway/bridge can
 /// report a typed `session_bootstrap_failed` recovery problem instead of a

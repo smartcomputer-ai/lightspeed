@@ -2896,3 +2896,56 @@ fn code_mode_api_grant_round_trips_and_keeps_binding_deadline_immutable() {
     features.code_mode.as_mut().unwrap().limits.timeout_ms = 44;
     validate_code_deadline_for_existing_bindings(&state, &features).unwrap();
 }
+
+#[test]
+fn prepared_toolsets_refuse_what_every_turn_would_refuse() {
+    let config = |api_kind, tool_choice| harness::SessionConfig {
+        model: harness::ModelSelection {
+            api_kind,
+            provider_id: "provider".to_owned(),
+            model: "model".to_owned(),
+        },
+        generation: harness::GenerationConfig {
+            tool_choice,
+            ..Default::default()
+        },
+        limits: Default::default(),
+        context: Default::default(),
+        features: Default::default(),
+    };
+    let record = test_mcp_server_record("crm", mcp::McpServerStatus::Active);
+    let tool = mcp_api::mcp_tool_from_config_attachment(&mcp_config_attachment(), &record, None)
+        .expect("provider-executed tool");
+    let tools = BTreeMap::from([(tool.name.clone(), tool.clone())]);
+
+    let refused = session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiCompletions, None),
+        &tools,
+    )
+    .expect_err("completions cannot run a provider-executed MCP tool");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest);
+    assert!(refused.message.contains("provider-executed MCP tool"));
+
+    let dangling = Some(harness::ToolChoice::Specific {
+        tool_name: harness::ToolName::new("typo"),
+    });
+    let refused = session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiResponses, dangling),
+        &tools,
+    )
+    .expect_err("the choice names no tool");
+    assert_eq!(refused.kind, AgentApiErrorKind::InvalidRequest);
+    assert_eq!(
+        refused.message,
+        "tool_choice references missing active tool typo"
+    );
+
+    let chosen = Some(harness::ToolChoice::Specific {
+        tool_name: tool.name.clone(),
+    });
+    session_preparation::validate_prepared_toolset(
+        &config(harness::ProviderApiKind::OpenAiResponses, chosen),
+        &tools,
+    )
+    .expect("a real choice on an API kind that can run the tool");
+}

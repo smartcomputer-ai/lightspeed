@@ -111,6 +111,7 @@ pub struct FakeLlm {
     parallel_tool_calls: usize,
     failing_parallel_call: Option<usize>,
     transient_failures_remaining: Arc<AtomicUsize>,
+    refused_generations_remaining: Arc<AtomicUsize>,
     generation_delay: Duration,
     stalled: Arc<AtomicBool>,
     counters: FakeRuntimeCounters,
@@ -124,6 +125,7 @@ impl FakeLlm {
             parallel_tool_calls: 1,
             failing_parallel_call: None,
             transient_failures_remaining: Arc::new(AtomicUsize::new(0)),
+            refused_generations_remaining: Arc::new(AtomicUsize::new(0)),
             generation_delay: Duration::ZERO,
             stalled: Arc::new(AtomicBool::new(false)),
             counters: FakeRuntimeCounters::default(),
@@ -186,6 +188,45 @@ impl FakeLlm {
         self.transient_failures_remaining
             .store(count, Ordering::SeqCst);
         self
+    }
+
+    /// Answer the next `count` generate calls with a result the harness refuses:
+    /// two approval requests with one continuation. Live tests use it to drive a
+    /// refusal through the workflow, since early validation stops the easy ones.
+    pub fn with_refused_generations(self, count: usize) -> Self {
+        self.refused_generations_remaining
+            .store(count, Ordering::SeqCst);
+        self
+    }
+
+    fn refused_result(request: &LlmGenerationRequest) -> LlmGenerationResult {
+        let approval = harness::ObservedApprovalRequest {
+            subject: harness::ApprovalSubject::McpToolCall {
+                server_id: "fake".to_owned(),
+                server_label: "fake".to_owned(),
+                tool_name: "fake".to_owned(),
+                arguments_ref: harness::BlobRef::from_bytes(b"{}"),
+            },
+            continuation: harness::ApprovalContinuation::OpenAiMcp {
+                provider_request_id: "mcpr_fake".to_owned(),
+            },
+        };
+        LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status: LlmGenerationStatus::Succeeded,
+            failure_ref: None,
+            context_entries: Vec::new(),
+            facts: LlmGenerationFacts {
+                duration_ms: None,
+                provider_response_id: None,
+                finish: LlmFinish::Stop,
+                usage: None,
+                tool_calls: Vec::new(),
+                approval_requests: vec![approval.clone(), approval],
+                context_token_estimate: None,
+            },
+        }
     }
 
     fn take_scripted_transient_failure(&self) -> bool {
@@ -333,6 +374,15 @@ impl CoreAgentLlm for FakeLlm {
                 message: "scripted transient provider failure".to_owned(),
                 retry_after: Some(FAKE_TRANSIENT_RETRY_AFTER),
             });
+        }
+        if self
+            .refused_generations_remaining
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Ok(Self::refused_result(&request));
         }
         let guard = InflightGuard::start(
             &self.counters.generations_started,

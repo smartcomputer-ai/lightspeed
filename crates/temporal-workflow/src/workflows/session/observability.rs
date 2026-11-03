@@ -181,6 +181,25 @@ pub(super) fn log_admission_refused(ctx: &WorkflowContext<AgentSessionWorkflow>,
     );
 }
 
+pub(super) fn log_step_refused(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &str) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::error!(
+        target: "temporal_workflow",
+        event = "session_step_refused",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        lightspeed_run_id = fields.active_run_id,
+        session_head_seq = fields.session_head_seq,
+        error,
+        "the harness refused a step of the session; failing that work and carrying on"
+    );
+}
+
 fn log_continue_as_new(ctx: &WorkflowContext<AgentSessionWorkflow>, args: &AgentSessionArgs) {
     if ctx.is_replaying() {
         return;

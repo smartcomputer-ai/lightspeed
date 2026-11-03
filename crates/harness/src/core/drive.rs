@@ -511,6 +511,25 @@ pub enum CoreAgentDriveError {
     Planning(#[from] PlanningError),
 }
 
+impl CoreAgentDriveError {
+    /// The harness's own words when it refused a step because of what the session
+    /// holds. These come from admission, planning or the dry run, before anything is
+    /// appended, and the same state refuses again on every attempt. Every other
+    /// error is about getting data in or out, not about the session's content.
+    pub fn refusal_message(&self) -> Option<&str> {
+        match self {
+            Self::Domain(error) | Self::Command(CommandError::Domain(error)) => {
+                Some(error.message())
+            }
+            Self::Planning(PlanningError::Domain(error)) => Some(error.message()),
+            Self::Planning(
+                PlanningError::Rejected(message) | PlanningError::InvalidProposal(message),
+            ) => Some(message),
+            Self::Command(CommandError::Rejected(_)) | Self::Codec(_) => None,
+        }
+    }
+}
+
 pub fn classify_core_agent_action(state: &CoreAgentState) -> CoreAgentAction {
     if state.lifecycle.status == CoreAgentStatus::Closed {
         CoreAgentAction::Closed
@@ -605,8 +624,13 @@ pub fn next_context_compaction_request(
     if state.lifecycle.status != CoreAgentStatus::Open || !state.context.compaction.is_pending() {
         return Ok(None);
     }
-    let request = crate::core::components::llm::build_context_compaction_task(state)
-        .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
+    let request =
+        crate::core::components::llm::build_context_compaction_task(state).map_err(|error| {
+            match error {
+                PlanningError::Domain(error) => error,
+                error => DomainError::InvariantViolation(error.to_string()),
+            }
+        })?;
     Ok(Some(ContextCompactionRequest {
         session_id: session_id.clone(),
         request,
@@ -13474,5 +13498,449 @@ mod tests {
         assert_eq!(failure.message_ref, Some(failure_ref));
         assert_eq!(steering_in_context(&logged.drive), 1);
         logged.assert_replays(|_| {});
+    }
+
+    fn fail_run(run_id: RunId) -> CoreAgentCommand {
+        CoreAgentCommand::FailRun {
+            run_id,
+            message_ref: BlobRef::from_bytes(b"the real reason"),
+        }
+    }
+
+    /// The run ended as a normal failed run with the message, the session stayed
+    /// open and replays, and its next run produces a request a provider accepts.
+    fn assert_failed_run_leaves_a_working_session(
+        logged: &mut LoggedDrive,
+        seed: impl FnOnce(&mut CoreAgentDrive),
+    ) -> LlmGenerationRequest {
+        let run = logged.last_run();
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::Internal);
+        assert_eq!(
+            failure.message_ref,
+            Some(BlobRef::from_bytes(b"the real reason"))
+        );
+        assert!(logged.drive.state().runs.active.is_none());
+        assert_eq!(logged.drive.state().lifecycle.status, CoreAgentStatus::Open);
+        logged.assert_replays(seed);
+        logged.request_run(b"next");
+        let next = logged.until_generate();
+        assert_tool_calls_answered(openai_items(&next));
+        next
+    }
+
+    #[test]
+    fn failing_a_run_with_an_open_batch_answers_every_call_and_keeps_finished_ones() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a", "tool_b"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![
+                observed_call("call_a", "tool_a"),
+                observed_call("call_b", "tool_b"),
+            ],
+        ));
+        let batch = logged.until_tools();
+        let finished = per_call_result(
+            &batch.calls[0].call_id,
+            ToolCallStatus::Succeeded,
+            Vec::new(),
+        );
+        let finished_content = finished.model_visible_context_entries[0].content.clone();
+        let action = logged
+            .drive
+            .resume_tool_call(batch.batch_id, finished, 80)
+            .expect("first result");
+        logged.commit(action);
+
+        let entries = logged.admit(fail_run(batch.run_id));
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.context.entries_applied",
+                "lightspeed.core.run.failed"
+            ]
+        );
+        let results = logged
+            .drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. }))
+            .map(|entry| entry.content.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(results[0], finished_content);
+        assert_eq!(results[1].content_ref, crate::cancelled_tool_result_ref());
+        assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
+    }
+
+    #[test]
+    fn failing_a_run_answers_a_tool_turn_whose_batch_never_started() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_a", "tool_a")],
+        ));
+        assert!(
+            logged
+                .drive
+                .state()
+                .runs
+                .active
+                .as_ref()
+                .unwrap()
+                .tool_batches
+                .is_empty()
+        );
+
+        logged.admit(fail_run(request.run_id));
+        assert_eq!(
+            context_kinds(&logged.drive),
+            ["User", "call:call_a", "result:call_a"]
+        );
+        assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
+    }
+
+    #[test]
+    fn failing_a_run_parked_on_an_approval_ends_the_approval_in_the_log() {
+        let (mut logged, batch) = native_approval_parked();
+        let entries = logged.admit(fail_run(batch.run_id));
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.context.entries_applied",
+                "lightspeed.core.approval.cancelled",
+                "lightspeed.core.run.failed"
+            ]
+        );
+        assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
+    }
+
+    #[test]
+    fn failing_a_run_writes_accepted_steering_down_after_answering_its_calls() {
+        let (mut logged, batch) = native_approval_parked();
+        logged.steer(batch.run_id, b"a correction");
+        let entries = logged.admit(fail_run(batch.run_id));
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.context.entries_applied",
+                "lightspeed.core.approval.cancelled",
+                "lightspeed.core.context.entries_applied",
+                "lightspeed.core.run.failed"
+            ]
+        );
+        let next = assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
+        assert!(
+            openai_items(&next)
+                .iter()
+                .any(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
+        );
+    }
+
+    #[test]
+    fn failing_a_run_in_flight_with_only_steering_open() {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        let entries = logged.admit(fail_run(request.run_id));
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.context.entries_applied",
+                "lightspeed.core.run.failed"
+            ]
+        );
+        assert_failed_run_leaves_a_working_session(&mut logged, |_| {});
+    }
+
+    #[test]
+    fn failing_a_cancelling_run_keeps_its_steering_dropped_and_a_retry_is_a_no_op() {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        logged.admit(CoreAgentCommand::CancelRun {
+            run_id: request.run_id,
+            requested_by: None,
+        });
+        logged.admit(fail_run(request.run_id));
+        assert_eq!(steering_in_context(&logged.drive), 0);
+        let retry = logged
+            .drive
+            .admit_command(fail_run(request.run_id), 60)
+            .expect("retry");
+        assert!(matches!(retry, CoreAgentAction::Idle));
+    }
+
+    #[test]
+    fn failing_a_run_that_holds_a_parked_batch_cancels_its_promises_and_replays() {
+        let mut logged = LoggedDrive::open(config(), &["await"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_wait", "await")],
+        ));
+        let batch = logged.until_tools();
+        let run_id = batch.run_id;
+        let parked = park_on_wait_promise(&mut logged.drive, &batch);
+        let deferred = logged
+            .drive
+            .resume_tool_batch_outcome(parked, 80)
+            .expect("defer");
+        logged.commit(deferred);
+
+        let entries = logged.admit(fail_run(run_id));
+        assert_eq!(
+            event_kinds(&entries),
+            [
+                "lightspeed.core.context.entries_applied",
+                "lightspeed.core.run.failed",
+                "lightspeed.core.promise.cancelled"
+            ]
+        );
+        assert_failed_run_leaves_a_working_session(&mut logged, |replayed| {
+            insert_wait_promise(replayed, run_id)
+        });
+    }
+
+    fn provider_mcp_tool() -> ToolSpec {
+        let mut tool = native_inject_mcp_tool("mcp_crm", crate::RemoteMcpApprovalPolicy::Never);
+        if let ToolKind::RemoteMcp(remote) = &mut tool.kind {
+            remote.execution = crate::RemoteMcpExecution::Provider;
+        }
+        tool
+    }
+
+    fn completions_config() -> SessionConfig {
+        let mut config = config();
+        config.model.api_kind = ProviderApiKind::OpenAiCompletions;
+        config.model.provider_id = "deepseek".to_owned();
+        config
+    }
+
+    /// What a host does with a refusal: nothing was appended, so it fails the run
+    /// and carries on.
+    fn fail_refused_run(logged: &mut LoggedDrive) -> RunId {
+        let error = logged
+            .drive
+            .next_action_unbounded(60)
+            .expect_err("the harness refuses this step");
+        let message = error.refusal_message().expect("a refusal").to_owned();
+        let message_ref = BlobRef::from_bytes(message.as_bytes());
+        let run_id = logged
+            .drive
+            .state()
+            .runs
+            .active
+            .as_ref()
+            .expect("run")
+            .run_id;
+        logged.admit(CoreAgentCommand::FailRun {
+            run_id,
+            message_ref: message_ref.clone(),
+        });
+        assert_eq!(
+            logged.last_run().failure.as_ref().unwrap().message_ref,
+            Some(message_ref)
+        );
+        run_id
+    }
+
+    #[test]
+    fn a_tool_choice_a_later_patch_removed_fails_the_run_and_keeps_the_session() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+        let run_config = RunConfig {
+            tool_choice: Some(ToolChoice::Specific {
+                tool_name: ToolName::new("tool_a"),
+            }),
+            ..RunConfig::default()
+        };
+        logged.admit(request_run_command(
+            None,
+            user_input(BlobRef::from_bytes(b"input")),
+            run_config,
+        ));
+        logged.admit(CoreAgentCommand::PatchTools {
+            expected_revision: None,
+            patch: crate::ToolPatch {
+                upsert: Vec::new(),
+                remove: vec![ToolName::new("tool_a")],
+            },
+        });
+        // The refusal comes when the turn plans, after the run has started.
+        loop {
+            match logged.drive.next_action_unbounded(60) {
+                Ok(action @ CoreAgentAction::AppendEvents { .. }) => {
+                    logged.commit(action);
+                }
+                Ok(other) => panic!("expected a refusal, got {other:?}"),
+                Err(_) => break,
+            }
+        }
+        fail_refused_run(&mut logged);
+        logged.assert_replays(|_| {});
+        logged.request_run(b"next");
+        let next = logged.until_generate();
+        assert_tool_calls_answered(openai_items(&next));
+    }
+
+    #[test]
+    fn an_ineligible_tool_published_behind_a_run_fails_only_that_run() {
+        let mut logged = LoggedDrive::open(completions_config(), &[]);
+        logged.request_run(b"input");
+        let tool = provider_mcp_tool();
+        logged.admit(CoreAgentCommand::ReplaceTools {
+            expected_revision: None,
+            tools: BTreeMap::from([(tool.name.clone(), tool)]),
+        });
+        loop {
+            match logged.drive.next_action_unbounded(60) {
+                Ok(action @ CoreAgentAction::AppendEvents { .. }) => {
+                    logged.commit(action);
+                }
+                Ok(other) => panic!("expected a refusal, got {other:?}"),
+                Err(_) => break,
+            }
+        }
+        fail_refused_run(&mut logged);
+        logged.assert_replays(|_| {});
+
+        // A later run on the same toolset is told at the door.
+        let refused = logged
+            .drive
+            .admit_command(
+                request_run_command(None, user_input(BlobRef::from_bytes(b"x")), run_config()),
+                60,
+            )
+            .expect_err("refused at admission");
+        assert_eq!(
+            rejection_of(refused).kind,
+            CommandRejectionKind::ProviderCompatibility
+        );
+
+        // Fixing the tool brings the session straight back, with all it was told.
+        logged.admit(CoreAgentCommand::ReplaceTools {
+            expected_revision: None,
+            tools: BTreeMap::new(),
+        });
+        logged.request_run(b"next");
+        logged.until_generate();
+    }
+
+    #[test]
+    fn a_refused_compaction_with_no_run_finishes_failed_and_answers_its_waiter() {
+        let mut logged = LoggedDrive::open(completions_config(), &[]);
+        logged.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("note"),
+            entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"note")),
+        });
+        logged.admit(CoreAgentCommand::CompactContext);
+        // Admission could not know: the tool arrived behind the request in this
+        // fixture, the same way a catalog edit arrives behind a queued request.
+        let tool = provider_mcp_tool();
+        logged
+            .drive
+            .state
+            .tooling
+            .tools
+            .insert(tool.name.clone(), tool);
+        let error = logged
+            .drive
+            .next_action_unbounded(60)
+            .expect_err("the compaction task is refused");
+        assert!(error.refusal_message().is_some());
+        let failure_ref = BlobRef::from_bytes(b"refused");
+        let finished = logged
+            .drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    usage: None,
+                    calls: 0,
+                    session_id: logged.drive.session_id().clone(),
+                    context_revision: logged.drive.state().context.revision,
+                    status: ContextCompactionStatus::Failed,
+                    failure_ref: Some(failure_ref),
+                    context_entries: Vec::new(),
+                },
+                70,
+            )
+            .expect("finish");
+        commit_action(&mut logged.drive, finished);
+        let compaction = &logged.drive.state().context.compaction;
+        assert!(!compaction.is_pending());
+        assert_eq!(
+            compaction.last_manual_finished_revision,
+            Some(logged.drive.state().context.revision)
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_told_apart_from_everything_that_stays_fatal() {
+        let domain = DomainError::InvariantViolation("the reason".to_owned());
+        for error in [
+            CoreAgentDriveError::Domain(domain.clone()),
+            CoreAgentDriveError::Command(CommandError::Domain(domain.clone())),
+            CoreAgentDriveError::Planning(PlanningError::Domain(domain)),
+            CoreAgentDriveError::Planning(PlanningError::Rejected("the reason".to_owned())),
+        ] {
+            assert_eq!(error.refusal_message(), Some("the reason"));
+        }
+        assert_eq!(
+            CoreAgentDriveError::Command(CommandError::Rejected(crate::CommandRejection::new(
+                CommandRejectionKind::ActiveWork,
+                "busy"
+            )))
+            .refusal_message(),
+            None
+        );
+    }
+
+    #[test]
+    fn an_identical_config_put_is_still_checked_against_the_tools() {
+        let mut dangling = config();
+        dangling.generation.tool_choice = Some(ToolChoice::Specific {
+            tool_name: ToolName::new("typo"),
+        });
+        let mut logged = LoggedDrive::open(dangling.clone(), &[]);
+        let refused = logged
+            .drive
+            .admit_command(
+                CoreAgentCommand::ReplaceSessionConfig {
+                    expected_revision: None,
+                    config: dangling,
+                },
+                60,
+            )
+            .expect_err("no no-op past the check");
+        assert_eq!(rejection_of(refused).kind, CommandRejectionKind::Invalid);
+    }
+
+    #[test]
+    fn run_admission_checks_the_tool_choice_the_run_would_use() {
+        let mut dangling = config();
+        dangling.generation.tool_choice = Some(ToolChoice::Specific {
+            tool_name: ToolName::new("typo"),
+        });
+        let mut logged = LoggedDrive::open(dangling, &[]);
+        let refused = logged
+            .drive
+            .admit_command(
+                request_run_command(None, user_input(BlobRef::from_bytes(b"x")), run_config()),
+                60,
+            )
+            .expect_err("the session's choice dangles");
+        assert_eq!(rejection_of(refused).kind, CommandRejectionKind::Invalid);
     }
 }

@@ -1736,6 +1736,9 @@ pub enum RunFailureKindView {
     ContextFailure,
     LimitExceeded,
     Cancelled,
+    /// The harness refused a step of this run because of what the session holds.
+    /// `message` is the refusal's own text. The session stays usable, and open
+    /// tool calls were answered as cancelled.
     Internal,
 }
 

@@ -47,7 +47,7 @@ pub(crate) fn validate_config_update_for_state(
 ) -> Result<(), DomainError> {
     validate_recorded_config_update(state, config)?;
     config.validate()?;
-    validate_tool_choice_for_active_tools(state, config.generation.tool_choice.as_ref())?;
+    validate_tool_choice_for_tools(&state.tooling.tools, config.generation.tool_choice.as_ref())?;
     validate_retained_native_model(state, &config.model)
 }
 
@@ -800,11 +800,16 @@ pub(crate) fn validate_run_config_for_state(
     }
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
-    validate_tool_choice_for_active_tools(state, run_config.tool_choice.as_ref())?;
-    validate_retained_native_model(
-        state,
-        run_config.model_override.as_ref().unwrap_or(&config.model),
-    )
+    let model = run_config.model_override.as_ref().unwrap_or(&config.model);
+    validate_tool_choice_for_tools(
+        &state.tooling.tools,
+        run_config
+            .tool_choice
+            .as_ref()
+            .or(config.generation.tool_choice.as_ref()),
+    )?;
+    crate::validate_tools_for_api_kind(state.tooling.tools.values(), &model.api_kind)?;
+    validate_retained_native_model(state, model)
 }
 
 /// The reducer's half of a run request. A committed run has already passed
@@ -1197,14 +1202,16 @@ fn validate_mcp_feature(mcp: &McpFeature) -> Result<(), DomainError> {
     Ok(())
 }
 
-fn validate_tool_choice_for_active_tools(
-    state: &CoreAgentState,
+/// A specific tool choice has to name one of these tools. Hosts check this while
+/// preparing a toolset, so the caller hears it before a run depends on it.
+pub fn validate_tool_choice_for_tools(
+    tools: &std::collections::BTreeMap<crate::ToolName, crate::ToolSpec>,
     tool_choice: Option<&ToolChoice>,
 ) -> Result<(), DomainError> {
     let Some(ToolChoice::Specific { tool_name }) = tool_choice else {
         return Ok(());
     };
-    if state.tooling.tools.contains_key(tool_name) {
+    if tools.contains_key(tool_name) {
         Ok(())
     } else {
         Err(DomainError::InvariantViolation(format!(

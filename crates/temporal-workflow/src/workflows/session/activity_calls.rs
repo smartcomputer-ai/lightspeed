@@ -253,6 +253,32 @@ async fn put_llm_boundary_error_blob(
     .unwrap_or_else(|_| harness::llm_runtime_boundary_failure_ref())
 }
 
+/// Store a harness refusal's text for the failed work that reports it. The failure
+/// is recorded even when this write is not; a store that is really gone stops the
+/// workflow at the append that follows.
+pub(super) async fn put_refusal_blob(
+    ctx: &mut WorkflowContext<AgentSessionWorkflow>,
+    message: &str,
+) -> BlobRef {
+    let mut bytes = message.as_bytes();
+    if bytes.len() > MAX_LLM_BOUNDARY_ERROR_BYTES {
+        let mut end = MAX_LLM_BOUNDARY_ERROR_BYTES;
+        while !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        bytes = &bytes[..end];
+    }
+    ctx.execute_activity(
+        WorkflowActivities::put_blob,
+        PutBlobRequest {
+            bytes: bytes.to_vec(),
+        },
+        crate::boundary_error_blob_activity_options(),
+    )
+    .await
+    .unwrap_or_else(|_| harness::run_internal_failure_ref())
+}
+
 pub(super) async fn call_tool_prepare_promise_controls(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     request: harness::PromiseControlArgumentRequest,

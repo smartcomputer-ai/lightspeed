@@ -13656,14 +13656,18 @@
               "tool_failure",
               "context_failure",
               "limit_exceeded",
-              "cancelled",
-              "internal"
+              "cancelled"
             ],
             "type": "string"
           },
           {
             "const": "request_rejected",
             "description": "The provider rejected the request as invalid or larger than the model\naccepts. `message` is the provider's own text, unchanged; resending the\nsame context fails the same way.",
+            "type": "string"
+          },
+          {
+            "const": "internal",
+            "description": "The harness refused a step of this run because of what the session holds.\n`message` is the refusal's own text. The session stays usable, and open\ntool calls were answered as cancelled.",
             "type": "string"
           }
         ]

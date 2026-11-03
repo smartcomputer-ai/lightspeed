@@ -9,7 +9,9 @@ use crate::{
     core::components::{
         approval::pending_approval_cancellations,
         config::{validate_config_update_for_state, validate_run_config_for_state},
-        context::{compaction_abandoned_proposal, entries_applied_proposal},
+        context::{
+            compaction_abandoned_proposal, entries_applied_proposal, missing_steering_entries_after,
+        },
         tooling::{open_tool_group_closing_entries, validate_tool_map},
     },
 };
@@ -177,13 +179,13 @@ pub fn admit_command(
                     "open session is missing config".to_owned(),
                 ))
             })?;
+            validate_config_update_for_state(state, &config)
+                .map_err(command_rejection_from_domain)?;
             if &config == current {
                 // Replacing with the identical document is an idempotent
                 // no-op; the revision stays untouched.
                 return Ok(Vec::new());
             }
-            validate_config_update_for_state(state, &config)
-                .map_err(command_rejection_from_domain)?;
             let revision = state
                 .lifecycle
                 .config_revision
@@ -489,6 +491,7 @@ pub fn admit_command(
                 && (state.runs.active.is_some()
                     || !state.runs.queued.is_empty()
                     || state.context.compaction.is_pending()
+                    || state.context.compaction.is_queued()
                     || state
                         .promises
                         .pending()
@@ -899,6 +902,21 @@ pub fn admit_command(
             ));
             Ok(proposals)
         }
+        CoreAgentCommand::FailRun {
+            run_id,
+            message_ref,
+        } => {
+            require_open(state)?;
+            let Some(active_run) = state
+                .runs
+                .active
+                .as_ref()
+                .filter(|run| run.run_id == run_id)
+            else {
+                return Ok(Vec::new());
+            };
+            fail_run_proposals(state, active_run, message_ref).map_err(CommandError::Domain)
+        }
         CoreAgentCommand::ResumeToolBatch(command) => {
             require_open(state)?;
             crate::core::drive::resume_tool_batch_proposals(state, command, observed_at_ms)
@@ -985,6 +1003,54 @@ pub fn admit_command(
             )])
         }
     }
+}
+
+/// One append that leaves nothing of the run for a later request to trip on: open
+/// calls answered, approvals ended, accepted steering written down, then the failure.
+/// A cancelling run's steering stays dropped, as it would have been.
+fn fail_run_proposals(
+    state: &CoreAgentState,
+    active_run: &crate::ActiveRun,
+    message_ref: crate::BlobRef,
+) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
+    let run_id = active_run.run_id;
+    let joins = CoreAgentJoins {
+        run_id: Some(run_id),
+        ..CoreAgentJoins::default()
+    };
+    let mut proposals = Vec::new();
+    let mut base_revision = state.context.revision;
+    let mut last_entry_id = state.id_cursors.last_context_item_id;
+    let closing = open_tool_group_closing_entries(state, active_run)?;
+    if let Some(last) = closing.last() {
+        last_entry_id = last.entry_id.as_u64();
+        proposals.push(entries_applied_proposal(state, run_id, closing));
+        base_revision += 1;
+    }
+    proposals.extend(pending_approval_cancellations(active_run));
+    if active_run.status != RunStatus::Cancelling {
+        let steering = missing_steering_entries_after(state, last_entry_id)?;
+        if !steering.is_empty() {
+            proposals.push(CoreAgentEventProposal::new(
+                joins.clone(),
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                    base_revision,
+                    entries: steering,
+                }),
+            ));
+        }
+    }
+    proposals.push(CoreAgentEventProposal::new(
+        joins,
+        CoreAgentEvent::Run(RunEvent::Failed {
+            run_id,
+            failure: crate::RunFailure {
+                kind: crate::RunFailureKind::Internal,
+                message_ref: Some(message_ref),
+            },
+        }),
+    ));
+    Ok(proposals)
 }
 
 fn fail_pending_completion_promises(

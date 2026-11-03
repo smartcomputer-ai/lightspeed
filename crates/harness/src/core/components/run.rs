@@ -47,7 +47,8 @@ pub enum Event {
     /// Forced terminal transition for a wedged run: unlike `Cancelled`, this
     /// applies from any non-terminal status and does not require open turns
     /// or tool batches to be drained first. Emitted by watchdog/force-close
-    /// recovery paths, never by normal planning.
+    /// recovery paths, never by normal planning. The watchdog's admission answers
+    /// open tool calls in the same append, because the session lives on.
     ForceCancelled {
         run_id: RunId,
     },
@@ -382,10 +383,23 @@ pub enum RunFailureKind {
     ContextFailure,
     LimitExceeded,
     Cancelled,
+    /// The harness refused a step of this run because of what the session holds.
+    /// The message is the refusal's own text. One run was lost to it, so this
+    /// usually means a harness bug or a configuration only the run could reveal.
     Internal,
 }
 
 pub type RunEvent = Event;
+
+/// Failure message of a run the harness refused when its real message could not
+/// be stored. Every runtime must guarantee the matching blob exists via
+/// [`crate::storage::ensure_harness_blobs`].
+pub const RUN_INTERNAL_FAILURE_CONTENT: &str =
+    "the run failed on an internal error and its message could not be recorded\n";
+
+pub fn run_internal_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(RUN_INTERNAL_FAILURE_CONTENT.as_bytes())
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunQueueState {
