@@ -382,7 +382,7 @@ mod tests {
                 3,
             )
             .unwrap_err();
-        assert_eq!(error.kind, api::AgentApiErrorKind::Rejected);
+        assert_eq!(error.kind, api::AgentApiErrorKind::Conflict);
         drop(candidate);
         assert_eq!(live.state(), &before);
         // A later valid attempt can still prepare from exactly the original state.
