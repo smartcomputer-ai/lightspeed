@@ -231,12 +231,14 @@ Later packages add their own entries.
   `workflow_tool_start_recovery_query_meets_the_reply_schema` has never run. If the
   mapping is wrong, a broken handler waits until the deadline or the run ends, and with no
   deadline it polls every 60 s for as long as the run lasts.
-- **A detached follow-up can end the workflow until `store-rejections`.** The follow-up now
-  reads its payload through an activity, so an unreadable payload fails the session workflow
-  after three attempts, as an await of that promise does. Before, the raw ref failed each
-  generation instead and the session stayed up. A schema-less reply naming a missing blob
-  reaches this, and the ingest gate in that package closes it. A store outage long enough to
-  exhaust the attempts stays fatal. Do not ship between the two packages.
+- **A detached follow-up can stall the session until `store-rejections`.** The follow-up now
+  reads its payload through `materialize_await_result` on `activity_options()`, which has no
+  retry bound, so an unreadable payload retries forever and blocks the outer loop, as an await
+  of that promise does. Only a malformed ref gets this far: a well-formed ref to a missing blob
+  already stalls at `append_events` with `MissingBlobs` when the promise resolves, before this
+  change too. Before, a malformed ref failed each generation and the session stayed usable. The
+  ingest gate in that package closes this, after which only a store outage blocks here, and
+  waiting that out is correct. Do not ship between the two packages.
 - **File attachments do not reach a detached follow-up.** A run input has no field for
   them, so a detached sub-agent's linked file is named in the result JSON only. It is not
   recorded on a tool completion, so the session's own final answer cannot link it onward by
@@ -1031,3 +1033,18 @@ Open:
   follow-up, which the ingest gate should reduce to store outages.
 - For `state-pruning`: `OpenAiMcp` approval records carry no batch id, so they need their own
   handling when pruned. The await-rejected text already says an id may be no longer retained.
+
+Independent review of this package:
+
+- It starts at `af6f8b4e`, so `9957b035` is its first commit.
+- The risky note on a detached follow-up was wrong and is corrected above. It said an unreadable
+  payload fails the workflow after three attempts, but `activity_options()` has no retry bound,
+  so the outer loop stalls instead, and it blamed a missing blob, which stalls earlier at append.
+- A poll's next check was measured from the start of its sweep. After a slow sweep the backoff
+  was already due, so checks ran back to back. It now measures from the current workflow time
+  (`87a36549`).
+- Checked with no change: replay safety of `process_due` and the follow-up activity, the rollover
+  block on `pending_source_resolutions`, `validate_policy` staying out of what the reducer runs,
+  no first-party binding claiming the reserved kind, receivers keying the deadline notice by
+  invocation, and a media entry passing run input validation.
+- Still unverified: the query status mapping and the live test, because the Docker daemon is down.
