@@ -363,13 +363,19 @@ Later packages add their own entries.
   after the headers is a resend within the LLM retry budget. The provider may already have served that
   request, so a retry can bill a second generation, and a provider-hosted MCP call in it can run twice. That
   matches the at-least-once already accepted for provider-hosted calls. Production generation is all
-  non-streaming, so this covers all generation traffic. Before, it failed the run on Anthropic and
-  Completions.
+  non-streaming, so this covers all generation traffic. Before, a reset failed the run on every client, and a
+  deadline after the headers failed it on Anthropic and Completions. A connect timeout on any client now reads
+  "request timed out after" the request deadline rather than the connect timeout, as it already did on Responses.
 - **The compaction estimate no longer refuses anything by itself.** A chunk with no smaller cut goes to the
   provider, however far over the limit it looks. That relies on the provider answering with a typed overflow.
   A compatible backend that truncates silently, or that sends an overflow the client does not classify, gets
   an oversized summary request or a plain rejection instead. The bytes/4 and bytes/8 hints undercount
-  dense text and small PDFs, which costs refused calls from the 32-call budget and not a failure.
+  dense text and small PDFs, which costs refused calls from the 32-call budget and not a failure. They also
+  overcount scanned PDFs, and a retained tail is part of every chunk's size. A 2 MB PDF in the tail on a 200k
+  window makes every chunk the smallest cut, so a prefix with more than 32 cuts fails on the call budget until
+  that PDF ages into the prefix. The input budget is checked after a call, so it can overshoot by one accepted
+  chunk. "Did not reduce its input" still compares estimates, which a summary larger than a PDF-only request can
+  trip when that request is just over its 4,096-token floor.
 - **Only Anthropic's overflow wording was added.** As instructed, the shared hints are unchanged, so a backend
   with its own wording, such as Gemini's OpenAI layer ("input token count ... exceeds the maximum"), still fails
   as `request_rejected` and repeats until someone compacts. Of the two Anthropic phrases, only "prompt is too
@@ -1647,3 +1653,14 @@ Handoff:
   and classification does not rescue it.
 - `docs-and-review-notes`: no guide text changed here. The compaction guide should say the size estimate is advisory if
   it describes it at all.
+
+Independent review of this package. All five items hold up against their briefs: the classifier replaces every copy and
+`Response::chunk` reports through the decode kind too, so audio is covered; every response-side error reaches
+`fail_on_invalid_response`; no reader of the summary preview needed the full text; every admitted document is a user
+message with no provider kind; the workflow contract exporter leaves no diff. Fixed:
+
+- `a29ed3e1`: the pre-send budget check was skipped only while nothing had been spent, so an estimate could still refuse
+  any later chunk. Two 10 MiB PDFs estimate at 2.6M tokens and a retained tail counts in every chunk, so every compaction
+  with more than one chunk failed before the provider was asked. The check is gone: the budget is enforced after each
+  call from reported usage, with the estimate standing in only when a backend reports none. The `2e281a2c` entry above
+  describes the first version. Risky calls now also records the tail PDF case and the timeout message.
