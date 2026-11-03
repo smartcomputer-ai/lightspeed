@@ -138,7 +138,8 @@ pub struct AgentSessionStatus {
     pub fatal_error: Option<String>,
     /// The latest advisory fact: an emission refused or a best-effort step that
     /// did not happen. The session carried on, so no gateway path reads this as
-    /// an error, and it stays until a newer warning replaces it.
+    /// an error. It stays until a newer warning replaces it or the execution
+    /// rolls over, which starts the snapshot fresh.
     #[serde(default)]
     pub last_warning: Option<String>,
     /// True when the session workflow failed during bootstrap/rehydration. The

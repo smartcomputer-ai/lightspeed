@@ -15986,7 +15986,7 @@
       "oneOf": [
         {
           "const": "failed",
-          "description": "The execution failed; its error is in the workflow history and the log.",
+          "description": "The execution failed; its error is in the Temporal workflow history.",
           "type": "string"
         },
         {

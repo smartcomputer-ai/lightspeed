@@ -58,7 +58,7 @@ impl AgentSessionWorkflow {
 
     /// Keep an advisory fact on the status snapshot and in the log. A warning
     /// says something was refused or left undone while the session carried
-    /// on, so no gateway path treats it as an error and nothing clears it.
+    /// on, so no gateway path treats it as an error.
     pub(super) fn record_warning(&mut self, replaying: bool, warning: String) {
         if !replaying {
             tracing::warn!(

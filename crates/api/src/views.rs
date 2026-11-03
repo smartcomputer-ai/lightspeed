@@ -144,7 +144,7 @@ pub enum SessionStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionExecutionFailureView {
-    /// The execution failed; its error is in the workflow history and the log.
+    /// The execution failed; its error is in the Temporal workflow history.
     Failed,
     /// The execution was ended from outside, or ended without closing the
     /// session.
