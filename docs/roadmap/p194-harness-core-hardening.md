@@ -415,6 +415,21 @@ Later packages add their own entries.
   `sessions_live` and both provider `*_compaction_live` suites relied on idle compaction and were rewritten to start a
   run, and only compile. Run them at the next checkpoint.
 
+- **Capacity costs Anthropic runs a model listing.** Each run on the `anthropic` route with no declared limit now reads the
+  discovery cache during preparation. The cache keeps a success for 10 s, so a quiet session pays a `GET /v1/models` per run
+  start, and in an outage a run can wait up to the 15 s discovery timeout before admission. Other routes return at once.
+- **An idle session that has not run shows no reported capacity.** The settings view reads `contextLengthError` as its
+  threshold source on a fresh Anthropic session until the first generation records a limit. A session whose model was
+  changed while idle shows the last generation's limit until the next run. Both are display only: a run reads its own value.
+- **Reported capacity is unproven against Temporal and a real provider.** No live test ran. `ActivityState` gets discovery
+  only through `UniverseRuntime`, so live suites that build their own state resolve nothing and exercise the fallback.
+  Whether a real Anthropic run's `runAccepted` carries the limit has not been seen.
+- **Model switches are only proven where they were tested.** Removing the pin relies on the OpenAI and Anthropic requests in
+  the owner's answer. Chat Completions routes and Anthropic's native compaction block across models were not tried. A 200
+  does not show the new model used the old reasoning. A refusal fails each run with the provider's text until someone
+  switches back, and nothing warns before it. Idle manual compaction still uses the last generation's model, so after a
+  switch away from a retired model it can fail while a run on the new model works.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -1777,3 +1792,54 @@ workflow contract leaves no diff. Fixed:
 
 Still open, not fixed: an entry removal by a context edit does not clear `entry_guard_attempted`, so a run that made its
 attempt, had entries removed and then crossed the limit again fails without a second attempt. The next run heals it.
+
+### `run-capacity-and-model-switch` (H-28, H-80, H-79)
+
+Landed:
+
+- `c663c3ac` (H-79): `validate_retained_native_model` is gone, so any model on the route is allowed for a run or a document,
+  whatever context holds. Provider and API kind stay pinned, in admission and in the reducer. No guard replaces it. The
+  `model` and `RunStartConfig.model` API docs say what a switch does. Contracts regenerated.
+- `f3d11b39` (H-28, H-80): `input_limit_tokens` sits beside `run_config` on `RunRequestCommand`, `AcceptedRunEvent`,
+  `AcceptedRun` and `ActiveRun`, outside equality and the submission digest. `SessionToolsetRequest.input_capacity_model`
+  names the model and `SessionToolsetPreparation.input_limit_tokens` carries the answer, which the `PreparedRun` branch sets
+  on the command. `ContextConfig.reported_input_limit_tokens`, `RunConfig.input_limit_tokens`, `resolve_context_capacity`
+  and the gateway's write on override runs are deleted. The zero check moved to run admission as `Invalid`. Contracts
+  regenerated; the workflow contract did not change.
+
+Calls made:
+
+- The instruction reads "the active run's field, then config", which alone would let a reported 200k beat a declared 100k.
+  Preparation therefore does not ask about a model the document declares a limit for, so the order is correct as written.
+- The document's limit still applies only to the document's model, as the existing test wanted. An override run on another
+  model with no reported figure has no limit, rather than borrowing one meant for a different model.
+- The activity skips discovery when `input_capacity_model` is `None`, which every non-run preparation sends. Discovery goes
+  after the toolset, so a refused toolset does not pay for it.
+- The universe shares one `ModelDiscoveryService` between the gateway and its activities (now an `Arc`), so a credential
+  change invalidates both. Only `UniverseRuntime` wires it, and that is the production path.
+- A retry whose submission is known skips preparation and arrives with `None`, which is fine because capacity is not part of
+  the comparison.
+- `ContextCompactionView.inputLimitTokens` gained a doc comment saying where the figure comes from.
+
+Deviations:
+
+- `ActiveRun` carries the field too, which the instruction implies but does not list.
+- The web composer's copy is unchanged. "Applies to each message you send from here" became true when the pin went.
+- Old reproductions not ported: `reported_limit_breaks_document_identity_and_profile_apply_drops_capacity` and
+  `carrying_the_value_forward_keeps_identity_and_capacity` test a field that no longer exists. Ported as regression tests:
+  retries in all three run states, a replaced document keeping proactive compaction, the context-limit fallback, the
+  override, edit and queued model cases. The retry, proactive and model-switch tests also assert replay.
+
+Verified: `cargo test -p harness` (389 unit, 16 in `state_bounds`), `cargo test -p temporal-workflow --lib` (203) and `--test
+workflow_contract`, `cargo test -p api --test schema_artifacts`, `cargo test -p api-projection`, the `models_api` and
+`gateway::service::tests` filters of `cargo test -p temporal-runtime --lib`, `npm run typecheck`, `cargo check --workspace
+--all-targets --locked`. No live test ran.
+
+Handoff:
+
+- `docs-and-review-notes`: `using-lightspeed/sessions-and-runs.md` (near line 213), `models-and-credentials.md` (near line
+  100) and `profiles-and-instructions.md` (near line 151) still say retained state can prevent a model change. Reword them
+  from the owner's answer. `how-it-works/context-and-storage.md` near line 193 should say reported capacity is resolved per
+  run, and a discovery failure uses the context-limit fallback for that run.
+- `format-guards`: `input_limit_tokens` moved on the `runAccepted` event, on stored queued and active runs, and off `RunConfig`
+  and `ContextConfig`, for the checkpoint bump and the shape tests.
