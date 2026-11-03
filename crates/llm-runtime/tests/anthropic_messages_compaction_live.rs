@@ -361,23 +361,36 @@ async fn anthropic_messages_live_high_watermark_standalone_compaction() {
 
     let context_ref = store_anthropic_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Lightspeed is testing idle \
+        "Summarize this short context for future continuation: Lightspeed is testing \
          high-watermark standalone compaction on the Anthropic Messages adapter.",
     )
     .await;
-    let compacted = runner
+    runner
         .drive_command(DriveCommand {
-            session_id,
+            session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::UpsertContext {
                 expected_revision: None,
                 key: ContextEntryKey::new("client.anthropic.raw.high_watermark"),
                 entry: anthropic_raw_context_input(context_ref.clone(), Some(11)),
             },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("seed context");
+    let prompt_ref = blobs
+        .put_bytes(b"Reply with the single word OK.".to_vec())
+        .await
+        .expect("store prompt");
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 30,
+            command: provider_compaction_run(prompt_ref),
             max_steps: Some(128),
         })
         .await
-        .expect("seed context and compact at high watermark");
+        .expect("compact at high watermark when the run starts");
 
     assert_eq!(compacted.quiescence, RunnerQuiescence::Idle);
     assert!(

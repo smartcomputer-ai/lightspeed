@@ -922,6 +922,11 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     {
         return Ok(vec![compaction_abandoned_proposal(state)]);
     }
+    // A pending compaction is frozen at its revision. A run that has just started has
+    // input waiting, and writing it now would orphan the request.
+    if state.context.compaction.is_pending() {
+        return Ok(Vec::new());
+    }
     if let Some(proposal) = provider_compacted_prune_proposal(state)? {
         return Ok(vec![proposal]);
     }
@@ -1057,6 +1062,12 @@ fn high_watermark_compaction_proposal(
     if !compaction_enabled(config) {
         return None;
     }
+    // Room is worth paying for only when a run will use it, so a run ending over the
+    // watermark compacts when the next one starts, before its input arrives. Run
+    // terminals flush after the drive settles, so compacting here would hold a
+    // sub-agent's parent or a bot lane behind a summary nobody may read. A queued run
+    // starts before this planner looks, so an active run is the only case.
+    state.runs.active.as_ref()?;
     if !matches!(
         config.context.compaction,
         Some(CompactionPolicy::ProviderStandalone { .. })

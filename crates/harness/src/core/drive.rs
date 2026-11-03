@@ -5694,7 +5694,7 @@ mod tests {
     }
 
     #[test]
-    fn high_watermark_standalone_compaction_requests_provider_call_when_idle() {
+    fn high_watermark_standalone_compaction_waits_for_a_run() {
         let session_id = SessionId::new("session-a");
         let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(Some(10), Some(4)));
@@ -5722,6 +5722,14 @@ mod tests {
             .iter()
             .map(|entry| entry.entry_id)
             .collect::<Vec<_>>();
+
+        assert!(matches!(
+            drive.next_action(30, 64).expect("nothing to do yet"),
+            CoreAgentAction::Idle
+        ));
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let start = drive.next_action(30, 64).expect("start the run");
+        commit_action(&mut drive, start);
 
         let action = drive.next_action(30, 64).expect("high watermark plan");
         let requested_entries = commit_action(&mut drive, action);
@@ -5782,6 +5790,9 @@ mod tests {
             )
             .expect("context edit");
         commit_action(&mut drive, context);
+        request_run(&mut drive, BlobRef::from_bytes(b"input"));
+        let start = drive.next_action(30, 64).expect("start the run");
+        commit_action(&mut drive, start);
 
         let action = drive.next_action(30, 64).expect("high watermark plan");
         let requested_entries = commit_action(&mut drive, action);
@@ -16029,17 +16040,15 @@ mod tests {
     fn the_last_generations_count_triggers_compaction_between_turns() {
         let mut logged = watermark_session();
         counted_tool_turn(&mut logged, 100);
-        loop {
+        let observed = loop {
             let action = logged.drive.next_action_unbounded(60).expect("next action");
             let observed = logged.drive.state().context.observed_tokens();
-            if compaction_requests(&logged) > 0 {
-                break;
-            }
             logged.commit(action);
             if compaction_requests(&logged) > 0 {
-                assert_eq!(observed, None, "the tool results moved the revision");
+                break observed;
             }
-        }
+        };
+        assert_eq!(observed, None, "the tool results moved the revision");
     }
 
     /// Anything sent during a compaction is held and lands right after it, which
@@ -16079,5 +16088,84 @@ mod tests {
         logged.steer(request_run_id(&logged), b"moves the revision");
         logged.until_generate();
         assert_eq!(compaction_requests(&logged), 1);
+    }
+
+    /// A run ending over the watermark reaches its terminal and goes idle, so whoever
+    /// waits on that terminal does not wait behind a summary. The next run pays,
+    /// before its input is in context, on the count the last generation left.
+    #[test]
+    fn a_run_ending_over_the_watermark_compacts_when_the_next_run_starts() {
+        let mut logged = watermark_session();
+        let request = logged.until_generate();
+        let mut result = final_turn(&request);
+        result.facts.context_token_estimate = Some(TokenEstimate {
+            tokens: 100,
+            quality: crate::TokenEstimateQuality::ProviderCounted,
+        });
+        logged.resume(result);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_eq!(logged.last_run().status, RunStatus::Completed);
+        assert_eq!(compaction_requests(&logged), 0);
+        assert_eq!(logged.drive.state().context.observed_tokens(), Some(100));
+
+        logged.request_run(b"second");
+        let request = until_compaction(&mut logged);
+        let run = logged.drive.state().runs.active.as_ref().expect("a run");
+        assert!(run.input_entry_ids.is_empty(), "the input arrives after");
+        assert_eq!(
+            logged
+                .drive
+                .state()
+                .context
+                .compaction
+                .pending_plan()
+                .and_then(|plan| plan.run_id),
+            Some(run.run_id)
+        );
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        let request = logged.until_generate();
+        assert!(
+            request
+                .request
+                .context
+                .entries
+                .iter()
+                .any(|entry| entry.content.content_ref == BlobRef::from_bytes(b"second"))
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    /// Context that moved between runs has no count, so the first turn simply runs.
+    /// The next count or the provider's overflow is the backstop.
+    #[test]
+    fn context_moved_between_runs_leaves_the_next_run_to_its_first_turn() {
+        let mut logged = watermark_session();
+        let request = logged.until_generate();
+        let mut result = final_turn(&request);
+        result.facts.context_token_estimate = Some(TokenEstimate {
+            tokens: 100,
+            quality: crate::TokenEstimateQuality::ProviderCounted,
+        });
+        logged.resume(result);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        logged.admit(CoreAgentCommand::UpsertContext {
+            expected_revision: None,
+            key: ContextEntryKey::new("note"),
+            entry: message_input(ContextMessageRole::User, BlobRef::from_bytes(b"note")),
+        });
+
+        logged.request_run(b"second");
+        logged.until_generate();
+        assert_eq!(compaction_requests(&logged), 0);
+    }
+
+    #[test]
+    fn a_manual_compaction_still_runs_with_no_run() {
+        let mut logged = watermark_session();
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        logged.admit(CoreAgentCommand::CompactContext);
+        until_compaction(&mut logged);
     }
 }

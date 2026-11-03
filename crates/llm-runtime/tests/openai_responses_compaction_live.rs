@@ -275,22 +275,43 @@ async fn openai_responses_live_high_watermark_standalone_compaction() {
 
     let context_ref = store_openai_raw_message(
         blobs.as_ref(),
-        "Summarize this short context for future continuation: Lightspeed is testing idle high-watermark standalone compaction.",
+        "Summarize this short context for future continuation: Lightspeed is testing high-watermark standalone compaction.",
     )
     .await;
-    let compacted = runner
+    runner
         .drive_command(DriveCommand {
-            session_id,
+            session_id: session_id.clone(),
             observed_at_ms: 20,
             command: CoreAgentCommand::UpsertContext {
                 expected_revision: None,
                 key: ContextEntryKey::new("client.openai.raw.high_watermark"),
                 entry: openai_raw_context_input(context_ref.clone(), Some(11)),
             },
+            max_steps: Some(64),
+        })
+        .await
+        .expect("seed context");
+    let prompt_ref = blobs
+        .put_bytes(b"Reply with the single word OK.".to_vec())
+        .await
+        .expect("store prompt");
+    let compacted = runner
+        .drive_command(DriveCommand {
+            session_id,
+            observed_at_ms: 30,
+            command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
+                requested_by: None,
+                notify_on_terminal: Vec::new(),
+                submission_id: None,
+                source: harness::RunRequestSource::Input {
+                    input: user_input(prompt_ref),
+                },
+                run_config: run_config(),
+            }),
             max_steps: Some(128),
         })
         .await
-        .expect("seed context and compact at high watermark");
+        .expect("compact at high watermark when the run starts");
 
     assert_eq!(compacted.quiescence, RunnerQuiescence::Idle);
     assert!(

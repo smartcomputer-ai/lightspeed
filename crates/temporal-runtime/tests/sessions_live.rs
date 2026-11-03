@@ -158,7 +158,8 @@ async fn run_compaction_live_client(
             .contains("ZEPHYR-42")
     );
 
-    // Proactive compaction uses the same hosted activity after token usage is observed.
+    // Proactive compaction uses the same hosted activity after token usage is observed,
+    // when the next run starts.
     config.context.as_mut().unwrap().compaction = Some(api::CompactionPolicy::ProviderStandalone {
         compact_threshold_tokens: Some(500),
         target_tokens: None,
@@ -188,6 +189,9 @@ async fn run_compaction_live_client(
             .unwrap_or_default()
             .contains("ZEPHYR-42")
     );
+    let next_run = start_text_run(&api, &session_id, "Reply with the word done.").await?;
+    let next_run = wait_for_terminal_run(&api, &session_id, &next_run.id).await?;
+    assert_eq!(next_run.status, api::RunStatus::Completed);
     support::live::wait_until(
         "hosted proactive compaction to finish",
         std::time::Duration::from_secs(60),
