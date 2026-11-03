@@ -1073,8 +1073,6 @@ mod tests {
         assert!((result_bytes as u64) < temporal_workflow::DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES,);
     }
 
-    /// The size guard fires with a typed error when the reduced result would
-    /// exceed the budget, instead of letting Temporal reject it opaquely.
     #[test]
     fn a_log_that_will_not_reduce_is_final_and_a_store_outage_is_not() {
         let is_final = |error: anyhow::Error| match reduction_failure(error) {
@@ -1089,6 +1087,8 @@ mod tests {
         })));
     }
 
+    /// The size guard fires with a typed error when the reduced result would
+    /// exceed the budget, instead of letting Temporal reject it opaquely.
     #[test]
     fn bootstrap_size_guard_rejects_oversized_result() {
         let session_id = SessionId::new("oversized");

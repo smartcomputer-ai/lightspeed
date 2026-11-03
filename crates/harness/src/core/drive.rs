@@ -14332,12 +14332,11 @@ mod tests {
         ));
         logged.pump();
 
+        // The events as committed, not encoded again, which would scrub them here.
         let stored = logged
             .log
             .iter()
-            .map(|entry| {
-                serde_json::to_string(&CoreAgentCodec.encode_entry(entry).unwrap()).unwrap()
-            })
+            .map(|entry| serde_json::to_string(&entry.event).unwrap())
             .collect::<String>();
         assert!(!stored.contains("\\u0000"), "NUL reached the log: {stored}");
         assert!(stored.contains("cat\u{FFFD}alog"), "{stored}");
