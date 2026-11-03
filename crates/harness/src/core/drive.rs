@@ -12166,6 +12166,7 @@ mod tests {
         crate::code_tool_request(drive.session_id(), drive.state(), "execution-1", "1")
             .expect("the scope stays usable");
     }
+
     #[test]
     fn every_code_tool_lifecycle_event_is_attributed_to_its_parent_call() {
         let (mut drive, parent) = code_tool_fixture();

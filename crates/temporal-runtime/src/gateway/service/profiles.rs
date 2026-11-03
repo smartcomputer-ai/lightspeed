@@ -225,6 +225,19 @@ pub(super) fn map_profile_error(error: ProfileError) -> AgentApiError {
     }
 }
 
+/// The edge where a profile's text ref becomes a ref: a value that is not one is
+/// the caller's mistake, refused before anything holds it.
+fn session_instructions_from_api(
+    instructions: ProfileInstructions,
+) -> Result<SessionProfileInstructions, AgentApiError> {
+    Ok(match instructions {
+        ProfileInstructions::Text { text } => SessionProfileInstructions::Text { text },
+        ProfileInstructions::TextRef { blob_ref } => SessionProfileInstructions::TextRef {
+            blob_ref: parse_blob_ref(&blob_ref)?,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,17 +299,4 @@ mod tests {
             Some(200)
         );
     }
-}
-
-/// The edge where a profile's text ref becomes a ref: a value that is not one is
-/// the caller's mistake, refused before anything holds it.
-fn session_instructions_from_api(
-    instructions: ProfileInstructions,
-) -> Result<SessionProfileInstructions, AgentApiError> {
-    Ok(match instructions {
-        ProfileInstructions::Text { text } => SessionProfileInstructions::Text { text },
-        ProfileInstructions::TextRef { blob_ref } => SessionProfileInstructions::TextRef {
-            blob_ref: parse_blob_ref(&blob_ref)?,
-        },
-    })
 }

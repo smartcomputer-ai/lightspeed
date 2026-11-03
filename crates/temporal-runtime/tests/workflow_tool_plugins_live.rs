@@ -1555,8 +1555,6 @@ async fn workflow_tool_controller_self_receiver_deadline_breaks_stalled_reply() 
     .await
 }
 
-/// Producer authorization: a forged resolution from the wrong workflow id is
-/// dropped; the exact stored producer resolves the promise.
 /// Signals that fail to decode as an envelope, each with the words of the warning
 /// the session reports for it.
 fn malformed_emissions(
@@ -1611,6 +1609,8 @@ fn malformed_emissions(
     ]
 }
 
+/// Producer authorization: a forged resolution from the wrong workflow id is
+/// dropped; the exact stored producer resolves the promise.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Temporal + Postgres env"]
 async fn workflow_tool_reply_requires_exact_stored_producer() -> anyhow::Result<()> {
