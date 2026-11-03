@@ -196,6 +196,24 @@ Later packages add their own entries.
   production change is `read_local_segment`, which every session read uses: it moved to
   a free function with the same SQL and binds.
 
+- **The session loop changes in `host-loop-boundaries` have never run against Temporal.** Docker
+  was down, so the five items are checked by unit tests and compilation only. The arm-local
+  commits, the yields and the cancel queue change the order of workflow commands on the main path
+  of every run, and only a live suite exercises that. Run `sessions_live` and
+  `workflow_tool_plugins_live` at the next checkpoint before trusting this package.
+- **A failed execution cancel is not asked again.** The old rescan re-issued every cancel after each
+  rollover, which is what H-27 removes, and it also happened to retry a cancel that had failed. The
+  activity now has three attempts in 90 s, then a warning, and that execution runs on until it ends
+  by itself. Accepted because the old options retried forever and held up the whole session loop.
+- **A cancel that lands with a finished generation now loses the race to it.** Finished work goes
+  first, so the result is committed and the cancel lands one event later. An answer that had already
+  come back is kept in the transcript of a cancelled run, and the tokens are counted.
+- **The stall guard adds a timer to history when it fires.** After 32 passes with the same clock and
+  history length, the loop logs `session_loop_stalled` and waits one second. Its decision reads
+  `history_length`, which assumes replay sees the same value per activation, as the rollover check
+  already does. It has not fired in any run, so that assumption and the 32 are both untested. Nothing
+  known reaches it today.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -679,3 +697,98 @@ Open:
   shipped and needs the owner's permission to change.
 - `session_events.event_kind` and its index have no reader in the Rust code. Left alone,
   because this package does not change the schema.
+
+### `host-loop-boundaries` (H-07, H-08, H-02, H-14, H-27)
+
+Landed:
+
+- `2687bcbe` (H-07): the GenerateLlm, CompactContext and InvokeTools arms commit what their activity
+  returned through `commit_resume`, and `invoke_tool_batch_as_unit` appends its own resume, including
+  the boundary-failure branch. `action` at the loop top only holds planner output, so the drain and
+  re-plan are unchanged and a steer still extends a run before its completion append.
+- `6b4874fb` (H-08): every `select!` in the workflow crate is `select_biased!`, with the orders the
+  package names. The other sites have a fixed order too: `wait_loop`, `lanes` and `controller` take
+  the state wait first (their arms do the same thing either way), and the chat poll timer takes
+  cancelled first. `clippy.toml` disallows `futures_util::select`.
+- `df50d80d` (H-02): `history_boundary_outcome` is three-way over `outer_loop_can_clear_now`, and
+  `drive_boundary_after_commit` sets the checkpoint flag. So does `drain_pending_admissions` when it
+  took anything, which covers rejected admissions and no-op operations, and so do source resolutions.
+  Stale start backoffs are dropped.
+- `9a3e897f` (H-14): `drive_boundary_after_commit` also yields on `transport_work_due`, so a job or
+  sub-agent starts before the next generation.
+- `0d8632df` (H-27): `pending_execution_cancels` is filled per entry in `append_events`, carried
+  across continue-as-new, and is all that `process_execution_cancels` reads. The rescan and
+  `cancelled_workflow_executions` are gone.
+
+Calls made:
+
+- `drive_owed` in the outer loop is not in the package text. With yields now common, a run's terminal
+  append with a notify intent yields, and the wake predicates then see nothing to drive, so auto-reject
+  and close on terminal never ran. The same gap already existed at a rollover on that append, so a
+  continued execution also owes the drive one pass. Unit tests do not reach this; it is inline in the
+  loop.
+- A yield from the resume or watchdog drive restarts the pass. Otherwise the same pass goes on to the
+  main drive and starts a generation before the transport work it yielded for.
+- `StallGuard` is included. The judge recommended it; the planned action does not name it. It is
+  about 25 lines and covers wake predicates nobody has found yet, such as an active run whose drive
+  returns Idle.
+- `outer_loop_can_clear_now` leaves out due deadlines and the cancel queue, though
+  `transport_work_due` has both. A deadline can be held behind a compaction, so counting it would
+  yield from the top of the drive with nothing consumed, and spin. The cancel queue does not block a
+  rollover, so clearing it clears nothing. Transport yields come only after a commit, so these two
+  cannot spin there.
+- The early return for `run_preparation` and `pending_toolsets` in `history_boundary_outcome` is gone,
+  since the predicate gives the same answer. A control admission passing preparation now yields, and
+  the outer loop drains it.
+- The cancel activity uses `preparation::activity_options()`, as the brief asks for a bounded policy.
+- Cancels are still queued for invocations whose start failed. A start reported as failed may still
+  have reached the server, and the cancel costs one no-op.
+- `clippy.toml` uses `allow-invalid`, so crates without `futures_util` do not warn. Checked by putting
+  a `futures::select!` back in `temporal-workflow` and by a clean `cargo clippy -p bots`. It caught a
+  plugin workflow in `workflow_tool_plugins_live.rs`, now biased with cancelled first.
+
+Deviations:
+
+- The method is `queue_execution_cancel_for_entry`, singular, because it takes one entry inside the
+  apply loop. The package calls it `queue_execution_cancels_for_entries`.
+- The brief's judge puts the cancel queue in `workflow_state_allows_continue_as_new` and the blockers.
+  The package carries it across instead, so it is in neither. It is in the wake predicate,
+  `transport_work_due` and `workflow_state_is_closed_and_quiescent`.
+- There is no workflow test delivering a signal in the same activation as an activity result, because
+  nothing here runs the workflow without Temporal and the timing cannot be forced live. The harness
+  tests walk the new order instead, which does not prove the loop follows it.
+- The field keeps the name `execution_has_rollover_checkpoint`. The brief only suggested a rename.
+- `workflow_tool_pushed_accepted_delivers_after_run_terminal` stays. It starts the receiver after the
+  run, so it now covers delivery retries surviving the run; the new test covers delivery during it.
+- Not ported: `repro_refute_hostdrop_v5e.rs` tests asserting the old loss (replaced by the order tests),
+  `repro_selectarm_flip_v3j.rs` (models the pick, and clippy now guards it), and
+  `repro_rollovergate_noop_refute_e7w2.rs` (replaced by the live no-op rollover check), and
+  `repro_refute_rollover_spin_p4n.rs` with `repro_rolloverspin_refute_y8n.rs` (replaced by the state-level
+  blocker tests). Nothing is ported from `repro_wfspine_core.rs`: its H-14 test shows the harness plans a
+  generation after a start batch, which stays true, and its other tests belong to later packages.
+
+Verified: `cargo test -p temporal-workflow --lib` (174 passed), `cargo test -p temporal-workflow --test '*'`
+(3 passed), `cargo test -p harness` (309 passed), `cargo clippy -p temporal-workflow --all-targets` and
+`-p bots` with `-D warnings`, and `cargo check --workspace --all-targets --locked`. The workflow contract
+exporter leaves no diff. No live test ran: the Docker daemon was down and starting it is out of bounds.
+
+Written but never run, for the checkpoint:
+
+- `workflow_tool_start_goes_out_before_the_next_generation_finishes`
+- `workflow_tool_pushed_accepted_delivers_before_the_next_generation_finishes`
+- `workflow_tool_auto_cancel_cancels_started_execution`, which now uses `CALL_NOWAIT` in place of the
+  short await
+- the no-op rollover check at the end of the continue-as-new test in `sessions_live`
+
+Open:
+
+- For `tool-dispatch-per-call`: the commit boundary runs after a whole batch. `execute_call_group` commits
+  per call with no boundary between them, so a workflow-tool call moved onto that path holds its start
+  until the batch ends. Check this when moving them.
+- For `state-pruning`: `has_due_start` and `has_due_promise_deadline` now scan `start_requests` and the
+  pending promises at every commit, which is cheap only once those maps are bounded. Prune at a later
+  boundary than the promise's terminal event, as the per-entry lookup relies on the record for that entry.
+- For the docs package: `agent-loop-and-durability.md` lines 181-182 overstate pushed promise facts, since
+  a pushed resolution can wait out one activity. The race wake predicates are unchanged by design.
+- Not fixed, bounded: a due deadline held behind a compaction queues another `ResolvePromise` each pass,
+  and the extras are no-ops once the first lands.
