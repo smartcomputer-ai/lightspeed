@@ -2,20 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    BlobRef, CodecError, CoreAgentCodec, CoreAgentEntry, CoreAgentEvent, DomainError, PromiseId,
-    RunId, SessionId, ToolBatchId, ToolCallId, ToolEffect, ToolKind, ToolName, ToolSpec, TurnId,
-    WorkflowToolId, WorkflowToolInvocationId, storage::StoredSessionEntry,
+    BlobRef, DomainError, PromiseId, RunId, SessionId, ToolBatchId, ToolCallId, ToolEffect,
+    ToolKind, ToolName, ToolSpec, TurnId, WorkflowToolId, WorkflowToolInvocationId,
 };
 
 const MANAGED_TOOL_DECLARATION_VERSION: u32 = 1;
 const MAX_MANAGED_TOOLS: usize = 32;
 pub const MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN: u32 = 32;
-pub const MAX_WORKFLOW_TOOL_EMISSIONS_PER_READ: usize =
-    MAX_MANAGED_TOOLS * MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN as usize;
 /// Admission-time resource guardrail on one invocation's keyed promise set,
 /// not a semantic. Bindings declare their own `max_promises` at or below it.
 pub const MAX_COMPLETION_PROMISES: u32 = 32;
@@ -151,13 +147,6 @@ impl WorkflowToolTarget {
     pub fn bound_receiver(&self) -> Option<&WorkflowEndpointRef> {
         match self {
             Self::Bound { receiver, .. } => Some(receiver),
-            Self::Start { .. } => None,
-        }
-    }
-
-    pub fn bound_dispatch(&self) -> Option<BoundWorkflowToolDispatch> {
-        match self {
-            Self::Bound { dispatch, .. } => Some(*dispatch),
             Self::Start { .. } => None,
         }
     }
@@ -408,56 +397,6 @@ pub struct WorkflowToolInvocation {
     pub completion_promises: Option<BTreeMap<String, PromiseId>>,
 }
 
-#[derive(Debug, Error)]
-pub enum ReadToolEmissionsError {
-    #[error("invalid workflow-tool receiver endpoint: {message}")]
-    InvalidReceiver { message: String },
-
-    #[error("decode workflow-tool session entry: {0}")]
-    Decode(#[from] CodecError),
-
-    #[error("reduce workflow-tool session log: {message}")]
-    InvalidSessionLog { message: String },
-
-    #[error("invalid durable workflow-tool binding {binding_fingerprint}: {message}")]
-    InvalidBinding {
-        binding_fingerprint: String,
-        message: String,
-    },
-
-    #[error("workflow-tool receiver is not bound to this session: {workflow_id}")]
-    ReceiverNotBound { workflow_id: String },
-
-    #[error(
-        "workflow-tool invocation {invocation_id} references unknown durable binding {binding_fingerprint}"
-    )]
-    UnknownBinding {
-        invocation_id: WorkflowToolInvocationId,
-        binding_fingerprint: String,
-    },
-
-    #[error(
-        "workflow-tool invocation {invocation_id} does not match its durable binding: {message}"
-    )]
-    InvocationBindingMismatch {
-        invocation_id: WorkflowToolInvocationId,
-        message: String,
-    },
-
-    #[error("workflow-tool invocation {invocation_id} does not match its event joins")]
-    InvocationJoinMismatch {
-        invocation_id: WorkflowToolInvocationId,
-    },
-
-    #[error("duplicate workflow-tool invocation in session log: {invocation_id}")]
-    DuplicateInvocation {
-        invocation_id: WorkflowToolInvocationId,
-    },
-
-    #[error("workflow-tool emission read exceeds the bounded result limit of {limit} invocations")]
-    ResultLimitExceeded { limit: usize },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowToolEvent {
@@ -509,23 +448,6 @@ impl WorkflowToolBinding {
         })
     }
 
-    /// Convenience for the original bound-receiver, notify-only shape.
-    pub fn admit_bound_notify(
-        session_universe_id: Uuid,
-        definition: WorkflowToolDefinition,
-        receiver: WorkflowEndpointRef,
-    ) -> Result<Self, DomainError> {
-        Self::admit(
-            session_universe_id,
-            definition,
-            WorkflowToolTarget::Bound {
-                receiver,
-                dispatch: BoundWorkflowToolDispatch::Pull,
-            },
-            WorkflowToolCompletion::Accepted,
-        )
-    }
-
     pub fn bound_receiver(&self) -> Option<&WorkflowEndpointRef> {
         self.target.bound_receiver()
     }
@@ -572,18 +494,6 @@ impl WorkflowToolDeclaration {
             target,
             completion,
         }
-    }
-
-    /// The original shape: bound receiver, notify-only completion.
-    pub fn bound_notify(definition: WorkflowToolDefinition, receiver: WorkflowEndpointRef) -> Self {
-        Self::new(
-            definition,
-            WorkflowToolTarget::Bound {
-                receiver,
-                dispatch: BoundWorkflowToolDispatch::Pull,
-            },
-            WorkflowToolCompletion::Accepted,
-        )
     }
 }
 
@@ -810,16 +720,6 @@ pub struct WorkflowToolState {
 }
 
 impl WorkflowToolState {
-    pub fn matches_managed_declaration(
-        &self,
-        session_universe_id: Uuid,
-        declaration: &ManagedSessionWorkflowTools,
-    ) -> Result<bool, DomainError> {
-        let expected = declaration.creation_fingerprint(session_universe_id)?;
-        Ok(self.session_universe_id == Some(session_universe_id)
-            && self.managed_creation_fingerprint.as_deref() == Some(expected.as_str()))
-    }
-
     pub fn binding_for_tool_name(&self, tool_name: &ToolName) -> Option<&WorkflowToolBinding> {
         self.bindings
             .values()
@@ -836,246 +736,6 @@ impl WorkflowToolState {
             .count()
             .try_into()
             .unwrap_or(u32::MAX)
-    }
-}
-
-/// Project the workflow-tool invocations for one receiver and run from the
-/// durable session log.
-///
-/// Results retain session-log order. Bindings are learned only from durable
-/// configuration facts encountered before an invocation, so registry changes
-/// cannot retarget historical emissions. Invocations inherited by a session
-/// fork are ignored because their embedded session id names the source
-/// session.
-pub fn read_tool_emissions(
-    entries: &[StoredSessionEntry],
-    receiver_endpoint: &WorkflowEndpointRef,
-    session_id: &SessionId,
-    run_id: RunId,
-) -> Result<Vec<WorkflowToolInvocation>, ReadToolEmissionsError> {
-    receiver_endpoint
-        .validate()
-        .map_err(|error| ReadToolEmissionsError::InvalidReceiver {
-            message: error.to_string(),
-        })?;
-
-    let mut projection = WorkflowToolEmissionReadProjection {
-        receiver_endpoint,
-        session_id,
-        run_id,
-        bindings: BTreeMap::new(),
-        receiver_bound: false,
-        seen_invocations: BTreeSet::new(),
-        emissions: Vec::new(),
-    };
-    let mut reduced = crate::CoreAgentState::new();
-    for entry in entries {
-        let decoded = CoreAgentCodec.decode_entry(entry)?;
-        crate::apply_event(&mut reduced, &decoded).map_err(|error| {
-            ReadToolEmissionsError::InvalidSessionLog {
-                message: error.to_string(),
-            }
-        })?;
-        projection.observe(&decoded)?;
-    }
-    projection.finish()
-}
-
-struct WorkflowToolEmissionReadProjection<'a> {
-    receiver_endpoint: &'a WorkflowEndpointRef,
-    session_id: &'a SessionId,
-    run_id: RunId,
-    bindings: BTreeMap<String, WorkflowToolBinding>,
-    receiver_bound: bool,
-    seen_invocations: BTreeSet<WorkflowToolInvocationId>,
-    emissions: Vec<WorkflowToolInvocation>,
-}
-
-impl WorkflowToolEmissionReadProjection<'_> {
-    fn observe(&mut self, entry: &CoreAgentEntry) -> Result<(), ReadToolEmissionsError> {
-        match &entry.event {
-            CoreAgentEvent::WorkflowToolConfig(event) => self.observe_config(event)?,
-            CoreAgentEvent::WorkflowTool(WorkflowToolEvent::Emitted { invocation })
-                if invocation.session_id == *self.session_id =>
-            {
-                let binding = self
-                    .bindings
-                    .get(&invocation.binding_fingerprint)
-                    .ok_or_else(|| ReadToolEmissionsError::UnknownBinding {
-                        invocation_id: invocation.invocation_id.clone(),
-                        binding_fingerprint: invocation.binding_fingerprint.clone(),
-                    })?;
-                validate_invocation_against_binding(binding, invocation)
-                    .and_then(|()| require_bound_target(binding))
-                    .map_err(|error| ReadToolEmissionsError::InvocationBindingMismatch {
-                        invocation_id: invocation.invocation_id.clone(),
-                        message: error.to_string(),
-                    })?;
-                let expected_id = WorkflowToolInvocationId::for_call(
-                    invocation.session_universe_id,
-                    &invocation.session_id,
-                    invocation.run_id,
-                    invocation.turn_id,
-                    invocation.tool_batch_id,
-                    &invocation.tool_call_id,
-                    &invocation.binding_fingerprint,
-                );
-                if invocation.invocation_id != expected_id {
-                    return Err(ReadToolEmissionsError::InvocationBindingMismatch {
-                        invocation_id: invocation.invocation_id.clone(),
-                        message: "invocation id is not canonical".to_owned(),
-                    });
-                }
-                if entry.joins.run_id != Some(invocation.run_id)
-                    || entry.joins.turn_id != Some(invocation.turn_id)
-                    || entry.joins.tool_batch_id != Some(invocation.tool_batch_id)
-                    || entry.joins.tool_call_id.as_ref() != Some(&invocation.tool_call_id)
-                {
-                    return Err(ReadToolEmissionsError::InvocationJoinMismatch {
-                        invocation_id: invocation.invocation_id.clone(),
-                    });
-                }
-                if !self
-                    .seen_invocations
-                    .insert(invocation.invocation_id.clone())
-                {
-                    return Err(ReadToolEmissionsError::DuplicateInvocation {
-                        invocation_id: invocation.invocation_id.clone(),
-                    });
-                }
-                if invocation.run_id == self.run_id
-                    && binding.bound_receiver() == Some(self.receiver_endpoint)
-                {
-                    if self.emissions.len() >= MAX_WORKFLOW_TOOL_EMISSIONS_PER_READ {
-                        return Err(ReadToolEmissionsError::ResultLimitExceeded {
-                            limit: MAX_WORKFLOW_TOOL_EMISSIONS_PER_READ,
-                        });
-                    }
-                    self.emissions.push(invocation.clone());
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn observe_config(
-        &mut self,
-        event: &WorkflowToolConfigEvent,
-    ) -> Result<(), ReadToolEmissionsError> {
-        match event {
-            WorkflowToolConfigEvent::ManagedBindingsAdmitted {
-                session_universe_id,
-                declaration_version,
-                lifecycle_controller,
-                creation_fingerprint: observed_creation_fingerprint,
-                bindings,
-            } => {
-                if *declaration_version != MANAGED_TOOL_DECLARATION_VERSION {
-                    return Err(ReadToolEmissionsError::InvalidBinding {
-                        binding_fingerprint: observed_creation_fingerprint.clone(),
-                        message: format!(
-                            "unsupported managed-session declaration version {declaration_version}"
-                        ),
-                    });
-                }
-                if let Some(controller) = lifecycle_controller {
-                    controller.validate().map_err(|error| {
-                        ReadToolEmissionsError::InvalidBinding {
-                            binding_fingerprint: observed_creation_fingerprint.clone(),
-                            message: error.to_string(),
-                        }
-                    })?;
-                }
-                let expected_creation_fingerprint = creation_fingerprint(
-                    *session_universe_id,
-                    *declaration_version,
-                    lifecycle_controller.as_ref(),
-                    bindings,
-                )
-                .map_err(|error| ReadToolEmissionsError::InvalidBinding {
-                    binding_fingerprint: observed_creation_fingerprint.clone(),
-                    message: error.to_string(),
-                })?;
-                if observed_creation_fingerprint != &expected_creation_fingerprint {
-                    return Err(ReadToolEmissionsError::InvalidBinding {
-                        binding_fingerprint: observed_creation_fingerprint.clone(),
-                        message: "managed-session creation fingerprint does not match".to_owned(),
-                    });
-                }
-
-                for binding in bindings {
-                    binding
-                        .validate()
-                        .map_err(|error| ReadToolEmissionsError::InvalidBinding {
-                            binding_fingerprint: binding.binding_fingerprint.clone(),
-                            message: error.to_string(),
-                        })?;
-                    validate_controller_self_receiver(binding, lifecycle_controller.as_ref())
-                        .map_err(|error| ReadToolEmissionsError::InvalidBinding {
-                            binding_fingerprint: binding.binding_fingerprint.clone(),
-                            message: error.to_string(),
-                        })?;
-                    if binding.session_universe_id != *session_universe_id {
-                        return Err(ReadToolEmissionsError::InvalidBinding {
-                            binding_fingerprint: binding.binding_fingerprint.clone(),
-                            message: "binding source universe differs from its managed-session declaration"
-                                .to_owned(),
-                        });
-                    }
-                    if binding.bound_receiver() == Some(self.receiver_endpoint) {
-                        self.receiver_bound = true;
-                    }
-                    match self
-                        .bindings
-                        .insert(binding.binding_fingerprint.clone(), binding.clone())
-                    {
-                        Some(existing) if existing != *binding => {
-                            return Err(ReadToolEmissionsError::InvalidBinding {
-                                binding_fingerprint: binding.binding_fingerprint.clone(),
-                                message: "fingerprint identifies more than one durable binding"
-                                    .to_owned(),
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            WorkflowToolConfigEvent::SystemBindingAdmitted { binding } => {
-                binding
-                    .validate()
-                    .map_err(|error| ReadToolEmissionsError::InvalidBinding {
-                        binding_fingerprint: binding.binding_fingerprint.clone(),
-                        message: error.to_string(),
-                    })?;
-                if binding.bound_receiver() == Some(self.receiver_endpoint) {
-                    self.receiver_bound = true;
-                }
-                match self.bindings.insert(
-                    binding.binding_fingerprint.clone(),
-                    binding.as_ref().clone(),
-                ) {
-                    Some(existing) if existing != **binding => {
-                        return Err(ReadToolEmissionsError::InvalidBinding {
-                            binding_fingerprint: binding.binding_fingerprint.clone(),
-                            message: "fingerprint identifies more than one durable binding"
-                                .to_owned(),
-                        });
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn finish(self) -> Result<Vec<WorkflowToolInvocation>, ReadToolEmissionsError> {
-        if !self.receiver_bound {
-            return Err(ReadToolEmissionsError::ReceiverNotBound {
-                workflow_id: self.receiver_endpoint.workflow_id.clone(),
-            });
-        }
-        Ok(self.emissions)
     }
 }
 
@@ -2251,6 +1911,22 @@ mod tests {
         storage::StoredSessionEntry,
     };
 
+    fn admit_notify(
+        universe_id: Uuid,
+        definition: WorkflowToolDefinition,
+        receiver: WorkflowEndpointRef,
+    ) -> Result<WorkflowToolBinding, DomainError> {
+        WorkflowToolBinding::admit(
+            universe_id,
+            definition,
+            WorkflowToolTarget::Bound {
+                receiver,
+                dispatch: BoundWorkflowToolDispatch::Pull,
+            },
+            WorkflowToolCompletion::Accepted,
+        )
+    }
+
     fn endpoint(workflow_id: &str) -> WorkflowEndpointRef {
         WorkflowEndpointRef {
             workflow_id: workflow_id.to_owned(),
@@ -2282,7 +1958,14 @@ mod tests {
         definition: WorkflowToolDefinition,
         receiver: WorkflowEndpointRef,
     ) -> WorkflowToolDeclaration {
-        WorkflowToolDeclaration::bound_notify(definition, receiver)
+        WorkflowToolDeclaration::new(
+            definition,
+            WorkflowToolTarget::Bound {
+                receiver,
+                dispatch: BoundWorkflowToolDispatch::Pull,
+            },
+            WorkflowToolCompletion::Accepted,
+        )
     }
 
     fn reply_completion() -> WorkflowToolCompletion {
@@ -2440,7 +2123,7 @@ mod tests {
     fn completion_and_target_participate_in_binding_identity() {
         let universe_id = Uuid::from_u128(1);
         let receiver = endpoint("service::approvals-1");
-        let notify = WorkflowToolBinding::admit_bound_notify(
+        let notify = admit_notify(
             universe_id,
             definition("approve", "request_approval"),
             receiver.clone(),
@@ -2688,7 +2371,7 @@ mod tests {
         validate_completion_promises(&keyed, &invocation).expect("distinct keyed map");
 
         // Notify bindings must not carry a map.
-        let notify = WorkflowToolBinding::admit_bound_notify(
+        let notify = admit_notify(
             universe_id,
             definition("approve", "request_approval"),
             endpoint("service::approvals-1"),
@@ -2789,15 +2472,7 @@ mod tests {
         panic!("drive did not request tool invocation");
     }
 
-    fn valid_port_log(
-        call_ids: &[&str],
-    ) -> (
-        Vec<StoredSessionEntry>,
-        WorkflowEndpointRef,
-        SessionId,
-        RunId,
-        Vec<WorkflowToolInvocation>,
-    ) {
+    fn valid_port_log(call_ids: &[&str]) -> Vec<StoredSessionEntry> {
         let universe_id = Uuid::from_u128(1);
         let controller = endpoint("controller::work-1");
         let session_id = SessionId::new("managed-session");
@@ -2807,8 +2482,7 @@ mod tests {
             Some(controller.clone()),
             vec![tool_declaration(definition.clone(), controller.clone())],
         );
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut log = Vec::new();
 
         let open = drive
@@ -2978,7 +2652,7 @@ mod tests {
             .expect("complete workflow-tool tool batch");
         commit_action(&mut drive, &mut log, tool_completed);
 
-        (log, controller, session_id, request.run_id, invocations)
+        log
     }
 
     fn rewrite_emission(
@@ -3171,67 +2845,34 @@ mod tests {
         assert_ne!(id, other_universe);
     }
 
-    #[test]
-    fn pull_read_is_receiver_authorized_run_scoped_and_log_ordered() {
-        let (entries, controller, session_id, requested_run, invocations) =
-            valid_port_log(&["z-first", "a-second"]);
-
-        let emissions = read_tool_emissions(&entries, &controller, &session_id, requested_run)
-            .expect("authorized pull read");
-
-        assert_eq!(emissions, invocations);
-        assert!(
-            read_tool_emissions(
-                &entries,
-                &controller,
-                &session_id,
-                RunId::new(requested_run.as_u64() + 1),
-            )
-            .expect("other run read")
-            .is_empty()
-        );
-
-        let error = read_tool_emissions(
-            &entries,
-            &endpoint("controller::other-work"),
-            &session_id,
-            requested_run,
-        )
-        .expect_err("unbound receiver must be rejected");
-        assert!(matches!(
-            error,
-            ReadToolEmissionsError::ReceiverNotBound { .. }
-        ));
+    /// Replay a stored log through the reducer the way a session load does.
+    fn replay(entries: &[StoredSessionEntry]) -> Result<crate::CoreAgentState, DomainError> {
+        let mut state = crate::CoreAgentState::new();
+        for entry in entries {
+            let decoded = CoreAgentCodec.decode_entry(entry).expect("decode entry");
+            crate::core::apply::apply_event(&mut state, &decoded)
+                .map_err(|error| DomainError::InvariantViolation(error.to_string()))?;
+        }
+        Ok(state)
     }
 
     #[test]
-    fn pull_read_rejects_invocation_whose_durable_binding_metadata_was_changed() {
-        let (mut entries, controller, session_id, run_id, _) = valid_port_log(&["forged"]);
+    fn replay_rejects_invocation_whose_durable_binding_metadata_was_changed() {
+        let mut entries = valid_port_log(&["forged"]);
+        replay(&entries).expect("unchanged log replays");
         rewrite_emission(&mut entries, |invocation| {
             invocation.semantic_type = "lightspeed.work.other.v1".to_owned();
         });
-
-        let error = read_tool_emissions(&entries, &controller, &session_id, run_id)
-            .expect_err("changed binding metadata must fail");
-        assert!(matches!(
-            error,
-            ReadToolEmissionsError::InvalidSessionLog { .. }
-        ));
+        replay(&entries).expect_err("changed binding metadata must fail");
     }
 
     #[test]
-    fn pull_read_replays_tool_success_and_arguments_invariants() {
-        let (mut entries, controller, session_id, run_id, _) = valid_port_log(&["forged"]);
+    fn replay_rejects_invocation_whose_arguments_differ_from_its_call() {
+        let mut entries = valid_port_log(&["forged"]);
         rewrite_emission(&mut entries, |invocation| {
             invocation.arguments_ref = BlobRef::from_bytes(b"different arguments");
         });
-
-        let error = read_tool_emissions(&entries, &controller, &session_id, run_id)
-            .expect_err("arguments mismatch must fail full replay");
-        assert!(matches!(
-            error,
-            ReadToolEmissionsError::InvalidSessionLog { .. }
-        ));
+        replay(&entries).expect_err("arguments mismatch must fail full replay");
     }
 
     #[test]
@@ -3332,7 +2973,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("ordinary-session"),
             CoreAgentState::new(),
-            None,
         );
         let mut log = Vec::new();
         let open = drive

@@ -527,8 +527,6 @@ pub struct CreateOrLoadSessionResult {
     /// Replayed reduced agent state. `None` for a freshly created session with
     /// no persisted events yet (the workflow then opens a new session).
     pub core_state: Option<CoreAgentState>,
-    /// Current durable log head after replay.
-    pub head: Option<SessionPosition>,
     /// True only when the authoritative durable head was empty at bootstrap.
     /// This must not be inferred from tail replay counts because a checkpoint
     /// can make a non-empty session replay zero events.

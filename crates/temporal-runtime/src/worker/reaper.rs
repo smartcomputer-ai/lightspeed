@@ -948,11 +948,7 @@ async fn append_commands_direct(
     commands: Vec<CoreAgentCommand>,
     now_ms: u64,
 ) -> Result<usize, DirectAppendError> {
-    let mut drive = CoreAgentDrive::from_replayed(
-        session_id.clone(),
-        snapshot.state.clone(),
-        snapshot.record.head.clone(),
-    );
+    let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), snapshot.state.clone());
     let mut appended_count = 0usize;
     for command in commands {
         let action = drive

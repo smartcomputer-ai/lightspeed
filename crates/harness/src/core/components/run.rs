@@ -361,12 +361,6 @@ impl RunSource {
             }
         }
     }
-
-    pub fn matches_message_input(&self, requested: &[ContextEntryInput]) -> bool {
-        match self {
-            Self::Input { input } => input == requested,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

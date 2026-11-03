@@ -19,12 +19,12 @@ use crate::{
     ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole, CoreAgentCodec,
     CoreAgentEntry, CoreAgentEvent, CoreAgentEventProposal, CoreAgentJoins, CoreAgentState,
     CoreAgentStatus, DomainError, EventSeq, LlmFinish, LlmGenerationRequest, LlmGenerationResult,
-    LlmGenerationStatus, LlmRequest, NativeMcpApprovalRequest, PlanningError, PromiseEvent,
-    PromiseId, PromiseOwnership, PromiseStatus, ResumeToolBatchCommand, RunEvent, SessionId,
-    SessionPosition, ToolBatchId, ToolBatchOutcome, ToolBatchResumeOutput, ToolBatchSuspension,
-    ToolCallId, ToolCallResult, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
-    ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, TurnEvent, TurnId,
-    TurnOutcome, WakeReason,
+    LlmGenerationStatus, NativeMcpApprovalRequest, PlanningError, PromiseEvent, PromiseId,
+    PromiseOwnership, PromiseStatus, ResumeToolBatchCommand, RunEvent, SessionId, SessionPosition,
+    ToolBatchId, ToolBatchOutcome, ToolBatchResumeOutput, ToolBatchSuspension, ToolCallId,
+    ToolCallResult, ToolCallStatus, ToolEvent, ToolInvocationBatchRequest,
+    ToolInvocationBatchResult, ToolInvocationRequest, ToolInvocationResult, TurnEvent, TurnOutcome,
+    WakeReason,
     core::components::context::context_entries_from_inputs,
     session::{StoredSessionEntry, UncommittedStoredEvent},
 };
@@ -53,21 +53,14 @@ pub enum CoreAgentAction {
 pub struct CoreAgentDrive {
     session_id: SessionId,
     state: CoreAgentState,
-    head: Option<SessionPosition>,
     steps_taken: usize,
 }
 
 impl CoreAgentDrive {
-    pub fn from_replayed(
-        session_id: SessionId,
-        state: CoreAgentState,
-        head: Option<SessionPosition>,
-    ) -> Self {
-        debug_assert_eq!(state.reduced_to, head);
+    pub fn from_replayed(session_id: SessionId, state: CoreAgentState) -> Self {
         Self {
             session_id,
             state,
-            head,
             steps_taken: 0,
         }
     }
@@ -150,7 +143,6 @@ impl CoreAgentDrive {
         for entry in &decoded {
             crate::core::apply::apply_event(&mut self.state, entry)?;
         }
-        self.head = self.state.reduced_to.clone();
         Ok(decoded)
     }
 
@@ -380,10 +372,6 @@ impl CoreAgentDrive {
         self.append_action(proposals, observed_at_ms)
     }
 
-    pub fn reset_steps(&mut self) {
-        self.steps_taken = 0;
-    }
-
     pub fn state(&self) -> &CoreAgentState {
         &self.state
     }
@@ -393,7 +381,7 @@ impl CoreAgentDrive {
     }
 
     pub fn head(&self) -> Option<&SessionPosition> {
-        self.head.as_ref()
+        self.state.reduced_to.as_ref()
     }
 
     fn append_action(
@@ -412,7 +400,7 @@ impl CoreAgentDrive {
             .collect::<Result<Vec<_>, _>>()?;
         self.dry_run_append(&events)?;
         Ok(CoreAgentAction::AppendEvents {
-            expected_head: self.head.clone(),
+            expected_head: self.state.reduced_to.clone(),
             events,
         })
     }
@@ -522,9 +510,7 @@ impl CoreAgentDriveError {
                 Some(error.message())
             }
             Self::Planning(PlanningError::Domain(error)) => Some(error.message()),
-            Self::Planning(
-                PlanningError::Rejected(message) | PlanningError::InvalidProposal(message),
-            ) => Some(message),
+            Self::Planning(PlanningError::Rejected(message)) => Some(message),
             Self::Command(CommandError::Rejected(_)) | Self::Codec(_) => None,
         }
     }
@@ -573,48 +559,6 @@ pub fn next_generation_request(
         turn_id,
         request,
     }))
-}
-
-pub fn rebuild_llm_request_for_planned_turn(
-    entries: &[CoreAgentEntry],
-    target_turn_id: TurnId,
-) -> Result<Option<LlmRequest>, DomainError> {
-    let mut state = CoreAgentState::new();
-    for entry in entries {
-        if let CoreAgentEvent::Turn(TurnEvent::Planned {
-            turn_id,
-            run_id,
-            request_fingerprint,
-            config_revision,
-            context_revision,
-            toolset_revision,
-        }) = &entry.event
-            && *turn_id == target_turn_id
-        {
-            let active_run = state.runs.active.as_ref().ok_or_else(|| {
-                DomainError::InvariantViolation(
-                    "planned turn reconstruction requires an active run".into(),
-                )
-            })?;
-            if active_run.run_id != *run_id || active_run.active_turn_id != Some(*turn_id) {
-                return Err(DomainError::InvariantViolation(
-                    "planned turn reconstruction run/turn does not match active state".into(),
-                ));
-            }
-            let planned = crate::PlannedRequestState {
-                request_fingerprint: request_fingerprint.clone(),
-                config_revision: *config_revision,
-                context_revision: *context_revision,
-                toolset_revision: *toolset_revision,
-            };
-            return crate::core::components::llm::build_planned_llm_request(
-                &state, active_run, *turn_id, &planned,
-            )
-            .map(Some);
-        }
-        crate::core::apply::apply_event(&mut state, entry)?;
-    }
-    Ok(None)
 }
 
 pub fn next_context_compaction_request(
@@ -2401,12 +2345,12 @@ mod tests {
         BlobRef, CommandRejectionDetails, CommandRejectionKind, CompactionPolicy,
         ContextCompactionStatus, ContextCompactionTrigger, ContextConfig, ContextEntry,
         ContextEntryId, ContextEntryInput, ContextEntryKey, ContextEntryKind, ContextRemovalReason,
-        CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts, ModelSelection,
+        CoreAgentCommand, FunctionToolSpec, LlmGenerationFacts, LlmRequest, ModelSelection,
         OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, ObservedToolCall, ProviderApiKind, RunConfig,
         RunFailureKind, RunId, RunRequestCommand, RunRequestSource, RunStatus, SessionConfig,
         TokenEstimate, TokenEstimateQuality, ToolBatchOutcome, ToolChoice, ToolEffect,
-        ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec, WorkflowEndpointRef,
-        WorkflowToolDefinition, WorkflowToolId, WorkflowToolInvocation,
+        ToolInvocationResult, ToolKind, ToolName, ToolParallelism, ToolSpec, TurnId,
+        WorkflowEndpointRef, WorkflowToolDefinition, WorkflowToolId, WorkflowToolInvocation,
     };
 
     fn config() -> SessionConfig {
@@ -2474,13 +2418,99 @@ mod tests {
         drive.resume_appended(entries).expect("resume appended")
     }
 
+    fn rebuild_llm_request_for_planned_turn(
+        entries: &[CoreAgentEntry],
+        target_turn_id: TurnId,
+    ) -> Result<Option<LlmRequest>, DomainError> {
+        let mut state = CoreAgentState::new();
+        for entry in entries {
+            if let CoreAgentEvent::Turn(TurnEvent::Planned {
+                turn_id,
+                run_id,
+                request_fingerprint,
+                config_revision,
+                context_revision,
+                toolset_revision,
+            }) = &entry.event
+                && *turn_id == target_turn_id
+            {
+                let active_run = state.runs.active.as_ref().ok_or_else(|| {
+                    DomainError::InvariantViolation(
+                        "planned turn reconstruction requires an active run".into(),
+                    )
+                })?;
+                if active_run.run_id != *run_id || active_run.active_turn_id != Some(*turn_id) {
+                    return Err(DomainError::InvariantViolation(
+                        "planned turn reconstruction run/turn does not match active state".into(),
+                    ));
+                }
+                let planned = crate::PlannedRequestState {
+                    request_fingerprint: request_fingerprint.clone(),
+                    config_revision: *config_revision,
+                    context_revision: *context_revision,
+                    toolset_revision: *toolset_revision,
+                };
+                return crate::core::components::llm::build_planned_llm_request(
+                    &state, active_run, *turn_id, &planned,
+                )
+                .map(Some);
+            }
+            crate::core::apply::apply_event(&mut state, entry)?;
+        }
+        Ok(None)
+    }
+
+    /// A host can list a session and read its log with a commit between the
+    /// two. The drive plans from what it reduced, so its compare-and-swap head is
+    /// the state's position however old the listing was.
+    #[test]
+    fn a_drive_fences_appends_on_the_position_of_its_own_state() {
+        let mut writer =
+            CoreAgentDrive::from_replayed(SessionId::new("listed"), CoreAgentState::new());
+        open_session(&mut writer);
+        let listed_head = writer.head().cloned();
+        let upsert = writer
+            .admit_command(
+                CoreAgentCommand::UpsertContext {
+                    expected_revision: None,
+                    key: ContextEntryKey::new("a.key"),
+                    entry: ContextEntryInput {
+                        kind: ContextEntryKind::ProviderOpaque,
+                        content: crate::ContentRef {
+                            content_ref: BlobRef::from_bytes(b"x"),
+                            media_type: None,
+                            provider_kind: None,
+                        },
+                        preview: None,
+                        origin: None,
+                        provenance_ref: None,
+                        token_estimate: None,
+                    },
+                },
+                2,
+            )
+            .expect("admit upsert");
+        commit_action(&mut writer, upsert);
+        let reduced_to = writer.state().reduced_to.clone();
+        assert!(reduced_to.is_some());
+        assert_ne!(listed_head, reduced_to);
+
+        let mut reader =
+            CoreAgentDrive::from_replayed(SessionId::new("listed"), writer.state().clone());
+        assert_eq!(reader.head(), reduced_to.as_ref());
+        let CoreAgentAction::AppendEvents { expected_head, .. } = reader
+            .admit_command(CoreAgentCommand::CloseSession { force: false }, 3)
+            .expect("admit close")
+        else {
+            panic!("expected an append");
+        };
+        assert_eq!(expected_head, reduced_to);
+    }
+
     #[test]
     fn input_origin_survives_run_and_steering_replay_and_may_be_absent() {
-        let mut drive = CoreAgentDrive::from_replayed(
-            SessionId::new("origin-test"),
-            CoreAgentState::new(),
-            None,
-        );
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("origin-test"), CoreAgentState::new());
         open_session(&mut drive);
         let checkpoint = drive.state().clone();
         let mut input = user_input(BlobRef::from_bytes(b"hello"));
@@ -2836,7 +2866,7 @@ mod tests {
     #[test]
     fn tool_batch_carries_admitted_runtime_policies_and_active_environment() {
         let session_id = SessionId::new("session-environment-runtime");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let mut session_config = config();
         let environments = crate::EnvironmentsFeature {
             selection: true,
@@ -2880,11 +2910,8 @@ mod tests {
 
     #[test]
     fn code_mode_configuration_and_revocation_replay() {
-        let mut drive = CoreAgentDrive::from_replayed(
-            SessionId::new("code-config"),
-            CoreAgentState::new(),
-            None,
-        );
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("code-config"), CoreAgentState::new());
         open_session(&mut drive);
         let checkpoint = drive.state().clone();
         let mut entries = Vec::new();
@@ -2938,8 +2965,7 @@ mod tests {
     #[test]
     fn code_mode_model_presentation_rebuilds_from_replayed_admission() {
         let session_id = SessionId::new("code-presentation");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut session_config = config();
         session_config.features.code_mode = Some(crate::CodeModeFeature {
             allowed_tools: Some(vec!["concurrency.await".into()]),
@@ -2974,8 +3000,7 @@ mod tests {
             )
             .unwrap();
         }
-        let mut restored =
-            CoreAgentDrive::from_replayed(session_id, replayed, drive.head().cloned());
+        let mut restored = CoreAgentDrive::from_replayed(session_id, replayed);
         let CoreAgentAction::GenerateLlm { request } = restored.next_action(81, 64).unwrap() else {
             panic!("replayed pending generation");
         };
@@ -2988,7 +3013,6 @@ mod tests {
             let mut drive = CoreAgentDrive::from_replayed(
                 SessionId::new("session-default"),
                 CoreAgentState::new(),
-                None,
             );
             let attachment = |id: &str, default| crate::EnvironmentAttachment {
                 environment_id: id.to_owned(),
@@ -3105,7 +3129,7 @@ mod tests {
     #[test]
     fn config_replace_clears_an_active_environment_that_is_no_longer_attached() {
         let session_id = SessionId::new("session-environment-detach");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let attachment = |id: &str| crate::EnvironmentAttachment {
             environment_id: id.to_owned(),
             default: false,
@@ -3327,7 +3351,7 @@ mod tests {
 
     fn planned_event_size_for_context_entry_count(count: usize) -> (usize, usize) {
         let session_id = SessionId::new(format!("session-context-{count}"));
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         for index in 0..count {
             let action = drive
@@ -3356,7 +3380,7 @@ mod tests {
     #[test]
     fn planned_turn_event_and_state_store_metadata_only() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
 
@@ -3397,7 +3421,7 @@ mod tests {
     #[test]
     fn planned_request_rebuilds_from_durable_events() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let mut entries = Vec::new();
 
         let open = drive
@@ -3445,8 +3469,7 @@ mod tests {
     #[test]
     fn native_run_output_replays_from_recorded_events_without_blob_access() {
         let session_id = SessionId::new("native-output-replay");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session(&mut drive);
         let action = drive
             .admit_command(
@@ -3461,7 +3484,6 @@ mod tests {
         commit_action(&mut drive, action);
         let request = drive_until_generate(&mut drive);
         let checkpoint = serde_json::to_vec(drive.state()).unwrap();
-        let head = drive.head().cloned();
         let mut message = message_input(
             ContextMessageRole::Assistant,
             BlobRef::from_bytes(b"opaque native bytes"),
@@ -3503,11 +3525,8 @@ mod tests {
             drive.state().runs.completed.last().unwrap().output.as_ref(),
             Some(&expected)
         );
-        let mut replayed = CoreAgentDrive::from_replayed(
-            session_id,
-            serde_json::from_slice(&checkpoint).unwrap(),
-            head,
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(session_id, serde_json::from_slice(&checkpoint).unwrap());
         replayed
             .resume_appended(
                 events
@@ -3555,7 +3574,7 @@ mod tests {
     #[test]
     fn request_run_rejects_non_user_message_input() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let error = drive
@@ -3582,7 +3601,7 @@ mod tests {
     #[test]
     fn request_run_accepts_provider_opaque_native_input() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let action = drive
@@ -3615,7 +3634,7 @@ mod tests {
     #[test]
     fn upsert_context_accepts_provider_opaque_entry() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let key = ContextEntryKey::new("client.native");
 
@@ -3682,7 +3701,7 @@ mod tests {
     #[test]
     fn keyed_catalog_upsert_supersedes_and_keeps_the_previous_version() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         upsert(
             &mut drive,
@@ -3745,7 +3764,7 @@ mod tests {
     #[test]
     fn catalog_metadata_refresh_keeps_position_supersession_and_replays() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("metadata"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("metadata"), CoreAgentState::new());
         open_session(&mut drive);
         upsert(
             &mut drive,
@@ -3820,7 +3839,7 @@ mod tests {
     #[test]
     fn catalog_keys_supersede_independently_and_replay_text_and_provenance() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("catalogs"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("catalogs"), CoreAgentState::new());
         open_session(&mut drive);
         let checkpoint = drive.state().clone();
         let mut first = client_catalog_input("Menu", BlobRef::from_bytes(b"old text"));
@@ -3889,7 +3908,7 @@ mod tests {
     #[test]
     fn superseded_catalog_versions_are_capped_oldest_first() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         for version in 0..(crate::SUPERSEDED_CATALOG_CAP as u64 + 3) {
             upsert(
@@ -3922,7 +3941,7 @@ mod tests {
     #[test]
     fn remove_context_clears_every_catalog_version_under_the_key() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         upsert(
             &mut drive,
@@ -3953,7 +3972,7 @@ mod tests {
     #[test]
     fn keyed_non_catalog_upsert_still_replaces_in_place() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         upsert(
             &mut drive,
@@ -3979,7 +3998,7 @@ mod tests {
     #[test]
     fn catalog_is_context_only_and_needs_a_title() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         let input = client_catalog_input("Bot directory", BlobRef::from_bytes(b"a"));
 
@@ -4010,7 +4029,7 @@ mod tests {
     #[test]
     fn planned_context_includes_catalogs_at_their_positions() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         let catalog = ContextEntryInput {
             kind: ContextEntryKind::Catalog {
@@ -4043,8 +4062,7 @@ mod tests {
     #[test]
     fn standalone_compaction_prunes_superseded_catalogs_and_keeps_the_current_one() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
         upsert(
             &mut drive,
@@ -4130,7 +4148,7 @@ mod tests {
     #[test]
     fn stale_context_revision_rejects_all_direct_edits_with_structured_details() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let key = ContextEntryKey::new("client.native");
         let input = provider_opaque_input(BlobRef::from_bytes(b"native"));
@@ -4191,7 +4209,7 @@ mod tests {
     #[test]
     fn upsert_context_rejects_reserved_run_key_prefix() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let error = drive
@@ -4215,7 +4233,7 @@ mod tests {
     #[test]
     fn remove_context_rejects_reserved_run_key_prefix() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let error = drive
@@ -4238,7 +4256,7 @@ mod tests {
     #[test]
     fn upsert_context_accepts_instruction_entry_with_instruction_key() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let key = ContextEntryKey::new("instructions.100.base");
 
@@ -4263,7 +4281,7 @@ mod tests {
     #[test]
     fn replace_context_prefix_syncs_managed_instruction_entries() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         for (key, content) in [
@@ -4340,7 +4358,7 @@ mod tests {
     #[test]
     fn replace_context_prefix_rejects_entries_outside_prefix() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let mut entries = std::collections::BTreeMap::new();
         entries.insert(
@@ -4369,7 +4387,7 @@ mod tests {
     #[test]
     fn upsert_context_rejects_instruction_entry_without_instruction_key() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let error = drive
@@ -4397,7 +4415,7 @@ mod tests {
     #[test]
     fn upsert_context_accepts_user_message_entry_and_dedupes_replays() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let content_ref = BlobRef::from_bytes(b"persistent user message");
 
@@ -4446,7 +4464,7 @@ mod tests {
     #[test]
     fn upsert_context_rejects_assistant_message_entry() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let error = drive
@@ -4474,7 +4492,7 @@ mod tests {
     #[test]
     fn planned_context_includes_instruction_entries_first_by_key() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let second_ref = BlobRef::from_bytes(b"second instructions");
         let first_ref = BlobRef::from_bytes(b"first instructions");
@@ -4518,7 +4536,7 @@ mod tests {
     #[test]
     fn queued_run_input_does_not_enter_context_until_run_starts() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
@@ -4532,7 +4550,7 @@ mod tests {
     #[test]
     fn run_input_materializes_once_before_turn_planning() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
 
@@ -4573,7 +4591,7 @@ mod tests {
     #[test]
     fn unconsumed_run_input_context_cannot_be_removed() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
         let start_run = drive.next_action(21, 64).expect("start run");
@@ -4607,7 +4625,7 @@ mod tests {
     #[test]
     fn consumed_run_input_context_can_be_removed() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
         let request = drive_until_generate(&mut drive);
@@ -4639,7 +4657,7 @@ mod tests {
         ] {
             let session_id = SessionId::new("session-a");
             let mut drive =
-                CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+                CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
             let mut session_config = config();
             if provider_kind == crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND {
                 session_config.model = crate::ModelSelection {
@@ -4663,7 +4681,6 @@ mod tests {
                 .input_entry_ids[0];
 
             let checkpoint = serde_json::to_vec(drive.state()).unwrap();
-            let head = drive.head().cloned();
             let mut compacted = openai_compaction_input(BlobRef::from_bytes(
                 br#"{"type":"compaction","content":"summary"}"#,
             ));
@@ -4717,7 +4734,6 @@ mod tests {
             let mut replayed = CoreAgentDrive::from_replayed(
                 session_id,
                 serde_json::from_slice(&checkpoint).unwrap(),
-                head,
             );
             replayed
                 .resume_appended(
@@ -4748,8 +4764,7 @@ mod tests {
     #[test]
     fn manual_standalone_compaction_emits_provider_request_and_prunes_replaced_entries() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
         let context_ref = BlobRef::from_bytes(b"native context");
         let upsert = drive
@@ -4842,8 +4857,7 @@ mod tests {
     #[test]
     fn skill_reads_and_inserted_text_are_compacted_normally_and_replay() {
         let session_id = SessionId::new("skill-read-compaction");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
         upsert(
             &mut drive,
@@ -4923,7 +4937,6 @@ mod tests {
         }
         assert!(drive.state().runs.active.is_none());
         let checkpoint = serde_json::to_vec(drive.state()).unwrap();
-        let head = drive.head().cloned();
         let action = drive
             .admit_command(CoreAgentCommand::CompactContext, 160)
             .unwrap();
@@ -4984,11 +4997,8 @@ mod tests {
                 .all(|entry| entry.content.content_ref != read_ref
                     && entry.content.content_ref != inserted_ref)
         );
-        let mut replayed = CoreAgentDrive::from_replayed(
-            session_id,
-            serde_json::from_slice(&checkpoint).unwrap(),
-            head,
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(session_id, serde_json::from_slice(&checkpoint).unwrap());
         replayed
             .resume_appended(
                 events
@@ -5003,7 +5013,7 @@ mod tests {
     #[test]
     fn compaction_keeps_recent_tool_exchanges_byte_for_byte_and_renders_summary_first() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("tail"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("tail"), CoreAgentState::new());
         open_session(&mut drive);
         let mut inputs = Vec::new();
         for turn in 1..=3 {
@@ -5119,11 +5129,8 @@ mod tests {
             ProviderApiKind::AnthropicMessages,
             ProviderApiKind::OpenAiCompletions,
         ] {
-            let mut drive = CoreAgentDrive::from_replayed(
-                SessionId::new("defaults"),
-                CoreAgentState::new(),
-                None,
-            );
+            let mut drive =
+                CoreAgentDrive::from_replayed(SessionId::new("defaults"), CoreAgentState::new());
             let mut config = config();
             config.model.api_kind = api_kind;
             open_session_with_config(&mut drive, config);
@@ -5166,7 +5173,7 @@ mod tests {
     #[test]
     fn input_capacity_follows_the_effective_model_without_reusing_stale_limits() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("capacity"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("capacity"), CoreAgentState::new());
         let mut config = config();
         config.context.reported_input_limit_tokens = Some(200_000);
         config.context.input_limit_tokens = Some(100_000);
@@ -5206,8 +5213,7 @@ mod tests {
     #[test]
     fn generation_metadata_and_usage_observation_survive_replay_with_distinct_lifetimes() {
         let session_id = SessionId::new("generation-observation");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut config = config();
         config.context.compaction = Some(CompactionPolicy::Disabled);
         open_session_with_config(&mut drive, config);
@@ -5233,7 +5239,6 @@ mod tests {
         commit_action(&mut drive, action);
         let request = drive_until_generate(&mut drive);
         let checkpoint = drive.state().clone();
-        let head = drive.head().cloned();
         let action = drive
             .resume_generation(
                 LlmGenerationResult {
@@ -5311,7 +5316,7 @@ mod tests {
             drive.state().context.last_generation_model(),
             Some(&request.request.model)
         );
-        let mut replay = CoreAgentDrive::from_replayed(session_id, checkpoint, head);
+        let mut replay = CoreAgentDrive::from_replayed(session_id, checkpoint);
         replay
             .resume_appended(
                 events
@@ -5326,7 +5331,7 @@ mod tests {
     #[test]
     fn disabled_blocks_overflow_recovery_but_explicit_compaction_still_works() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("disabled"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("disabled"), CoreAgentState::new());
         let mut config = config();
         config.context.compaction = Some(CompactionPolicy::Disabled);
         open_session_with_config(&mut drive, config);
@@ -5404,7 +5409,7 @@ mod tests {
     #[test]
     fn unknown_limits_recover_twice_in_the_same_run_and_replay_atomically() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("overflow"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("overflow"), CoreAgentState::new());
         open_session(&mut drive);
         upsert(
             &mut drive,
@@ -5420,7 +5425,6 @@ mod tests {
         let run_id = request.run_id;
         for attempt in 1..=2 {
             let checkpoint = drive.state().clone();
-            let head = drive.head().cloned();
             let mut overflow = overflow_result(&request);
             let partial_ref = BlobRef::from_bytes(b"discarded partial tool call");
             let mut partial = message_input(ContextMessageRole::Assistant, partial_ref.clone());
@@ -5504,8 +5508,7 @@ mod tests {
                 events.extend(commit_action(&mut drive, action));
             };
             assert_eq!(request.run_id, run_id);
-            let mut replay =
-                CoreAgentDrive::from_replayed(SessionId::new("overflow"), checkpoint, head);
+            let mut replay = CoreAgentDrive::from_replayed(SessionId::new("overflow"), checkpoint);
             replay
                 .resume_appended(
                     events
@@ -5545,7 +5548,7 @@ mod tests {
     #[test]
     fn manual_compaction_queues_without_invalidating_an_inflight_request() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("queued"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("queued"), CoreAgentState::new());
         open_session(&mut drive);
         upsert(
             &mut drive,
@@ -5635,8 +5638,7 @@ mod tests {
     #[test]
     fn failed_manual_standalone_compaction_clears_pending_state() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
         let upsert = drive
             .admit_command(
@@ -5698,8 +5700,7 @@ mod tests {
     #[test]
     fn pending_standalone_compaction_blocks_context_mutations_and_runs() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(None, Some(256)));
         let upsert = drive
             .admit_command(
@@ -5754,8 +5755,7 @@ mod tests {
     #[test]
     fn high_watermark_standalone_compaction_requests_provider_call_when_idle() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(Some(10), Some(4)));
 
         for (index, tokens) in [6, 5].into_iter().enumerate() {
@@ -5813,8 +5813,7 @@ mod tests {
     #[test]
     fn high_watermark_standalone_compaction_uses_compactable_context_estimate() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session_with_config(&mut drive, standalone_compaction_config(Some(10), Some(4)));
 
         let instructions = drive
@@ -5882,7 +5881,7 @@ mod tests {
     #[test]
     fn stale_context_base_revision_is_rejected() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
         let start_run = drive.next_action(21, 64).expect("start run");
@@ -5910,7 +5909,7 @@ mod tests {
     #[test]
     fn duplicate_key_entries_in_one_context_event_are_rejected() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         let key = ContextEntryKey::new("client.note");
         let base_revision = drive.state().context.revision;
@@ -5936,7 +5935,7 @@ mod tests {
     #[test]
     fn missing_context_key_removal_is_rejected_at_admission() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
 
         let error = drive
@@ -5961,11 +5960,8 @@ mod tests {
     /// lands before the next turn, in admission order.
     #[test]
     fn steering_rejects_a_previous_run_target_and_replays_the_matching_target() {
-        let mut drive = CoreAgentDrive::from_replayed(
-            SessionId::new("steering-target"),
-            CoreAgentState::new(),
-            None,
-        );
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("steering-target"), CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"first"));
         let first = drive_until_generate(&mut drive).run_id;
@@ -6022,7 +6018,7 @@ mod tests {
     #[test]
     fn steering_materializes_after_in_flight_turn_completes() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         install_test_tool(&mut drive, "await");
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
@@ -6109,7 +6105,7 @@ mod tests {
     #[test]
     fn steering_parked_run_is_accepted_and_materializes_on_resume() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let parked = park_on_wait_promise(&mut drive, &request);
         let deferred = drive
@@ -6168,7 +6164,7 @@ mod tests {
     #[test]
     fn steering_cancelling_run_is_rejected() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
         let request = drive_until_generate(&mut drive);
@@ -6205,7 +6201,7 @@ mod tests {
     #[test]
     fn cancel_during_generation_cancels_turn_and_drains_to_cancelled() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
         let request = drive_until_generate(&mut drive);
@@ -6269,7 +6265,7 @@ mod tests {
     #[test]
     fn cancel_during_tool_batch_cancels_pending_calls_and_drains_to_cancelled() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
 
         let cancel = drive
@@ -6321,7 +6317,7 @@ mod tests {
     #[test]
     fn cancel_between_tool_call_turn_and_batch_start_records_cancelled_results() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         install_test_tool(&mut drive, "await");
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
@@ -6431,7 +6427,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-steer-window"),
             CoreAgentState::new(),
-            None,
         );
         let mut log = Vec::new();
         admit_logged(
@@ -6647,7 +6642,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-tools-frozen"),
             CoreAgentState::new(),
-            None,
         );
         let mut log = Vec::new();
         admit_logged(
@@ -6770,7 +6764,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-tools-parked"),
             CoreAgentState::new(),
-            None,
         );
         let request = drive_to_single_tool_invocation(&mut drive);
         let parked = park_on_wait_promise(&mut drive, &request);
@@ -6799,7 +6792,7 @@ mod tests {
     #[test]
     fn unconsumed_steering_extends_run_by_one_turn_after_final_output() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         open_session(&mut drive);
         request_run(&mut drive, BlobRef::from_bytes(b"input"));
         let first = drive_until_generate(&mut drive);
@@ -6879,7 +6872,7 @@ mod tests {
     #[test]
     fn drive_emits_append_action_after_command_admission() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
 
         let action = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
@@ -6892,7 +6885,7 @@ mod tests {
     #[test]
     fn drive_applies_only_committed_appended_entries() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let action = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("admit command");
@@ -6907,7 +6900,7 @@ mod tests {
     #[test]
     fn replace_session_config_updates_full_config_snapshot() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -6939,7 +6932,7 @@ mod tests {
     #[test]
     fn replace_session_config_preserves_managed_workflow_tool_bindings() {
         let session_id = SessionId::new("session-managed");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let receiver = WorkflowEndpointRef {
             workflow_id: "work/controller-1".to_owned(),
             workflow_kind: "agent_work".to_owned(),
@@ -6951,14 +6944,18 @@ mod tests {
                     session_universe_id: uuid::Uuid::from_u128(7),
                     workflow_tools: crate::ManagedSessionWorkflowTools::v1(
                         Some(receiver.clone()),
-                        vec![crate::WorkflowToolDeclaration::bound_notify(
+                        vec![crate::WorkflowToolDeclaration::new(
                             WorkflowToolDefinition {
                                 tool_id: WorkflowToolId::new("work-report"),
                                 revision: 1,
                                 semantic_type: "lightspeed.work.report.v1".to_owned(),
                                 tool: test_tool_spec("work_report"),
                             },
-                            receiver,
+                            crate::WorkflowToolTarget::Bound {
+                                receiver,
+                                dispatch: crate::BoundWorkflowToolDispatch::Pull,
+                            },
+                            crate::WorkflowToolCompletion::Accepted,
                         )],
                     ),
                 },
@@ -6988,7 +6985,7 @@ mod tests {
     #[test]
     fn replace_session_config_with_identical_document_is_a_noop() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7011,7 +7008,7 @@ mod tests {
     #[test]
     fn replace_session_config_rejects_specific_tool_choice_for_missing_tool() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7041,7 +7038,7 @@ mod tests {
     #[test]
     fn request_run_rejects_specific_tool_choice_for_missing_tool() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7067,7 +7064,7 @@ mod tests {
     #[test]
     fn replace_session_config_rejects_queued_work() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7103,8 +7100,7 @@ mod tests {
     #[test]
     fn drive_emits_llm_action_after_planned_generation_events_are_committed() {
         let session_id = SessionId::new("session-a");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7135,7 +7131,7 @@ mod tests {
     #[test]
     fn unbounded_drive_ignores_the_explicit_runner_step_counter() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7168,7 +7164,7 @@ mod tests {
     #[test]
     fn drive_resumes_llm_result_into_append_action() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7236,7 +7232,7 @@ mod tests {
     #[test]
     fn length_finish_fails_run_but_keeps_partial_output() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7318,7 +7314,7 @@ mod tests {
     #[test]
     fn content_filter_finish_fails_run_like_a_model_failure() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7411,7 +7407,7 @@ mod tests {
 
     /// One completed run: user input, then an assistant answer.
     fn drive_with_completed_run(session_id: SessionId) -> (CoreAgentDrive, Vec<CoreAgentEntry>) {
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let mut entries = Vec::new();
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
@@ -7524,7 +7520,7 @@ mod tests {
             "{retry:?}"
         );
 
-        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         replayed
             .resume_appended(
                 entries
@@ -7571,11 +7567,8 @@ mod tests {
 
     #[test]
     fn entry_replacement_is_refused_while_a_run_is_active() {
-        let mut drive = CoreAgentDrive::from_replayed(
-            SessionId::new("session-active"),
-            CoreAgentState::new(),
-            None,
-        );
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-active"), CoreAgentState::new());
         open_session(&mut drive);
         let request = drive
             .admit_command(
@@ -7611,8 +7604,7 @@ mod tests {
     #[test]
     fn rejected_generation_fails_run_as_request_rejected_and_replays() {
         let session_id = SessionId::new("session-rejected");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut entries = Vec::new();
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
@@ -7673,7 +7665,7 @@ mod tests {
             CoreAgentAction::Idle
         ));
 
-        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut replayed = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         replayed
             .resume_appended(
                 entries
@@ -7688,7 +7680,7 @@ mod tests {
     #[test]
     fn failed_generation_fails_run_without_starting_another_turn() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let open = drive
             .admit_command(CoreAgentCommand::OpenSession { config: config() }, 10)
             .expect("open");
@@ -7758,7 +7750,7 @@ mod tests {
     #[test]
     fn deferred_tool_batch_parks_and_next_action_does_not_reemit_invocation() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
 
         let parked = park_on_wait_promise(&mut drive, &request);
@@ -7795,7 +7787,7 @@ mod tests {
     #[test]
     fn await_over_resolved_promise_parks_then_wakes_terminal() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let promise_id = crate::PromiseId::new("promise_1");
         drive.state.promises.promises.insert(
@@ -7843,11 +7835,8 @@ mod tests {
         {
             attachments.push(metadata.clone());
         }
-        let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
         let resumed = drive
             .admit_command(command, 91)
             .expect("resume terminal await");
@@ -7899,7 +7888,7 @@ mod tests {
     #[test]
     fn zero_timeout_await_parks_then_wakes_timeout() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let promise_id = crate::PromiseId::new("promise_1");
         drive.state.promises.promises.insert(
@@ -7940,7 +7929,7 @@ mod tests {
     #[test]
     fn unknown_promise_await_fails_without_parking() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let deferred = drive
             .resume_tool_batch_outcome(
@@ -7977,7 +7966,7 @@ mod tests {
     #[test]
     fn resume_tool_batch_command_clears_parked_batch_and_is_retry_safe() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let parked = park_on_wait_promise(&mut drive, &request);
         let deferred = drive
@@ -8032,7 +8021,7 @@ mod tests {
     #[test]
     fn inline_tool_batch_completion_is_unchanged() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
 
         let completed = drive
@@ -8075,7 +8064,7 @@ mod tests {
     #[test]
     fn tool_batch_result_materializes_extra_model_visible_entries() {
         let session_id = SessionId::new("session-extra-tool-context");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let tool_result_ref = BlobRef::from_bytes(b"wait completed");
         let extra_ref = BlobRef::from_bytes(b"extra visible message");
@@ -8137,7 +8126,7 @@ mod tests {
     #[test]
     fn duplicate_submission_admits_as_no_op_while_queued() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
 
         let accepted =
@@ -8159,7 +8148,7 @@ mod tests {
     #[test]
     fn duplicate_submission_with_different_input_is_rejected() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
 
         let accepted =
@@ -8179,7 +8168,7 @@ mod tests {
     #[test]
     fn duplicate_submission_with_different_terminal_notification_is_rejected() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
         let command = |token: &str| {
             let mut command = request_run_command(
@@ -8218,7 +8207,7 @@ mod tests {
     #[test]
     fn duplicate_submission_after_run_completion_admits_as_no_op() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
         open_session(&mut drive);
 
         let accepted =
@@ -8293,7 +8282,7 @@ mod tests {
     #[test]
     fn resume_of_deferred_batch_while_cancelling_reaches_cancelled() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let parked = park_on_wait_promise(&mut drive, &request);
         let deferred = drive
@@ -8342,7 +8331,7 @@ mod tests {
     #[test]
     fn force_cancel_run_reaps_parked_cancelling_run_and_retries_are_noops() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let parked = park_on_wait_promise(&mut drive, &request);
         let deferred = drive
@@ -8387,7 +8376,7 @@ mod tests {
     #[test]
     fn force_close_cancels_active_and_queued_work_and_closes() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let parked = park_on_wait_promise(&mut drive, &request);
         let deferred = drive
@@ -8468,7 +8457,7 @@ mod tests {
     #[test]
     fn close_without_force_still_rejects_active_work() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         drive_to_single_tool_invocation(&mut drive);
         let rejected = drive
             .admit_command(CoreAgentCommand::CloseSession { force: false }, 95)
@@ -8498,8 +8487,7 @@ mod tests {
     fn pushed_accepted_workflow_tool_stays_successful_after_delivery_failure() {
         let session_id = SessionId::new("session-tool");
         let universe_id = uuid::Uuid::from_u128(7);
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let definition = WorkflowToolDefinition {
             tool_id: WorkflowToolId::new("report"),
             revision: 1,
@@ -8627,8 +8615,7 @@ mod tests {
     fn joined_workflow_tool_parks_and_resumes_the_original_call() {
         let session_id = SessionId::new("session-tool");
         let universe_id = uuid::Uuid::from_u128(7);
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let definition = WorkflowToolDefinition {
             tool_id: WorkflowToolId::new("send"),
             revision: 1,
@@ -8863,11 +8850,8 @@ mod tests {
             "asset.txt".into(),
             None,
         ));
-        let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
         let resumed = drive
             .admit_command(
                 CoreAgentCommand::ResumeToolBatch(ResumeToolBatchCommand {
@@ -8932,8 +8916,7 @@ mod tests {
     fn multiple_joined_calls_park_all_of_and_preserve_completed_ordinary_calls() {
         let session_id = SessionId::new("session-tool");
         let universe_id = uuid::Uuid::from_u128(8);
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let workflow_spec = test_tool_spec("message_send");
         let ordinary_spec = test_tool_spec("local_echo");
         let definition = WorkflowToolDefinition {
@@ -9176,8 +9159,7 @@ mod tests {
     fn explicit_await_and_joined_calls_in_one_batch_fail_without_parking() {
         let session_id = SessionId::new("session-tool");
         let universe_id = uuid::Uuid::from_u128(9);
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         open_session(&mut drive);
         let workflow_spec = test_tool_spec("message_send");
         let definition = WorkflowToolDefinition {
@@ -9348,8 +9330,7 @@ mod tests {
     fn promise_bearing_workflow_tool_creates_keyed_promises_atomically() {
         let session_id = SessionId::new("session-tool");
         let universe_id = uuid::Uuid::from_u128(7);
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let definition = WorkflowToolDefinition {
             tool_id: WorkflowToolId::new("approve"),
             revision: 1,
@@ -9530,8 +9511,7 @@ mod tests {
     fn start_on_call_tool_records_intent_and_keyed_promises_atomically() {
         let session_id = SessionId::new("session-tool");
         let universe_id = uuid::Uuid::from_u128(7);
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let definition = WorkflowToolDefinition {
             tool_id: WorkflowToolId::new("launch"),
             revision: 1,
@@ -9705,7 +9685,7 @@ mod tests {
     #[test]
     fn tool_result_promise_effect_creates_pending_run_scoped_promise() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let run_id = request.run_id;
         let resumed = drive
@@ -9753,7 +9733,7 @@ mod tests {
     #[test]
     fn tool_batch_promise_base_sits_above_the_cursor_and_the_cursor_follows_the_max() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         assert_eq!(request.promise_id_base, 1);
 
@@ -9778,7 +9758,7 @@ mod tests {
         let session_id = SessionId::new("session-a");
         let mut state = CoreAgentState::new();
         state.id_cursors.last_promise_id = 5;
-        let mut drive = CoreAgentDrive::from_replayed(session_id, state, None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, state);
         let request = drive_to_single_tool_invocation(&mut drive);
         assert_eq!(request.promise_id_base, 6);
 
@@ -9804,7 +9784,7 @@ mod tests {
     #[test]
     fn tool_result_reusing_a_promise_id_is_an_invariant_violation() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         assert!(
             drive
@@ -9819,7 +9799,7 @@ mod tests {
     #[test]
     fn tool_result_detach_effect_promotes_promise_to_session_scope() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let run_id = request.run_id;
         let promise_id = crate::PromiseId::new("promise_1");
@@ -9872,7 +9852,6 @@ mod tests {
             event,
         };
         crate::core::apply::apply_event(&mut drive.state, &entry)?;
-        drive.head = drive.state.reduced_to.clone();
         Ok(())
     }
 
@@ -9908,7 +9887,7 @@ mod tests {
     /// Three finished runs of a user message and an answer: six consumed entries.
     fn session_with_finished_runs(session: &str) -> CoreAgentDrive {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new(session), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new(session), CoreAgentState::new());
         open_session(&mut drive);
         for _ in 0..3 {
             request_run(&mut drive, BlobRef::from_bytes(b"input"));
@@ -9960,7 +9939,6 @@ mod tests {
             let mut replayed = CoreAgentDrive::from_replayed(
                 SessionId::new("session-recorded-plan"),
                 drive.state().clone(),
-                drive.head().cloned(),
             );
             let event = compaction_requested(&replayed, covered.clone());
             recorded(&mut replayed, event).expect("a recorded plan is a fact");
@@ -10036,7 +10014,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-recorded-config"),
             CoreAgentState::new(),
-            None,
         );
         assert!(
             drive
@@ -10128,7 +10105,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-recorded-run"),
             CoreAgentState::new(),
-            None,
         );
         let mut anthropic = config();
         anthropic.model.api_kind = ProviderApiKind::AnthropicMessages;
@@ -10265,7 +10241,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-cancel-detach"),
             CoreAgentState::new(),
-            None,
         );
         let (request, promise_id) = promise_control_batch(&mut drive, "cancel", "detach");
         let outcome = promise_control_outcome(
@@ -10298,7 +10273,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("session-detach-cancel"),
             CoreAgentState::new(),
-            None,
         );
         let (request, promise_id) = promise_control_batch(&mut drive, "detach", "cancel");
         let outcome = promise_control_outcome(
@@ -10333,11 +10307,8 @@ mod tests {
 
     #[test]
     fn a_batch_the_reducer_refuses_is_returned_as_an_error_before_anything_is_appended() {
-        let mut drive = CoreAgentDrive::from_replayed(
-            SessionId::new("session-dry-run"),
-            CoreAgentState::new(),
-            None,
-        );
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-dry-run"), CoreAgentState::new());
         let (_, promise_id) = promise_control_batch(&mut drive, "cancel", "detach");
         let before = drive.state().clone();
         let head = drive.head().cloned();
@@ -10505,7 +10476,7 @@ mod tests {
     #[test]
     fn resolve_promise_is_first_writer_wins_and_rejects_unknown_ids() {
         let session_id = SessionId::new("session-a");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = drive_to_single_tool_invocation(&mut drive);
         let resumed = drive
             .resume_tool_batch_outcome(
@@ -10656,7 +10627,7 @@ mod tests {
     #[test]
     fn per_call_resumes_complete_a_batch_progressively() {
         let session_id = SessionId::new("session-per-call");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = two_call_tool_batch(&mut drive, config());
         assert_eq!(request.calls.len(), 2);
 
@@ -10738,7 +10709,7 @@ mod tests {
     #[test]
     fn per_call_results_retain_runtime_durations() {
         let session_id = SessionId::new("session-durations");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = two_call_tool_batch(&mut drive, config());
 
         let mut first = per_call_result(
@@ -10785,7 +10756,7 @@ mod tests {
     #[test]
     fn per_call_environment_selection_stays_exclusive_across_resumes() {
         let session_id = SessionId::new("session-per-call-environment");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let mut session_config = config();
         session_config.features.environments = Some(crate::EnvironmentsFeature {
             selection: true,
@@ -10961,7 +10932,7 @@ mod tests {
     #[test]
     fn batch_requests_carry_native_mcp_routing_for_every_call_that_needs_it() {
         let session_id = SessionId::new("session-mixed-native-mcp-routing");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = mixed_native_mcp_batch(&mut drive);
 
         assert_eq!(request.calls.len(), 3);
@@ -10973,7 +10944,7 @@ mod tests {
     #[test]
     fn awaiting_approval_outcome_completes_ungated_calls_and_parks_once_for_the_gated_set() {
         let session_id = SessionId::new("session-mixed-native-mcp-approvals");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = mixed_native_mcp_batch(&mut drive);
         let run_id = request.run_id;
 
@@ -11053,7 +11024,7 @@ mod tests {
     #[test]
     fn native_mcp_approval_park_requires_pending_calls_of_the_active_batch() {
         let session_id = SessionId::new("session-mixed-native-mcp-park-guards");
-        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = mixed_native_mcp_batch(&mut drive);
 
         let empty = drive
@@ -11092,8 +11063,7 @@ mod tests {
     #[test]
     fn builtin_calls_replay_with_internal_identity_and_original_turn_inputs() {
         let session_id = SessionId::new("builtin-replay");
-        let mut drive =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut drive = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut session_config = config();
         session_config.model = ModelSelection {
             api_kind: ProviderApiKind::AnthropicMessages,
@@ -11142,7 +11112,6 @@ mod tests {
         commit_action(&mut drive, action);
         let generation = drive_until_generate(&mut drive);
         let checkpoint = serde_json::to_vec(drive.state()).unwrap();
-        let head = drive.head().cloned();
         let native_call = BlobRef::from_bytes(
             br#"{"type":"tool_use","name":"Bash","input":{"command":"echo hello"}}"#,
         );
@@ -11212,11 +11181,8 @@ mod tests {
                 model: override_model
             })
         );
-        let mut replayed = CoreAgentDrive::from_replayed(
-            session_id,
-            serde_json::from_slice(&checkpoint).unwrap(),
-            head,
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(session_id, serde_json::from_slice(&checkpoint).unwrap());
         // Replaying the committed events needs no definitions, blobs, or codecs.
         replayed
             .resume_appended(
@@ -11239,7 +11205,6 @@ mod tests {
         let mut drive = CoreAgentDrive::from_replayed(
             SessionId::new("code-tool-session"),
             CoreAgentState::new(),
-            None,
         );
         let declarations = [
             (
@@ -11438,11 +11403,8 @@ mod tests {
     fn code_tool_parallel_calls_reserve_promises_deduplicate_and_replay_without_touching_outer_batch()
      {
         let (mut drive, parent) = code_tool_fixture();
-        let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
         let outer = drive.state().runs.active.clone();
         let context = drive.state().context.clone();
         let mut log = code_tool_commit(
@@ -11568,11 +11530,8 @@ mod tests {
     #[test]
     fn code_tool_completion_stores_a_compact_result_and_replays() {
         let (mut drive, parent) = code_tool_fixture();
-        let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
         let mut log = code_tool_commit(
             &mut drive,
             CoreAgentCommand::OpenCodeToolScope {
@@ -11652,11 +11611,8 @@ mod tests {
     fn code_tool_joined_and_submit_await_have_independent_waits_and_session_owned_results() {
         let (mut drive, parent) = code_tool_fixture();
         let outer = drive.state().runs.active.clone();
-        let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
         let mut log = code_tool_commit(
             &mut drive,
             CoreAgentCommand::OpenCodeToolScope {
@@ -12144,11 +12100,8 @@ mod tests {
                 result: joined_effect,
             },
         );
-        let mut replayed = CoreAgentDrive::from_replayed(
-            drive.session_id().clone(),
-            drive.state().clone(),
-            drive.head().cloned(),
-        );
+        let mut replayed =
+            CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
         assert!(
             drive
                 .admit_command(CoreAgentCommand::CloseSession { force: false }, 100)
@@ -12308,11 +12261,8 @@ mod tests {
             )
             .unwrap();
             let late_result = completed_tool_result(&request).results.remove(0);
-            let mut replayed = CoreAgentDrive::from_replayed(
-                drive.session_id().clone(),
-                drive.state().clone(),
-                drive.head().cloned(),
-            );
+            let mut replayed =
+                CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
             let command = if close_session {
                 CoreAgentCommand::CloseSession { force: true }
             } else {
@@ -12395,11 +12345,8 @@ mod tests {
             .unwrap();
             let reply_id = PromiseId::from_number(joined_request.promise_id_base);
             let submitted_id = PromiseId::from_number(submit_request.promise_id_base);
-            let mut replayed = CoreAgentDrive::from_replayed(
-                drive.session_id().clone(),
-                drive.state().clone(),
-                drive.head().cloned(),
-            );
+            let mut replayed =
+                CoreAgentDrive::from_replayed(drive.session_id().clone(), drive.state().clone());
             let mut log = code_tool_commit(
                 &mut drive,
                 CoreAgentCommand::CloseCodeToolScope {
@@ -12488,7 +12435,7 @@ mod tests {
     #[test]
     fn caller_input_is_invalid_and_reads_without_reducer_vocabulary() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new());
         open_session(&mut drive);
         let run_config = RunConfig {
             tool_choice: Some(ToolChoice::Specific {
@@ -12514,7 +12461,7 @@ mod tests {
     #[test]
     fn every_stale_expected_revision_is_a_revision_conflict() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new());
         open_session(&mut drive);
         for command in [
             CoreAgentCommand::ReplaceSessionConfig {
@@ -12538,7 +12485,7 @@ mod tests {
     #[test]
     fn a_session_that_is_not_open_refuses_by_lifecycle() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new());
         let rejection = rejection_of(
             drive
                 .admit_command(CoreAgentCommand::CompactContext, 20)
@@ -12551,7 +12498,7 @@ mod tests {
     #[test]
     fn manual_compaction_refusals_are_about_state_and_not_input() {
         let mut drive =
-            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new(), None);
+            CoreAgentDrive::from_replayed(SessionId::new("session_1"), CoreAgentState::new());
         open_session(&mut drive);
         let rejection = rejection_of(
             drive
@@ -12573,7 +12520,6 @@ mod tests {
                 drive: CoreAgentDrive::from_replayed(
                     SessionId::new("session-logged"),
                     CoreAgentState::new(),
-                    None,
                 ),
                 log: Vec::new(),
             };
@@ -12667,7 +12613,6 @@ mod tests {
             let mut replayed = CoreAgentDrive::from_replayed(
                 self.drive.session_id().clone(),
                 CoreAgentState::new(),
-                None,
             );
             seed(&mut replayed);
             replayed

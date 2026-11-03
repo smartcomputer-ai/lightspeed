@@ -554,7 +554,7 @@ mod tests {
             )
             .await
             .expect("put schema");
-        WorkflowToolBinding::admit_bound_notify(
+        WorkflowToolBinding::admit(
             Uuid::from_u128(1),
             WorkflowToolDefinition {
                 tool_id: WorkflowToolId::new("report"),
@@ -573,10 +573,14 @@ mod tests {
                     execution: Default::default(),
                 },
             },
-            WorkflowEndpointRef {
-                workflow_id: "work arbitrary id".to_owned(),
-                workflow_kind: "agent_work".to_owned(),
+            WorkflowToolTarget::Bound {
+                receiver: WorkflowEndpointRef {
+                    workflow_id: "work arbitrary id".to_owned(),
+                    workflow_kind: "agent_work".to_owned(),
+                },
+                dispatch: harness::BoundWorkflowToolDispatch::Pull,
             },
+            WorkflowToolCompletion::Accepted,
         )
         .expect("binding")
     }

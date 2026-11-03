@@ -2210,7 +2210,7 @@ fn active_environment_blocker_message(blocker: &ActiveEnvironmentBlocker) -> Str
     }
 }
 
-/// Cross-call batch rules evaluated from bounded sibling summaries. Only the
+/// Cross-call batch rules evaluated from the siblings' tool identities. Only the
 /// calls participating in a violation fail; unrelated siblings execute
 /// normally.
 fn per_call_batch_rule_violation(
@@ -2220,21 +2220,19 @@ fn per_call_batch_rule_violation(
     let is_env_dependent = |tool_id: Option<&harness::ToolName>| {
         tool_id.is_some_and(|id| BuiltinToolRequirements::for_id(id).active_environment)
     };
-    let sibling_selection = request.sibling_calls.iter().any(|sibling| {
-        sibling
-            .tool_id
-            .as_ref()
-            .is_some_and(is_environment_selection_tool)
-    });
+    let sibling_selection = request
+        .sibling_tool_ids
+        .iter()
+        .any(is_environment_selection_tool);
     if call
         .tool_id
         .as_ref()
         .is_some_and(is_environment_selection_tool)
         && (sibling_selection
             || request
-                .sibling_calls
+                .sibling_tool_ids
                 .iter()
-                .any(|sibling| is_env_dependent(sibling.tool_id.as_ref())))
+                .any(|sibling| is_env_dependent(Some(sibling))))
     {
         return Some(
             "environment activation/deactivation cannot share a batch with another selection or an environment-dependent tool",
@@ -2595,7 +2593,7 @@ mod tests {
     fn per_call_request(
         tool_name: &str,
         arguments: &[u8],
-        siblings: &[(&str, &[u8])],
+        siblings: &[&str],
     ) -> harness::ToolInvocationCallRequest {
         harness::ToolInvocationCallRequest {
             vfs_working_directory: None,
@@ -2619,16 +2617,7 @@ mod tests {
                 promise_control: None,
                 remote_mcp: None,
             },
-            sibling_calls: siblings
-                .iter()
-                .enumerate()
-                .map(|(index, (name, arguments))| harness::ToolCallSummary {
-                    call_id: ToolCallId::new(format!("call_sibling_{index}")),
-                    tool_id: Some(test_tool_id(name)),
-                    tool_name: ToolName::new(*name),
-                    arguments_ref: BlobRef::from_bytes(arguments),
-                })
-                .collect(),
+            sibling_tool_ids: siblings.iter().map(|name| test_tool_id(name)).collect(),
             execution: harness::ToolExecutionSpec::default(),
         }
     }
@@ -2772,7 +2761,7 @@ mod tests {
                 per_call_batch_rule_violation(&per_call_request(
                     transfer,
                     b"{}",
-                    &[("environment_activate", b"{}")],
+                    &["environment_activate"],
                 ))
                 .is_some()
             );
@@ -2780,7 +2769,7 @@ mod tests {
                 per_call_batch_rule_violation(&per_call_request(
                     "environment_activate",
                     b"{}",
-                    &[(transfer, b"{}")],
+                    &[transfer],
                 ))
                 .is_some()
             );
@@ -2791,7 +2780,7 @@ mod tests {
             per_call_batch_rule_violation(&per_call_request(
                 "environment_activate",
                 b"{}",
-                &[("read_file", b"{}")]
+                &["read_file"]
             ),)
             .is_some()
         );
@@ -2799,7 +2788,7 @@ mod tests {
             per_call_batch_rule_violation(&per_call_request(
                 "read_file",
                 b"{}",
-                &[("environment_activate", b"{}")]
+                &["environment_activate"]
             ),)
             .is_some()
         );
@@ -2808,7 +2797,7 @@ mod tests {
             per_call_batch_rule_violation(&per_call_request(
                 "environment_activate",
                 b"{}",
-                &[("environment_deactivate", b"{}")],
+                &["environment_deactivate"],
             ),)
             .is_some()
         );
@@ -2817,7 +2806,7 @@ mod tests {
             per_call_batch_rule_violation(&per_call_request(
                 "web_fetch",
                 b"{}",
-                &[("environment_activate", b"{}"), ("read_file", b"{}")],
+                &["environment_activate", "read_file"],
             ),)
             .is_none()
         );
@@ -2826,7 +2815,7 @@ mod tests {
             per_call_batch_rule_violation(&per_call_request(
                 "environment_activate",
                 b"{}",
-                &[("web_fetch", b"{}")]
+                &["web_fetch"]
             ),)
             .is_none()
         );
@@ -2920,9 +2909,13 @@ mod tests {
         };
         let workflow_tools = harness::ManagedSessionWorkflowTools::v1(
             Some(receiver.clone()),
-            vec![harness::WorkflowToolDeclaration::bound_notify(
+            vec![harness::WorkflowToolDeclaration::new(
                 definition.clone(),
-                receiver,
+                harness::WorkflowToolTarget::Bound {
+                    receiver,
+                    dispatch: harness::BoundWorkflowToolDispatch::Pull,
+                },
+                harness::WorkflowToolCompletion::Accepted,
             )],
         );
         let universe_id = uuid::Uuid::from_u128(1);
@@ -4894,7 +4887,7 @@ mod tests {
                 promise_control: None,
                 remote_mcp: None,
             },
-            sibling_calls: Vec::new(),
+            sibling_tool_ids: Vec::new(),
             execution: harness::ToolExecutionSpec::default(),
         };
 
@@ -4957,7 +4950,7 @@ mod tests {
                 promise_control: None,
                 remote_mcp: None,
             },
-            sibling_calls: Vec::new(),
+            sibling_tool_ids: Vec::new(),
             execution: harness::ToolExecutionSpec::default(),
         };
 
@@ -5083,7 +5076,7 @@ mod tests {
                 promise_control: None,
                 remote_mcp: None,
             },
-            sibling_calls: Vec::new(),
+            sibling_tool_ids: Vec::new(),
             execution: harness::ToolExecutionSpec::default(),
         };
 

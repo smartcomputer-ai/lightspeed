@@ -39,28 +39,6 @@ pub(super) async fn admit_admissions(
         };
         let correlation_token = admission.correlation_token.clone();
         let command = admission.command;
-        if let CoreAgentCommand::ReplaceSessionConfig {
-            config,
-            expected_revision,
-        } = &command
-        {
-            if let Err(error) = preparation::execute_operation(
-                ctx,
-                drive,
-                crate::SessionOperation::Configure {
-                    config: config.clone(),
-                    expected_revision: *expected_revision,
-                },
-            )
-            .await?
-            {
-                record_admission_failure(
-                    ctx,
-                    preparation::failure(&command, correlation_token, error),
-                );
-            }
-            continue;
-        }
         let mut deferred_tools = None;
         if drive.state().lifecycle.status == CoreAgentStatus::Open
             && matches!(command, CoreAgentCommand::RequestRun(_))

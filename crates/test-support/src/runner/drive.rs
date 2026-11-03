@@ -515,12 +515,7 @@ impl SessionRunner {
 
     async fn load_drive(&self, session_id: &SessionId) -> Result<CoreAgentDrive, RunnerError> {
         let state = self.load_state(session_id).await?;
-        let head = state.reduced_to.clone();
-        Ok(CoreAgentDrive::from_replayed(
-            session_id.clone(),
-            state,
-            head,
-        ))
+        Ok(CoreAgentDrive::from_replayed(session_id.clone(), state))
     }
 
     async fn fulfill_until_quiescent(

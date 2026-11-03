@@ -13,11 +13,7 @@ pub(super) struct PreparationCandidate {
 impl PreparationCandidate {
     pub(super) fn new(live: &CoreAgentDrive) -> Self {
         Self {
-            drive: CoreAgentDrive::from_replayed(
-                live.session_id().clone(),
-                live.state().clone(),
-                live.head().cloned(),
-            ),
+            drive: CoreAgentDrive::from_replayed(live.session_id().clone(), live.state().clone()),
             original_head: live.head().cloned(),
             events: Vec::new(),
         }
@@ -180,7 +176,6 @@ mod tests {
         let mut live = CoreAgentDrive::from_replayed(
             SessionId::new("atomic-preparation"),
             CoreAgentState::new(),
-            None,
         );
         let mut candidate = PreparationCandidate::new(&live);
         candidate

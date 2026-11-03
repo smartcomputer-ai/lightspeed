@@ -285,7 +285,8 @@ fn session_fields(ctx: &WorkflowContext<AgentSessionWorkflow>) -> SessionFields 
             .map(|run| run.run_id.to_string())
             .unwrap_or_default();
         let session_head_seq = state
-            .head
+            .core_state
+            .reduced_to
             .as_ref()
             .map(|head| head.seq.to_string())
             .unwrap_or_default();

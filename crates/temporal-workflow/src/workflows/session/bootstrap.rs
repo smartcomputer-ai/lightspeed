@@ -48,12 +48,10 @@ pub(super) async fn initialize(
         is_fresh_session,
         args.workflow_tools.as_ref(),
     )?;
-    let head = loaded.head;
     ctx.state_mut(|state| {
         state.universe_id = Some(args.universe_id);
         state.session_id = Some(args.session_id.clone());
         state.core_state = core_state;
-        state.head = head;
         if let Some(continuation) = args.continuation_state.as_ref() {
             state.admission_failures = continuation.admission_failures.clone();
             state.ready = continuation.ready;

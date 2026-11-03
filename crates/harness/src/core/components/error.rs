@@ -90,8 +90,6 @@ pub enum CommandRejectionKind {
 pub enum PlanningError {
     #[error("planning rejected: {0}")]
     Rejected(String),
-    #[error("invalid planning proposal: {0}")]
-    InvalidProposal(String),
     #[error(transparent)]
     Domain(#[from] DomainError),
 }

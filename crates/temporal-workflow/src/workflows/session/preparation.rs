@@ -686,11 +686,8 @@ mod tests {
     /// A live session opened with the default configuration, whose admission
     /// materialized the default compaction policy.
     fn opened_live() -> CoreAgentDrive {
-        let empty = CoreAgentDrive::from_replayed(
-            SessionId::new("config-changed"),
-            CoreAgentState::new(),
-            None,
-        );
+        let empty =
+            CoreAgentDrive::from_replayed(SessionId::new("config-changed"), CoreAgentState::new());
         let mut opening = PreparationCandidate::new(&empty);
         opening
             .push(
@@ -705,8 +702,7 @@ mod tests {
             )
             .unwrap();
         let state = opening.state().clone();
-        let head = state.reduced_to.clone();
-        CoreAgentDrive::from_replayed(empty.session_id().clone(), state, head)
+        CoreAgentDrive::from_replayed(empty.session_id().clone(), state)
     }
 
     #[test]

@@ -489,7 +489,6 @@ pub(super) async fn append_events(
         }
         state.queue_emissions_for_entries(&entries)?;
         state.queue_promise_cancellations_for_entries(&entries);
-        state.head = appended.head;
         state.execution_has_rollover_checkpoint = true;
         if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
             preparation::abandon_pending_run(state);
@@ -673,17 +672,12 @@ fn workflow_user_message_input(content_ref: BlobRef, preview: Option<String>) ->
 pub(super) fn drive_from_state(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<CoreAgentDrive> {
-    let (session_id, core_state, head) = ctx.state(|state| {
-        (
-            state.session_id.clone(),
-            state.core_state.clone(),
-            state.head.clone(),
-        )
-    });
+    let (session_id, core_state) =
+        ctx.state(|state| (state.session_id.clone(), state.core_state.clone()));
     let Some(session_id) = session_id else {
         anyhow::bail!("missing initialized agent session id");
     };
-    Ok(CoreAgentDrive::from_replayed(session_id, core_state, head))
+    Ok(CoreAgentDrive::from_replayed(session_id, core_state))
 }
 
 fn vfs_skill_discovery_enabled(state: &CoreAgentState) -> bool {

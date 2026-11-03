@@ -84,7 +84,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     if let Some(batch_id) = active_run.active_tool_batch_id {
         return match active_run.status {
             RunStatus::Active => {
-                let proposals = decide_active_tool_batch_invocations(state, active_run, batch_id)?;
+                let proposals = decide_active_tool_batch_invocations(active_run, batch_id)?;
                 if proposals.is_empty() {
                     decide_active_tool_batch_completion(state, active_run, batch_id)
                 } else {
@@ -929,7 +929,6 @@ fn validate_model_visible_tool_entries(
 }
 
 fn decide_active_tool_batch_invocations(
-    _state: &CoreAgentState,
     active_run: &ActiveRun,
     batch_id: ToolBatchId,
 ) -> Result<Vec<CoreAgentEventProposal>, PlanningError> {

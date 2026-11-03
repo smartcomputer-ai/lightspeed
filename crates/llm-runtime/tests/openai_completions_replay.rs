@@ -66,7 +66,6 @@ async fn harness_completion_history_reconstructs_one_message_and_preserves_reque
     let mut drive = harness::CoreAgentDrive::from_replayed(
         SessionId::new("completion-replay"),
         harness::CoreAgentState::new(),
-        None,
     );
     let action = drive
         .admit_command(

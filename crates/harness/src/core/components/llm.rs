@@ -51,13 +51,6 @@ impl ProviderParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProviderCompatibility {
-    pub api_kind: ProviderApiKind,
-    pub model: String,
-    pub native_context_family: String,
-}
-
 /// Transient generation intent planned by the core.
 ///
 /// This is rebuilt from reduced state when a generation action is emitted; it is

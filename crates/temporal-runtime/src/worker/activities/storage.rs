@@ -1,5 +1,5 @@
 use harness::{
-    BlobRef, RunId, SessionId, SessionPosition, WorkflowEndpointRef, WorkflowToolInvocation,
+    BlobRef, SessionId, SessionPosition,
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, BlobEdge, CreateSession, ReadSessionEvents,
         SessionStore, SessionStoreError, StoredSessionEntry, UncommittedStoredEvent,
@@ -58,7 +58,6 @@ pub(super) async fn create_or_load_session(
             .map_err(activity_error)?;
     let checkpoint_due = crate::checkpoint::checkpoint_due(&loaded);
     let reduced = loaded.reduced;
-    let head = record.head.clone();
     let fresh_session = loaded.fresh_session;
     if checkpoint_due
         && let Err(error) = crate::checkpoint::write_checkpoint(
@@ -85,7 +84,6 @@ pub(super) async fn create_or_load_session(
     let result = CreateOrLoadSessionResult {
         record,
         core_state,
-        head,
         fresh_session,
         replayed_event_count,
     };
@@ -520,34 +518,6 @@ pub(super) async fn read_blob(
     Ok(ReadBlobResult { bytes })
 }
 
-/// Read one run's workflow-tool emissions from this worker state's
-/// universe-scoped session store. Exact receiver authorization is evaluated
-/// against the durable binding facts by the harness projection.
-// Work-cycle reconciliation is the first production caller.
-#[allow(dead_code)]
-pub(super) async fn read_tool_emissions(
-    deps: &StorageActivityDeps,
-    receiver_endpoint: &WorkflowEndpointRef,
-    session_id: &SessionId,
-    run_id: RunId,
-) -> Result<Vec<WorkflowToolInvocation>, ActivityError> {
-    read_tool_emissions_with_page_limit(deps, receiver_endpoint, session_id, run_id, 512).await
-}
-
-async fn read_tool_emissions_with_page_limit(
-    deps: &StorageActivityDeps,
-    receiver_endpoint: &WorkflowEndpointRef,
-    session_id: &SessionId,
-    run_id: RunId,
-    page_limit: usize,
-) -> Result<Vec<WorkflowToolInvocation>, ActivityError> {
-    let entries =
-        read_all_session_events_with_page_limit(deps.sessions.as_ref(), session_id, page_limit)
-            .await?;
-    harness::read_tool_emissions(&entries, receiver_endpoint, session_id, run_id)
-        .map_err(activity_error)
-}
-
 pub(super) async fn append_events(
     deps: &StorageActivityDeps,
     request: AppendEventsRequest,
@@ -707,14 +677,6 @@ async fn read_all_session_events(
     store: &dyn SessionStore,
     session_id: &SessionId,
 ) -> Result<Vec<StoredSessionEntry>, ActivityError> {
-    read_all_session_events_with_page_limit(store, session_id, 512).await
-}
-
-async fn read_all_session_events_with_page_limit(
-    store: &dyn SessionStore,
-    session_id: &SessionId,
-    page_limit: usize,
-) -> Result<Vec<StoredSessionEntry>, ActivityError> {
     let mut after = None;
     let mut entries = Vec::new();
     loop {
@@ -722,7 +684,7 @@ async fn read_all_session_events_with_page_limit(
             .read_after(ReadSessionEvents {
                 session_id: session_id.clone(),
                 after,
-                limit: page_limit,
+                limit: 512,
             })
             .await
             .map_err(activity_error)?;
@@ -1075,7 +1037,6 @@ mod tests {
                 updated_at_ms: 1,
             },
             core_state: Some(harness::CoreAgentState::new()),
-            head: None,
             fresh_session: true,
             replayed_event_count: 0,
         };
@@ -1574,8 +1535,7 @@ mod tests {
             }],
             ..EnvironmentsFeature::default()
         });
-        let mut staged =
-            CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new(), None);
+        let mut staged = CoreAgentDrive::from_replayed(session_id.clone(), CoreAgentState::new());
         let mut events = Vec::new();
         for command in [
             open,
@@ -1644,19 +1604,29 @@ mod tests {
         assert_eq!(append_events(&deps, request).await.unwrap(), committed);
         let durable = read_all(store.as_ref(), &session_id).await;
         assert_eq!(durable.entries, committed.entries);
-        let mut replay = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new(), None);
+        let mut replay = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         replay.resume_appended(durable.entries).unwrap();
         assert_eq!(replay.state(), staged.state());
         assert_eq!(replay.state().lifecycle.config_revision, 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn tool_emission_retry_and_restarted_reads_are_complete_across_pages() {
+    async fn duplicate_tool_result_append_does_not_duplicate_emissions() {
         use harness::{
             ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCommand,
             FunctionToolSpec, ManagedSessionWorkflowTools, RunConfig, RunRequestCommand,
             RunRequestSource, ToolKind, ToolParallelism, ToolSpec, WorkflowEndpointRef,
             WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolId,
+        };
+        let notify_declaration = |definition, receiver| {
+            WorkflowToolDeclaration::new(
+                definition,
+                harness::WorkflowToolTarget::Bound {
+                    receiver,
+                    dispatch: harness::BoundWorkflowToolDispatch::Pull,
+                },
+                harness::WorkflowToolCompletion::Accepted,
+            )
         };
         use test_support::{DriveCommand, RunnerStores, SessionRunner};
         use uuid::Uuid;
@@ -1675,7 +1645,7 @@ mod tests {
         let declaration = ManagedSessionWorkflowTools::v1(
             Some(controller_receiver.clone()),
             vec![
-                WorkflowToolDeclaration::bound_notify(
+                notify_declaration(
                     WorkflowToolDefinition {
                         tool_id: WorkflowToolId::new("work-report"),
                         revision: 1,
@@ -1695,7 +1665,7 @@ mod tests {
                     },
                     controller_receiver.clone(),
                 ),
-                WorkflowToolDeclaration::bound_notify(
+                notify_declaration(
                     WorkflowToolDefinition {
                         tool_id: WorkflowToolId::new("approval-request"),
                         revision: 1,
@@ -1819,26 +1789,7 @@ mod tests {
             })
             .await
             .expect("complete run with workflow-tool emission");
-        let run = completed.state.runs.completed.last().expect("terminal run");
-        let run_id = run.run_id;
-        let expected = completed
-            .state
-            .workflow_tools
-            .emissions
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(expected.len(), 2);
-        let expected_report = expected
-            .iter()
-            .find(|invocation| invocation.tool_id.as_str() == "work-report")
-            .cloned()
-            .expect("durable work report");
-        let expected_approval = expected
-            .iter()
-            .find(|invocation| invocation.tool_id.as_str() == "approval-request")
-            .cloned()
-            .expect("durable approval request");
+        assert_eq!(completed.state.workflow_tools.emissions.len(), 2);
 
         // Re-submit the exact committed tool-result append as an activity
         // retry. The activity must return the existing entries rather than
@@ -1877,9 +1828,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        // A fresh dependency bundle represents a restarted worker process:
-        // the pull result is reconstructed only from the durable, paginated
-        // session log and carries no workflow-local cursor or cache.
+        // A fresh dependency bundle represents a restarted worker process.
         let deps = storage_deps(store.clone());
         let retried = append_events(
             &deps,
@@ -1896,22 +1845,6 @@ mod tests {
             durable_entries[first_tool_result..=last_tool_result]
         );
 
-        let reports = read_tool_emissions_with_page_limit(
-            &deps,
-            &controller_receiver,
-            &session_id,
-            run_id,
-            2,
-        )
-        .await
-        .expect("read controller emissions after terminal boundary");
-        let approvals =
-            read_tool_emissions_with_page_limit(&deps, &approval_receiver, &session_id, run_id, 2)
-                .await
-                .expect("read approval emissions after terminal boundary");
-
-        assert_eq!(reports, vec![expected_report]);
-        assert_eq!(approvals, vec![expected_approval]);
         let after_retry = read_all_session_events(store.as_ref(), &session_id)
             .await
             .expect("read log after retry");
@@ -1923,18 +1856,6 @@ mod tests {
             2,
             "duplicate tool-result admission must not duplicate emissions"
         );
-        read_tool_emissions_with_page_limit(
-            &deps,
-            &WorkflowEndpointRef {
-                workflow_id: "unrelated-plugin".to_owned(),
-                workflow_kind: "unrelated".to_owned(),
-            },
-            &session_id,
-            run_id,
-            2,
-        )
-        .await
-        .expect_err("unbound receiver must not read session emissions");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2015,7 +1936,6 @@ mod tests {
         .expect("empty append");
 
         assert!(result.entries.is_empty());
-        assert_eq!(result.head, None);
         assert!(
             read_all(store.as_ref(), &session_id)
                 .await

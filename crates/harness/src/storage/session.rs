@@ -31,7 +31,7 @@ pub struct SessionRecord {
     /// replaying inherited history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_seq: Option<EventSeq>,
-    /// Observation time of the terminal lifecycle event. Cleared on reopen.
+    /// Observation time of the terminal lifecycle event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closed_at_ms: Option<u64>,
     /// What the session is doing now, projected from run events for lists.
@@ -448,12 +448,7 @@ pub trait SessionStore: Send + Sync {
     async fn list_sessions(
         &self,
         request: ListSessions,
-    ) -> Result<SessionListPage, SessionStoreError> {
-        let _ = request;
-        Err(SessionStoreError::Store {
-            message: "list_sessions is not supported by this session store".to_owned(),
-        })
-    }
+    ) -> Result<SessionListPage, SessionStoreError>;
 
     /// Replace the session's display name (`None` clears it). Metadata only:
     /// does not touch the event log or `updated_at_ms`.
@@ -461,14 +456,7 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
         display_name: Option<String>,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        let _ = display_name;
-        Err(SessionStoreError::Store {
-            message: format!(
-                "set_session_display_name is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     /// Replace the session's metadata map. Metadata only: does not touch
     /// the event log or `updated_at_ms`.
@@ -476,14 +464,7 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
         metadata: BTreeMap<String, String>,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        let _ = metadata;
-        Err(SessionStoreError::Store {
-            message: format!(
-                "set_session_metadata is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     /// Replace the root-owned automatic-deletion duration. Descendant targets
     /// are rejected rather than mutating their root implicitly.
@@ -491,27 +472,14 @@ pub trait SessionStore: Send + Sync {
         &self,
         session_id: &SessionId,
         delete_after_close_ms: Option<u64>,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        let _ = delete_after_close_ms;
-        Err(SessionStoreError::Store {
-            message: format!(
-                "set_session_retention is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     /// List due retention roots in deadline order.
     async fn list_retention_roots_due_for_deletion(
         &self,
         now_ms: u64,
         limit: usize,
-    ) -> Result<Vec<SessionRecord>, SessionStoreError> {
-        let _ = (now_ms, limit);
-        Err(SessionStoreError::Store {
-            message: "list_retention_roots_due_for_deletion is not supported by this session store"
-                .to_owned(),
-        })
-    }
+    ) -> Result<Vec<SessionRecord>, SessionStoreError>;
 
     /// Delete a logically closed session. Implementations must perform the
     /// lifecycle check and delete atomically and reject sessions whose event
@@ -519,14 +487,7 @@ pub trait SessionStore: Send + Sync {
     async fn delete_closed_sessions(
         &self,
         request: DeleteClosedSessions,
-    ) -> Result<DeleteClosedSessionsResult, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "delete_closed_sessions is not supported by this session store for {}",
-                request.session_id
-            ),
-        })
-    }
+    ) -> Result<DeleteClosedSessionsResult, SessionStoreError>;
 
     async fn delete_closed_session(
         &self,
@@ -544,34 +505,14 @@ pub trait SessionStore: Send + Sync {
     async fn create_cloned_session(
         &self,
         request: CreateClonedSession,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "create_cloned_session is not supported by this session store for {}",
-                request.session_id
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
     async fn create_forked_session(
         &self,
         request: CreateForkedSession,
-    ) -> Result<SessionRecord, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "create_forked_session is not supported by this session store for {}",
-                request.session_id
-            ),
-        })
-    }
+    ) -> Result<SessionRecord, SessionStoreError>;
 
-    async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError> {
-        Err(SessionStoreError::Store {
-            message: format!(
-                "safe_fork_seq is not supported by this session store for {session_id}"
-            ),
-        })
-    }
+    async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError>;
 
     async fn append(
         &self,
@@ -610,19 +551,15 @@ pub trait SessionStore: Send + Sync {
 
     async fn load_checkpoint(
         &self,
-        _session_id: &SessionId,
-    ) -> Result<Option<SessionCheckpoint>, SessionStoreError> {
-        Ok(None)
-    }
+        session_id: &SessionId,
+    ) -> Result<Option<SessionCheckpoint>, SessionStoreError>;
 
     /// Advance the checkpoint pointer. Returns false when a newer pointer
-    /// already exists or the store intentionally does not support checkpoints.
+    /// already exists.
     async fn advance_checkpoint(
         &self,
-        _request: AdvanceSessionCheckpoint,
-    ) -> Result<bool, SessionStoreError> {
-        Ok(false)
-    }
+        request: AdvanceSessionCheckpoint,
+    ) -> Result<bool, SessionStoreError>;
 
     async fn head(
         &self,
@@ -1392,8 +1329,6 @@ pub fn apply_lifecycle_projection(record: &mut SessionRecord, entry: &StoredSess
     match entry.event.kind.as_str() {
         CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND => {
             record.lifecycle_status = SessionLifecycleStatus::Open;
-            record.closed_at_seq = None;
-            record.closed_at_ms = None;
             refresh_delete_at(record);
         }
         CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND => {

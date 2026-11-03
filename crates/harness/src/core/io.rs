@@ -11,7 +11,7 @@
 //! hold `Send + Sync` async adapters should fulfill `CoreAgentAction` values
 //! directly instead of implementing these traits inside the workflow.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -328,20 +328,13 @@ pub struct ToolInvocationCallRequest {
     /// call's index, so sibling per-call dispatches never collide.
     pub promise_id_base: u64,
     pub call: ToolInvocationRequest,
+    /// Distinct tool identities of the other calls in this batch, for the
+    /// cross-call batch rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sibling_calls: Vec<ToolCallSummary>,
+    pub sibling_tool_ids: Vec<ToolName>,
     /// Execution policy facts selected from the admitted tool binding.
     #[serde(default)]
     pub execution: ToolExecutionSpec,
-}
-
-/// Bounded summary of one sibling call in the same tool batch.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ToolCallSummary {
-    pub call_id: ToolCallId,
-    pub tool_id: Option<ToolName>,
-    pub tool_name: ToolName,
-    pub arguments_ref: BlobRef,
 }
 
 impl ToolInvocationCallRequest {
@@ -367,24 +360,23 @@ impl ToolInvocationCallRequest {
 
 impl ToolInvocationBatchRequest {
     /// Split one call out of this batch request, carrying batch-scoped runtime
-    /// facts and bounded sibling summaries.
+    /// facts and the tool identities of its siblings. A sibling with no resolved
+    /// tool never triggers a batch rule, and the call itself is excluded by
+    /// position, so a second call to the same tool still appears.
     pub fn call_request(
         &self,
         index: usize,
         execution: ToolExecutionSpec,
     ) -> Option<ToolInvocationCallRequest> {
         let call = self.calls.get(index)?.clone();
-        let sibling_calls = self
+        let sibling_tool_ids = self
             .calls
             .iter()
             .enumerate()
             .filter(|(sibling_index, _)| *sibling_index != index)
-            .map(|(_, sibling)| ToolCallSummary {
-                call_id: sibling.call_id.clone(),
-                tool_id: sibling.tool_id.clone(),
-                tool_name: sibling.tool_name.clone(),
-                arguments_ref: sibling.arguments_ref.clone(),
-            })
+            .filter_map(|(_, sibling)| sibling.tool_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect();
         Some(ToolInvocationCallRequest {
             session_id: self.session_id.clone(),
@@ -399,7 +391,7 @@ impl ToolInvocationBatchRequest {
             code_mode_policy: self.code_mode_policy.clone(),
             promise_id_base: self.promise_id_base + index as u64,
             call,
-            sibling_calls,
+            sibling_tool_ids,
             execution,
         })
     }
@@ -665,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn call_request_splits_one_call_with_sibling_summaries_and_batch_facts() {
+    fn call_request_splits_one_call_with_sibling_tool_ids_and_batch_facts() {
         let batch = batch_request_with_calls(&["call_a", "call_b", "call_c"]);
 
         let request = batch
@@ -675,14 +667,7 @@ mod tests {
         assert_eq!(request.call.call_id, ToolCallId::new("call_b"));
         assert_eq!(request.batch_id, batch.batch_id);
         assert_eq!(request.active_environment_id, batch.active_environment_id);
-        assert_eq!(
-            request
-                .sibling_calls
-                .iter()
-                .map(|sibling| sibling.call_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["call_a", "call_c"]
-        );
+        assert_eq!(request.sibling_tool_ids, vec![ToolName::new("tool")]);
         assert!(
             batch
                 .call_request(3, ToolExecutionSpec::default())
@@ -693,6 +678,39 @@ mod tests {
         assert_eq!(rebuilt.batch_id, batch.batch_id);
         assert_eq!(rebuilt.calls.len(), 1);
         assert_eq!(rebuilt.calls[0].call_id, ToolCallId::new("call_b"));
+    }
+
+    #[test]
+    fn sibling_tool_ids_exclude_unresolved_calls_and_repeat_only_once() {
+        let mut batch = batch_request_with_calls(&["call_a", "call_b", "call_c", "call_d"]);
+        batch.calls[0].tool_id = Some(ToolName::new("tool_b"));
+        batch.calls[1].tool_id = Some(ToolName::new("tool_b"));
+        batch.calls[2].tool_id = Some(ToolName::new("tool_a"));
+        batch.calls[3].tool_id = None;
+
+        let request = batch
+            .call_request(1, ToolExecutionSpec::default())
+            .expect("call request");
+
+        // The call's own position is excluded, so a second call to its tool shows.
+        assert_eq!(
+            request.sibling_tool_ids,
+            vec![ToolName::new("tool_a"), ToolName::new("tool_b")]
+        );
+    }
+
+    #[test]
+    fn sibling_tool_ids_grow_with_distinct_tools_not_with_the_batch() {
+        let ids = (0..32)
+            .map(|index| format!("call_{index}"))
+            .collect::<Vec<_>>();
+        let batch = batch_request_with_calls(&ids.iter().map(String::as_str).collect::<Vec<_>>());
+
+        let request = batch
+            .call_request(0, ToolExecutionSpec::default())
+            .expect("call request");
+
+        assert_eq!(request.sibling_tool_ids, vec![ToolName::new("tool")]);
     }
 
     struct BatchOnlyTools;

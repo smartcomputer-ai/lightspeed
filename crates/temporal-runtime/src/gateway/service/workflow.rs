@@ -697,11 +697,7 @@ impl GatewayAgentApi {
         if loaded.state.lifecycle.status == CoreAgentStatus::Closed {
             return Ok(());
         }
-        let mut drive = harness::CoreAgentDrive::from_replayed(
-            session_id.clone(),
-            loaded.state,
-            loaded.record.head,
-        );
+        let mut drive = harness::CoreAgentDrive::from_replayed(session_id.clone(), loaded.state);
         let action = drive
             .admit_command(
                 CoreAgentCommand::CloseSession { force: true },

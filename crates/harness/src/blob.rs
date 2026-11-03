@@ -58,10 +58,6 @@ impl BlobRef {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    pub fn new_unchecked_for_tests(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
 }
 
 impl Default for BlobRef {

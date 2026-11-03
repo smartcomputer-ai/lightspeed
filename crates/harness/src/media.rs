@@ -44,13 +44,6 @@ pub fn media_handle(blob_ref: &BlobRef) -> String {
     )
 }
 
-/// True when `handle` names `blob_ref`. Accepts the handle with or without
-/// its `media:` prefix.
-pub fn blob_ref_matches_handle(blob_ref: &BlobRef, handle: &str) -> bool {
-    let hex = handle.strip_prefix(MEDIA_HANDLE_PREFIX).unwrap_or(handle);
-    hex.len() == MEDIA_HANDLE_HEX_LEN && media_handle(blob_ref).ends_with(hex)
-}
-
 /// Every distinct media handle written in `text`, in first-seen order. A
 /// handle is `media:` followed by exactly twelve lowercase hex characters
 /// and not followed by another hex character.
@@ -319,6 +312,12 @@ pub fn is_media_content(content: &ContentRef) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// True when `handle` names `blob_ref`, with or without its `media:` prefix.
+    fn blob_ref_matches_handle(blob_ref: &BlobRef, handle: &str) -> bool {
+        let hex = handle.strip_prefix(MEDIA_HANDLE_PREFIX).unwrap_or(handle);
+        hex.len() == MEDIA_HANDLE_HEX_LEN && media_handle(blob_ref).ends_with(hex)
+    }
 
     #[test]
     fn handle_is_the_first_twelve_hex_characters() {
