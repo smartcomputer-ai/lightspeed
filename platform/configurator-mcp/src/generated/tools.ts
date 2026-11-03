@@ -3570,7 +3570,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "items": {
-          "description": "Steering input, same vocabulary as run input. Delivered to the model\nat the next turn boundary of the run; it does not interrupt the\nin-flight turn or wake a parked await.",
+          "description": "Steering input, same vocabulary as run input. Delivered to the model\nat the next turn boundary of the run; it does not interrupt the\nin-flight turn or wake a parked await. If the run fails before that\nboundary, the input still enters context and the next run sees it as\nhistory. Cancelling the run drops it.",
           "items": {
             "$ref": "#/definitions/InputItem"
           },

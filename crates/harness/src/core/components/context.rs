@@ -1159,7 +1159,9 @@ fn missing_run_input_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>
     )
 }
 
-fn missing_steering_entries(state: &CoreAgentState) -> Result<Vec<ContextEntry>, DomainError> {
+pub(crate) fn missing_steering_entries(
+    state: &CoreAgentState,
+) -> Result<Vec<ContextEntry>, DomainError> {
     let Some(active_run) = state.runs.active.as_ref() else {
         return Ok(Vec::new());
     };

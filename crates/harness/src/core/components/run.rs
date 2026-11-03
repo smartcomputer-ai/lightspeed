@@ -462,6 +462,15 @@ pub(crate) fn has_unconsumed_steering(active_run: &ActiveRun) -> bool {
         .any(|steering| steering.consumed_by_turn_id.is_none())
 }
 
+/// Steering accepted but not yet in context. Unlike [`has_unconsumed_steering`],
+/// this is about the record and not the model: entries in context survive the run.
+pub(crate) fn has_unmaterialized_steering(active_run: &ActiveRun) -> bool {
+    active_run
+        .steering
+        .iter()
+        .any(|steering| steering.entry_ids.len() < steering.input.len())
+}
+
 fn terminal_run_proposal(
     state: &CoreAgentState,
     active_run: &ActiveRun,
@@ -583,6 +592,16 @@ fn terminal_run_proposal(
         }
         _ => None,
     };
+
+    // The API acknowledged this steering, so a failing run writes it down first and
+    // the next run sees it as history. The context planner runs next and no turn
+    // starts in between. A cancelled run drops it: the caller asked for this to stop.
+    if let Some(CoreAgentEvent::Run(Event::Failed { failure, .. })) = &kind
+        && failure.kind != RunFailureKind::Cancelled
+        && has_unmaterialized_steering(active_run)
+    {
+        return Ok(None);
+    }
 
     Ok(kind.map(|kind| {
         CoreAgentEventProposal::new(

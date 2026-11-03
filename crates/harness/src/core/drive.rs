@@ -910,6 +910,22 @@ pub fn context_compaction_result_proposals(
         && plan.trigger == crate::ContextCompactionTrigger::ContextLimit
         && let Some(run) = &state.runs.active
     {
+        // This failure skips the run planner, so it writes down accepted steering
+        // itself, as that planner does before an ordinary failure.
+        let steering = crate::core::components::context::missing_steering_entries(state)?;
+        if run.status == crate::RunStatus::Active && !steering.is_empty() {
+            proposals.push(CoreAgentEventProposal::new(
+                CoreAgentJoins {
+                    run_id: Some(run.run_id),
+                    ..Default::default()
+                },
+                CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                    // `CompactionFinished` above moved the revision by one.
+                    base_revision: base_revision + 1,
+                    entries: steering,
+                }),
+            ));
+        }
         proposals.push(CoreAgentEventProposal::new(
             CoreAgentJoins {
                 run_id: Some(run.run_id),
@@ -13335,5 +13351,128 @@ mod tests {
                 .expect("no request")
                 .is_none()
         );
+    }
+
+    fn steering_in_context(drive: &CoreAgentDrive) -> usize {
+        drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
+            .count()
+    }
+
+    fn turns_started(log: &[CoreAgentEntry]) -> usize {
+        log.iter()
+            .filter(|entry| matches!(entry.event, CoreAgentEvent::Turn(TurnEvent::Started { .. })))
+            .count()
+    }
+
+    #[test]
+    fn a_failed_turn_writes_accepted_steering_down_without_another_turn() {
+        for (status, finish, expected) in [
+            (
+                LlmGenerationStatus::Failed,
+                LlmFinish::Failed,
+                RunFailureKind::ModelFailure,
+            ),
+            (
+                LlmGenerationStatus::Rejected,
+                LlmFinish::Failed,
+                RunFailureKind::RequestRejected,
+            ),
+            (
+                LlmGenerationStatus::Succeeded,
+                LlmFinish::Length,
+                RunFailureKind::ModelFailure,
+            ),
+        ] {
+            let mut logged = LoggedDrive::open(config(), &[]);
+            logged.request_run(b"input");
+            let request = logged.until_generate();
+            logged.steer(request.run_id, b"a correction");
+            logged.resume(generation_result(
+                &request,
+                status,
+                finish,
+                Vec::new(),
+                Vec::new(),
+            ));
+
+            assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+            assert_eq!(turns_started(&logged.log), 1, "no farewell turn");
+            let failure = logged.last_run().failure.as_ref().expect("failure");
+            assert_eq!(failure.kind, expected);
+            assert_eq!(steering_in_context(&logged.drive), 1);
+            logged.assert_replays(|_| {});
+
+            logged.request_run(b"next");
+            let next = logged.until_generate();
+            assert!(
+                openai_items(&next)
+                    .iter()
+                    .any(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn cancelling_a_run_still_drops_its_unseen_steering() {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        logged.admit(CoreAgentCommand::CancelRun {
+            run_id: request.run_id,
+            requested_by: None,
+        });
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_eq!(logged.last_run().status, RunStatus::Cancelled);
+        assert_eq!(steering_in_context(&logged.drive), 0);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_failed_overflow_compaction_writes_accepted_steering_down_before_failing() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        logged.request_run(b"earlier");
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        logged.resume(overflow_result(&request));
+        let CoreAgentAction::CompactContext {
+            request: compaction,
+        } = logged.pump()
+        else {
+            panic!("overflow asks for compaction");
+        };
+        let failure_ref = BlobRef::from_bytes(b"compaction failed");
+        let failed = logged
+            .drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    usage: None,
+                    calls: 1,
+                    session_id: compaction.session_id,
+                    context_revision: compaction.request.context.context_revision,
+                    status: ContextCompactionStatus::Failed,
+                    failure_ref: Some(failure_ref.clone()),
+                    context_entries: Vec::new(),
+                },
+                80,
+            )
+            .expect("resume compaction");
+        logged.commit(failed);
+
+        let failure = logged.last_run().failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::ContextFailure);
+        assert_eq!(failure.message_ref, Some(failure_ref));
+        assert_eq!(steering_in_context(&logged.drive), 1);
+        logged.assert_replays(|_| {});
     }
 }

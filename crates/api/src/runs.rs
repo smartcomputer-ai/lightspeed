@@ -195,7 +195,9 @@ pub struct RunSteerParams {
     pub run_id: RunId,
     /// Steering input, same vocabulary as run input. Delivered to the model
     /// at the next turn boundary of the run; it does not interrupt the
-    /// in-flight turn or wake a parked await.
+    /// in-flight turn or wake a parked await. If the run fails before that
+    /// boundary, the input still enters context and the next run sees it as
+    /// history. Cancelling the run drops it.
     pub items: Vec<InputItem>,
 }
 
