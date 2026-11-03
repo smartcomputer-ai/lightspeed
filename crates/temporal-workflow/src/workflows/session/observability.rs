@@ -178,6 +178,27 @@ pub(super) fn log_admission_refused(ctx: &WorkflowContext<AgentSessionWorkflow>,
     );
 }
 
+/// A stalled pass has no caller to tell and no failure to raise. It means some wake
+/// predicate says work is ready that no step of the pass consumes, which is a bug.
+pub(super) fn log_loop_stalled(ctx: &WorkflowContext<AgentSessionWorkflow>) {
+    if ctx.is_replaying() {
+        return;
+    }
+    let fields = session_fields(ctx);
+    tracing::error!(
+        target: "temporal_workflow",
+        event = "session_loop_stalled",
+        universe_id = fields.universe_id,
+        session_id = fields.session_id,
+        workflow_id = ctx.workflow_id(),
+        temporal_run_id = ctx.run_id(),
+        lightspeed_run_id = fields.active_run_id,
+        session_head_seq = fields.session_head_seq,
+        history_length = ctx.history_length(),
+        "the session loop stopped awaiting; waiting out a timer instead of holding the worker"
+    );
+}
+
 pub(super) fn log_step_refused(ctx: &WorkflowContext<AgentSessionWorkflow>, error: &str) {
     if ctx.is_replaying() {
         return;

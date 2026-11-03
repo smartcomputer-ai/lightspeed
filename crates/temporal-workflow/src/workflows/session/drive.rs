@@ -3,8 +3,8 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DriveOutcome {
     Idle,
-    /// History rollover is due, but a transport queue must be drained by the
-    /// outer workflow loop before continuation can safely occur.
+    /// The outer workflow loop has work it will really await right now. The drive
+    /// has not reached Idle, so the outer loop comes back to it afterwards.
     YieldForWorkflowWork,
     ContinueAsNew,
 }
@@ -336,6 +336,7 @@ fn drive_boundary_after_commit(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> Option<DriveOutcome> {
+    ctx.state_mut(|state| state.execution_has_rollover_checkpoint = true);
     history_boundary_outcome(ctx, args)
 }
 
@@ -417,27 +418,31 @@ fn history_boundary_outcome(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> Option<DriveOutcome> {
-    // Pending preparation may need the current turn and its tool batch to finish
-    // before it can publish. Let the driver reach that boundary instead of
-    // yielding forever.
-    if ctx.state(|state| state.run_preparation.is_some() || !state.pending_toolsets.is_empty()) {
-        return None;
-    }
+    let now_ms = workflow_time_ms(ctx);
     history_boundary_outcome_for(
         wait_loop::history_rollover_due(ctx, args),
         ctx.all_handlers_finished() && ctx.state(wait_loop::workflow_state_allows_continue_as_new),
+        ctx.state(|state| wait_loop::outer_loop_can_clear_now(state, now_ms)),
     )
 }
 
+/// A blocked rollover yields only to an outer loop that will really await
+/// something. Workflow time is frozen within an activation, so yielding to one that
+/// has nothing to await returns straight here and never gives the poll back: the
+/// process stops polling every role until it is killed. Every other blocker needs
+/// the drive or the clock, so the drive carries on and asks again at its next commit.
 pub(super) fn history_boundary_outcome_for(
     rollover_due: bool,
     continuation_safe: bool,
+    outer_loop_can_clear: bool,
 ) -> Option<DriveOutcome> {
-    rollover_due.then_some(if continuation_safe {
-        DriveOutcome::ContinueAsNew
-    } else {
-        DriveOutcome::YieldForWorkflowWork
-    })
+    if !rollover_due {
+        return None;
+    }
+    if continuation_safe {
+        return Some(DriveOutcome::ContinueAsNew);
+    }
+    outer_loop_can_clear.then_some(DriveOutcome::YieldForWorkflowWork)
 }
 
 async fn maybe_close_on_terminal(

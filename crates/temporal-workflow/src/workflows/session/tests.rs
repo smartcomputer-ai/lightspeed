@@ -287,15 +287,159 @@ fn continue_as_new_policy_uses_default_threshold() {
 }
 
 #[test]
-fn active_drive_rollover_outcome_is_typed_and_waits_for_transport_drain() {
-    assert_eq!(drive::history_boundary_outcome_for(false, true), None);
+fn a_due_rollover_continues_when_safe_and_yields_only_to_real_outer_work() {
+    use drive::history_boundary_outcome_for as outcome;
+
+    assert_eq!(outcome(false, true, true), None);
+    assert_eq!(outcome(false, false, true), None);
     assert_eq!(
-        drive::history_boundary_outcome_for(true, true),
+        outcome(true, true, false),
         Some(DriveOutcome::ContinueAsNew)
     );
+    assert_eq!(outcome(true, true, true), Some(DriveOutcome::ContinueAsNew));
     assert_eq!(
-        drive::history_boundary_outcome_for(true, false),
+        outcome(true, false, true),
         Some(DriveOutcome::YieldForWorkflowWork)
+    );
+    assert_eq!(
+        outcome(true, false, false),
+        None,
+        "a blocker the outer loop cannot clear leaves the drive to carry on"
+    );
+}
+
+#[test]
+fn blockers_that_need_the_drive_or_the_clock_never_yield_to_the_outer_loop() {
+    const NOW: u64 = 1_000;
+    let unblocked = || AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    let blocked_and_not_clearable = |state: &AgentSessionWorkflow, blocker: &str| {
+        assert!(
+            !wait_loop::workflow_state_allows_continue_as_new(state),
+            "{blocker} blocks continuation"
+        );
+        assert!(
+            !wait_loop::outer_loop_can_clear_now(state, NOW),
+            "{blocker} cannot be cleared by the outer loop now"
+        );
+    };
+
+    let mut watchdog = unblocked();
+    watchdog.cancelling_watchdog = Some(CancellingWatchdog {
+        run_id: 1,
+        since_ms: NOW,
+    });
+    blocked_and_not_clearable(&watchdog, "an armed watchdog");
+
+    let mut backing_off = unblocked();
+    let mut retrying = pending_run_emission();
+    retrying.next_attempt_at_ms = NOW + 1;
+    backing_off.pending_emissions.push(retrying);
+    blocked_and_not_clearable(&backing_off, "an emission in backoff");
+
+    let mut start_backoff = workflow_with_start_intent().workflow;
+    start_backoff.ready = true;
+    let invocation = start_backoff
+        .core_state
+        .workflow_tools
+        .start_requests
+        .keys()
+        .next()
+        .expect("start intent")
+        .as_str()
+        .to_owned();
+    start_backoff
+        .workflow_start_backoffs
+        .insert(invocation, (1, NOW + 1));
+    blocked_and_not_clearable(&start_backoff, "a start in backoff");
+
+    let mut held = workflow_with_turn_in_flight();
+    held.queue_admission(admission(CoreAgentCommand::RemoveContext {
+        expected_revision: None,
+        key: harness::ContextEntryKey::new("client.note"),
+    }));
+    assert!(!admissions::has_admissible_admissions(&held));
+    blocked_and_not_clearable(&held, "an admission held behind a turn");
+}
+
+#[test]
+fn work_the_outer_loop_consumes_with_an_await_makes_a_blocked_rollover_yield() {
+    const NOW: u64 = 1_000;
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    assert!(!wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+
+    workflow.queue_admission(admission(request_input_run("submit_1")));
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    workflow.pending_admissions.clear();
+
+    workflow.pending_tool_batch_resumes.push(pending_resume(1));
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    workflow.pending_tool_batch_resumes.clear();
+
+    workflow
+        .pending_promise_cancellations
+        .push(pending_promise_cancellation("promise_1"));
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    workflow.pending_promise_cancellations.clear();
+
+    // A retained emission counts once its retry is due, not only when it is new.
+    let mut retrying = pending_run_emission();
+    retrying.next_attempt_at_ms = NOW;
+    workflow.pending_emissions.push(retrying);
+    assert!(wait_loop::outer_loop_can_clear_now(&workflow, NOW));
+    assert!(!wait_loop::outer_loop_can_clear_now(&workflow, NOW - 1));
+}
+
+#[test]
+fn a_start_backoff_whose_candidate_is_gone_does_not_block_rollover_for_good() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow.ready = true;
+    let key = invocation_id.as_str().to_owned();
+    workflow
+        .workflow_start_backoffs
+        .insert(key.clone(), (1, 2_000));
+    workflow_starts::forget_stale_backoffs(&mut workflow);
+    assert!(
+        workflow.workflow_start_backoffs.contains_key(&key),
+        "a live candidate keeps its backoff"
+    );
+
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Cancelled;
+    workflow_starts::forget_stale_backoffs(&mut workflow);
+
+    assert!(workflow.workflow_start_backoffs.is_empty());
+    assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
+}
+
+#[test]
+fn a_loop_that_stops_awaiting_is_caught_and_a_moving_clock_is_not() {
+    let mut guard = wait_loop::StallGuard::default();
+    for now in 0..1_000 {
+        assert!(!guard.stalled(1, now), "the clock moved");
+    }
+    for history_length in 2..1_000 {
+        assert!(!guard.stalled(history_length, 1_000), "history moved");
+    }
+    let passes = (0..100).filter(|_| guard.stalled(1_000, 1_000)).count();
+    assert!(
+        (2..=4).contains(&passes),
+        "a frozen activation reports repeatedly, got {passes}"
     );
 }
 
@@ -990,6 +1134,73 @@ fn bound_dispatch_controls_push_delivery_independently_of_completion() {
 
 #[test]
 fn start_intents_recompute_pending_start_work_from_durable_state() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+
+    // A durable start intent with a pending keyed promise is immediate
+    // start work — recomputed from state, so replay and continue-as-new
+    // rebuild it without transport bookkeeping.
+    assert!(workflow_starts::has_immediate_work(&workflow));
+
+    // A confirmed start needs no re-issue until state changes.
+    workflow
+        .confirmed_workflow_starts
+        .insert(invocation_id.as_str().to_owned());
+    assert!(!workflow_starts::has_immediate_work(&workflow));
+    workflow.confirmed_workflow_starts.clear();
+
+    // Terminal start failure removes the candidate.
+    workflow
+        .core_state
+        .workflow_tools
+        .start_failures
+        .insert(invocation_id.clone(), harness::BlobRef::from_bytes(b"err"));
+    assert!(!workflow_starts::has_immediate_work(&workflow));
+    workflow.core_state.workflow_tools.start_failures.clear();
+
+    // A terminal promise set leaves nothing to start; started executions
+    // get a recovery poll instead of a bound-receiver push.
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Resolved;
+    assert!(!workflow_starts::has_immediate_work(&workflow));
+
+    // Recovery polls cover pending started-execution promises only.
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Pending;
+    promise_sources::reconcile_polls_for_state(&mut workflow, 1_000);
+    let poll = workflow
+        .promise_source_polls
+        .get(promise_id.as_str())
+        .expect("recovery poll for started execution");
+    assert!(
+        poll.next_check_at_ms > 1_000,
+        "recovery poll is a slow backstop"
+    );
+}
+
+/// A session holding one start-on-call invocation with its keyed promise pending.
+struct StartIntent {
+    workflow: AgentSessionWorkflow,
+    invocation_id: harness::WorkflowToolInvocationId,
+    promise_id: harness::PromiseId,
+    execution_id: String,
+}
+
+fn workflow_with_start_intent() -> StartIntent {
     let mut workflow = AgentSessionWorkflow {
         universe_id: Some(test_universe()),
         session_id: Some(SessionId::new("child_session")),
@@ -1091,56 +1302,69 @@ fn start_intents_recompute_pending_start_work_from_durable_state() {
             deadline_ms: None,
         },
     );
+    StartIntent {
+        workflow,
+        invocation_id,
+        promise_id,
+        execution_id,
+    }
+}
 
-    // A durable start intent with a pending keyed promise is immediate
-    // start work — recomputed from state, so replay and continue-as-new
-    // rebuild it without transport bookkeeping.
-    assert!(workflow_starts::has_immediate_work(&workflow));
-
-    // A confirmed start needs no re-issue until state changes.
-    workflow
-        .confirmed_workflow_starts
-        .insert(invocation_id.as_str().to_owned());
-    assert!(!workflow_starts::has_immediate_work(&workflow));
-    workflow.confirmed_workflow_starts.clear();
-
-    // Terminal start failure removes the candidate.
-    workflow
-        .core_state
-        .workflow_tools
-        .start_failures
-        .insert(invocation_id.clone(), harness::BlobRef::from_bytes(b"err"));
-    assert!(!workflow_starts::has_immediate_work(&workflow));
-    workflow.core_state.workflow_tools.start_failures.clear();
-
-    // A terminal promise set leaves nothing to start; started executions
-    // get a recovery poll instead of a bound-receiver push.
-    workflow
-        .core_state
-        .promises
-        .promises
-        .get_mut(&promise_id)
-        .expect("promise")
-        .status = PromiseStatus::Resolved;
-    assert!(!workflow_starts::has_immediate_work(&workflow));
-
-    // Recovery polls cover pending started-execution promises only.
-    workflow
-        .core_state
-        .promises
-        .promises
-        .get_mut(&promise_id)
-        .expect("promise")
-        .status = PromiseStatus::Pending;
-    promise_sources::reconcile_polls_for_state(&mut workflow, 1_000);
-    let poll = workflow
-        .promise_source_polls
-        .get(promise_id.as_str())
-        .expect("recovery poll for started execution");
-    assert!(
-        poll.next_check_at_ms > 1_000,
-        "recovery poll is a slow backstop"
-    );
+/// A ready session with an active run whose turn has started.
+fn workflow_with_turn_in_flight() -> AgentSessionWorkflow {
+    let mut workflow = AgentSessionWorkflow {
+        ready: true,
+        ..Default::default()
+    };
+    let mut drive = CoreAgentDrive::from_replayed(SessionId::new("held"), CoreAgentState::new());
+    let mut commit = |drive: &mut CoreAgentDrive, action: CoreAgentAction| {
+        let CoreAgentAction::AppendEvents { events, .. } = action else {
+            panic!("expected an append, got {action:?}");
+        };
+        let mut seq = drive.head().map_or(0, |head| head.seq.as_u64());
+        let entries = events
+            .into_iter()
+            .map(|event| {
+                seq += 1;
+                harness::storage::StoredSessionEntry {
+                    position: SessionPosition {
+                        seq: harness::EventSeq::new(seq),
+                    },
+                    observed_at_ms: event.observed_at_ms,
+                    joins: event.joins,
+                    event: event.event,
+                }
+            })
+            .collect();
+        drive.resume_appended(entries).expect("apply");
+    };
+    let open = drive
+        .admit_command(
+            CoreAgentCommand::OpenSession {
+                config: crate::default_session_config(harness::ModelSelection {
+                    api_kind: harness::ProviderApiKind::OpenAiResponses,
+                    provider_id: "openai".into(),
+                    model: "gpt-test".into(),
+                }),
+            },
+            1,
+        )
+        .expect("open");
+    commit(&mut drive, open);
+    let run = drive
+        .admit_command(request_input_run("submit_held"), 2)
+        .expect("run");
+    commit(&mut drive, run);
+    for now in 3..64 {
+        match drive.next_action_unbounded(now).expect("next action") {
+            CoreAgentAction::GenerateLlm { .. } => {
+                workflow.core_state = drive.state().clone();
+                return workflow;
+            }
+            action => commit(&mut drive, action),
+        }
+    }
+    panic!("the run never reached its generation");
 }
 
 #[test]

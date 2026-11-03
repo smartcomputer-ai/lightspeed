@@ -20,6 +20,7 @@ mod wait_loop;
 mod watchdog;
 mod workflow_starts;
 
+use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -63,6 +64,9 @@ use errors::{fatal, record_admission_failure, record_bootstrap_error, record_war
 use session_state::flush_pending_emissions;
 use wait_loop::{can_continue_as_new, wait_for_workflow_work, workflow_state_should_complete};
 use watchdog::{process_cancelling_watchdog, reconcile_cancelling_watchdog};
+
+/// How long a session loop that stopped awaiting waits before its next pass.
+const STALLED_LOOP_WAIT: Duration = Duration::from_secs(1);
 
 #[workflow]
 pub struct AgentSessionWorkflow {
@@ -146,7 +150,19 @@ impl AgentSessionWorkflow {
         let dispatch_ctx = ctx.clone();
         let code_tool_dispatch = code_tools::run_dispatch_loop(ctx.clone()).fuse();
         let session = async {
+            let mut stall_guard = wait_loop::StallGuard::default();
+            // Auto-reject and close on terminal run only when the drive reaches Idle.
+            // A yield or a rollover can stop it one step short, and nothing the wake
+            // predicates read says so, so the loop remembers it owes the drive a pass.
+            let mut drive_owed = args
+                .continuation_state
+                .as_ref()
+                .is_some_and(|continuation| continuation.ready);
             loop {
+                if stall_guard.stalled(ctx.history_length(), workflow_time_ms(ctx)) {
+                    observability::log_loop_stalled(ctx);
+                    let _ = ctx.timer_with_manual_cancellation(STALLED_LOOP_WAIT).await;
+                }
                 preparation::prepare_initial_session(ctx, &args)
                     .await
                     .map_err(|error| fatal(ctx, error, "session_setup"))?;
@@ -155,7 +171,9 @@ impl AgentSessionWorkflow {
                 }
                 reconcile_cancelling_watchdog(ctx);
                 promise_sources::reconcile_polls(ctx);
-                wait_for_workflow_work(ctx).await;
+                if !drive_owed {
+                    wait_for_workflow_work(ctx).await;
+                }
                 code_tools::process_pending(ctx)
                     .await
                     .map_err(|error| fatal(ctx, error, "code_tools"))?;
@@ -185,8 +203,15 @@ impl AgentSessionWorkflow {
                 let outcome = drive_past_refusals(ctx, &args, resumed)
                     .await
                     .map_err(|error| fatal(ctx, error, "tool_batch_resume"))?;
-                if outcome == DriveOutcome::ContinueAsNew {
-                    return observability::request_continue_as_new(ctx, &args);
+                match outcome {
+                    DriveOutcome::ContinueAsNew => {
+                        return observability::request_continue_as_new(ctx, &args);
+                    }
+                    DriveOutcome::YieldForWorkflowWork => {
+                        drive_owed = true;
+                        continue;
+                    }
+                    DriveOutcome::Idle => {}
                 }
                 // After the resumes, so a resume about to land is not pre-empted by
                 // the force that exists for the case where none ever does.
@@ -194,15 +219,22 @@ impl AgentSessionWorkflow {
                 let outcome = drive_past_refusals(ctx, &args, forced)
                     .await
                     .map_err(|error| fatal(ctx, error, "cancellation_watchdog"))?;
-                if outcome == DriveOutcome::ContinueAsNew {
-                    return observability::request_continue_as_new(ctx, &args);
+                match outcome {
+                    DriveOutcome::ContinueAsNew => {
+                        return observability::request_continue_as_new(ctx, &args);
+                    }
+                    DriveOutcome::YieldForWorkflowWork => {
+                        drive_owed = true;
+                        continue;
+                    }
+                    DriveOutcome::Idle => {}
                 }
                 let mut admission_drive =
                     drive_from_state(ctx).map_err(|error| fatal(ctx, error, "drive_rehydrate"))?;
                 admissions::drain_pending_admissions(ctx, &mut admission_drive)
                     .await
                     .map_err(|error| fatal(ctx, error, "admission"))?;
-                if wait_loop::workflow_state_needs_core_drive(ctx) {
+                if drive_owed || wait_loop::workflow_state_needs_core_drive(ctx) {
                     let mut drive = drive_from_state(ctx)
                         .map_err(|error| fatal(ctx, error, "drive_rehydrate"))?;
                     let driven = drive_until_idle(ctx, &args, &mut drive).await;
@@ -212,6 +244,7 @@ impl AgentSessionWorkflow {
                     if outcome == DriveOutcome::ContinueAsNew {
                         return observability::request_continue_as_new(ctx, &args);
                     }
+                    drive_owed = outcome == DriveOutcome::YieldForWorkflowWork;
                 }
                 if workflow_state_should_complete(ctx) {
                     return Ok(());

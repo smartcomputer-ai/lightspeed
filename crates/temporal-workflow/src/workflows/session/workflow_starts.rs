@@ -78,6 +78,28 @@ pub(super) fn has_immediate_work(state: &AgentSessionWorkflow) -> bool {
     })
 }
 
+/// Whether `process_pending_starts` at `now_ms` would issue anything.
+pub(super) fn has_due_start(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
+    start_candidates(state).iter().any(|candidate| {
+        state
+            .workflow_start_backoffs
+            .get(candidate.invocation.invocation_id.as_str())
+            .is_none_or(|(_, next_at_ms)| *next_at_ms <= now_ms)
+    })
+}
+
+/// A backoff outlives its candidate when the promise goes terminal before the retry.
+/// It would never be due again, and it would hold continue-as-new shut for good.
+pub(super) fn forget_stale_backoffs(state: &mut AgentSessionWorkflow) {
+    let candidates = start_candidates(state)
+        .into_iter()
+        .map(|candidate| candidate.invocation.invocation_id.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+    state
+        .workflow_start_backoffs
+        .retain(|invocation_id, _| candidates.contains(invocation_id));
+}
+
 pub(super) fn nearest_wake_ms(state: &AgentSessionWorkflow) -> Option<u64> {
     let candidates = start_candidates(state);
     candidates
@@ -99,7 +121,8 @@ pub(super) async fn process_pending_starts(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
     let now = workflow_time_ms(ctx);
-    let due = ctx.state(|state| {
+    let due = ctx.state_mut(|state| {
+        forget_stale_backoffs(state);
         start_candidates(state)
             .into_iter()
             .filter(|candidate| {

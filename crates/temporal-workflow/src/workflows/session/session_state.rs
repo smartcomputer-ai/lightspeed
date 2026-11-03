@@ -377,9 +377,11 @@ pub(super) fn nearest_emission_retry_ms(state: &AgentSessionWorkflow) -> Option<
         .min()
 }
 
-pub(super) fn has_due_emissions(state: &AgentSessionWorkflow) -> bool {
+/// Whether a flush at `now_ms` would attempt anything. Pass 0 for the entries that
+/// are not waiting out a retry; those that are wake through their own timer.
+pub(super) fn has_due_emissions(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
     state
         .pending_emissions
         .iter()
-        .any(|pending| pending.next_attempt_at_ms == 0)
+        .any(|pending| pending.next_attempt_at_ms <= now_ms)
 }

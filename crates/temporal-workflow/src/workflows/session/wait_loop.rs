@@ -43,13 +43,55 @@ pub(super) fn workflow_state_has_immediate_work(state: &AgentSessionWorkflow) ->
         || admissions::has_admissible_admissions(state)
         || !state.pending_tool_batch_resumes.is_empty()
         || code_tools::has_immediate_work(state)
-        || session_state::has_due_emissions(state)
+        || session_state::has_due_emissions(state, 0)
         || !state.pending_source_resolutions.is_empty()
         || !state.pending_promise_cancellations.is_empty()
         || awaits::has_satisfied_await(state)
         || promise_sources::has_immediate_work(state)
         || workflow_starts::has_immediate_work(state)
         || workflow_state_needs_core_drive_for_state(state)
+}
+
+/// Whether the outer loop would consume a rollover blocker on its next pass, with an
+/// await in it. An armed watchdog, unfinished update handlers, code tools in flight,
+/// backoffs not yet due and admissions held behind a turn or a compaction do not
+/// count: those clear only through the drive or the clock.
+pub(super) fn outer_loop_can_clear_now(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
+    admissions::has_admissible_admissions(state)
+        || !state.pending_tool_batch_resumes.is_empty()
+        || session_state::has_due_emissions(state, now_ms)
+        || !state.pending_source_resolutions.is_empty()
+        || !state.pending_promise_cancellations.is_empty()
+        || code_tools::has_immediate_work(state)
+        || workflow_starts::has_due_start(state, now_ms)
+}
+
+/// Passes of the outer loop allowed in one activation with nothing awaited.
+const STALLED_PASS_LIMIT: u32 = 32;
+
+/// Catches a session loop that stopped awaiting. A workflow task's clock and history
+/// length move only between activations, so a pass that repeats both awaited nothing.
+/// One such loop would hold every workflow on this worker's thread.
+#[derive(Default)]
+pub(super) struct StallGuard {
+    seen: (u32, u64),
+    passes: u32,
+}
+
+impl StallGuard {
+    /// Note the start of a pass, and say whether the loop should wait out a timer.
+    pub(super) fn stalled(&mut self, history_length: u32, now_ms: u64) -> bool {
+        if self.seen != (history_length, now_ms) {
+            self.seen = (history_length, now_ms);
+            self.passes = 0;
+        }
+        self.passes += 1;
+        if self.passes < STALLED_PASS_LIMIT {
+            return false;
+        }
+        self.passes = 0;
+        true
+    }
 }
 
 pub(super) fn workflow_state_needs_core_drive(ctx: &WorkflowContext<AgentSessionWorkflow>) -> bool {

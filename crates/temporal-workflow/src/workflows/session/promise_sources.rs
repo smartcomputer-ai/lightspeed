@@ -253,7 +253,12 @@ pub(super) async fn flush_pending_promise_cancellations(
 pub(super) async fn process_pending_source_resolutions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
-    let pending = ctx.state_mut(|state| std::mem::take(&mut state.pending_source_resolutions));
+    let pending = ctx.state_mut(|state| {
+        let pending = std::mem::take(&mut state.pending_source_resolutions);
+        // A refused producer appends nothing and its signal still grew the history.
+        state.execution_has_rollover_checkpoint |= !pending.is_empty();
+        pending
+    });
     for pending in pending {
         let PendingSourceResolution {
             promise_id,

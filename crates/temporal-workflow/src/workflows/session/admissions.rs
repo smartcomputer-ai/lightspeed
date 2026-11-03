@@ -176,6 +176,10 @@ pub(super) async fn drain_pending_admissions(
         return Ok(false);
     }
     admit_admissions(ctx, drive, admissions).await?;
+    // Admitted, rejected or a no-op operation, the work was consumed even when it
+    // appended nothing. Without this an execution that only does such work never
+    // earns a rollover and its history grows to the server's limit.
+    ctx.state_mut(|state| state.execution_has_rollover_checkpoint = true);
     Ok(true)
 }
 
