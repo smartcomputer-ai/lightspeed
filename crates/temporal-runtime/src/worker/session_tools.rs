@@ -171,12 +171,11 @@ impl SessionTools {
         &self,
         call: &harness::ToolInvocationRequest,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
-        let result = match async {
-            let args: CancelArgs = self.read_tool_args(call).await?;
-            cancel_promises_from_runtime(&args, call.promise_control.as_ref()).map_err(io_error)
-        }
-        .await
-        {
+        let args: CancelArgs = match self.read_tool_args(call).await? {
+            Ok(args) => args,
+            Err(failed) => return Ok(failed),
+        };
+        let result = match cancel_promises_from_runtime(&args, call.promise_control.as_ref()) {
             Ok((output, effects)) => {
                 let visible = cancel_promises_model_visible_text(&output);
                 let mut result = self.succeeded_tool_result(call, &output, visible).await?;
@@ -195,23 +194,23 @@ impl SessionTools {
         run_id: harness::RunId,
         call: &harness::ToolInvocationRequest,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
-        let result = match async {
-            let args: DetachArgs = self.read_tool_args(call).await?;
-            detach_promises_from_runtime(&args, run_id, call.promise_control.as_ref())
-                .map_err(io_error)
-        }
-        .await
-        {
-            Ok((output, effects)) => {
-                let visible = detach_promises_model_visible_text(&output);
-                let mut result = self.succeeded_tool_result(call, &output, visible).await?;
-                result.effects = effects;
-                result
-            }
-            Err(error) => {
-                failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string()).await?
-            }
+        let args: DetachArgs = match self.read_tool_args(call).await? {
+            Ok(args) => args,
+            Err(failed) => return Ok(failed),
         };
+        let result =
+            match detach_promises_from_runtime(&args, run_id, call.promise_control.as_ref()) {
+                Ok((output, effects)) => {
+                    let visible = detach_promises_model_visible_text(&output);
+                    let mut result = self.succeeded_tool_result(call, &output, visible).await?;
+                    result.effects = effects;
+                    result
+                }
+                Err(error) => {
+                    failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                        .await?
+                }
+            };
         Ok(result)
     }
 
@@ -220,7 +219,10 @@ impl SessionTools {
         call: &harness::ToolInvocationRequest,
         promise_ids: &PromiseIdAllocator,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
-        let args: SleepArgs = self.read_tool_args(call).await?;
+        let args: SleepArgs = match self.read_tool_args(call).await? {
+            Ok(args) => args,
+            Err(failed) => return Ok(failed),
+        };
         let fire_at_ms = now_unix_ms()?.saturating_add(args.ms);
         let promise_id = promise_ids.allocate();
         let output = SleepOutput {
@@ -243,7 +245,10 @@ impl SessionTools {
         &self,
         call: &harness::ToolInvocationRequest,
     ) -> Result<Result<harness::AwaitSpec, ToolInvocationResult>, CoreAgentIoError> {
-        let args: AwaitArgs = self.read_tool_args(call).await?;
+        let args: AwaitArgs = match self.read_tool_args(call).await? {
+            Ok(args) => args,
+            Err(failed) => return Ok(Err(failed)),
+        };
         match await_spec_from_args(args, now_unix_ms()?).map_err(io_error) {
             Ok(spec) => Ok(Ok(spec)),
             Err(error) => {
@@ -262,7 +267,10 @@ impl SessionTools {
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
         match call.tool_id.as_ref().map(|id| id.as_str()) {
             Some("env.job_read") => {
-                let args: JobReadArgs = self.read_tool_args(call).await?;
+                let args: JobReadArgs = match self.read_tool_args(call).await? {
+                    Ok(args) => args,
+                    Err(failed) => return Ok(failed),
+                };
                 let result = self
                     .read_environment_jobs(
                         &request.session_id,
@@ -425,10 +433,13 @@ impl SessionTools {
         Ok(EnvironmentJobRead { entries })
     }
 
+    /// A call's arguments, or its failed result when they do not parse. The model
+    /// wrote them, so that is this call's failure and must not touch its siblings.
+    /// Only a store that cannot read them is an error.
     async fn read_tool_args<T>(
         &self,
         call: &harness::ToolInvocationRequest,
-    ) -> Result<T, CoreAgentIoError>
+    ) -> Result<Result<T, ToolInvocationResult>, CoreAgentIoError>
     where
         T: serde::de::DeserializeOwned,
     {
@@ -437,8 +448,16 @@ impl SessionTools {
             .read_bytes(&call.arguments_ref)
             .await
             .map_err(|error| io_error(format!("read tool arguments: {error}")))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|error| io_error(format!("invalid JSON tool arguments: {error}")))
+        match serde_json::from_slice(&bytes) {
+            Ok(args) => Ok(Ok(args)),
+            Err(error) => failed_result(
+                self.blobs.as_ref(),
+                call.call_id.clone(),
+                format!("invalid JSON tool arguments: {error}"),
+            )
+            .await
+            .map(Err),
+        }
     }
 
     async fn invoke_workflow_tool_call(
@@ -538,16 +557,9 @@ impl SessionTools {
                 )
                 .await;
             };
-            let args: AgentCallArgs = match self.read_tool_args(call).await {
+            let args: AgentCallArgs = match self.read_tool_args(call).await? {
                 Ok(args) => args,
-                Err(error) => {
-                    return failed_result(
-                        self.blobs.as_ref(),
-                        call.call_id.clone(),
-                        error.to_string(),
-                    )
-                    .await;
-                }
+                Err(failed) => return Ok(failed),
             };
             if let Err(error) = args.validate() {
                 return failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
@@ -624,16 +636,9 @@ impl SessionTools {
                 )
                 .await;
             }
-            let args: tools::code::CodeExecuteArgs = match self.read_tool_args(call).await {
+            let args: tools::code::CodeExecuteArgs = match self.read_tool_args(call).await? {
                 Ok(args) => args,
-                Err(error) => {
-                    return failed_result(
-                        self.blobs.as_ref(),
-                        call.call_id.clone(),
-                        error.to_string(),
-                    )
-                    .await;
-                }
+                Err(failed) => return Ok(failed),
             };
             let limits = match args.effective_limits(policy.limits) {
                 Ok(limits) => limits,
@@ -863,7 +868,10 @@ impl SessionTools {
         let active = request.active_environment_id.as_ref();
         match call.tool_id.as_ref().map(|id| id.as_str()) {
             Some("environment.list") => {
-                let _: EnvironmentListArgs = self.read_tool_args(call).await?;
+                let _: EnvironmentListArgs = match self.read_tool_args(call).await? {
+                    Ok(args) => args,
+                    Err(failed) => return Ok(failed),
+                };
                 let mut environments = Vec::with_capacity(policy.environments.len());
                 for attachment in &policy.environments {
                     let environment_id =
@@ -908,7 +916,10 @@ impl SessionTools {
                 .await
             }
             Some("environment.read") => {
-                let args: EnvironmentReadArgs = self.read_tool_args(call).await?;
+                let args: EnvironmentReadArgs = match self.read_tool_args(call).await? {
+                    Ok(args) => args,
+                    Err(failed) => return Ok(failed),
+                };
                 let environment_id = match environment_read_target(args, active, Some(policy)) {
                     Ok(environment_id) => environment_id,
                     Err(EnvironmentReadTargetError::NoActiveEnvironment) => {
@@ -953,7 +964,10 @@ impl SessionTools {
                 .await
             }
             Some("environment.activate") => {
-                let args: EnvironmentActivateArgs = self.read_tool_args(call).await?;
+                let args: EnvironmentActivateArgs = match self.read_tool_args(call).await? {
+                    Ok(args) => args,
+                    Err(failed) => return Ok(failed),
+                };
                 let environment_id =
                     match resolve_attached_environment(&args.environment_id, Some(policy)) {
                         Ok(id) => id,
@@ -1023,7 +1037,10 @@ impl SessionTools {
                 Ok(result)
             }
             Some("environment.deactivate") => {
-                let _: EnvironmentDeactivateArgs = self.read_tool_args(call).await?;
+                let _: EnvironmentDeactivateArgs = match self.read_tool_args(call).await? {
+                    Ok(args) => args,
+                    Err(failed) => return Ok(failed),
+                };
                 let output = EnvironmentDeactivateOutput { active: false };
                 let mut result = self
                     .succeeded_tool_result(call, &output, "Active environment cleared.")
@@ -1526,15 +1543,24 @@ impl CoreAgentTools for SessionTools {
         let Some(call) = await_calls.first() else {
             return Ok(completed(results));
         };
-        Ok(match self.prepare_await(call).await? {
-            Ok(spec) => ToolBatchOutcome::Deferred {
+        // The siblings above have finished, so an error from here on must not take
+        // their results with it.
+        Ok(match self.prepare_await(call).await {
+            Ok(Ok(spec)) => ToolBatchOutcome::Deferred {
                 batch_id: request.batch_id,
                 call_id: call.call_id.clone(),
                 completed_results: results,
                 spec,
             },
-            Err(failed) => {
+            Ok(Err(failed)) => {
                 results.push(failed);
+                completed(results)
+            }
+            Err(error) => {
+                results.push(
+                    failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                        .await?,
+                );
                 completed(results)
             }
         })
@@ -5114,6 +5140,132 @@ mod tests {
             completed_results[0].effects[0].kind,
             harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_malformed_await_fails_alone_and_keeps_its_workflow_tool_sibling() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let sessions = InMemorySessionStore::new();
+        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+        let workflow_args = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
+            .await
+            .unwrap();
+        // `timeout` instead of `timeout_ms`: the argument structs deny unknown fields.
+        let wait_args = blobs
+            .put_bytes(br#"{"promises":["promise_1"],"timeout":5}"#.to_vec())
+            .await
+            .unwrap();
+
+        let results = tools
+            .invoke_batch(residue_batch(
+                session_id,
+                vec![
+                    workflow_call("call_report", &binding, workflow_args),
+                    await_call("call_wait", wait_args),
+                ],
+            ))
+            .await
+            .expect("a parse failure is not a batch failure")
+            .completed_result()
+            .expect("nothing to wait for")
+            .results;
+
+        assert_eq!(results[0].call_id, ToolCallId::new("call_report"));
+        assert_eq!(results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(
+            results[0].effects[0].kind,
+            harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+        );
+        assert_eq!(results[1].call_id, ToolCallId::new("call_wait"));
+        assert_eq!(results[1].status, ToolCallStatus::Failed);
+        assert!(
+            failure_text(blobs.as_ref(), &results[1])
+                .await
+                .contains("invalid JSON tool arguments")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_await_whose_arguments_cannot_be_read_keeps_its_workflow_tool_sibling() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let sessions = InMemorySessionStore::new();
+        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+        let workflow_args = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
+            .await
+            .unwrap();
+
+        let results = tools
+            .invoke_batch(residue_batch(
+                session_id,
+                vec![
+                    workflow_call("call_report", &binding, workflow_args),
+                    await_call("call_wait", BlobRef::from_bytes(b"never stored")),
+                ],
+            ))
+            .await
+            .expect("the finished sibling survives")
+            .completed_result()
+            .expect("nothing to wait for")
+            .results;
+
+        assert_eq!(results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(
+            results[0].effects[0].kind,
+            harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+        );
+        assert_eq!(results[1].status, ToolCallStatus::Failed);
+        assert!(
+            failure_text(blobs.as_ref(), &results[1])
+                .await
+                .contains("read tool arguments")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn malformed_arguments_are_the_calls_own_failure_on_every_route() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .with_environment_resolver(test_resolver(registry));
+        let malformed = blobs
+            .put_bytes(br#"{"unexpected_field":true}"#.to_vec())
+            .await
+            .unwrap();
+        for tool in [
+            ::tools::concurrency::SLEEP_TOOL_NAME,
+            ::tools::concurrency::CANCEL_TOOL_NAME,
+            ::tools::concurrency::DETACH_TOOL_NAME,
+            ENVIRONMENT_LIST_TOOL_NAME,
+            "job_read",
+        ] {
+            let mut request = per_call_request(tool, b"{}", &[]);
+            request.call.arguments_ref = malformed.clone();
+            request.environment_policy = Some(test_environment_policy(&[]));
+            let result = tools
+                .invoke_call(request)
+                .await
+                .unwrap_or_else(|error| panic!("{tool} returned an error: {error}"));
+            assert_eq!(result.status, ToolCallStatus::Failed, "{tool}");
+            assert!(
+                failure_text(blobs.as_ref(), &result)
+                    .await
+                    .contains("invalid JSON tool arguments"),
+                "{tool}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn arguments_the_store_cannot_read_stay_an_error() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
+        let mut request = per_call_request(::tools::concurrency::SLEEP_TOOL_NAME, b"{}", &[]);
+        request.call.arguments_ref = BlobRef::from_bytes(b"never stored");
+        assert!(tools.invoke_call(request).await.is_err());
     }
 
     /// The per-call summary of a call's siblings covers every pending call,
