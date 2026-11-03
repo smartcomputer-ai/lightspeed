@@ -352,8 +352,11 @@ pub struct WorkflowToolExecutionCancelRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolReplyValidationRequest {
-    pub reply_schema_ref: harness::BlobRef,
-    pub payload_ref: Option<harness::BlobRef>,
+    pub resolution: harness::PromiseResolution,
+    /// Checked against a `Resolved` payload, which it then requires.
+    pub reply_schema_ref: Option<harness::BlobRef>,
+    /// The reply becomes a call's result, which providers receive as text.
+    pub text_reply: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

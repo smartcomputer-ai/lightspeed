@@ -1822,10 +1822,79 @@ fn a_recovered_result_meets_the_reply_schema_a_signal_would() {
             &delivery_from(&execution_id, promise_id.as_str()),
         ),
         promise_sources::SourceResolutionGate::Admit {
-            reply_schema_ref: Some(schema)
+            reply_schema_ref: Some(schema),
+            text_reply: false,
         }
     );
     assert!(workflow.last_warning.is_none());
+}
+
+/// A joined reply becomes its call's result, which providers read as text.
+#[test]
+fn a_joined_binding_asks_the_ingest_check_for_a_text_reply() {
+    let StartIntent {
+        mut workflow,
+        promise_id,
+        execution_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow
+        .core_state
+        .workflow_tools
+        .bindings
+        .get_mut(&harness::WorkflowToolId::new("launch"))
+        .expect("binding")
+        .completion = harness::WorkflowToolCompletion::Joined {
+        reply_schema_ref: None,
+        deadline_after_ms: 1_000,
+    };
+    assert_eq!(
+        promise_sources::source_resolution_gate(
+            &mut workflow,
+            false,
+            &delivery_from(&execution_id, promise_id.as_str()),
+        ),
+        promise_sources::SourceResolutionGate::Admit {
+            reply_schema_ref: None,
+            text_reply: true,
+        }
+    );
+}
+
+#[test]
+fn the_ingest_check_runs_for_every_ref_and_every_declared_schema() {
+    let schema = harness::BlobRef::from_bytes(b"{}");
+    let blob = harness::BlobRef::from_bytes(b"reply");
+    let needs = promise_sources::resolution_needs_ingest_check;
+    assert!(needs(
+        None,
+        &harness::PromiseResolution::Resolved {
+            payload_ref: Some(blob.clone())
+        }
+    ));
+    assert!(needs(
+        None,
+        &harness::PromiseResolution::Failed {
+            error_ref: Some(blob)
+        }
+    ));
+    // A schema requires a payload, so its absence is for the check to report.
+    assert!(needs(
+        Some(&schema),
+        &harness::PromiseResolution::Resolved { payload_ref: None }
+    ));
+    assert!(!needs(
+        None,
+        &harness::PromiseResolution::Resolved { payload_ref: None }
+    ));
+    assert!(!needs(
+        Some(&schema),
+        &harness::PromiseResolution::Failed { error_ref: None }
+    ));
+    assert!(!needs(
+        Some(&schema),
+        &harness::PromiseResolution::Cancelled
+    ));
 }
 
 #[test]
@@ -1861,7 +1930,8 @@ fn only_the_stored_producer_settles_a_promise_and_nothing_outside_settles_a_time
             &delivery_from("universe/child", "promise_1"),
         ),
         promise_sources::SourceResolutionGate::Admit {
-            reply_schema_ref: None
+            reply_schema_ref: None,
+            text_reply: false,
         }
     );
 }

@@ -1,8 +1,9 @@
 use harness::{
     BlobRef, SessionId, SessionPosition,
     storage::{
-        AppendSessionEvents, AppendSessionEventsResult, BlobEdge, CreateSession, ReadSessionEvents,
-        SessionStore, SessionStoreError, StoredSessionEntry, UncommittedStoredEvent,
+        AppendSessionEvents, AppendSessionEventsResult, BlobEdge, BlobStoreError, CreateSession,
+        ReadSessionEvents, SessionStore, SessionStoreError, StoredSessionEntry,
+        UncommittedStoredEvent,
     },
 };
 use temporal_workflow::{DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES, SessionBootstrapPayloadTooLarge};
@@ -465,26 +466,17 @@ pub(super) async fn prepare_joined_context(
     Ok(prepared)
 }
 
-/// Bounded CAS load + JSON Schema check of one keyed reply payload against
-/// the binding's immutable reply schema. Invalid payloads become a stable
-/// CAS-backed error the workflow uses to fail the promise; only I/O and
-/// schema-compilation problems are activity errors.
+/// The ingest check of a producer's reply, before it can reach the log. A ref that is
+/// not a ref, a blob that is not there, or a payload that fails the binding's schema or
+/// cannot be its call's text result all become a stable CAS-backed error the workflow
+/// fails that promise with. Only a store that did not answer is an activity error, and
+/// waiting that out is correct.
 pub(super) async fn validate_workflow_tool_reply(
     deps: &StorageActivityDeps,
     request: temporal_workflow::WorkflowToolReplyValidationRequest,
 ) -> Result<temporal_workflow::WorkflowToolReplyValidationResult, ActivityError> {
+    use harness::PromiseResolution;
     use temporal_workflow::WorkflowToolReplyValidationResult as ValidationResult;
-
-    let schema_bytes = deps
-        .blobs
-        .read_bytes(&request.reply_schema_ref)
-        .await
-        .map_err(activity_error)?;
-    let schema: serde_json::Value = serde_json::from_slice(&schema_bytes).map_err(|error| {
-        activity_error(anyhow::anyhow!("reply schema is not valid JSON: {error}"))
-    })?;
-    let validator = jsonschema::validator_for(&schema)
-        .map_err(|error| activity_error(anyhow::anyhow!("reply schema is unsupported: {error}")))?;
 
     let invalid = |message: String| async {
         let error_ref = deps
@@ -495,18 +487,72 @@ pub(super) async fn validate_workflow_tool_reply(
         Ok(ValidationResult::Invalid { error_ref })
     };
 
-    let Some(payload_ref) = request.payload_ref else {
-        return invalid("reply payload is required by the binding's reply schema".to_owned()).await;
+    let (what, reply_ref, reply_schema_ref) = match request.resolution {
+        PromiseResolution::Resolved { payload_ref } => {
+            ("payload", payload_ref, request.reply_schema_ref)
+        }
+        PromiseResolution::Failed { error_ref } => ("error", error_ref, None),
+        PromiseResolution::Cancelled => return Ok(ValidationResult::Valid),
     };
-    let payload_bytes = match deps.blobs.read_bytes(&payload_ref).await {
+    let Some(reply_ref) = reply_ref else {
+        return match reply_schema_ref {
+            Some(_) => {
+                invalid("reply payload is required by the binding's reply schema".to_owned()).await
+            }
+            None => Ok(ValidationResult::Valid),
+        };
+    };
+    if BlobRef::parse(reply_ref.as_str()).is_err() {
+        return invalid(format!("reply {what} {reply_ref} is not a blob reference")).await;
+    }
+    // Renews the blob's grace period, so a collection sweep cannot take it before the
+    // append that follows roots it.
+    match deps.blobs.retain_blob(&reply_ref).await {
+        Ok(()) => {}
+        Err(BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply {what} {reply_ref} does not exist")).await;
+        }
+        Err(error) => return Err(activity_error(error)),
+    }
+    if reply_schema_ref.is_none() && !request.text_reply {
+        return Ok(ValidationResult::Valid);
+    }
+    let bytes = match deps.blobs.read_bytes(&reply_ref).await {
         Ok(bytes) => bytes,
-        // A reply naming a blob that is not there is that reply's failure.
-        Err(harness::storage::BlobStoreError::NotFound { .. }) => {
-            return invalid(format!("reply payload {payload_ref} does not exist")).await;
+        Err(BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply {what} {reply_ref} does not exist")).await;
         }
         Err(error) => return Err(activity_error(error)),
     };
-    let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
+    let Some(reply_schema_ref) = reply_schema_ref else {
+        return match std::str::from_utf8(&bytes) {
+            Ok(_) => Ok(ValidationResult::Valid),
+            Err(_) => {
+                invalid(format!(
+                    "reply {what} {reply_ref} is not text, and this tool's result must be"
+                ))
+                .await
+            }
+        };
+    };
+    // Admission checked the schema, so a problem with it here belongs to this binding
+    // and fails its reply. It must not block the session.
+    let schema_bytes = match deps.blobs.read_bytes(&reply_schema_ref).await {
+        Ok(bytes) => bytes,
+        Err(BlobStoreError::NotFound { .. }) => {
+            return invalid(format!("reply schema {reply_schema_ref} does not exist")).await;
+        }
+        Err(error) => return Err(activity_error(error)),
+    };
+    let schema: serde_json::Value = match serde_json::from_slice(&schema_bytes) {
+        Ok(schema) => schema,
+        Err(error) => return invalid(format!("reply schema is not valid JSON: {error}")).await,
+    };
+    let validator = match jsonschema::validator_for(&schema) {
+        Ok(validator) => validator,
+        Err(error) => return invalid(format!("reply schema is unsupported: {error}")).await,
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(payload) => payload,
         Err(error) => {
             return invalid(format!("reply payload is not valid JSON: {error}")).await;
@@ -1486,13 +1532,12 @@ mod tests {
         assert_eq!(value["results"][0]["output"]["blob_ref"], binary.as_str());
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn a_reply_naming_a_missing_blob_is_that_replys_failure() {
-        let blobs = Arc::new(InMemoryBlobStore::new());
-        let reply_schema_ref = blobs
-            .put_bytes(br#"{"type":"object"}"#.to_vec())
-            .await
-            .expect("schema");
+    async fn check_reply(
+        blobs: Arc<InMemoryBlobStore>,
+        resolution: harness::PromiseResolution,
+        reply_schema_ref: Option<BlobRef>,
+        text_reply: bool,
+    ) -> Result<Option<String>, ActivityError> {
         let deps = StorageActivityDeps {
             sessions: Arc::new(InMemorySessionStore::new()),
             blobs: blobs.clone(),
@@ -1501,16 +1546,212 @@ mod tests {
         let validation = validate_workflow_tool_reply(
             &deps,
             temporal_workflow::WorkflowToolReplyValidationRequest {
+                resolution,
                 reply_schema_ref,
-                payload_ref: Some(BlobRef::from_bytes(b"never stored")),
+                text_reply,
+            },
+        )
+        .await?;
+        Ok(match validation {
+            temporal_workflow::WorkflowToolReplyValidationResult::Valid => None,
+            temporal_workflow::WorkflowToolReplyValidationResult::Invalid { error_ref } => {
+                Some(String::from_utf8(blobs.read_bytes(&error_ref).await.unwrap()).unwrap())
+            }
+        })
+    }
+
+    fn resolved(payload_ref: BlobRef) -> harness::PromiseResolution {
+        harness::PromiseResolution::Resolved {
+            payload_ref: Some(payload_ref),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_naming_a_missing_blob_is_that_replys_failure() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let schema = blobs
+            .put_bytes(br#"{"type":"object"}"#.to_vec())
+            .await
+            .expect("schema");
+        let missing = BlobRef::from_bytes(b"never stored");
+        for reply_schema_ref in [None, Some(schema)] {
+            let problem = check_reply(
+                blobs.clone(),
+                resolved(missing.clone()),
+                reply_schema_ref,
+                false,
+            )
+            .await
+            .expect("the activity does not fail for it")
+            .expect("invalid");
+            assert_eq!(problem, format!("reply payload {missing} does not exist"));
+        }
+        let problem = check_reply(
+            blobs,
+            harness::PromiseResolution::Failed {
+                error_ref: Some(missing.clone()),
+            },
+            None,
+            false,
+        )
+        .await
+        .expect("the activity does not fail for it")
+        .expect("invalid");
+        assert_eq!(problem, format!("reply error {missing} does not exist"));
+    }
+
+    /// A ref the store's root guard cannot see as a ref would commit and then fail
+    /// every read of it, so the check has to stop it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_naming_something_that_is_not_a_ref_is_that_replys_failure() {
+        let malformed: BlobRef = serde_json::from_value(serde_json::json!("not-a-blob-ref"))
+            .expect("a ref decodes from any string");
+        for resolution in [
+            resolved(malformed.clone()),
+            harness::PromiseResolution::Failed {
+                error_ref: Some(malformed.clone()),
+            },
+        ] {
+            let problem = check_reply(Arc::new(InMemoryBlobStore::new()), resolution, None, false)
+                .await
+                .expect("the activity does not fail for it")
+                .expect("invalid");
+            assert!(problem.contains("is not a blob reference"), "{problem}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_joined_reply_must_be_text_and_a_promise_reply_need_not_be() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let binary = blobs.put_bytes(vec![0xff, 0xfe, 0x00]).await.expect("put");
+        let problem = check_reply(blobs.clone(), resolved(binary.clone()), None, true)
+            .await
+            .expect("the activity does not fail for it")
+            .expect("invalid");
+        assert!(problem.contains("is not text"), "{problem}");
+        let failed = harness::PromiseResolution::Failed {
+            error_ref: Some(binary.clone()),
+        };
+        assert!(
+            check_reply(blobs.clone(), failed, None, true)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        // An await reports opaque bytes by reference, so they are a fine promise reply.
+        assert_eq!(
+            check_reply(blobs.clone(), resolved(binary), None, false)
+                .await
+                .unwrap(),
+            None
+        );
+        let text = blobs.put_bytes(b"plain".to_vec()).await.expect("put");
+        assert_eq!(
+            check_reply(blobs, resolved(text), None, true)
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_schema_still_decides_a_readable_payload() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let schema = blobs
+            .put_bytes(br#"{"type":"object"}"#.to_vec())
+            .await
+            .expect("schema");
+        let object = blobs.put_bytes(br#"{"a":1}"#.to_vec()).await.expect("put");
+        let number = blobs.put_bytes(b"1".to_vec()).await.expect("put");
+        assert_eq!(
+            check_reply(blobs.clone(), resolved(object), Some(schema.clone()), true)
+                .await
+                .unwrap(),
+            None
+        );
+        let mismatch = check_reply(blobs.clone(), resolved(number), Some(schema.clone()), false)
+            .await
+            .unwrap()
+            .expect("invalid");
+        assert!(mismatch.contains("does not match"), "{mismatch}");
+        let required = check_reply(
+            blobs,
+            harness::PromiseResolution::Resolved { payload_ref: None },
+            Some(schema),
+            false,
+        )
+        .await
+        .unwrap()
+        .expect("invalid");
+        assert!(required.contains("is required"), "{required}");
+    }
+
+    /// A schema that cannot be read or compiled fails the reply. It never turns into
+    /// an activity failure on the session's one loop.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_broken_reply_schema_fails_the_reply_and_not_the_activity() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let payload = blobs.put_bytes(br#"{"a":1}"#.to_vec()).await.expect("put");
+        let not_json = blobs.put_bytes(b"not json".to_vec()).await.expect("put");
+        for schema in [not_json, BlobRef::from_bytes(b"never stored")] {
+            let problem = check_reply(
+                blobs.clone(),
+                resolved(payload.clone()),
+                Some(schema),
+                false,
+            )
+            .await
+            .expect("the activity does not fail for it")
+            .expect("invalid");
+            assert!(problem.contains("reply schema"), "{problem}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_store_that_does_not_answer_is_waited_out() {
+        struct Down;
+        #[async_trait::async_trait]
+        impl harness::storage::BlobStore for Down {
+            async fn put_bytes(&self, _: Vec<u8>) -> Result<BlobRef, BlobStoreError> {
+                Err(down())
+            }
+            async fn read_bytes(&self, _: &BlobRef) -> Result<Vec<u8>, BlobStoreError> {
+                Err(down())
+            }
+            async fn has_blob(&self, _: &BlobRef) -> Result<bool, BlobStoreError> {
+                Err(down())
+            }
+            async fn stat_blob(
+                &self,
+                _: &BlobRef,
+            ) -> Result<harness::storage::BlobInfo, BlobStoreError> {
+                Err(down())
+            }
+        }
+        fn down() -> BlobStoreError {
+            BlobStoreError::Store {
+                message: "connection refused".to_owned(),
+            }
+        }
+        let deps = StorageActivityDeps {
+            sessions: Arc::new(InMemorySessionStore::new()),
+            blobs: Arc::new(Down),
+            blob_graph: None,
+        };
+        let error = validate_workflow_tool_reply(
+            &deps,
+            temporal_workflow::WorkflowToolReplyValidationRequest {
+                resolution: resolved(BlobRef::from_bytes(b"payload")),
+                reply_schema_ref: None,
+                text_reply: false,
             },
         )
         .await
-        .expect("the activity does not fail for it");
-        assert!(matches!(
-            validation,
-            temporal_workflow::WorkflowToolReplyValidationResult::Invalid { .. }
-        ));
+        .expect_err("the store did not answer");
+        let ActivityError::Application(failure) = error else {
+            panic!("expected application failure");
+        };
+        assert!(!failure.is_non_retryable());
     }
 
     #[tokio::test(flavor = "current_thread")]

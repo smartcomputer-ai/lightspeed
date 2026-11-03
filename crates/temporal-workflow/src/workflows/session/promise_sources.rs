@@ -265,8 +265,11 @@ pub(super) async fn flush_pending_promise_cancellations(
 /// What the session does with one received source-resolution.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum SourceResolutionGate {
-    /// Admit it, once a `Resolved` payload satisfies this schema if one is declared.
-    Admit { reply_schema_ref: Option<BlobRef> },
+    /// Admit it, once its refs and a declared schema pass the ingest check.
+    Admit {
+        reply_schema_ref: Option<BlobRef>,
+        text_reply: bool,
+    },
     /// Nothing to do, and any reason is already recorded.
     Drop,
 }
@@ -289,6 +292,14 @@ pub(super) fn source_resolution_gate(
         return SourceResolutionGate::Drop;
     };
     if promise.status.is_terminal() {
+        if !replaying {
+            tracing::info!(
+                target: "temporal_workflow",
+                event = "source_resolution_late",
+                promise_id = promise_id.as_str(),
+                "source resolution for a settled promise ignored"
+            );
+        }
         return SourceResolutionGate::Drop;
     }
     let authorized_invocation = match &promise.source {
@@ -314,7 +325,7 @@ pub(super) fn source_resolution_gate(
         return SourceResolutionGate::Drop;
     };
     let tools = &state.core_state.workflow_tools;
-    let reply_schema_ref = harness::WorkflowToolInvocationId::try_new(invocation_id)
+    let completion = harness::WorkflowToolInvocationId::try_new(invocation_id)
         .ok()
         .and_then(|invocation_id| {
             tools
@@ -323,22 +334,40 @@ pub(super) fn source_resolution_gate(
                 .or_else(|| tools.start_requests.get(&invocation_id))
         })
         .and_then(|invocation| tools.bindings.get(&invocation.tool_id))
-        .and_then(|binding| match &binding.completion {
-            harness::WorkflowToolCompletion::Joined {
-                reply_schema_ref, ..
-            }
-            | harness::WorkflowToolCompletion::Promises {
-                reply_schema_ref, ..
-            } => reply_schema_ref.clone(),
-            harness::WorkflowToolCompletion::Accepted => None,
-        });
-    SourceResolutionGate::Admit { reply_schema_ref }
+        .map(|binding| &binding.completion);
+    let (reply_schema_ref, text_reply) = match completion {
+        Some(harness::WorkflowToolCompletion::Joined {
+            reply_schema_ref, ..
+        }) => (reply_schema_ref.clone(), true),
+        Some(harness::WorkflowToolCompletion::Promises {
+            reply_schema_ref, ..
+        }) => (reply_schema_ref.clone(), false),
+        Some(harness::WorkflowToolCompletion::Accepted) | None => (None, false),
+    };
+    SourceResolutionGate::Admit {
+        reply_schema_ref,
+        text_reply,
+    }
 }
 
-/// Producer-authorize and (optionally) schema-validate received
-/// source-resolutions, then converge them on the ordinary `ResolvePromise`
-/// admission funnel. `Resolved` payloads must satisfy the binding's immutable
-/// reply schema when one is declared.
+/// Whether a resolution has anything for the ingest check to look at.
+pub(super) fn resolution_needs_ingest_check(
+    reply_schema_ref: Option<&BlobRef>,
+    resolution: &harness::PromiseResolution,
+) -> bool {
+    match resolution {
+        harness::PromiseResolution::Resolved { payload_ref } => {
+            payload_ref.is_some() || reply_schema_ref.is_some()
+        }
+        harness::PromiseResolution::Failed { error_ref } => error_ref.is_some(),
+        harness::PromiseResolution::Cancelled => false,
+    }
+}
+
+/// The one way a producer's resolution enters the session. It is authorized, and its
+/// refs and declared schema are checked, before `ResolvePromise` is admitted. A reply
+/// the store could never accept or a later read could never use fails its own promise
+/// here, so nothing past this point can be blocked by what a producer sent.
 pub(super) async fn process_pending_source_resolutions(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
 ) -> anyhow::Result<()> {
@@ -351,7 +380,11 @@ pub(super) async fn process_pending_source_resolutions(
     let replaying = ctx.is_replaying();
     for pending in pending {
         let gate = ctx.state_mut(|state| source_resolution_gate(state, replaying, &pending));
-        let SourceResolutionGate::Admit { reply_schema_ref } = gate else {
+        let SourceResolutionGate::Admit {
+            reply_schema_ref,
+            text_reply,
+        } = gate
+        else {
             continue;
         };
         let PendingSourceResolution {
@@ -359,31 +392,29 @@ pub(super) async fn process_pending_source_resolutions(
             resolution,
             ..
         } = pending;
-        let resolution = match (reply_schema_ref, resolution) {
-            (Some(reply_schema_ref), harness::PromiseResolution::Resolved { payload_ref }) => {
-                let validation = ctx
-                    .execute_activity(
-                        WorkflowActivities::validate_workflow_tool_reply,
-                        crate::WorkflowToolReplyValidationRequest {
-                            reply_schema_ref,
-                            payload_ref: payload_ref.clone(),
-                        },
-                        activity_options(),
-                    )
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-                match validation {
-                    crate::WorkflowToolReplyValidationResult::Valid => {
-                        harness::PromiseResolution::Resolved { payload_ref }
-                    }
-                    crate::WorkflowToolReplyValidationResult::Invalid { error_ref } => {
-                        harness::PromiseResolution::Failed {
-                            error_ref: Some(error_ref),
-                        }
+        let resolution = if resolution_needs_ingest_check(reply_schema_ref.as_ref(), &resolution) {
+            let validation = ctx
+                .execute_activity(
+                    WorkflowActivities::validate_workflow_tool_reply,
+                    crate::WorkflowToolReplyValidationRequest {
+                        resolution: resolution.clone(),
+                        reply_schema_ref,
+                        text_reply,
+                    },
+                    activity_options(),
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(errors::activity_failure_message(&error)))?;
+            match validation {
+                crate::WorkflowToolReplyValidationResult::Valid => resolution,
+                crate::WorkflowToolReplyValidationResult::Invalid { error_ref } => {
+                    harness::PromiseResolution::Failed {
+                        error_ref: Some(error_ref),
                     }
                 }
             }
-            (_, resolution) => resolution,
+        } else {
+            resolution
         };
         queue_resolution(ctx, promise_id.as_str().to_owned(), resolution);
     }

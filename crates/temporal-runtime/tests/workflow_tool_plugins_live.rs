@@ -2284,9 +2284,8 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("start managed session: {error:?}"))?;
 
         let session_handle = live_workflow_handle(&client, &session_id)?;
-        let resolve_run = |payload: Vec<u8>, expect: &'static str| {
+        let resolve_run = |resolution: PromiseResolution, expect: &'static str| {
             let api = api.clone();
-            let blobs = blobs.clone();
             let session_id = session_id.clone();
             let session_handle = &session_handle;
             let receiver_id = receiver_id.clone();
@@ -2324,15 +2323,12 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                     }
                     tokio::time::sleep(Duration::from_millis(200)).await;
                 };
-                let payload_ref = blobs.put_bytes(payload).await?;
                 let reply = EmissionEnvelope::source_resolution(
                     live_universe_id()?,
                     receiver_id,
                     &temporal_workflow::compose_workflow_id(live_universe_id()?, &session_id),
                     harness::PromiseId::new(promise_id),
-                    PromiseResolution::Resolved {
-                        payload_ref: Some(payload_ref),
-                    },
+                    resolution,
                 );
                 session_handle
                     .signal(
@@ -2354,11 +2350,27 @@ async fn workflow_tool_reply_schema_gates_resolutions() -> anyhow::Result<()> {
                 anyhow::Ok(())
             }
         };
+        let resolved = |payload_ref| PromiseResolution::Resolved {
+            payload_ref: Some(payload_ref),
+        };
 
         // Schema-invalid payload -> the keyed promise fails.
-        resolve_run(b"\"not an object\"".to_vec(), "failed").await?;
+        let invalid = blobs.put_bytes(b"\"not an object\"".to_vec()).await?;
+        resolve_run(resolved(invalid), "failed").await?;
         // Valid payload -> the keyed promise resolves.
-        resolve_run(br#"{"ok":true}"#.to_vec(), "resolved").await?;
+        let valid = blobs.put_bytes(br#"{"ok":true}"#.to_vec()).await?;
+        resolve_run(resolved(valid), "resolved").await?;
+        // A reply naming a blob that was never stored, or something that is not a ref,
+        // fails its promise and the session carries on with the next run.
+        let unstored = harness::BlobRef::from_bytes(b"never stored");
+        resolve_run(resolved(unstored.clone()), "failed").await?;
+        let malformed: harness::BlobRef =
+            serde_json::from_value(serde_json::json!("not-a-blob-ref"))?;
+        resolve_run(resolved(malformed), "failed").await?;
+        let failed_with_unstored = PromiseResolution::Failed {
+            error_ref: Some(unstored),
+        };
+        resolve_run(failed_with_unstored, "failed").await?;
 
         let _ = client
             .get_workflow_handle::<TestBoundPluginWorkflow>(receiver_id)
