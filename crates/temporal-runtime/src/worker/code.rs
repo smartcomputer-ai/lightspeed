@@ -918,6 +918,12 @@ mod tests {
         )
     }
 
+    /// A scope's bindings that arrive after this worker stopped waiting have no reader.
+    #[test]
+    fn the_session_stops_preparing_a_scope_before_preparation_stops_waiting_for_it() {
+        assert!(temporal_workflow::CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE < PREPARE_TIMEOUT);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn selected_output_preserves_mixed_order_and_successes_before_script_failure() {
         use codemode::OutputSelection::*;

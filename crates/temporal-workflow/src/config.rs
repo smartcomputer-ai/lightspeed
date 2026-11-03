@@ -118,6 +118,24 @@ pub fn boundary_error_blob_activity_options() -> ActivityOptions {
     .build()
 }
 
+/// How long the session waits for one code tool scope's bindings. The caller's own
+/// preparation stops waiting after 45 s and a reply after that has no reader, so the
+/// one attempt it gets has to finish inside that window.
+pub const CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE: Duration = Duration::from_secs(38);
+pub const CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE: Duration = Duration::from_secs(40);
+
+/// Bounded options for preparing a code tool scope on the session's outer loop. A
+/// failure rejects the scope, and the script reports it as a readable error.
+pub fn code_tool_prepare_scope_activity_options() -> ActivityOptions {
+    ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
+        start_to_close: CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE,
+        schedule_to_close: CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE,
+    })
+    .cancellation_token(temporalio_sdk::WorkflowCancellationToken::new())
+    .retry_policy(tool_retry_policy(1))
+    .build()
+}
+
 /// Bounded options for one recovery poll of a started execution. It runs on the
 /// session's outer loop, and when these attempts are exhausted the poll simply asks
 /// again later, so it must never reintroduce Temporal's default unlimited retries.
@@ -394,6 +412,29 @@ mod tests {
             boundary_error_blob_activity_options().close_timeouts,
             ActivityCloseTimeouts::ScheduleAndStartToClose { .. }
         ));
+    }
+
+    #[test]
+    fn preparing_a_code_tool_scope_gets_one_attempt_inside_its_callers_wait() {
+        let options = code_tool_prepare_scope_activity_options();
+        assert_eq!(
+            options
+                .retry_policy
+                .expect("declares a retry policy")
+                .raw()
+                .maximum_attempts,
+            1
+        );
+        assert!(matches!(
+            options.close_timeouts,
+            ActivityCloseTimeouts::ScheduleAndStartToClose {
+                start_to_close: CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE,
+                schedule_to_close: CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE,
+            }
+        ));
+        assert!(
+            CODE_TOOL_PREPARE_SCOPE_START_TO_CLOSE <= CODE_TOOL_PREPARE_SCOPE_SCHEDULE_TO_CLOSE
+        );
     }
 
     #[test]

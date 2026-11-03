@@ -435,19 +435,31 @@ async fn admit_open(
         Ok(value) => value,
         Err(error) => return Ok(Err(error)),
     };
-    let bindings = match ctx
-        .execute_activity(
-            WorkflowActivities::code_tool_prepare_scope,
-            prepared,
-            crate::activity_options(),
-        )
-        .await
-    {
-        Ok(result) => result.bindings,
+    // This can reach network servers from the session's one loop, so control
+    // admissions keep landing behind it. A cancel that does makes the parent stale,
+    // and admission refuses the scope below.
+    let mut drive = drive_from_state(ctx)?;
+    let activity_ctx = ctx.clone();
+    let activity = activity_ctx.execute_activity(
+        WorkflowActivities::code_tool_prepare_scope,
+        prepared,
+        crate::code_tool_prepare_scope_activity_options(),
+    );
+    let bindings = match preparation::await_activity(ctx, &mut drive, activity).await {
+        Ok(Ok(result)) => result.bindings,
+        Ok(Err(error)) => {
+            return Ok(Err(rejected(
+                Rejection::Unavailable,
+                format!(
+                    "prepare code tool bindings: {}",
+                    errors::activity_failure_message(&error)
+                ),
+            )));
+        }
         Err(error) => {
             return Ok(Err(rejected(
                 Rejection::Unavailable,
-                format!("prepare code tool bindings: {error}"),
+                format!("prepare code tool bindings: {}", error.message),
             )));
         }
     };
