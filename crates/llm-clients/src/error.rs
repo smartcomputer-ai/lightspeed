@@ -347,6 +347,55 @@ mod tests {
     }
 
     #[test]
+    fn verbatim_openai_shaped_overflow_rejections_classify_as_context_length() {
+        for (error_code, message) in [
+            // OpenAI Chat Completions.
+            (
+                Some("context_length_exceeded"),
+                "This model's maximum context length is 128000 tokens. However, your messages \
+                 resulted in 130000 tokens. Please reduce the length of the messages.",
+            ),
+            // OpenAI Responses.
+            (
+                Some("context_length_exceeded"),
+                "Your input exceeds the context window of this model. Please adjust your input \
+                 and try again.",
+            ),
+            // DeepSeek, which sends no code.
+            (
+                None,
+                "This model's maximum context length is 65536 tokens. However, you requested \
+                 70000 tokens (70000 in the messages, 0 in the completion). Please reduce the \
+                 length of the messages or completion.",
+            ),
+        ] {
+            assert_eq!(
+                classify_status(
+                    400,
+                    error_code,
+                    Some("invalid_request_error"),
+                    Some(message)
+                ),
+                ProviderFailureKind::ContextLength,
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_loose_too_long_stays_an_invalid_request_in_the_shared_rules() {
+        assert_eq!(
+            classify_status(
+                400,
+                None,
+                Some("invalid_request_error"),
+                Some("tool name is too long")
+            ),
+            ProviderFailureKind::InvalidRequest
+        );
+    }
+
+    #[test]
     fn classify_status_uses_provider_content_filter_hint() {
         assert_eq!(
             classify_status(400, Some("content_filter"), None, None),

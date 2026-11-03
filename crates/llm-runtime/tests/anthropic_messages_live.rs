@@ -1845,6 +1845,43 @@ async fn anthropic_messages_live_runtime_reports_provider_rejections() {
     );
 }
 
+/// Input alone over the window is refused with a 400 that carries no code of
+/// its own. It has to cross the runtime boundary as `ContextLimit`, because
+/// that is what starts recovery compaction and what makes rolling compaction
+/// split its chunk.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ANTHROPIC_API_KEY (the provider refuses this request before generating)"]
+async fn anthropic_messages_live_runtime_reports_input_overflow_as_context_limit() {
+    use harness::{CoreAgentIoError, CoreAgentLlm as _};
+    let blobs = Arc::new(InMemoryBlobStore::new());
+    let oversized = "lorem 12345 ".repeat(1_000_000);
+    let entry = user_entry(1, text_blob(&blobs, &oversized).await);
+    let adapter = Arc::new(AnthropicMessagesLlmAdapter::new(
+        retrying_anthropic_messages_client(live_client()),
+        blobs.clone(),
+    ));
+    let runtime = llm_runtime::LlmRuntime::new(
+        llm_runtime::LlmAdapterRegistry::new()
+            .with_generation_adapter(ProviderApiKind::AnthropicMessages, adapter),
+    );
+
+    let error = runtime
+        .generate(generation_request(
+            1,
+            intent_request("live-anthropic-overflow", vec![entry]),
+        ))
+        .await
+        .expect_err("the provider refuses input over the window");
+
+    let CoreAgentIoError::ContextLimit { message } = error else {
+        panic!("expected a context limit, got {error:?}");
+    };
+    assert!(
+        message.contains("prompt is too long"),
+        "the provider's message is kept word for word: {message}"
+    );
+}
+
 /// Crossing the request media budget omits the oldest media, which rewrites
 /// content the provider has already seen. On a model that checks preserved
 /// thinking, the session continues under `drop_block`, while the strict

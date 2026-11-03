@@ -19,6 +19,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
 
+const CONTEXT_LENGTH_EXCEEDED_CODE: &str = "context_length_exceeded";
 pub const API_KIND: &str = "anthropic:messages";
 pub const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Beta header required when authenticating with an OAuth bearer token
@@ -1263,12 +1264,24 @@ fn parse_provider_http_error(
         .unwrap_or_else(|| body.clone());
 
     ProviderHttpError::new(API_KIND, status, message.clone(), headers).with_provider_details(
-        None,
+        overflow_error_code(error_type.as_deref(), &message),
         error_type,
         Some(message),
         raw_json,
         Some(body),
     )
+}
+
+/// Anthropic's overflow rejection carries no code of its own and none of the
+/// wording shared across providers, so it is named here, where the error type
+/// is known, and not by widening the shared hints with a phrase as loose as
+/// "too long". The second phrase is what models before 4.5 answer when input
+/// plus `max_tokens` is over the window.
+fn overflow_error_code(error_type: Option<&str>, message: &str) -> Option<String> {
+    let message = message.to_ascii_lowercase();
+    (error_type == Some("invalid_request_error")
+        && (message.contains("prompt is too long") || message.contains("exceed context limit")))
+    .then(|| CONTEXT_LENGTH_EXCEEDED_CODE.to_owned())
 }
 
 fn split_beta_headers(value: &str) -> Vec<String> {
@@ -1283,7 +1296,59 @@ fn split_beta_headers(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ProviderFailureKind;
     use serde_json::json;
+
+    fn http_error(
+        status: reqwest::StatusCode,
+        error_type: &str,
+        message: &str,
+    ) -> ProviderHttpError {
+        let body = json!({
+            "type": "error",
+            "error": { "type": error_type, "message": message },
+            "request_id": "req_test",
+        });
+        parse_provider_http_error(status, HeaderSnapshot::default(), body.to_string())
+    }
+
+    #[test]
+    fn overflow_rejections_classify_as_context_length() {
+        for message in [
+            "prompt is too long: 250000 tokens > 200000 maximum",
+            "input length and `max_tokens` exceed context limit: 180000 + 40000 > 200000, \
+             decrease input length or `max_tokens` and try again",
+        ] {
+            let error = http_error(
+                reqwest::StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                message,
+            );
+            assert_eq!(error.kind, ProviderFailureKind::ContextLength, "{message}");
+            assert_eq!(error.message, message);
+            let error = LlmApiError::from(error);
+            assert!(!error.retryable());
+            assert!(error.request_rejection().is_some());
+        }
+    }
+
+    #[test]
+    fn the_overflow_code_needs_the_error_type_and_the_wording() {
+        let other_rejection = http_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "messages.0: tool name is too long",
+        );
+        assert_eq!(other_rejection.kind, ProviderFailureKind::InvalidRequest);
+        assert_eq!(other_rejection.error_code, None);
+
+        let not_a_rejection = http_error(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "api_error",
+            "prompt is too long",
+        );
+        assert_eq!(not_a_rejection.kind, ProviderFailureKind::Server);
+    }
 
     fn client_with_betas(betas: &[&str]) -> Client {
         let mut config = Config::new("test-key");

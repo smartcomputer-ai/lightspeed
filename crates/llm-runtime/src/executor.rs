@@ -298,7 +298,7 @@ mod tests {
             }
         );
 
-        let context = "prompt is too long: maximum context length is 200000 tokens";
+        let context = "prompt is too long: 250000 tokens > 200000 maximum";
         let error = failing_generate(http_error(
             400,
             llm_clients::ProviderFailureKind::ContextLength,
