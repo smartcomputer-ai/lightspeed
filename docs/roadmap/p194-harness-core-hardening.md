@@ -213,6 +213,17 @@ Later packages add their own entries.
   `history_length`, which assumes replay sees the same value per activation, as the rollover check
   already does. It has not fired in any run, so that assumption and the 32 are both untested. Nothing
   known reaches it today.
+- **`tool-dispatch-per-call` changes which activity runs which call, and it has not run against
+  Temporal.** Docker was down. Every batch with an `await` or a workflow tool now takes two activity
+  paths, and this reverses the September call not to split batches, though the batch stays one logical
+  batch. Worker loss now fails only the affected call. A spawn beside a gated call now waits for the
+  decision, where it used to run first. Consecutive parallel-safe calls in these batches now overlap.
+  Run `mcp_live`, `subagents_live`, `workflow_tool_plugins_live` and the code suites at the next
+  checkpoint before trusting this package.
+- **A provider approval pending beside a gated native call fails the run.** `RunParked` refuses that mix,
+  and the dry run now catches it, so it ends as a normal failed run with the reducer's message. Whether a
+  provider ever sends `function_call` and `mcp_approval_request` in one response is unverified, so I left
+  the refusal in place rather than relax a check on a shape nobody has seen.
 
 ## Progress
 
@@ -811,3 +822,81 @@ Review of this package:
   still wait for the outer loop while a run keeps generating, since `transport_work_due` does not list them.
 - Still unverified: Docker was down again, so nothing here has run against Temporal. The risky note above
   stands, and the same-activation order is still shown only by harness tests.
+
+### `tool-dispatch-per-call` (H-03, H-70, H-05, H-33, H-45, S-08)
+
+Landed:
+
+- `0def183c` (H-03): `execute_call_group` keeps `NeedsApproval` outcomes and parks once when its window
+  drains. `control::tool_batch_abandoned` is checked at the top of the loop, which covers top-ups, new
+  readiness waits, re-dispatches and the park, and it replaces the Active check in the readiness races.
+- `73866431` (H-70): `execution_groups` skips `await` and workflow-tool calls, and a dispatch with no
+  groups goes to `tool_invoke_batch`. The activity's MCP merge and approvals branch,
+  `ToolBatchOutcome::AwaitingApproval`, and the inline route, domain setup, denial, blocker and
+  selection paths of `SessionTools::invoke_batch` are deleted. S-05 falls out of this.
+- `f239250b` (H-05): the one numbering rule, `batch.promise_id_base.max(last_promise_id + 1)`, in
+  `next_tool_batch_request`, with the slot comments corrected and tests with minted siblings.
+- `2fe5c3ac` (H-33): `read_tool_args` returns a parse failure as that call's failed result and keeps a
+  blob-read failure as an error, through one helper on every route. An erring await keeps its siblings.
+- `14f621b1` (H-45): injected MCP specs register as RemoteInteractive, and the overrides are gone.
+- `058b6ac1` (S-08): the saturating add and the corrected comments, with the regenerated workflow
+  schema, because the `PromiseId` doc comment is in it.
+- `98c101f6`: the mixed-batch live scenario now gates two calls in one parallel group.
+- `aaa72eb3` (H-33): the malformed await test uses a real `agent_spawn` as its sibling.
+
+Calls made:
+
+- A call's window never holds a park. Ungated siblings finish first, so the Parked case in
+  `tool_batch_abandoned` is only a guard, and the top-up loop needs no Active check. The refusal of a
+  second park comes from `dry_run_append`, so `native_mcp_approval_proposals` gets no status check of its
+  own. A test pins that it is refused before reaching the log.
+- `SessionTools::invoke_batch` refuses an ordinary call with a failed result instead of keeping an inline
+  route for it. Keeping it would leave a second promise numbering beside the per-call slots. Its tests
+  moved to the per-call path through a test-only `invoke_each`.
+- Groups form over the per-call calls only, so `[read, spawn, read]` is one parallel group. The spawn has
+  no effect until commit, so nothing it does can be overtaken.
+- `invoke_mixed_await_batch` and `invoke_lone_await_batch` merged into `invoke_batch`, because the
+  impossible `Deferred` and approval arms were most of them. The package's "keep `completed_results`"
+  applies to the merged code.
+- The worker takes a native MCP call's deadline from `request.execution.class`. The H-45 judge left the
+  literals because the batch request carried no class, and the batch path no longer runs MCP calls.
+- The unit activity's race uses `tool_batch_abandoned` too, leaving `tool_batch_still_wanted` only for
+  the check between groups.
+- `[environment.activate, job_submit]` now pins the job to the newly activated environment, because the
+  activation commits first. It used to pin the old one from the same request. I kept this as better.
+- S-10 stays undone: the automatic re-dispatch is gone and the residue never contains `run_process`.
+
+Deviations from the briefs:
+
+- Not added: the H-03 live scenario with a slow ungated sibling and a steer during the park. A park can no
+  longer overlap a call, so it would only cover a steer during an ordinary window. The predicate has a
+  unit test, and that loop has no test without Temporal.
+- Not ported: the `repro_refute_admissionpark_h7y`, `repro_wholesystem_parkabandon_g5d`,
+  `repro_cancelconsumed_refute_w8d` and `repro_refute_readinesscancel_n6x` tests, which run a synchronous
+  copy of the loop. Their harness facts are covered by the new drive tests and their predicate by
+  `control::tests`. The two-park, slot-collision, `[agent_run, gated]` and `[sleep, agent_spawn]` shapes
+  are ported to `drive.rs`, and `[agent_spawn, await{timeout:5}]` and the blob-read case to
+  `session_tools.rs`.
+
+Verified: `cargo test -p temporal-workflow --lib` (179 passed), `cargo test -p temporal-workflow --test '*'`
+(3 passed), `cargo test -p harness` (316 passed), `cargo test -p temporal-runtime --lib` (476 passed, 1
+ignored), and `cargo check --workspace --all-targets --locked`. The workflow contract exporter leaves no
+diff. No live test ran: the Docker daemon was down and starting it is out of bounds.
+
+Written but never run, for the checkpoint:
+
+- `temporal_live_native_mcp_mixed_await_batch_parks_once_and_completes`, now with two gated calls.
+
+Open:
+
+- The note left by `host-loop-boundaries` does not bite: workflow-tool calls stay on the unit activity, whose
+  single commit reaches `drive_boundary_after_commit`, so no start is held behind per-call commits.
+- `execute_call_group` still ignores what `drain_pending_admissions` returns, so a drain that admits nothing
+  would spin through the loop. The wait matches what the drain admits, and this was already there.
+- For `rename-vocabulary`: `NativeMcp` and `Native` stay until then. The error text "requires batch-unit
+  execution" stays too, because `mcp_live` asserts on it.
+- For the docs package: `how-it-works/tools-and-controller-workflows.md` lines 42-60 still describe batches
+  with `await` or a workflow tool as one activity, and scope the parallelism rule to "ordinary" batches. A
+  page on approvals should say that a spawn beside a gated call waits for the decision.
+- A failing assertion in the `temporal-runtime` lib tests aborted the whole binary here with `failed to
+  initiate panic, error 5` instead of reporting it. It only showed on a real failure, and I did not chase it.
