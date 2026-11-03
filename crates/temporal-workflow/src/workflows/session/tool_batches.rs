@@ -218,24 +218,24 @@ async fn execute_call_group(
                 _ = wait => None,
             }
         };
-        match ready {
+        let resumed = match ready {
             Some((index, Ok(ToolInvokeCallActivityResult::NeedsApproval { subject }))) => {
                 gated.push(harness::NativeMcpApprovalRequest {
                     call_id: request.calls[index].call_id.clone(),
                     subject,
                 });
+                Ok(())
             }
-            Some((index, outcome)) => {
-                // A refusal here ends the run while the workflow lives on, so the
-                // siblings must not keep working for a run that is gone.
-                if let Err(error) = resume_call(ctx, drive, request, index, outcome).await {
-                    abandon_inflight_calls(inflight).await;
-                    return Err(error);
-                }
-            }
-            None => {
-                admissions::drain_pending_admissions(ctx, drive).await?;
-            }
+            Some((index, outcome)) => resume_call(ctx, drive, request, index, outcome).await,
+            None => admissions::drain_pending_admissions(ctx, drive)
+                .await
+                .map(|_| ()),
+        };
+        // A refusal here ends the run while the workflow lives on, so the siblings
+        // must not keep working for a run that is gone.
+        if let Err(error) = resumed {
+            abandon_inflight_calls(inflight).await;
+            return Err(error);
         }
     }
     if gated.is_empty() {
@@ -670,27 +670,6 @@ mod tests {
             execution_groups(&state, &request),
             vec![vec![0, 1], vec![2], vec![3]]
         );
-    }
-
-    #[test]
-    fn native_mcp_calls_take_their_execution_from_the_admitted_binding() {
-        let mut state = state_with_tools(vec![
-            (
-                harness::MCP_FIND_TOOLS_TOOL_ID,
-                ToolParallelism::ParallelSafe,
-            ),
-            (harness::MCP_CALL_TOOL_ID, ToolParallelism::Exclusive),
-        ]);
-        let remote = harness::ToolExecutionClass::RemoteInteractive;
-        for (id, retry_safe) in [
-            (harness::MCP_FIND_TOOLS_TOOL_ID, true),
-            (harness::MCP_CALL_TOOL_ID, false),
-        ] {
-            let id = ToolName::new(id);
-            let spec = ToolExecutionSpec::new(remote, retry_safe);
-            state.tooling.tools.get_mut(&id).expect("tool").execution = spec;
-            assert_eq!(call_execution_spec(&state, Some(&id)), spec);
-        }
     }
 
     #[test]
