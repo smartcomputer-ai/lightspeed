@@ -206,6 +206,24 @@ async fn terminal_start_failure(
     attempts: u32,
     message: String,
 ) -> anyhow::Result<()> {
+    // Every promise settled while this start kept failing, so nothing waits on it.
+    if ctx.state(|state| {
+        !state
+            .core_state
+            .workflow_tools
+            .start_requests
+            .contains_key(&invocation.invocation_id)
+    }) {
+        if !ctx.is_replaying() {
+            tracing::info!(
+                target: "temporal_workflow",
+                event = "workflow_tool_start_abandoned",
+                invocation_id = invocation.invocation_id.as_str(),
+                "gave up starting a finished workflow tool invocation"
+            );
+        }
+        return Ok(());
+    }
     let detail = format!(
         "workflow tool start intent {} could not start its execution after {attempts} attempts: {message}",
         invocation.invocation_id

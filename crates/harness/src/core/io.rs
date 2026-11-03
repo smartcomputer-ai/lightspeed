@@ -400,23 +400,23 @@ impl ToolInvocationBatchRequest {
 /// Bounded session-owned facts needed to execute one admitted workflow-tool call.
 ///
 /// This is transient runtime input, not durable session vocabulary. Carrying it
-/// on the activity request makes retries use the exact binding and emission
+/// on the activity request makes retries use the exact binding and in-flight
 /// count observed when the deterministic owner scheduled the batch.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolCallRuntime {
     pub version: u32,
     pub binding: WorkflowToolBinding,
-    pub prior_emission_count: u32,
+    pub in_flight_invocation_count: u32,
 }
 
 impl WorkflowToolCallRuntime {
     pub const VERSION: u32 = 1;
 
-    pub fn v1(binding: WorkflowToolBinding, prior_emission_count: u32) -> Self {
+    pub fn v1(binding: WorkflowToolBinding, in_flight_invocation_count: u32) -> Self {
         Self {
             version: Self::VERSION,
             binding,
-            prior_emission_count,
+            in_flight_invocation_count,
         }
     }
 }

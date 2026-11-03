@@ -1062,6 +1062,13 @@ pub(crate) fn prune_settled_run_records(run: &mut ActiveRun) {
     });
 }
 
+/// The session-wide half of pruning, at batch completion and run terminal: no batch
+/// is open at either, and a promise's own terminal event is never one of them.
+pub(crate) fn prune_finished_work(state: &mut CoreAgentState) {
+    crate::core::components::workflow_tool::prune_finished_invocations(state);
+    crate::core::components::promise::prune_terminal_promises(state);
+}
+
 fn prune_terminal_run_records(runs: &mut RunQueueState) {
     let excess = runs
         .completed
@@ -1257,6 +1264,7 @@ fn finish_active_run(
         notify_on_terminal: active_run.notify_on_terminal,
     });
     prune_terminal_run_records(&mut state.runs);
+    prune_finished_work(state);
     Ok(())
 }
 

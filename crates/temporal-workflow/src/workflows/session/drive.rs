@@ -541,22 +541,21 @@ pub(super) async fn append_events(
     let entries = drive
         .resume_appended(appended.entries)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
-    ctx.state_mut(|state| -> anyhow::Result<()> {
-        for entry in &entries {
-            harness::apply_event(&mut state.core_state, entry)
-                .map_err(|error| anyhow::anyhow!("apply session entry: {error}"))?;
-            state.queue_execution_cancel_for_entry(entry);
-        }
-        state.queue_emissions_for_entries(&entries)?;
-        state.queue_promise_cancellations_for_entries(&entries);
-        state.execution_has_rollover_checkpoint = true;
-        if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
-            preparation::abandon_pending_run(state);
-            state.pending_toolsets.clear();
-        }
-        Ok(())
-    })
-    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let followups = ctx
+        .state_mut(|state| -> anyhow::Result<Vec<DetachedPromiseFollowup>> {
+            let mut followups = Vec::new();
+            for entry in &entries {
+                followups.extend(apply_appended_entry(state, entry)?);
+            }
+            state.queue_emissions_for_entries(&entries)?;
+            state.execution_has_rollover_checkpoint = true;
+            if state.core_state.lifecycle.status == CoreAgentStatus::Closed {
+                preparation::abandon_pending_run(state);
+                state.pending_toolsets.clear();
+            }
+            Ok(followups)
+        })
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
     // Invalidation uses only recorded source identity. It performs no discovery,
     // including when selection changed in a tool result during an active run.
     if let Some(command) = invalid_environment_prompt_command(drive.state()) {
@@ -571,12 +570,26 @@ pub(super) async fn append_events(
     if let Some(command) = invalid_vfs_skill_catalog_command(drive.state()) {
         Box::pin(append_command(ctx, drive, command)).await?;
     }
-    queue_detached_promise_followups(ctx, &entries).await?;
+    queue_detached_promise_followups(ctx, followups).await?;
     Ok(entries)
 }
 
+/// Apply one appended entry and read what its promise event means right away, before
+/// the next entry of the append applies. That one can be a batch completion, which
+/// prunes the records read here.
+pub(super) fn apply_appended_entry(
+    state: &mut AgentSessionWorkflow,
+    entry: &CoreAgentEntry,
+) -> anyhow::Result<Option<DetachedPromiseFollowup>> {
+    harness::apply_event(&mut state.core_state, entry)
+        .map_err(|error| anyhow::anyhow!("apply session entry: {error}"))?;
+    state.queue_execution_cancel_for_entry(entry);
+    state.queue_promise_cancellation_for_entry(entry);
+    Ok(detached_promise_followup_for_entry(state, entry))
+}
+
 #[derive(Clone, Debug)]
-struct DetachedPromiseFollowup {
+pub(super) struct DetachedPromiseFollowup {
     promise_id: harness::PromiseId,
     result: AwaitPromiseResult,
 }
@@ -588,18 +601,11 @@ struct DetachedPromiseFollowup {
 /// them and the result still names them.
 async fn queue_detached_promise_followups(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
-    entries: &[CoreAgentEntry],
+    followups: Vec<DetachedPromiseFollowup>,
 ) -> anyhow::Result<()> {
-    let followups = ctx.state(|state| {
-        if state.core_state.lifecycle.status != CoreAgentStatus::Open {
-            return Vec::new();
-        }
-        entries
-            .iter()
-            .filter_map(|entry| detached_promise_followup_for_entry(state, entry))
-            .collect::<Vec<_>>()
-    });
-
+    if ctx.state(|state| state.core_state.lifecycle.status != CoreAgentStatus::Open) {
+        return Ok(());
+    }
     for followup in followups {
         let materialized = ctx
             .execute_activity(

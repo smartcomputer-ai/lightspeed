@@ -1719,7 +1719,7 @@ fn a_receiver_hears_of_a_hard_deadline_but_not_its_own_failure_report() {
             error_ref,
         })
     };
-    workflow.queue_promise_cancellations_for_entries(&[
+    for entry in [
         failed("promise_1", Some(harness::promise_deadline_exceeded_ref())),
         failed(
             "promise_2",
@@ -1729,7 +1729,9 @@ fn a_receiver_hears_of_a_hard_deadline_but_not_its_own_failure_report() {
         promise_entry(harness::PromiseEvent::Cancelled {
             promise_id: harness::PromiseId::new("promise_4"),
         }),
-    ]);
+    ] {
+        workflow.queue_promise_cancellation_for_entry(&entry);
+    }
     let notified = workflow
         .pending_promise_cancellations
         .iter()
@@ -3064,4 +3066,144 @@ fn only_a_forced_close_passes_a_pending_compaction() {
     assert!(!admissions::has_admissible_admissions(&workflow));
     workflow.pending_admissions = vec![close(true)];
     assert!(admissions::has_admissible_admissions(&workflow));
+}
+
+/// A batch or run ending in the append that settles a promise prunes what the host
+/// has to read about that promise, so each entry is read before the next applies.
+#[test]
+fn a_terminal_event_and_a_pruning_boundary_in_one_append_still_reach_the_host() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        execution_id,
+    } = workflow_with_start_intent();
+    workflow.core_state.runs.active = workflow_with_parked_tool_batch(await_spec(
+        &[promise_id.as_str()],
+        harness::AwaitMode::All,
+        None,
+    ))
+    .core_state
+    .runs
+    .active;
+    workflow.core_state.reduced_to = None;
+    // Enough newer terminal promises that this one leaves state at the boundary.
+    add_promises(
+        &mut workflow,
+        (2..=harness::MAX_RETAINED_TERMINAL_PROMISES as u64 + 1)
+            .map(|number| {
+                promise(
+                    harness::PromiseId::from_number(number).as_str(),
+                    PromiseStatus::Resolved,
+                )
+            })
+            .collect(),
+    );
+    let entry = |seq, event| CoreAgentEntry {
+        position: SessionPosition {
+            seq: harness::EventSeq::new(seq),
+        },
+        observed_at_ms: 1,
+        joins: Default::default(),
+        event,
+    };
+
+    for appended in [
+        entry(
+            1,
+            CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled {
+                promise_id: promise_id.clone(),
+            }),
+        ),
+        entry(
+            2,
+            CoreAgentEvent::Run(harness::RunEvent::ForceCancelled {
+                run_id: RunId::new(1),
+            }),
+        ),
+    ] {
+        drive::apply_appended_entry(&mut workflow, &appended).expect("apply");
+    }
+
+    assert_eq!(
+        workflow.pending_execution_cancels,
+        BTreeSet::from([execution_id])
+    );
+    assert_eq!(workflow.pending_promise_cancellations.len(), 1);
+    assert_eq!(
+        workflow.pending_promise_cancellations[0].promise_id,
+        promise_id.as_str()
+    );
+    let state = &workflow.core_state;
+    assert!(
+        !state
+            .workflow_tools
+            .start_requests
+            .contains_key(&invocation_id)
+    );
+    assert!(!state.promises.promises.contains_key(&promise_id));
+}
+
+#[test]
+fn a_detached_promise_settling_right_before_the_boundary_still_wakes_the_session() {
+    let mut workflow = workflow_with_parked_tool_batch(await_spec(
+        &["promise_999"],
+        harness::AwaitMode::All,
+        None,
+    ));
+    workflow.core_state.reduced_to = None;
+    let promise_id = harness::PromiseId::from_number(1);
+    add_promises(
+        &mut workflow,
+        std::iter::once(promise(promise_id.as_str(), PromiseStatus::Pending))
+            .chain(
+                (2..=harness::MAX_RETAINED_TERMINAL_PROMISES as u64 + 1).map(|number| {
+                    promise(
+                        harness::PromiseId::from_number(number).as_str(),
+                        PromiseStatus::Resolved,
+                    )
+                }),
+            )
+            .collect(),
+    );
+    let payload_ref = harness::BlobRef::from_bytes(b"done");
+    let followup = drive::apply_appended_entry(
+        &mut workflow,
+        &promise_entry(harness::PromiseEvent::Resolved {
+            promise_id: promise_id.clone(),
+            payload_ref: Some(payload_ref.clone()),
+        }),
+    )
+    .expect("apply");
+    drive::apply_appended_entry(
+        &mut workflow,
+        &CoreAgentEntry {
+            position: SessionPosition {
+                seq: harness::EventSeq::new(2),
+            },
+            observed_at_ms: 1,
+            joins: Default::default(),
+            event: CoreAgentEvent::Run(harness::RunEvent::ForceCancelled {
+                run_id: RunId::new(1),
+            }),
+        },
+    )
+    .expect("apply");
+    assert!(
+        !workflow
+            .core_state
+            .promises
+            .promises
+            .contains_key(&promise_id)
+    );
+    assert!(followup.is_some());
+}
+
+#[test]
+fn a_runner_cleaning_up_after_its_scope_left_state_reads_it_as_closed() {
+    let workflow = AgentSessionWorkflow::default();
+    let report = code_tools::report(&workflow, "execution").expect("report");
+    assert!(report.closed);
+    assert!(report.calls.is_empty());
+    assert_eq!(report.execution_id, "execution");
 }

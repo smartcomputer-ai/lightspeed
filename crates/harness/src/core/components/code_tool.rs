@@ -14,7 +14,6 @@ use crate::{
     WorkflowToolInvocationId,
 };
 
-pub const MAX_CODE_TOOL_SCOPES_PER_RUN: usize = 32;
 pub const MAX_CODE_TOOL_CALLS_PER_SCOPE: u32 = 1024;
 pub const MAX_CODE_TOOL_IN_FLIGHT: u32 = 64;
 pub const CODE_TOOL_PROMISE_SLOTS: u64 = crate::MAX_COMPLETION_PROMISES as u64;
@@ -345,18 +344,6 @@ fn validate_scope(state: &CoreAgentState, scope: &CodeToolScopeSpec) -> Result<(
             )));
         }
     }
-    let count = state
-        .code_tools
-        .scopes
-        .values()
-        .filter(|existing| {
-            code_tool_parent(state, &existing.spec)
-                .is_ok_and(|existing| existing.run_id == parent.run_id)
-        })
-        .count();
-    if count >= MAX_CODE_TOOL_SCOPES_PER_RUN {
-        return Err(invalid("code tool scope count exceeds the per-run limit"));
-    }
     Ok(())
 }
 
@@ -416,33 +403,6 @@ fn validate_call(state: &CoreAgentState, call: &CodeToolCallSpec) -> Result<(), 
         >= scope.spec.max_in_flight as usize
     {
         return Err(invalid("code tool execution exceeded its in-flight limit"));
-    }
-    if let Some(binding) = state.workflow_tools.binding_for_tool_name(&call.tool_id) {
-        let parent = code_tool_parent(state, &scope.spec)?;
-        let pending = state
-            .code_tools
-            .scopes
-            .values()
-            .filter(|scope| {
-                code_tool_parent(state, &scope.spec)
-                    .is_ok_and(|owner| owner.run_id == parent.run_id)
-            })
-            .flat_map(|scope| scope.calls.values())
-            .filter(|other| {
-                other.spec.tool_id == call.tool_id
-                    && matches!(other.status, CodeToolCallStatus::Pending)
-            })
-            .count();
-        if state
-            .workflow_tools
-            .emission_count(parent.run_id, &binding.definition.tool_id) as usize
-            + pending
-            >= crate::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN as usize
-        {
-            return Err(invalid(
-                "workflow tool invoked from code exhausted its emission budget",
-            ));
-        }
     }
     let call_id = code_tool_call_id(&call.origin);
     if state.runs.active.as_ref().is_some_and(|run| {
@@ -604,7 +564,8 @@ pub fn defer_code_tool_call_proposals(
         ));
     }
     let parent = code_tool_parent(state, &state.code_tools.scopes[&origin.execution_id].spec)?;
-    crate::core::drive::validate_await_spec_for_active_run(state, parent.run_id, &spec)?;
+    crate::core::drive::validate_await_spec_for_active_run(state, parent.run_id, &spec)
+        .map_err(|_| invalid(crate::AWAIT_REJECTED_CONTENT.trim_end()))?;
     let suspension = ToolBatchSuspension::AwaitTool {
         call_id: call.call_id.clone(),
         spec,
@@ -732,7 +693,11 @@ pub fn resume_code_tool_call_proposals(
         suspension: ToolBatchSuspension::JoinedWorkflowCalls { calls, .. },
     } = &call.status
     {
-        let promise = &state.promises.promises[&calls[0].promise_id];
+        let promise = state
+            .promises
+            .promises
+            .get(&calls[0].promise_id)
+            .ok_or_else(|| invalid("code tool joined promise is missing"))?;
         let expected_status = match promise.status {
             PromiseStatus::Resolved => ToolCallStatus::Succeeded,
             PromiseStatus::Failed => ToolCallStatus::Failed,
@@ -787,11 +752,10 @@ pub fn close_code_tool_scope_proposals(
     state: &CoreAgentState,
     execution_id: String,
 ) -> Result<Vec<CoreAgentEventProposal>, DomainError> {
-    let scope = state
-        .code_tools
-        .scopes
-        .get(&execution_id)
-        .ok_or_else(|| invalid("unknown code tool execution scope"))?;
+    // A runner can close after its parent has finished and the scope with it.
+    let Some(scope) = state.code_tools.scopes.get(&execution_id) else {
+        return Ok(Vec::new());
+    };
     if scope.closed {
         return Ok(Vec::new());
     }
@@ -899,20 +863,8 @@ pub(crate) fn apply_code_tool_event(
                 return Err(invalid("duplicate code tool scope event"));
             }
             validate_recorded_scope(state, scope)?;
-            // Retain closed outcomes for the current run, and drop prior-run
-            // scope indexes. The immutable log remains the outcome archive.
-            let run_id = code_tool_parent(state, scope)?.run_id;
-            let retain: BTreeSet<_> = state
-                .code_tools
-                .scopes
-                .iter()
-                .filter(|(_, existing)| {
-                    code_tool_parent(state, &existing.spec)
-                        .is_ok_and(|parent| parent.run_id == run_id)
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            state.code_tools.scopes.retain(|id, _| retain.contains(id));
+            // A scope leaves state with its parent invocation. The immutable log
+            // remains the outcome archive.
             state.code_tools.scopes.insert(
                 scope.execution_id.clone(),
                 CodeToolScope {

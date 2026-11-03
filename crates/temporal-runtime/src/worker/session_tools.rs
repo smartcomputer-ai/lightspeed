@@ -465,18 +465,16 @@ impl SessionTools {
         request: &ToolInvocationBatchRequest,
         call: &harness::ToolInvocationRequest,
         binding: &harness::WorkflowToolBinding,
-        emitted_count: u32,
+        in_flight_count: u32,
         promise_ids: &PromiseIdAllocator,
     ) -> Result<ToolInvocationResult, CoreAgentIoError> {
-        if emitted_count >= harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN {
+        if binding.completion.is_promise_bearing()
+            && in_flight_count >= harness::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS
+        {
             return failed_result(
                 self.blobs.as_ref(),
                 call.call_id.clone(),
-                format!(
-                    "workflow tool {} reached its per-run emission cap of {}",
-                    binding.definition.tool_id,
-                    harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN
-                ),
+                harness::in_flight_limit_message(&binding.definition.tool_id),
             )
             .await;
         }
@@ -755,9 +753,17 @@ impl SessionTools {
         }
         let tool_id = runtime.binding.definition.tool_id.clone();
         let sibling_count = successful_siblings.get(&tool_id).copied().unwrap_or(0);
-        let emitted_count = runtime.prior_emission_count.saturating_add(sibling_count);
+        let in_flight_count = runtime
+            .in_flight_invocation_count
+            .saturating_add(sibling_count);
         let result = self
-            .invoke_workflow_tool_call(request, call, &runtime.binding, emitted_count, promise_ids)
+            .invoke_workflow_tool_call(
+                request,
+                call,
+                &runtime.binding,
+                in_flight_count,
+                promise_ids,
+            )
             .await?;
         if result.status == ToolCallStatus::Succeeded {
             successful_siblings.insert(tool_id, sibling_count.saturating_add(1));
@@ -2658,6 +2664,39 @@ mod tests {
         blobs: &dyn BlobStore,
         sessions: &InMemorySessionStore,
     ) -> (SessionId, harness::WorkflowToolBinding) {
+        workflow_tool_session_with(
+            blobs,
+            sessions,
+            harness::BoundWorkflowToolDispatch::Pull,
+            harness::WorkflowToolCompletion::Accepted,
+        )
+        .await
+    }
+
+    async fn reply_workflow_tool_session(
+        blobs: &dyn BlobStore,
+        sessions: &InMemorySessionStore,
+    ) -> (SessionId, harness::WorkflowToolBinding) {
+        workflow_tool_session_with(
+            blobs,
+            sessions,
+            harness::BoundWorkflowToolDispatch::Push,
+            harness::WorkflowToolCompletion::Promises {
+                reply_schema_ref: None,
+                deadline_after_ms: Some(60_000),
+                max_promises: 1,
+                key_source: harness::WorkflowToolCompletionKeySource::Reply,
+            },
+        )
+        .await
+    }
+
+    async fn workflow_tool_session_with(
+        blobs: &dyn BlobStore,
+        sessions: &InMemorySessionStore,
+        dispatch: harness::BoundWorkflowToolDispatch,
+        completion: harness::WorkflowToolCompletion,
+    ) -> (SessionId, harness::WorkflowToolBinding) {
         let session_id = SessionId::new("workflow-tool-session");
         let schema_ref = blobs
             .put_bytes(
@@ -2691,11 +2730,8 @@ mod tests {
             Some(receiver.clone()),
             vec![harness::WorkflowToolDeclaration::new(
                 definition.clone(),
-                harness::WorkflowToolTarget::Bound {
-                    receiver,
-                    dispatch: harness::BoundWorkflowToolDispatch::Pull,
-                },
-                harness::WorkflowToolCompletion::Accepted,
+                harness::WorkflowToolTarget::Bound { receiver, dispatch },
+                completion,
             )],
         );
         let universe_id = uuid::Uuid::from_u128(1);
@@ -2755,7 +2791,7 @@ mod tests {
     async fn batch_calls_keep_order_and_accounting_and_refuse_ordinary_calls() {
         let (blobs, tools, _, workspace_attachments) = session_tools_with_readme_attachment().await;
         let sessions = InMemorySessionStore::new();
-        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let (session_id, binding) = reply_workflow_tool_session(blobs.as_ref(), &sessions).await;
         let workflow_args = blobs
             .put_bytes(br#"{"status":"complete"}"#.to_vec())
             .await
@@ -2770,13 +2806,13 @@ mod tests {
         workflow.builtin = None;
         workflow.workflow_tool = Some(harness::WorkflowToolCallRuntime::v1(
             binding,
-            harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN - 1,
+            harness::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS - 1,
         ));
         let mut bad_route = workflow.clone();
         bad_route.call_id = ToolCallId::new("bad-route");
         // Supplied workflow routing wins over a builtin-looking ID. The mismatch
-        // must fail validation without demanding VFS setup, and must not consume
-        // the sibling cap.
+        // must fail validation without demanding VFS setup, and must not take up
+        // the sibling's place under the in-flight limit.
         bad_route.tool_id = Some(test_tool_id("vfs_read_file"));
         let mut over_cap = workflow.clone();
         over_cap.call_id = ToolCallId::new("over-cap");
@@ -2833,7 +2869,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn workflow_tool_calls_validate_schema_ack_and_per_run_cap() {
+    async fn workflow_tool_calls_validate_schema_and_ack_and_a_notify_tool_is_never_limited() {
         let blobs = Arc::new(InMemoryBlobStore::new());
         let catalog = Arc::new(TestCatalog::default());
         let sessions = Arc::new(InMemorySessionStore::new());
@@ -2846,7 +2882,7 @@ mod tests {
             .put_bytes(br#"{"status":4}"#.to_vec())
             .await
             .expect("put invalid arguments");
-        let prior_emission_count = 2;
+        let in_flight_invocation_count = 2;
         let tools = SessionTools::new(blobs.clone(), catalog);
         let mut corrupt_binding = binding.clone();
         corrupt_binding.binding_fingerprint.push_str("-corrupt");
@@ -2858,7 +2894,7 @@ mod tests {
             arguments_ref: invalid_arguments,
             workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
                 binding.clone(),
-                prior_emission_count,
+                in_flight_invocation_count,
             )),
             promise_control: None,
             remote_mcp: None,
@@ -2871,7 +2907,7 @@ mod tests {
             arguments_ref: valid_arguments.clone(),
             workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
                 binding.clone(),
-                prior_emission_count,
+                in_flight_invocation_count,
             )),
             promise_control: None,
             remote_mcp: None,
@@ -2884,7 +2920,7 @@ mod tests {
             arguments_ref: valid_arguments.clone(),
             workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
                 corrupt_binding,
-                prior_emission_count,
+                in_flight_invocation_count,
             )),
             promise_control: None,
             remote_mcp: None,
@@ -2900,8 +2936,8 @@ mod tests {
             remote_mcp: None,
         });
         calls.extend(
-            (0..harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN - prior_emission_count).map(|index| {
-                harness::ToolInvocationRequest {
+            (0..harness::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS - in_flight_invocation_count).map(
+                |index| harness::ToolInvocationRequest {
                     builtin: None,
                     call_id: ToolCallId::new(format!("call-{index}")),
                     tool_id: Some(binding.definition.tool.name.clone()),
@@ -2909,22 +2945,22 @@ mod tests {
                     arguments_ref: valid_arguments.clone(),
                     workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
                         binding.clone(),
-                        prior_emission_count,
+                        in_flight_invocation_count,
                     )),
                     promise_control: None,
                     remote_mcp: None,
-                }
-            }),
+                },
+            ),
         );
         calls.push(harness::ToolInvocationRequest {
             builtin: None,
-            call_id: ToolCallId::new("call-over-cap"),
+            call_id: ToolCallId::new("call-past-the-limit"),
             tool_id: Some(binding.definition.tool.name.clone()),
             tool_name: binding.definition.tool.name.clone(),
             arguments_ref: valid_arguments,
             workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
                 binding.clone(),
-                prior_emission_count,
+                in_flight_invocation_count,
             )),
             promise_control: None,
             remote_mcp: None,
@@ -2958,7 +2994,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             successful.len(),
-            (harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN - prior_emission_count) as usize
+            // One past the limit too: nothing waits on a notify tool, so none is in flight.
+            (harness::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS - in_flight_invocation_count + 1)
+                as usize
         );
         assert!(successful.iter().all(|result| {
             result.effects.len() == 1
@@ -2975,11 +3013,6 @@ mod tests {
             .expect("read acknowledgement");
         assert!(acknowledgement.contains("\"accepted\":true"));
 
-        let over_cap = result
-            .results
-            .iter()
-            .find(|result| result.call_id.as_str() == "call-over-cap")
-            .expect("cap result");
         let invalid = result
             .results
             .iter()
@@ -3000,12 +3033,10 @@ mod tests {
             .iter()
             .find(|result| result.call_id.as_str() == "call-missing-runtime")
             .expect("missing runtime result");
-        assert_eq!(over_cap.status, ToolCallStatus::Failed);
         assert_eq!(invalid.status, ToolCallStatus::Failed);
         assert_eq!(name_mismatch.status, ToolCallStatus::Failed);
         assert_eq!(fingerprint_mismatch.status, ToolCallStatus::Failed);
         assert_eq!(missing_runtime.status, ToolCallStatus::Failed);
-        assert!(over_cap.effects.is_empty());
         assert!(invalid.effects.is_empty());
         assert!(name_mismatch.effects.is_empty());
         assert!(fingerprint_mismatch.effects.is_empty());
@@ -3203,6 +3234,64 @@ mod tests {
 
     /// The `agent_run` system binding as the gateway admits it: a
     /// start-on-call recipe with joined completion.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_tool_with_replies_is_refused_at_its_in_flight_limit_and_says_so() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let sessions = Arc::new(InMemorySessionStore::new());
+        let (session_id, binding) =
+            reply_workflow_tool_session(blobs.as_ref(), sessions.as_ref()).await;
+        let arguments = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
+            .await
+            .expect("put arguments");
+        let call = |id: &str, in_flight| harness::ToolInvocationRequest {
+            builtin: None,
+            call_id: ToolCallId::new(id),
+            tool_id: Some(binding.definition.tool.name.clone()),
+            tool_name: binding.definition.tool.name.clone(),
+            arguments_ref: arguments.clone(),
+            workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
+                binding.clone(),
+                in_flight,
+            )),
+            promise_control: None,
+            remote_mcp: None,
+        };
+        let limit = harness::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS;
+        let results = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .invoke_batch(ToolInvocationBatchRequest {
+                vfs_working_directory: None,
+                session_id,
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                promise_id_base: 1,
+                active_environment_id: None,
+                environment_policy: None,
+                subagents_policy: None,
+                code_mode_policy: None,
+                workspace_attachments: Vec::new(),
+                calls: vec![
+                    call("last-place", limit - 1),
+                    call("sibling-took-it", limit - 1),
+                ],
+            })
+            .await
+            .expect("invoke")
+            .completed_result()
+            .expect("completed")
+            .results;
+        assert_eq!(results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(results[1].status, ToolCallStatus::Failed);
+        assert_eq!(
+            blobs
+                .read_text(results[1].error_ref.as_ref().expect("error"))
+                .await
+                .expect("message"),
+            harness::in_flight_limit_message(&binding.definition.tool_id)
+        );
+    }
+
     async fn agent_run_binding(blobs: &InMemoryBlobStore) -> harness::WorkflowToolBinding {
         subagent_binding(blobs, tools::subagents::SubagentToolKind::Run).await
     }

@@ -173,28 +173,24 @@ impl AgentSessionWorkflow {
     /// A receiver hears when the session stops waiting for it: on a cancel, and when
     /// the hard deadline fails its promise. The deadline's own error ref tells that
     /// failure from a producer's report, which is not echoed back.
-    pub(super) fn queue_promise_cancellations_for_entries(&mut self, entries: &[CoreAgentEntry]) {
-        for entry in entries {
-            let promise_id = match &entry.event {
-                CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled { promise_id }) => {
-                    promise_id
-                }
-                CoreAgentEvent::Promise(harness::PromiseEvent::Failed {
-                    promise_id,
-                    error_ref: Some(error_ref),
-                }) if *error_ref == harness::promise_deadline_exceeded_ref() => promise_id,
-                _ => continue,
-            };
-            let Some(promise) = self.core_state.promises.promises.get(promise_id) else {
-                continue;
-            };
-            self.pending_promise_cancellations
-                .push(PendingPromiseCancellation {
-                    promise_id: promise_id.as_str().to_owned(),
-                    source: promise.source.clone(),
-                    log_seq: entry.position.seq.as_u64(),
-                });
-        }
+    pub(super) fn queue_promise_cancellation_for_entry(&mut self, entry: &CoreAgentEntry) {
+        let promise_id = match &entry.event {
+            CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled { promise_id }) => promise_id,
+            CoreAgentEvent::Promise(harness::PromiseEvent::Failed {
+                promise_id,
+                error_ref: Some(error_ref),
+            }) if *error_ref == harness::promise_deadline_exceeded_ref() => promise_id,
+            _ => return,
+        };
+        let Some(promise) = self.core_state.promises.promises.get(promise_id) else {
+            return;
+        };
+        self.pending_promise_cancellations
+            .push(PendingPromiseCancellation {
+                promise_id: promise_id.as_str().to_owned(),
+                source: promise.source.clone(),
+                log_seq: entry.position.seq.as_u64(),
+            });
     }
 
     /// When this entry ends the last pending keyed promise of a start-on-call
@@ -381,6 +377,26 @@ async fn terminal_tool_invocation_delivery_failure(
     let harness::EmissionBody::ToolInvocation { invocation, .. } = &pending.envelope.body else {
         return Ok(());
     };
+    // A notify-only invocation is finished once committed, so its record can be gone
+    // by the time delivery gives up. Nobody is waiting on it.
+    if ctx.state(|state| {
+        !state
+            .core_state
+            .workflow_tools
+            .emissions
+            .contains_key(&invocation.invocation_id)
+    }) {
+        if !ctx.is_replaying() {
+            tracing::info!(
+                target: "temporal_workflow",
+                event = "workflow_tool_delivery_abandoned",
+                invocation_id = invocation.invocation_id.as_str(),
+                receiver = pending.receiver_workflow_id.as_str(),
+                "gave up delivering a finished workflow tool invocation"
+            );
+        }
+        return Ok(());
+    }
     let message = format!(
         "workflow tool invocation {} could not be delivered to receiver {} after {} attempts",
         invocation.invocation_id, pending.receiver_workflow_id, pending.attempts

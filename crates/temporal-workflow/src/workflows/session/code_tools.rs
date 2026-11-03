@@ -99,9 +99,10 @@ pub(super) async fn invoke(
         Err(error)
     } else {
         let wanted = origin.clone();
+        // A call that is gone left state with its scope, and will not come back.
         ctx.wait_for_state(move |state| {
             harness::code_tool_call(&state.core_state, &wanted)
-                .is_some_and(|call| call.status.is_terminal())
+                .is_none_or(|call| call.status.is_terminal())
         })
         .await;
         ctx.state(|state| {
@@ -126,17 +127,26 @@ pub(super) async fn close(
     ctx.state(|state| report(state, &execution_id))
 }
 
+/// A scope leaves state with its parent invocation, and a runner can still be cleaning
+/// up after that. To it, a scope that is gone reads as closed with nothing outstanding.
 pub(super) fn report(
     state: &AgentSessionWorkflow,
     execution_id: &str,
 ) -> crate::CodeToolScopeResult {
-    state
+    Ok(state
         .core_state
         .code_tools
         .scopes
         .get(execution_id)
-        .map(crate::CodeToolScopeReport::from)
-        .ok_or_else(|| rejected(Rejection::UnknownScope, "unknown code tool execution scope"))
+        .map_or_else(
+            || crate::CodeToolScopeReport {
+                execution_id: execution_id.to_owned(),
+                closed: true,
+                bindings: BTreeMap::new(),
+                calls: BTreeMap::new(),
+            },
+            crate::CodeToolScopeReport::from,
+        ))
 }
 
 /// All durable mutations run on the session loop, including completions that
@@ -148,11 +158,11 @@ pub(super) async fn process_pending(
     for (origin, outcome) in completions {
         if ctx.state(|state| {
             harness::code_tool_call(&state.core_state, &origin)
-                .is_some_and(|call| !matches!(call.status, CodeToolCallStatus::Pending))
+                .is_none_or(|call| !matches!(call.status, CodeToolCallStatus::Pending))
         }) {
             // Only a pending call takes a result. Forced run termination records
-            // an unavailable outcome, and a late activity reply cannot resurrect
-            // the run or reapply its effects.
+            // an unavailable outcome, its scope may have left state since, and a
+            // late activity reply cannot resurrect the run or reapply its effects.
             ctx.state_mut(|state| {
                 state.code_tools.inflight.remove(&key(&origin));
             });
@@ -208,6 +218,22 @@ pub(super) async fn process_pending(
                 }
             }
             Request::Close(request) => {
+                if !ctx.is_replaying()
+                    && ctx.state(|state| {
+                        !state
+                            .core_state
+                            .code_tools
+                            .scopes
+                            .contains_key(&request.execution_id)
+                    })
+                {
+                    tracing::info!(
+                        target: "temporal_workflow",
+                        event = "code_tool_scope_late_close",
+                        execution_id = request.execution_id.as_str(),
+                        "close for a code tool scope already pruned"
+                    );
+                }
                 apply(
                     ctx,
                     CoreAgentCommand::CloseCodeToolScope {

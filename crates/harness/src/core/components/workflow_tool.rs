@@ -11,7 +11,10 @@ use crate::{
 
 const MANAGED_TOOL_DECLARATION_VERSION: u32 = 1;
 const MAX_MANAGED_TOOLS: usize = 32;
-pub const MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN: u32 = 32;
+/// Invocations of one tool that one run may have waiting on their promises. This
+/// guards concurrent load, not the length of a run: an invocation stops counting when
+/// its last promise settles, and one that takes no reply never counts.
+pub const MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS: u32 = 32;
 /// Admission-time resource guardrail on one invocation's keyed promise set,
 /// not a semantic. Bindings declare their own `max_promises` at or below it.
 pub const MAX_COMPLETION_PROMISES: u32 = 32;
@@ -758,17 +761,89 @@ impl WorkflowToolState {
             .find(|binding| &binding.definition.tool.name == tool_name)
     }
 
-    /// Per-run/per-tool invocation count across both bound emissions and
-    /// start requests; the deterministic cap covers them uniformly.
-    pub fn emission_count(&self, run_id: RunId, tool_id: &WorkflowToolId) -> u32 {
+    /// This run's invocations of this tool still waiting on a promise, across bound
+    /// emissions and start requests alike.
+    pub fn in_flight_invocation_count(
+        &self,
+        promises: &crate::PromiseComponentState,
+        run_id: RunId,
+        tool_id: &WorkflowToolId,
+    ) -> u32 {
         self.emissions
             .values()
             .chain(self.start_requests.values())
             .filter(|invocation| invocation.run_id == run_id && &invocation.tool_id == tool_id)
+            .filter(|invocation| {
+                invocation
+                    .completion_promises
+                    .iter()
+                    .flat_map(BTreeMap::values)
+                    .any(|promise_id| {
+                        promises
+                            .promises
+                            .get(promise_id)
+                            .is_some_and(|promise| !promise.status.is_terminal())
+                    })
+            })
             .count()
             .try_into()
             .unwrap_or(u32::MAX)
     }
+}
+
+/// What a caller hears when [`MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS`] refuses it.
+pub fn in_flight_limit_message(tool_id: &WorkflowToolId) -> String {
+    format!(
+        "workflow tool {tool_id} already has {MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS} invocations in flight in this run; wait for one to finish before starting another"
+    )
+}
+
+/// An invocation is finished once nothing can still happen to it: every keyed promise
+/// is terminal or already pruned, and no open code tool scope runs under it. A start
+/// intent needs no separate check, as the host only issues one with a promise pending.
+///
+/// This runs at batch completion and run terminal and never on a promise's own
+/// terminal event, because the host reads these records right after applying that
+/// event to find the execution or receiver to cancel. A closed scope goes with its
+/// parent, so every scope state holds can still find its parent.
+pub(crate) fn prune_finished_invocations(state: &mut crate::CoreAgentState) {
+    let tools = &state.workflow_tools;
+    let finished: BTreeSet<WorkflowToolInvocationId> = tools
+        .emissions
+        .values()
+        .chain(tools.start_requests.values())
+        .filter(|invocation| {
+            invocation
+                .completion_promises
+                .iter()
+                .flat_map(BTreeMap::values)
+                .all(|promise_id| {
+                    state
+                        .promises
+                        .promises
+                        .get(promise_id)
+                        .is_none_or(|promise| promise.status.is_terminal())
+                })
+                && !state.code_tools.scopes.values().any(|scope| {
+                    !scope.closed && scope.spec.parent_invocation_id == invocation.invocation_id
+                })
+        })
+        .map(|invocation| invocation.invocation_id.clone())
+        .collect();
+    if finished.is_empty() {
+        return;
+    }
+    let tools = &mut state.workflow_tools;
+    tools.emissions.retain(|id, _| !finished.contains(id));
+    tools.start_requests.retain(|id, _| !finished.contains(id));
+    tools
+        .delivery_failures
+        .retain(|id, _| !finished.contains(id));
+    tools.start_failures.retain(|id, _| !finished.contains(id));
+    state
+        .code_tools
+        .scopes
+        .retain(|_, scope| !finished.contains(&scope.spec.parent_invocation_id));
 }
 
 pub(crate) fn apply_config_event(
@@ -1163,7 +1238,7 @@ pub(crate) fn validate_emit_effect(
     expected_batch_id: ToolBatchId,
     expected_call_id: &ToolCallId,
     invocation: &WorkflowToolInvocation,
-    pending_emissions_for_port: u32,
+    in_flight_in_this_result: u32,
 ) -> Result<(), DomainError> {
     if &invocation.session_id != expected_session_id
         || invocation.run_id != expected_run_id
@@ -1237,13 +1312,15 @@ pub(crate) fn validate_emit_effect(
             "workflow tool invocation id does not match its durable call identity".to_owned(),
         ));
     }
-    let existing = state
-        .workflow_tools
-        .emission_count(invocation.run_id, &invocation.tool_id);
-    if existing.saturating_add(pending_emissions_for_port) >= MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN {
-        return Err(DomainError::InvariantViolation(format!(
-            "workflow tool {} exceeded its per-run emission cap",
-            invocation.tool_id
+    if binding.completion.is_promise_bearing()
+        && state
+            .workflow_tools
+            .in_flight_invocation_count(&state.promises, invocation.run_id, &invocation.tool_id)
+            .saturating_add(in_flight_in_this_result)
+            >= MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS
+    {
+        return Err(DomainError::InvariantViolation(in_flight_limit_message(
+            &invocation.tool_id,
         )));
     }
     Ok(())
@@ -2663,7 +2740,7 @@ mod tests {
             call.workflow_tool.as_ref().is_some_and(|runtime| {
                 runtime.version == crate::WorkflowToolCallRuntime::VERSION
                     && runtime.binding == binding
-                    && runtime.prior_emission_count == 0
+                    && runtime.in_flight_invocation_count == 0
             })
         }));
         let invocations = request

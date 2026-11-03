@@ -771,6 +771,11 @@ pub fn admit_command(
             resolution,
         } => {
             let Some(promise) = state.promises.promises.get(&promise_id) else {
+                // State keeps only recent terminal promises, so an old id settled long
+                // ago and this delivery is as late as one for a terminal promise.
+                if crate::core::components::promise::promise_was_pruned(state, &promise_id) {
+                    return Ok(Vec::new());
+                }
                 return reject(
                     CommandRejectionKind::UnknownReference,
                     format!("unknown promise {promise_id}"),
@@ -800,11 +805,9 @@ pub fn admit_command(
             invocation_id,
             error_ref,
         } => {
+            // A finished invocation leaves state, and nothing waits on its delivery.
             let Some(invocation) = state.workflow_tools.emissions.get(&invocation_id) else {
-                return reject(
-                    CommandRejectionKind::UnknownReference,
-                    format!("unknown workflow tool invocation {invocation_id}"),
-                );
+                return Ok(Vec::new());
             };
             match state.workflow_tools.delivery_failures.get(&invocation_id) {
                 // First terminal failure won; retried admission is a no-op.
@@ -841,11 +844,9 @@ pub fn admit_command(
             invocation_id,
             error_ref,
         } => {
+            // A finished invocation leaves state, and nothing waits on its start.
             let Some(invocation) = state.workflow_tools.start_requests.get(&invocation_id) else {
-                return reject(
-                    CommandRejectionKind::UnknownReference,
-                    format!("unknown workflow tool start intent {invocation_id}"),
-                );
+                return Ok(Vec::new());
             };
             match state.workflow_tools.start_failures.get(&invocation_id) {
                 // First terminal failure won; retried admission is a no-op.

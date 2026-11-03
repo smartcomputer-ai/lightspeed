@@ -1787,6 +1787,7 @@ fn complete_tool_batch(
     );
     active_run.active_tool_batch_id = None;
     crate::core::components::run::prune_settled_run_records(active_run);
+    crate::core::components::run::prune_finished_work(state);
     Ok(())
 }
 

@@ -965,9 +965,11 @@ pub(crate) fn tool_invocation_request(
                 .map(|binding| {
                     crate::WorkflowToolCallRuntime::v1(
                         binding.clone(),
-                        state
-                            .workflow_tools
-                            .emission_count(run_id, &binding.definition.tool_id),
+                        state.workflow_tools.in_flight_invocation_count(
+                            &state.promises,
+                            run_id,
+                            &binding.definition.tool_id,
+                        ),
                     )
                 });
             // Native MCP routing is decided here, once per dispatch, including
@@ -1878,6 +1880,9 @@ fn tool_call_completed_proposals_inner(
                 crate::core::components::promise::promise_id_from_cancel_effect(effect)?
             {
                 let Some(promise) = state.promises.promises.get(&promise_id) else {
+                    if crate::core::components::promise::promise_was_pruned(state, &promise_id) {
+                        continue;
+                    }
                     return Err(DomainError::InvariantViolation(format!(
                         "promise cancel effect references unknown promise {}",
                         promise_id
@@ -1901,6 +1906,9 @@ fn tool_call_completed_proposals_inner(
                 crate::core::components::promise::promise_id_from_detach_effect(effect)?
             {
                 let Some(promise) = state.promises.promises.get(&promise_id) else {
+                    if crate::core::components::promise::promise_was_pruned(state, &promise_id) {
+                        continue;
+                    }
                     return Err(DomainError::InvariantViolation(format!(
                         "promise detach effect references unknown promise {}",
                         promise_id
@@ -12275,7 +12283,7 @@ mod tests {
     }
 
     #[test]
-    fn code_tool_start_failure_reuses_promise_failure_and_parallel_emission_budget() {
+    fn code_tool_start_failure_reuses_promise_failure_and_a_full_tool_refuses_until_one_settles() {
         let (mut drive, parent) = code_tool_fixture();
         let mut scope = code_tool_scope(parent);
         scope.max_calls = 64;
@@ -12318,24 +12326,59 @@ mod tests {
             crate::code_tool_call(drive.state(), &submit.origin),
             Some(&outcome)
         );
-        for index in 0..crate::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN {
+        let admit_joined = |drive: &mut CoreAgentDrive, index: u32| {
+            let call = code_tool_spec(&format!("joined-{index}"), "agent_run");
+            code_tool_commit(
+                drive,
+                CoreAgentCommand::AdmitCodeToolCall { call: call.clone() },
+            );
+            let request = crate::code_tool_request(
+                drive.session_id(),
+                drive.state(),
+                "execution-1",
+                &call.origin.request_id,
+            )
+            .unwrap();
+            let promise_id = PromiseId::from_number(request.promise_id_base);
+            (
+                call.origin,
+                code_tool_workflow_effect(&request).0,
+                promise_id,
+            )
+        };
+        let mut first_promise = None;
+        for index in 0..crate::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS {
+            let (origin, result, promise_id) = admit_joined(&mut drive, index);
+            first_promise.get_or_insert(promise_id);
             code_tool_commit(
                 &mut drive,
-                CoreAgentCommand::AdmitCodeToolCall {
-                    call: code_tool_spec(&format!("joined-{index}"), "agent_run"),
-                },
+                CoreAgentCommand::CompleteCodeToolCall { origin, result },
             );
         }
+        // The call itself is admitted. Its emission is what the limit refuses, and
+        // that fails the one call.
+        let (origin, result, _) =
+            admit_joined(&mut drive, crate::MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS);
+        let refused = CoreAgentCommand::CompleteCodeToolCall { origin, result };
+        let error = drive
+            .admit_command(refused.clone(), 100)
+            .expect_err("the tool is at its limit");
         assert!(
-            drive
-                .admit_command(
-                    CoreAgentCommand::AdmitCodeToolCall {
-                        call: code_tool_spec("overflow", "agent_run")
-                    },
-                    100
-                )
-                .is_err()
+            error
+                .to_string()
+                .contains(&crate::in_flight_limit_message(&WorkflowToolId::new(
+                    "agent_run"
+                ))),
+            "{error}"
         );
+        code_tool_commit(
+            &mut drive,
+            CoreAgentCommand::ResolvePromise {
+                promise_id: first_promise.unwrap(),
+                resolution: crate::PromiseResolution::Resolved { payload_ref: None },
+            },
+        );
+        code_tool_commit(&mut drive, refused);
     }
     #[test]
     fn code_tool_cancellation_drains_late_effects_before_outer_batch_and_run_finish() {
@@ -12434,6 +12477,9 @@ mod tests {
                 claim_observed_at_ms: 100,
             },
         ));
+        assert!(
+            matches!(&crate::code_tool_call(drive.state(), &ordinary.origin).unwrap().status, crate::CodeToolCallStatus::Completed { result } if result.status == ToolCallStatus::Succeeded)
+        );
         log.extend(code_tool_commit(&mut drive, outer_resume));
         for _ in 0..8 {
             let action = drive.next_action(100, 64).unwrap();
@@ -12447,9 +12493,8 @@ mod tests {
             drive.state().runs.completed.last().unwrap().status,
             RunStatus::Cancelled
         );
-        assert!(
-            matches!(&crate::code_tool_call(drive.state(), &ordinary.origin).unwrap().status, crate::CodeToolCallStatus::Completed { result } if result.status == ToolCallStatus::Succeeded)
-        );
+        // The closed scope left state with its finished parent; the log keeps it.
+        assert!(drive.state().code_tools.scopes.is_empty());
         assert_eq!(
             drive.state().promises.promises
                 [&PromiseId::from_number(ordinary_request.promise_id_base)]

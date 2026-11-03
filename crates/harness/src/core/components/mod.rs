@@ -57,10 +57,11 @@ pub use llm::*;
 pub use log::*;
 pub use promise::AwaitOutcome;
 pub use promise::{
-    PROMISE_CANCEL_EFFECT_KIND, PROMISE_CREATE_EFFECT_KIND, PROMISE_DETACH_EFFECT_KIND,
-    PROMISE_ID_PREFIX, Promise, PromiseComponentState, PromiseEvent, PromiseId, PromiseIdAllocator,
-    PromiseIdError, PromiseOwnership, PromiseResolution, PromiseScope, PromiseSource,
-    PromiseStatus, promise_cancel_effect, promise_create_effect, promise_detach_effect,
+    MAX_RETAINED_TERMINAL_PROMISES, PROMISE_CANCEL_EFFECT_KIND, PROMISE_CREATE_EFFECT_KIND,
+    PROMISE_DETACH_EFFECT_KIND, PROMISE_ID_PREFIX, Promise, PromiseComponentState, PromiseEvent,
+    PromiseId, PromiseIdAllocator, PromiseIdError, PromiseOwnership, PromiseResolution,
+    PromiseScope, PromiseSource, PromiseStatus, promise_cancel_effect, promise_create_effect,
+    promise_detach_effect,
 };
 pub use run::{
     AcceptedRun, AcceptedRunEvent, ActiveRun, AwaitMode, AwaitSpec,
@@ -96,11 +97,11 @@ pub use turn::{
 };
 pub use workflow_tool::{
     AdmittedManagedSessionWorkflowTools, BoundWorkflowToolDispatch, MAX_COMPLETION_PROMISES,
-    MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN, ManagedSessionWorkflowTools, REPLY_COMPLETION_KEY,
+    MAX_IN_FLIGHT_WORKFLOW_TOOL_INVOCATIONS, ManagedSessionWorkflowTools, REPLY_COMPLETION_KEY,
     WORKFLOW_TOOL_EMIT_EFFECT_KIND, WORKFLOW_TOOL_EXECUTION_KIND, WorkflowEndpointRef,
     WorkflowStartRef, WorkflowToolBinding, WorkflowToolCompletion, WorkflowToolCompletionKeySource,
     WorkflowToolConfigEvent, WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolEvent,
     WorkflowToolInvocation, WorkflowToolState, WorkflowToolTarget, completion_promise_source,
-    validate_completion_key, with_completion_deadline, workflow_tool_emit_effect,
-    workflow_tool_execution_id,
+    in_flight_limit_message, validate_completion_key, with_completion_deadline,
+    workflow_tool_emit_effect, workflow_tool_execution_id,
 };

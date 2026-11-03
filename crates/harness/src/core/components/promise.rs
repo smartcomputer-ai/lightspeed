@@ -211,6 +211,10 @@ pub struct PromiseComponentState {
     pub promises: BTreeMap<PromiseId, Promise>,
 }
 
+/// Terminal promises state keeps, the most recently minted ones. An older id reads as
+/// unknown, which `await` reports and a late resolution ignores.
+pub const MAX_RETAINED_TERMINAL_PROMISES: usize = 256;
+
 impl PromiseComponentState {
     pub fn pending(&self) -> impl Iterator<Item = &Promise> {
         self.promises
@@ -326,6 +330,31 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
             Ok(())
         }
     }
+}
+
+/// Only ever runs with no batch open, so nothing a batch waits on can go. Pending
+/// promises always stay, and the id cursor is unaffected.
+pub(crate) fn prune_terminal_promises(state: &mut CoreAgentState) {
+    let promises = &mut state.promises.promises;
+    let terminal = promises
+        .values()
+        .filter(|promise| promise.status.is_terminal())
+        .count();
+    let mut droppable = terminal.saturating_sub(MAX_RETAINED_TERMINAL_PROMISES);
+    promises.retain(|_, promise| {
+        let oldest = droppable > 0 && promise.status.is_terminal();
+        if oldest {
+            droppable -= 1;
+        }
+        !oldest
+    });
+}
+
+/// A resolution or cancel can name a promise state has since pruned. Ids are never
+/// reused, so an id the cursor has passed is that case and not a mistake.
+pub(crate) fn promise_was_pruned(state: &CoreAgentState, promise_id: &PromiseId) -> bool {
+    promise_id.number() <= state.id_cursors.last_promise_id
+        && !state.promises.promises.contains_key(promise_id)
 }
 
 /// What one terminal joined promise means for the call parked on it, for the
