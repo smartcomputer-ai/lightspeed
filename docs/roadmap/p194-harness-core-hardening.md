@@ -900,3 +900,31 @@ Open:
   page on approvals should say that a spawn beside a gated call waits for the decision.
 - A failing assertion in the `temporal-runtime` lib tests aborted the whole binary here with `failed to
   initiate panic, error 5` instead of reporting it. It only showed on a real failure, and I did not chase it.
+
+Review of this package:
+
+- `cb13d0b2`: the admissions arm of `execute_call_group` returned a drain refusal with `?` and left its siblings
+  running, while the commit arm cancelled them. Both now share one abandon path. It also removes a tool
+  batches test that set a spec and read the same spec back.
+- `dcc6cacf`: adds a test that a batch can park again on a later dispatch, the `[gated, exclusive, gated]` shape,
+  with replay. It passed without a code change. It also corrects two comments that still said calls run
+  through a park, and moves the cursor test out from between another test and its doc comment.
+- Checked and found sound: every item is done as the package states. A preempted dispatch always means the
+  batch is abandoned, so no dispatch can return without progress and spin. The top-of-loop check runs
+  before the break that parks. Sibling summaries come from the whole dispatch. Every production registration
+  of a native MCP tool declares its class, including `mcp.find_tools` and `mcp.call`. Code tool reservations
+  run only on outer loop passes, when no dispatch is in flight, so they cannot take a slot from one. The
+  live mixed-batch scenario reads correctly against the new flow. The workflow contract exporter leaves no
+  diff.
+- One behaviour change the package notes did not name: `mcp.find_tools` now gets its declared retry-safe
+  three attempts, where the removed override forced one. It is read-only, so I kept it.
+- Left alone: `call_request` and `PromiseIdAllocator` still add without saturating, which the S-08 scope
+  leaves out and no production path can reach. A selection behind a gated call can still succeed after an
+  earlier selection in the same batch failed, as in `[activate A, gated, activate B]`, because the later
+  dispatch no longer lists A as a sibling. Only one selection takes effect, so it is harmless.
+- Still unverified: Docker was down again, so `execute_call_group` and the whole two-activity flow have
+  never run against Temporal. The risky note above stands.
+
+Verified: `cargo test -p harness --lib` (317 passed), `cargo test -p temporal-workflow --lib` (178 passed)
+and `--test '*'` (3 passed), `cargo test -p temporal-runtime --lib` (476 passed, 1 ignored), and
+`cargo check --workspace --all-targets --locked`.
