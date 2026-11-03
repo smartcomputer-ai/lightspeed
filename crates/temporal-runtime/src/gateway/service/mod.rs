@@ -2369,7 +2369,9 @@ impl AgentApiService for GatewayAgentApi {
                 page => page?,
             };
         if session.status != api::SessionStatus::Closed
-            && let Some(failure) = self.open_session_execution_failure(&session_id).await
+            && let Some(failure) = self
+                .open_session_execution_failure(&session_id, session.status)
+                .await
         {
             // A closing workflow commits the close and then completes, so a dead
             // execution behind an open row can just mean the row was read first.

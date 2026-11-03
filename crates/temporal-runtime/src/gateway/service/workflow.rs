@@ -641,9 +641,10 @@ impl GatewayAgentApi {
     pub(super) async fn open_session_execution_failure(
         &self,
         session_id: &SessionId,
+        status: api::SessionStatus,
     ) -> Option<api::SessionExecutionFailureView> {
         match self.execution_liveness(session_id).await {
-            Ok(liveness) => liveness.open_session_failure(),
+            Ok(liveness) => liveness.open_session_failure(status),
             Err(error) => {
                 tracing::warn!(
                     target: "temporal_runtime",
@@ -678,21 +679,7 @@ impl GatewayAgentApi {
             .load_session_state(session_id)
             .await
             .map(|loaded| loaded.state.lifecycle.status);
-        match (row, liveness) {
-            (Ok(CoreAgentStatus::Closed), _) => {
-                AgentApiError::rejected(format!("session is not open: {session_id}"))
-            }
-            // No row and no execution that failed: the session never existed
-            // or was deleted after it ended, which is not a bootstrap problem.
-            (Err(error), liveness)
-                if is_not_found(&error)
-                    && liveness != ExecutionLiveness::Terminal(ExecutionTerminalKind::Failed) =>
-            {
-                error
-            }
-            (_, ExecutionLiveness::Missing) => AgentApiError::not_found("agent workflow not found"),
-            _ => session_bootstrap_failed_error(session_id, None),
-        }
+        stopped_execution_not_found_error(session_id, row, liveness)
     }
 
     /// Force-close recovery path for sessions with no running workflow:
@@ -790,10 +777,17 @@ impl ExecutionLiveness {
     /// The failure to report for a session the store still has open. Closing a
     /// session is the only clean way out of its workflow, so an execution that
     /// completed or was canceled under an open row stopped short of that.
-    fn open_session_failure(self) -> Option<api::SessionExecutionFailureView> {
+    fn open_session_failure(
+        self,
+        status: api::SessionStatus,
+    ) -> Option<api::SessionExecutionFailureView> {
         use api::SessionExecutionFailureView as View;
         match self {
             Self::Running => None,
+            // A row nothing has opened is not dead for having no execution: a
+            // sub-agent's row is written before its workflow starts, and a
+            // retried start still opens one.
+            Self::Missing if status == api::SessionStatus::NotLoaded => None,
             Self::Missing => Some(View::Missing),
             Self::Terminal(ExecutionTerminalKind::Failed) => Some(View::Failed),
             Self::Terminal(ExecutionTerminalKind::TimedOut) => Some(View::TimedOut),
@@ -803,6 +797,30 @@ impl ExecutionLiveness {
                 | ExecutionTerminalKind::Terminated,
             ) => Some(View::Terminated),
         }
+    }
+}
+
+/// The error for an interaction that found no running execution, given what
+/// the store says about the row.
+fn stopped_execution_not_found_error(
+    session_id: &SessionId,
+    row: Result<CoreAgentStatus, AgentApiError>,
+    liveness: ExecutionLiveness,
+) -> AgentApiError {
+    match (row, liveness) {
+        (Ok(CoreAgentStatus::Closed), _) => {
+            AgentApiError::rejected(format!("session is not open: {session_id}"))
+        }
+        // No row and no execution that failed: the session never existed or
+        // was deleted after it ended, which is not a bootstrap problem.
+        (Err(error), liveness)
+            if is_not_found(&error)
+                && liveness != ExecutionLiveness::Terminal(ExecutionTerminalKind::Failed) =>
+        {
+            error
+        }
+        (_, ExecutionLiveness::Missing) => AgentApiError::not_found("agent workflow not found"),
+        _ => session_bootstrap_failed_error(session_id, None),
     }
 }
 
@@ -849,6 +867,7 @@ fn require_universe_workflow_reference(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::SessionStatus;
 
     #[test]
     fn only_an_ended_execution_reports_an_open_session_failure() {
@@ -867,15 +886,85 @@ mod tests {
             (WorkflowExecutionStatus::Canceled, Some(View::Terminated)),
         ] {
             assert_eq!(
-                ExecutionLiveness::from_status(status).open_session_failure(),
+                ExecutionLiveness::from_status(status).open_session_failure(SessionStatus::Idle),
                 expected,
                 "{status:?}"
             );
         }
         assert_eq!(
-            ExecutionLiveness::Missing.open_session_failure(),
+            ExecutionLiveness::Missing.open_session_failure(SessionStatus::Idle),
             Some(View::Missing)
         );
+    }
+
+    #[test]
+    fn a_row_nothing_has_opened_only_fails_on_an_execution_that_ran() {
+        use api::SessionExecutionFailureView as View;
+        assert_eq!(
+            ExecutionLiveness::Missing.open_session_failure(SessionStatus::NotLoaded),
+            None
+        );
+        assert_eq!(
+            ExecutionLiveness::Terminal(ExecutionTerminalKind::Failed)
+                .open_session_failure(SessionStatus::NotLoaded),
+            Some(View::Failed)
+        );
+    }
+
+    #[test]
+    fn a_stopped_execution_is_classified_by_what_the_store_has() {
+        use ExecutionTerminalKind::{Completed, Failed, Terminated};
+        let session_id = SessionId::new("session_1");
+        let no_row = || Err(AgentApiError::not_found("session not found: session_1"));
+        for (row, liveness, kind, message) in [
+            (
+                Ok(CoreAgentStatus::Closed),
+                ExecutionLiveness::Terminal(Completed),
+                AgentApiErrorKind::Rejected,
+                "session is not open: session_1",
+            ),
+            // A deleted session stays not found, so bots still see it as missing.
+            (
+                no_row(),
+                ExecutionLiveness::Terminal(Completed),
+                AgentApiErrorKind::NotFound,
+                "session not found: session_1",
+            ),
+            (
+                no_row(),
+                ExecutionLiveness::Terminal(Terminated),
+                AgentApiErrorKind::NotFound,
+                "session not found: session_1",
+            ),
+            (
+                no_row(),
+                ExecutionLiveness::Missing,
+                AgentApiErrorKind::NotFound,
+                "session not found: session_1",
+            ),
+            (
+                Ok(CoreAgentStatus::Open),
+                ExecutionLiveness::Missing,
+                AgentApiErrorKind::NotFound,
+                "agent workflow not found",
+            ),
+        ] {
+            let error = stopped_execution_not_found_error(&session_id, row, liveness);
+            assert_eq!(error.kind, kind, "{liveness:?}");
+            assert_eq!(error.message, message, "{liveness:?}");
+        }
+        for (row, liveness) in [
+            (no_row(), ExecutionLiveness::Terminal(Failed)),
+            (
+                Ok(CoreAgentStatus::Open),
+                ExecutionLiveness::Terminal(Terminated),
+            ),
+        ] {
+            assert_eq!(
+                stopped_execution_not_found_error(&session_id, row, liveness),
+                session_bootstrap_failed_error(&session_id, None)
+            );
+        }
     }
 
     #[test]
