@@ -359,6 +359,28 @@ Later packages add their own entries.
   turn is near turn 2,500. This was already so and is now reachable. Left alone,
   because the refusal is typed and the events API serves the run.
 
+- **A failed body read is now retried on every client.** A connection reset, truncated body or deadline
+  after the headers is a resend within the LLM retry budget. The provider may already have served that
+  request, so a retry can bill a second generation, and a provider-hosted MCP call in it can run twice. That
+  matches the at-least-once already accepted for provider-hosted calls. Production generation is all
+  non-streaming, so this covers all generation traffic. Before, it failed the run on Anthropic and
+  Completions.
+- **The compaction estimate no longer refuses anything by itself.** A chunk with no smaller cut goes to the
+  provider, however far over the limit it looks. That relies on the provider answering with a typed overflow.
+  A compatible backend that truncates silently, or that sends an overflow the client does not classify, gets
+  an oversized summary request or a plain rejection instead. The bytes/4 and bytes/8 hints undercount
+  dense text and small PDFs, which costs refused calls from the 32-call budget and not a failure.
+- **Only Anthropic's overflow wording was added.** As instructed, the shared hints are unchanged, so a backend
+  with its own wording, such as Gemini's OpenAI layer ("input token count ... exceeds the maximum"), still fails
+  as `request_rejected` and repeats until someone compacts. Of the two Anthropic phrases, only "prompt is too
+  long" was confirmed against the real API. "exceed context limit" is recalled wording for models before 4.5,
+  and classifying it as overflow is harmless if it no longer occurs.
+- **A bad tool name or call id still ends the run.** This is the owner's choice, reported properly now. Known
+  triggers (gpt-oss names on vLLM, an empty Gemini id, LiteLLM's signature in call ids) stay unusable, the valid
+  siblings and text of that turn are dropped, and a bot run ends with no chance to recover. Chat Completions
+  still fails on a missing id where the other two fall back to an index, because evening that out is the rejected
+  option's fallback.
+
 ## Progress
 
 ### `core-commit-safety` (H-01, H-16, H-11, H-06)
@@ -1559,3 +1581,69 @@ append, and ids allocated from cursors rather than counts. Fixed:
   `finalize` dead, so a delayed prepare could open the scope again. The query rejects again; close and the cleanup loop
   handle an absent scope themselves. Risky calls is corrected.
 - `6526b602`: the `submissionId` API doc still promised a retry always returns the original run.
+
+### `llm-provider-errors` (H-34, H-15, H-88, H-49, H-54)
+
+Landed:
+
+- `2fb062fd` (H-34): `HttpClient::transport_error` replaces all four `map_reqwest_error` copies. Retryable is
+  timeout, connect, request or decode, since reqwest reports a failed body read as a decode error. A request reqwest
+  refused to build stays terminal. `tests/transport_failures.rs` runs a closed connection, a stalled body and a
+  refused connection through every client's real call against a local listener.
+- `129161b0` (H-15): the Anthropic client passes an explicit `context_length_exceeded` code for an
+  `invalid_request_error` saying "prompt is too long" or "exceed context limit". `tests/provider_failures.rs` sends
+  the real 400 through a client and a listener, and sees `ContextLimit` at the runtime and chunk splitting in rolling
+  compaction.
+- `2e281a2c` (H-15): images cost a ceiling from `MAX_IMAGE_SIDE` (5,333 tokens, no blob read), PDFs bytes/8, the rest
+  bytes/4. The pre-send check only shrinks while a smaller cut exists, and an estimate cannot refuse the first chunk.
+  Reported usage still enforces `MAX_INPUT_TOKENS`.
+- `d59efd66` (H-88): `LlmAdapterError::InvalidProviderResponse` for everything read off a response.
+  `fail_on_invalid_response` turns it into a `Failed` result with usage and response id, so the debug dump step runs
+  and the run fails as `ModelFailure`. A harness test with replay pins that path.
+- `65cc644a` (H-49): the ten constants moved to `llm_clients::content` with unchanged values. The three compaction
+  kinds stay, and no neutral kind was added.
+- `408a0116` (H-54): `document_entry` takes the entry and requires a user message with no provider kind. The Anthropic
+  summary preview is cut to 256 characters, and the `preview` field doc is corrected.
+
+Calls made:
+
+- The classifier is a method on `HttpClient`, because it already holds the timeout. The timeout message now reads the
+  same everywhere, including reqwest's own text, which audio used to leave out.
+- A refused compaction attempt no longer counts as spent, beyond the brief. Otherwise a whole prefix estimated near the
+  budget that the provider refuses for free would have used up the budget for its own halves.
+- Compaction's "no complete usable summary" and "did not reduce its input" became `InvalidProviderResponse`, since
+  they judge what came back. Its budgets and limits keep `InvalidProviderRequest`.
+- On Anthropic the pause_turn loop now falls out to the same path, so usage is summed over continuations, including a
+  turn that passes the 8-continuation cap. That cap used to return with nothing kept.
+- The rule in `document_entry` covers PDFs as well. The judge left PDFs on media type alone, but the package text
+  applies it to the function, and every admitted PDF is a user message with no provider kind.
+- The harness's own test now spells `"openai.responses.message"` as a literal, because the harness does not depend on
+  `llm-clients`.
+
+Deviations:
+
+- The executor unit test keeps a hand-set kind and only takes the real message. The flow through classification is
+  tested in `provider_failures.rs`, because `parse_provider_http_error` is private to the client.
+- Compaction responses that cannot be read keep the new error name but not their usage: the existing failed compaction
+  result reports none. `reject_failure_finish` on Completions is a provider-reported failure on a 200 and is untouched,
+  so it also keeps no usage and no dump.
+- Ported from the old reproductions: media, text and budget cases into `compaction.rs`, and identity shapes into
+  `provider_failures.rs`. Not ported: the session journeys over reducer planning, whose compaction side is now covered
+  by the unit tests, and the validator checks, which pinned the grammar and nothing that changed here.
+
+Verified: `cargo test -p llm-clients -p llm-runtime`, `cargo test -p harness` (363 unit, 16 in `state_bounds`), `cargo
+test -p api-projection --lib` (47), `cargo test -p api --tests`, `cargo test -p temporal-workflow --test
+workflow_contract`, `cargo check --workspace --all-targets --locked`. The workflow contract exporter leaves no diff.
+
+One live test ran, because the real wording could not be checked otherwise:
+`anthropic_messages_live_runtime_reports_input_overflow_as_context_limit`, against the real API on `claude-opus-5-5`.
+It sends about 12 MB and confirms "prompt is too long" reaches the runtime as `ContextLimit`. Nothing here has run
+through Temporal, so overflow recovery after a real 400 and a failed result with usage are covered by unit tests only.
+
+Handoff:
+
+- `oversized-input-refusal`: "the smallest complete compaction chunk exceeds the context window" now means the provider
+  confirmed it, so that is where to name the largest entry. An entry that can never fit still ends as `ContextFailure`,
+  and classification does not rescue it.
+- `docs-and-review-notes`: no guide text changed here. The compaction guide should say the size estimate is advisory if
+  it describes it at all.
