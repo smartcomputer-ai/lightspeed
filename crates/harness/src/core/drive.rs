@@ -10816,9 +10816,6 @@ mod tests {
         assert_ne!(active_run.active_tool_batch_id, Some(request.batch_id));
     }
 
-    /// Runtime-measured per-call durations recorded by the execution
-    /// activity survive on the stored tool results, where analytics and
-    /// projections read them back per call.
     #[test]
     fn a_tool_event_accepts_a_promise_cursor_at_its_limit() {
         let session_id = SessionId::new("session-cursor-limit");
@@ -10847,6 +10844,9 @@ mod tests {
         assert_eq!(redispatch.promise_id_base, u64::MAX);
     }
 
+    /// Runtime-measured per-call durations recorded by the execution
+    /// activity survive on the stored tool results, where analytics and
+    /// projections read them back per call.
     #[test]
     fn per_call_results_retain_runtime_durations() {
         let session_id = SessionId::new("session-durations");
@@ -13244,8 +13244,8 @@ mod tests {
         logged.assert_replays(|_| {});
     }
 
-    /// The workflow keeps calls running through a park because this is accepted:
-    /// throwing the result away would only run the call again after the decision.
+    /// A park never discards a sibling's result, because this is accepted: throwing
+    /// the result away would only run the call again after the decision.
     #[test]
     fn a_sibling_result_commits_while_the_run_is_parked_on_approval() {
         let (mut logged, batch) = gated_native_dispatch(&["call_m1", "call_m2"]);
@@ -13593,6 +13593,79 @@ mod tests {
         let run = logged.drive.state().runs.active.as_ref().expect("active");
         assert_eq!(run.status, RunStatus::Parked);
         assert!(run.pending_approvals().next().is_none());
+        logged.assert_replays(|_| {});
+    }
+
+    /// Only calls in one window park together, so a gated call behind an exclusive
+    /// sibling parks on a later dispatch of the same batch.
+    #[test]
+    fn a_later_dispatch_of_a_batch_can_park_again() {
+        let (mut logged, first) = mixed_dispatch(&["mcp_echo__hello", "tool_a", "mcp_echo__hello"]);
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                first.batch_id,
+                vec![native_mcp_approval(&first.calls[0].call_id)],
+                70,
+            )
+            .expect("first park");
+        logged.commit(parked);
+        approve_only_approval(&mut logged, first.run_id);
+
+        let second = logged.until_tools();
+        assert_eq!(pending_call_ids(&second), ["call_0", "call_1", "call_2"]);
+        assert_eq!(injected_decision(&second.calls[0]), Some(true));
+        assert_eq!(injected_decision(&second.calls[2]), None);
+        for call in &second.calls[..2] {
+            let result = logged
+                .drive
+                .resume_tool_call(
+                    second.batch_id,
+                    per_call_result(&call.call_id, ToolCallStatus::Succeeded, Vec::new()),
+                    71,
+                )
+                .expect("call before the second park");
+            logged.commit(result);
+        }
+        let parked = logged
+            .drive
+            .request_native_mcp_approvals(
+                second.batch_id,
+                vec![native_mcp_approval(&second.calls[2].call_id)],
+                72,
+            )
+            .expect("second park");
+        logged.commit(parked);
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Parked);
+        logged.admit(CoreAgentCommand::DecideApproval(
+            crate::ApprovalDecisionCommand {
+                approval_id: crate::ApprovalId::new("approval_2"),
+                run_id: first.run_id,
+                decision: crate::ApprovalDecision::Approved,
+                note: None,
+                decided_by: None,
+                response: None,
+            },
+        ));
+
+        let third = logged.until_tools();
+        assert_eq!(pending_call_ids(&third), ["call_2"]);
+        assert_eq!(injected_decision(&third.calls[0]), Some(true));
+        let last = logged
+            .drive
+            .resume_tool_call(
+                third.batch_id,
+                per_call_result(
+                    &third.calls[0].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                73,
+            )
+            .expect("last call");
+        logged.commit(last);
+        logged.until_generate();
         logged.assert_replays(|_| {});
     }
 

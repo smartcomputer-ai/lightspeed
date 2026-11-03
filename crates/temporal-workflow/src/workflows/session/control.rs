@@ -97,8 +97,8 @@ pub(super) fn tool_batch_still_wanted(
 
 /// Calls already running for the tool batch `batch_id` of `run_id` have nobody to
 /// report to: the run is gone, it moved on to another batch, or it is ending. A park
-/// is none of these, because the harness accepts a sibling's result while parked and
-/// a call whose result is thrown away would run again after the decision.
+/// is none of these: a dispatch only parks once its window has drained, and a call
+/// whose result was thrown away for a park would run again after the decision.
 pub(super) fn tool_batch_abandoned(
     state: &CoreAgentState,
     run_id: harness::RunId,
