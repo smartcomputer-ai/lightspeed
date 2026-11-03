@@ -60,6 +60,9 @@ mod tests {
     use super::*;
     use harness::{BlobRef, PromiseId, PromiseResolution};
     use serde_json::{Value, json};
+    use temporalio_common::data_converters::{
+        GenericPayloadConverter, SerializationContext, SerializationContextData,
+    };
     use temporalio_common::protos::temporal::api::common::v1::Payload;
 
     fn envelope() -> EmissionEnvelope {
@@ -109,6 +112,29 @@ mod tests {
             serde_json::from_slice::<Value>(&input.payloads[0].data).unwrap(),
             serde_json::to_value(envelope()).unwrap()
         );
+    }
+
+    /// The step before any handler runs, as the workflow macro spells it: this is
+    /// where a typed input failed the workflow task.
+    #[test]
+    fn the_sdk_hands_over_any_payloads_as_raw() {
+        let converter = PayloadConverter::default();
+        let context_data = SerializationContextData::None;
+        let context = SerializationContext::new(&context_data, &converter);
+        let garbage = Payload {
+            data: vec![0xff, 0x00, 0x7b],
+            ..Default::default()
+        };
+        for payloads in [
+            Vec::new(),
+            vec![garbage.clone()],
+            vec![garbage.clone(), garbage],
+        ] {
+            let raw: RawValue = converter
+                .from_payloads(&context, payloads.clone())
+                .expect("a raw input never fails the signal");
+            assert_eq!(raw.payloads, payloads);
+        }
     }
 
     #[test]

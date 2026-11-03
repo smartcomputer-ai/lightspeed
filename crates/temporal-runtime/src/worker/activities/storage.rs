@@ -1289,6 +1289,39 @@ mod tests {
         assert_eq!(no_files.entries.len(), 1);
     }
 
+    /// A producer writes reply payloads, so what it lists is untrusted: a ref that
+    /// does not decode drops that one attachment and leaves the rest of the reply.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_listed_attachment_with_a_malformed_ref_is_dropped_on_its_own() {
+        use tools::attachments::Attachment;
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let blob = deps.blobs.put_bytes(b"%PDF report".to_vec()).await.unwrap();
+        let reference = harness::FileAttachment::new(blob, "report.pdf".into(), None);
+        let malformed = |content_ref: &str| {
+            json!({
+                "kind": "file",
+                "data": { "handle": "file:x", "content_ref": content_ref, "name": "n" },
+            })
+        };
+        let payload = deps
+            .blobs
+            .put_bytes(
+                serde_json::to_vec(&json!({"attachments": [
+                    malformed("short"),
+                    malformed(&format!("sha256:{}", "A".repeat(64))),
+                    Attachment::File(reference.clone()),
+                ]}))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let prepared = prepare_payload_context(&deps, &payload, &mut 1, &mut 8)
+            .await
+            .unwrap();
+        assert_eq!(prepared.attachments, vec![Attachment::File(reference)]);
+        assert!(prepared.entries.is_empty());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn joined_context_keeps_admitted_listed_blobs_in_order() {
         let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
