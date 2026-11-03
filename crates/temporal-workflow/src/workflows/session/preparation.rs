@@ -328,10 +328,25 @@ pub(super) async fn execute_operation(
         Ok(request) => request,
         Err(error) => return Ok(Err(error)),
     };
-    // Storage confirms exact-batch retries after a lost response. A commit
-    // failure is not evidence of rejection: propagate it without a receipt.
-    drive::append_events(ctx, drive, request.expected_head, request.events).await?;
-    Ok(Ok(summary))
+    let appended = drive::append_events(ctx, drive, request.expected_head, request.events).await;
+    operation_commit_outcome(appended, summary)
+}
+
+/// Storage confirms exact-batch retries after a lost response. A commit failure is
+/// not evidence of rejection: propagate it without a receipt. A data rejection is that
+/// evidence. Nothing was written and the caller's own configuration is what the store
+/// refused, so the caller hears it and the session stays as it was.
+fn operation_commit_outcome<T>(
+    appended: anyhow::Result<T>,
+    summary: ProfileApplySummary,
+) -> anyhow::Result<Result<ProfileApplySummary, AgentApiError>> {
+    match appended {
+        Ok(_) => Ok(Ok(summary)),
+        Err(error) if error.is::<errors::StoreDataRejection>() => {
+            Ok(Err(AgentApiError::internal(error.to_string())))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 async fn prepare_operation(
@@ -682,6 +697,28 @@ pub(super) fn abandon_pending_run(state: &mut AgentSessionWorkflow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_store_rejection_of_an_operation_answers_its_caller_and_leaves_the_session_alive() {
+        let summary = ProfileApplySummary::default();
+        let rejected = operation_commit_outcome::<()>(
+            Err(anyhow::Error::new(errors::StoreDataRejection {
+                message: "the reason".to_owned(),
+            })),
+            summary.clone(),
+        )
+        .expect("not fatal")
+        .expect_err("the caller hears it");
+        assert_eq!(rejected.kind, api::AgentApiErrorKind::Internal);
+        assert_eq!(rejected.message, "the reason");
+
+        operation_commit_outcome::<()>(Err(anyhow::anyhow!("outage")), summary.clone())
+            .expect_err("no receipt for what may have committed");
+        assert_eq!(
+            operation_commit_outcome(Ok(()), summary.clone()).unwrap(),
+            Ok(summary)
+        );
+    }
 
     /// A live session opened with the default configuration, whose admission
     /// materialized the default compaction policy.
