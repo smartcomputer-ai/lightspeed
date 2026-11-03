@@ -179,10 +179,7 @@ impl PgStore {
         tx.commit()
             .await
             .map_err(|error| session_sql_error("commit append transaction", error))?;
-        Ok(AppendSessionEventsResult {
-            entries: committed,
-            head,
-        })
+        Ok(AppendSessionEventsResult { entries: committed })
     }
 
     async fn read_all_effective_events(

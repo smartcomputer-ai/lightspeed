@@ -2,15 +2,19 @@ use harness::{
     CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND, CoreAgentCodec,
     CoreAgentEvent, CoreAgentJoins, StoredEvent, UncommittedCoreAgentEvent, WorkflowEndpointRef,
     WorkflowToolConfigEvent,
-    session::{EventSeq, SessionId, StoredJoins, UncommittedStoredEvent},
+    session::{EventSeq, SessionId, SessionPosition, StoredJoins, UncommittedStoredEvent},
     storage::{
-        AppendSessionEvents, CreateClonedSession, CreateForkedSession, CreateSession, ListSessions,
-        SessionLifecycleStatus, SessionStore, SessionStoreError,
+        AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
+        CreateSession, ListSessions, SessionLifecycleStatus, SessionStore, SessionStoreError,
     },
 };
 use sqlx::postgres::PgPoolOptions;
 use store_pg::{PgStore, PgStoreConfig};
 use uuid::Uuid;
+
+fn committed_head(appended: &AppendSessionEventsResult) -> Option<SessionPosition> {
+    appended.entries.last().map(|entry| entry.position.clone())
+}
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres env"]
@@ -50,7 +54,7 @@ async fn pg_live_lifecycle_projection_rejects_managed_branches() {
     store
         .append(AppendSessionEvents {
             session_id: parent.clone(),
-            expected_head: opened.head,
+            expected_head: committed_head(&opened),
             events: vec![
                 managed_bindings_event(
                     11,
@@ -223,7 +227,7 @@ async fn pg_live_delete_is_closed_only_and_preserves_fork_history() {
     store
         .append(AppendSessionEvents {
             session_id: parent.clone(),
-            expected_head: opened.head,
+            expected_head: committed_head(&opened),
             events: vec![lifecycle_event(11, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
         })
         .await
@@ -328,7 +332,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
             .await
             .expect("replace retention policy on closed root");
         assert_eq!(updated.delete_at_ms, deadline);
-        assert_eq!(updated.head, closed.head);
+        assert_eq!(updated.head, committed_head(&closed));
         assert_eq!(updated.updated_at_ms, 20);
     }
     assert!(
@@ -348,7 +352,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
     let opened = store
         .append(AppendSessionEvents {
             session_id: session_id.clone(),
-            expected_head: closed.head,
+            expected_head: committed_head(&closed),
             events: vec![lifecycle_event(30, CORE_AGENT_LIFECYCLE_OPENED_EVENT_KIND)],
         })
         .await
@@ -368,7 +372,7 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
     store
         .append(AppendSessionEvents {
             session_id: session_id.clone(),
-            expected_head: opened.head,
+            expected_head: committed_head(&opened),
             events: vec![lifecycle_event(40, CORE_AGENT_LIFECYCLE_CLOSED_EVENT_KIND)],
         })
         .await

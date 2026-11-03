@@ -73,7 +73,7 @@ async fn pg_live_sessions_are_isolated_by_universe() {
         .expect("append left events");
 
     assert_eq!(
-        appended.head.as_ref().map(|head| head.seq),
+        appended.entries.last().map(|entry| entry.position.seq),
         Some(EventSeq::new(2))
     );
     assert!(

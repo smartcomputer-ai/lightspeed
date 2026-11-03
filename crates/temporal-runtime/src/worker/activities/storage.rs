@@ -643,7 +643,6 @@ async fn confirm_existing_append(
     }
 
     Ok(AppendSessionEventsResult {
-        head: page.entries.last().map(|entry| entry.position.clone()),
         entries: page.entries,
     })
 }
@@ -1618,6 +1617,9 @@ mod tests {
             RunRequestSource, ToolKind, ToolParallelism, ToolSpec, WorkflowEndpointRef,
             WorkflowToolDeclaration, WorkflowToolDefinition, WorkflowToolId,
         };
+        use test_support::{DriveCommand, RunnerStores, SessionRunner};
+        use uuid::Uuid;
+
         let notify_declaration = |definition, receiver| {
             WorkflowToolDeclaration::new(
                 definition,
@@ -1628,8 +1630,6 @@ mod tests {
                 harness::WorkflowToolCompletion::Accepted,
             )
         };
-        use test_support::{DriveCommand, RunnerStores, SessionRunner};
-        use uuid::Uuid;
 
         let store = Arc::new(InMemorySessionStore::new());
         let session_id = create_test_session(store.as_ref()).await;

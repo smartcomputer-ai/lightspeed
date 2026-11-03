@@ -240,7 +240,6 @@ pub struct AppendSessionEvents {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppendSessionEventsResult {
     pub entries: Vec<StoredSessionEntry>,
-    pub head: Option<SessionPosition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1057,7 +1056,6 @@ impl SessionStore for InMemorySessionStore {
             .get_mut(&request.session_id)
             .expect("validated session record");
         let committed = commit_uncommitted_events(record, request.events);
-        let head = record.head.clone();
 
         let entries = inner
             .entries
@@ -1065,10 +1063,7 @@ impl SessionStore for InMemorySessionStore {
             .expect("session entries exist for record");
         entries.extend(committed.clone());
 
-        Ok(AppendSessionEventsResult {
-            entries: committed,
-            head,
-        })
+        Ok(AppendSessionEventsResult { entries: committed })
     }
 
     async fn read_after(
@@ -1602,10 +1597,6 @@ mod tests {
 
         assert_eq!(result.entries[0].position.seq, EventSeq::new(1));
         assert_eq!(result.entries[1].position.seq, EventSeq::new(2));
-        assert_eq!(
-            result.head.as_ref().map(|head| head.seq),
-            Some(EventSeq::new(2))
-        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2783,7 +2774,7 @@ mod tests {
                 expected: None,
                 actual,
                 ..
-            } if actual == first.head
+            } if actual.as_ref() == first.entries.last().map(|entry| &entry.position)
         ));
     }
 
