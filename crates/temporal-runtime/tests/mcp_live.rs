@@ -1023,10 +1023,10 @@ async fn temporal_live_native_mcp_search_call_and_approval() -> anyhow::Result<(
     .await
 }
 
-/// A model turn that mixes an `await` (batch-unit execution) with an injected
-/// native MCP call whose server gates every call on approval. The batch must
-/// park once on the MCP approval while the await stays pending, then complete
-/// every call through its intended runtime after the decision.
+/// A model turn that mixes an `await` with two injected native MCP calls whose
+/// server gates every call on approval. The two calls run in one parallel group,
+/// so the batch must park once for both while the await stays pending, then
+/// complete every call through its intended runtime after the decisions.
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra, npm install, and LIGHTSPEED_MCP_PRIVATE_NETWORKS allowing loopback"]
 async fn temporal_live_native_mcp_mixed_await_batch_parks_once_and_completes() -> anyhow::Result<()>
@@ -1043,7 +1043,7 @@ async fn temporal_live_native_mcp_mixed_await_batch_parks_once_and_completes() -
         selected_tool: "lightspeed_models_list".to_owned(),
     }) as Arc<dyn CoreAgentLlm>;
     // The hosted runtime is required: `sleep` and `await` are real tools here
-    // and the mixed batch must take the production batch-unit path.
+    // and the mixed batch must take the production path through both activities.
     let hosted = Arc::new(SessionTools::from_pg_store(store.clone()));
     let tools: Arc<dyn CoreAgentTools> = hosted.clone();
     let state = ActivityState::from_pg_store(store.clone(), llm, tools)
@@ -1477,6 +1477,15 @@ async fn wait_for_temporal_pending_approval(
     session_id: &SessionId,
     run_id: &str,
 ) -> anyhow::Result<api::PendingApprovalView> {
+    let mut pending = wait_for_temporal_pending_approvals(api, session_id, run_id).await?;
+    Ok(pending.remove(0))
+}
+
+async fn wait_for_temporal_pending_approvals(
+    api: &GatewayAgentApi,
+    session_id: &SessionId,
+    run_id: &str,
+) -> anyhow::Result<Vec<api::PendingApprovalView>> {
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let session = api
@@ -1489,9 +1498,9 @@ async fn wait_for_temporal_pending_approval(
                 .session;
             if let Some(run) = session.runs.iter().find(|run| run.id == run_id)
                 && run.status == api::RunStatus::Parked
-                && let Some(approval) = run.pending_approvals.first()
+                && !run.pending_approvals.is_empty()
             {
-                return Ok(approval.clone());
+                return Ok(run.pending_approvals.clone());
             }
             if let Some(run) = session.runs.iter().find(|run| run.id == run_id)
                 && matches!(
@@ -1985,6 +1994,7 @@ struct MixedBatchScriptedLlm {
 const MIXED_SLEEP_CALL_ID: &str = "mixed_sleep";
 const MIXED_AWAIT_CALL_ID: &str = "mixed_await";
 const MIXED_MCP_CALL_ID: &str = "mixed_mcp";
+const MIXED_MCP_SIBLING_CALL_ID: &str = "mixed_mcp_sibling";
 
 fn parse_timer_promise(sleep_result: &str) -> Option<String> {
     // "Timer scheduled for N ms (promise promise_1). Await it with ..."
@@ -2035,6 +2045,7 @@ impl CoreAgentLlm for MixedBatchScriptedLlm {
                             json!({"promises": [promise], "mode": "all", "timeout_ms": 60_000}),
                         ),
                         (injected.as_str(), MIXED_MCP_CALL_ID, json!({})),
+                        (injected.as_str(), MIXED_MCP_SIBLING_CALL_ID, json!({})),
                     ],
                 )
                 .await
@@ -2261,28 +2272,34 @@ async fn run_mixed_batch_live_client(
         })
         .await?;
 
-    // The mixed batch parks on the MCP approval; the await sibling neither
-    // fails nor defers ahead of the decision.
+    // The mixed batch parks once for both MCP approvals; the await sibling
+    // neither fails nor defers ahead of the decisions.
     let pending =
-        wait_for_temporal_pending_approval(&api, &session_id, &started.result.run.id).await?;
-    match &pending.subject {
-        api::ApprovalSubjectView::McpToolCall {
-            server_id: actual_server,
-            tool_name,
-            ..
-        } => {
-            assert_eq!(actual_server, &server_id);
-            assert_eq!(tool_name, selected_tool);
+        wait_for_temporal_pending_approvals(&api, &session_id, &started.result.run.id).await?;
+    assert_eq!(pending.len(), 2, "{pending:?}");
+    for approval in &pending {
+        match &approval.subject {
+            api::ApprovalSubjectView::McpToolCall {
+                server_id: actual_server,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(actual_server, &server_id);
+                assert_eq!(tool_name, selected_tool);
+            }
         }
     }
     api.decide_run_approvals(RunApprovalsDecideParams {
         session_id: session_id.as_str().to_owned(),
         run_id: started.result.run.id.clone(),
-        decisions: vec![ApprovalDecisionInput {
-            approval_id: pending.approval_id,
-            decision: ApprovalDecisionKind::Approve,
-            note: None,
-        }],
+        decisions: pending
+            .into_iter()
+            .map(|approval| ApprovalDecisionInput {
+                approval_id: approval.approval_id,
+                decision: ApprovalDecisionKind::Approve,
+                note: None,
+            })
+            .collect(),
     })
     .await?;
 
@@ -2292,7 +2309,12 @@ async fn run_mixed_batch_live_client(
         output.contains("mixed native MCP batch completed"),
         "unexpected final output: {output}"
     );
-    for call_id in [MIXED_SLEEP_CALL_ID, MIXED_AWAIT_CALL_ID, MIXED_MCP_CALL_ID] {
+    for call_id in [
+        MIXED_SLEEP_CALL_ID,
+        MIXED_AWAIT_CALL_ID,
+        MIXED_MCP_CALL_ID,
+        MIXED_MCP_SIBLING_CALL_ID,
+    ] {
         let call = terminal
             .tool_batches
             .iter()

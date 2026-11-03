@@ -328,8 +328,8 @@ pub struct ToolInvocationCallRequest {
     /// numbers above what earlier ones minted, so no two calls collide.
     pub promise_id_base: u64,
     pub call: ToolInvocationRequest,
-    /// Distinct tool identities of the other calls in this batch, for the
-    /// cross-call batch rules.
+    /// Distinct tool identities of the other calls in this dispatch, including
+    /// those that wait for the batch activity, for the cross-call batch rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sibling_tool_ids: Vec<ToolName>,
     /// Execution policy facts selected from the admitted tool binding.

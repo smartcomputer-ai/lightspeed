@@ -2304,7 +2304,7 @@ mod tests {
         );
     }
 
-    fn residue_batch(
+    fn batch_request_of(
         session_id: SessionId,
         calls: Vec<harness::ToolInvocationRequest>,
     ) -> ToolInvocationBatchRequest {
@@ -5111,7 +5111,7 @@ mod tests {
             .expect("workflow args");
 
         let result = tools
-            .invoke_batch(residue_batch(
+            .invoke_batch(batch_request_of(
                 session_id,
                 vec![
                     await_call("call_wait", wait_args),
@@ -5159,7 +5159,7 @@ mod tests {
             .unwrap();
 
         let results = tools
-            .invoke_batch(residue_batch(
+            .invoke_batch(batch_request_of(
                 session_id,
                 vec![
                     workflow_call("call_report", &binding, workflow_args),
@@ -5199,7 +5199,7 @@ mod tests {
             .unwrap();
 
         let results = tools
-            .invoke_batch(residue_batch(
+            .invoke_batch(batch_request_of(
                 session_id,
                 vec![
                     workflow_call("call_report", &binding, workflow_args),
@@ -5298,7 +5298,7 @@ mod tests {
             .put_bytes(br#"{"status":"complete"}"#.to_vec())
             .await
             .unwrap();
-        let mut batch = residue_batch(
+        let mut batch = batch_request_of(
             session_id,
             vec![
                 selection("call_a", args("environment-a").await),
