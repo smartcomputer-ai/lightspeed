@@ -421,9 +421,9 @@ Later packages add their own entries.
 - **An idle session that has not run shows no reported capacity.** The settings view reads `contextLengthError` as its
   threshold source on a fresh Anthropic session until the first generation records a limit. A session whose model was
   changed while idle shows the last generation's limit until the next run. Both are display only: a run reads its own value.
-- **Reported capacity is unproven against Temporal and a real provider.** No live test ran. `ActivityState` gets discovery
-  only through `UniverseRuntime`, so live suites that build their own state resolve nothing and exercise the fallback.
-  Whether a real Anthropic run's `runAccepted` carries the limit has not been seen.
+- **Only one live suite sees reported capacity.** `ActivityState` gets discovery only through `UniverseRuntime`, so live
+  suites that build their own state resolve nothing and exercise the fallback. `run_capacity_live` is the one test that
+  proves the wire, and it covers a single Anthropic run.
 - **Model switches are only proven where they were tested.** Removing the pin relies on the OpenAI and Anthropic requests in
   the owner's answer. Chat Completions routes and Anthropic's native compaction block across models were not tried. A 200
   does not show the new model used the old reasoning. A refusal fails each run with the provider's text until someone
@@ -1843,3 +1843,20 @@ Handoff:
   run, and a discovery failure uses the context-limit fallback for that run.
 - `format-guards`: `input_limit_tokens` moved on the `runAccepted` event, on stored queued and active runs, and off `RunConfig`
   and `ContextConfig`, for the checkpoint bump and the shape tests.
+
+Independent review of this package, with the capacity and model paths traced. The ordering call holds: a document cannot
+change while a run is active or queued, or while one is being prepared, so a run's reported figure cannot outlive the
+document or model it was resolved for, and "the run's field first" never beats a declared limit. Every production
+`RequestRun`, the gateway's and the detached follow-up, goes through `PreparedRun` unless its submission is already known.
+Discovery cannot fail the preparation activity: the toolset is store reads, so it and the 15 s discovery bound fit the 30 s
+activity limit, and the singleflight lock adds no second wait. A compaction request is derived from state and a run cannot
+start while one is pending, so the capacity in its fingerprint cannot move under it. No store query, fixture or adapter reads
+the moved fields. Regenerating every public consumer leaves no diff. The full `temporal-runtime` lib suite also passes (495),
+which the implementer had only filtered. Added:
+
+- `run_capacity_live`: nothing automated reached the activity wiring, and a lost wire would quietly stop proactive
+  compaction. One narrow test against the dev stack and real Anthropic shows a positive limit after a session's first run
+  with nothing declared, then completes a run on `claude-sonnet-5-5` and another back on `claude-opus-5`. It passed. It does
+  not force retained thinking across the switch, so it proves the path, not reasoning continuity.
+
+No code changed. The idle view and idle manual compaction notes under Risky calls stand as written.
