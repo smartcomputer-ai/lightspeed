@@ -642,17 +642,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -1833,17 +1826,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -3263,15 +3249,8 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
         },
         "RunLimitsConfig": {
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns this run may start, at least 1, in place of the session's `maxTurns`.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -4303,17 +4282,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -6327,17 +6299,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [
@@ -7460,17 +7425,10 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
           "additionalProperties": {
             "not": {}
           },
-          "description": "Run budget defaults enforced by the harness drive loop.",
+          "description": "Limits applied to every run of the session unless the run sets its own.",
           "properties": {
-            "maxToolRounds": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
             "maxTurns": {
+              "description": "Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.",
               "format": "uint32",
               "minimum": 0,
               "type": [

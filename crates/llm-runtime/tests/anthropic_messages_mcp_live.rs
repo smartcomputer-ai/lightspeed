@@ -232,11 +232,10 @@ fn session_config(model: ModelSelection) -> SessionConfig {
 fn run_config() -> RunConfig {
     RunConfig {
         input_limit_tokens: None,
-        max_turns: Some(2),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: Some(1),
         model_override: None,
         max_output_tokens: None,
         tool_choice: None,

@@ -1287,7 +1287,6 @@ mod tests {
         RunConfig {
             input_limit_tokens: None,
             max_turns: None,
-            max_tool_rounds: None,
             model_override: None,
             max_output_tokens: None,
             reasoning_effort: None,

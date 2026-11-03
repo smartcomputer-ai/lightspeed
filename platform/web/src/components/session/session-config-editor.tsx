@@ -294,10 +294,8 @@ export function normalizeSessionConfig(value: unknown): SessionConfig | undefine
 
   const limits = record(source.limits);
   const limitsResult: RecordValue = {};
-  for (const key of ["maxTurns", "maxToolRounds"] as const) {
-    const number = parseNumber(numberString(limits[key]));
-    if (number !== undefined) limitsResult[key] = number;
-  }
+  const maxTurns = parseNumber(numberString(limits.maxTurns));
+  if (maxTurns !== undefined) limitsResult.maxTurns = maxTurns;
   if (omitEmptyRecord(limitsResult)) result.limits = limitsResult;
 
   const context = record(source.context);
@@ -1265,7 +1263,7 @@ function LimitsFields({ config, change }: { config: RecordValue; change: (fn: (n
     if (number === undefined) delete item[key]; else item[key] = number;
     if (Object.keys(item).length) next.limits = item; else delete next.limits;
   });
-  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field><Field><FieldLabel>Max tool rounds</FieldLabel><Input readOnly={readOnly} type="number" min="0" value={numberString(limits.maxToolRounds)} onChange={(e) => update("maxToolRounds", e.target.value)} /></Field></div>;
+  return <div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>Max turns</FieldLabel><Input readOnly={readOnly} type="number" min="1" value={numberString(limits.maxTurns)} onChange={(e) => update("maxTurns", e.target.value)} /></Field></div>;
 }
 
 function ContextFields({ config, change }: { config: RecordValue; change: (fn: (next: RecordValue) => void) => void }) {

@@ -375,11 +375,10 @@ fn session_config(
 fn run_config() -> RunConfig {
     RunConfig {
         input_limit_tokens: None,
-        max_turns: Some(6),
+        max_turns: None,
         reasoning_effort: None,
         parallel_tool_use: None,
         processing_tier: None,
-        max_tool_rounds: Some(3),
         model_override: None,
         max_output_tokens: None,
         tool_choice: None,

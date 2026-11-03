@@ -2705,13 +2705,15 @@ export interface GenerationConfig {
   toolChoice?: ToolChoice | null;
 }
 /**
- * Run budget defaults enforced by the harness drive loop.
+ * Limits applied to every run of the session unless the run sets its own.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "LimitsConfig".
  */
 export interface LimitsConfig {
-  maxToolRounds?: number | null;
+  /**
+   * Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
+   */
   maxTurns?: number | null;
 }
 /**
@@ -8321,7 +8323,9 @@ export interface RunCancelParams {
  * via the `definition` "RunLimitsConfig".
  */
 export interface RunLimitsConfig {
-  maxToolRounds?: number | null;
+  /**
+   * Model turns this run may start, at least 1, in place of the session's `maxTurns`.
+   */
   maxTurns?: number | null;
 }
 /**

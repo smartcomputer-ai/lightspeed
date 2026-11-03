@@ -126,10 +126,6 @@ async fn run_model_scenario(
                 reasoning_effort: Some("low".into()),
                 ..Default::default()
             }),
-            limits: Some(api::LimitsConfig {
-                max_turns: Some(3),
-                max_tool_rounds: Some(1),
-            }),
             features: Some(api::FeaturesConfig {
                 code_mode: Some(api::CodeModeFeature {
                     allowed_tools: Some(vec![
@@ -289,10 +285,6 @@ async fn run_media_model_scenario(
                 max_output_tokens: Some(2048),
                 reasoning_effort: Some("low".into()),
                 ..Default::default()
-            }),
-            limits: Some(api::LimitsConfig {
-                max_turns: Some(3),
-                max_tool_rounds: Some(1),
             }),
             features: Some(api::FeaturesConfig {
                 code_mode: Some(api::CodeModeFeature {

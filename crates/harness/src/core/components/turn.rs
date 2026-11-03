@@ -318,6 +318,7 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                         "cannot start turn while another turn is active".into(),
                     ));
                 }
+                active_run.turn_count = active_run.turn_count.saturating_add(1);
                 active_run.turns.insert(
                     *turn_id,
                     TurnState {

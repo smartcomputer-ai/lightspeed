@@ -33,6 +33,7 @@ pub struct SessionConfig {
 
 impl SessionConfig {
     pub fn validate(&self) -> Result<(), DomainError> {
+        validate_max_turns(self.limits.max_turns)?;
         validate_generation(&self.generation, &self.model)?;
         validate_context_config(&self.context, &self.model.api_kind)?;
         validate_features(&self.features, &self.model.api_kind)
@@ -104,10 +105,9 @@ impl GenerationConfig {
 /// Run budget defaults. Per-run overrides ride [`RunConfig`].
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LimitsConfig {
+    /// Model turns a run may start. Unset means unbounded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
 }
 
 impl LimitsConfig {
@@ -732,10 +732,9 @@ pub struct RunConfig {
     /// Input capacity resolved outside the reducer for this run’s effective model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_limit_tokens: Option<u32>,
+    /// Model turns this run may start, in place of the session's limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_override: Option<ModelSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -792,6 +791,7 @@ pub(crate) fn validate_run_config_for_state(
             "input_limit_tokens must be positive".into(),
         ));
     }
+    validate_max_turns(run_config.max_turns)?;
     let config = current_config(state)?;
     run_config.validate_provider_compatibility(&config.model)?;
     let model = run_config.model_override.as_ref().unwrap_or(&config.model);
@@ -823,6 +823,15 @@ pub(crate) fn validate_recorded_run_config(
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
+
+fn validate_max_turns(max_turns: Option<u32>) -> Result<(), DomainError> {
+    if max_turns == Some(0) {
+        return Err(DomainError::InvariantViolation(
+            "maxTurns must be at least 1; leave it unset for no limit".to_owned(),
+        ));
+    }
+    Ok(())
+}
 
 fn validate_generation(
     generation: &GenerationConfig,

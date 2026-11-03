@@ -14370,6 +14370,292 @@ mod tests {
         }
     }
 
+    fn limited_config(max_turns: u32) -> SessionConfig {
+        let mut config = config();
+        config.limits.max_turns = Some(max_turns);
+        config
+    }
+
+    /// One model turn that calls a tool, and that call's result.
+    fn tool_round(logged: &mut LoggedDrive, index: usize) {
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call(&format!("call_{index}"), "tool_a")],
+        ));
+        let batch = logged.until_tools();
+        let action = logged
+            .drive
+            .resume_tool_batch(completed_tool_result(&batch), 80)
+            .expect("resume batch");
+        logged.commit(action);
+    }
+
+    fn assert_stopped_at_turn_limit(logged: &LoggedDrive) {
+        let run = logged.last_run();
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::LimitExceeded);
+        assert_eq!(failure.message_ref, Some(crate::turn_limit_failure_ref()));
+        assert_eq!(logged.drive.state().lifecycle.status, CoreAgentStatus::Open);
+    }
+
+    #[test]
+    fn a_session_turn_limit_ends_the_run_once_its_tool_results_land() {
+        let mut logged = LoggedDrive::open(limited_config(3), &["tool_a"]);
+        logged.request_run(b"input");
+        for index in 0..3 {
+            tool_round(&mut logged, index);
+        }
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_at_turn_limit(&logged);
+        assert_eq!(turns_started(&logged.log), 3, "no final model turn");
+        assert_tool_calls_answered(&logged.drive.state().context.entries);
+        logged.assert_replays(|_| {});
+
+        // The next run counts from zero and its request is one a provider accepts.
+        logged.request_run(b"next");
+        for index in 3..6 {
+            tool_round(&mut logged, index);
+        }
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_at_turn_limit(&logged);
+        assert_eq!(turns_started(&logged.log), 6);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_run_turn_limit_wins_over_the_session_limit_in_both_directions() {
+        for (session, run, expected) in [(2, 4, 4), (4, 2, 2)] {
+            let mut logged = LoggedDrive::open(limited_config(session), &["tool_a"]);
+            logged.admit(request_run_command(
+                None,
+                user_input(BlobRef::from_bytes(b"input")),
+                RunConfig {
+                    max_turns: Some(run),
+                    ..run_config()
+                },
+            ));
+            for index in 0..expected {
+                tool_round(&mut logged, index);
+            }
+            assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+            assert_stopped_at_turn_limit(&logged);
+            assert_eq!(turns_started(&logged.log), expected);
+        }
+    }
+
+    #[test]
+    fn a_session_with_no_turn_limit_keeps_running() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+        logged.request_run(b"input");
+        for index in 0..40 {
+            tool_round(&mut logged, index);
+        }
+        logged.until_generate();
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Active);
+        assert_eq!(run.turn_count, 41);
+    }
+
+    #[test]
+    fn a_final_answer_on_the_last_allowed_turn_completes() {
+        let mut logged = LoggedDrive::open(limited_config(2), &["tool_a"]);
+        logged.request_run(b"input");
+        tool_round(&mut logged, 0);
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_eq!(logged.last_run().status, RunStatus::Completed);
+        assert!(logged.last_run().failure.is_none());
+        logged.assert_replays(|_| {});
+    }
+
+    /// Settled turn records can be dropped from reduced state, so the limit cannot
+    /// be read off them.
+    #[test]
+    fn a_turn_limit_counts_turns_whose_records_are_gone() {
+        let mut logged = LoggedDrive::open(limited_config(3), &["tool_a"]);
+        logged.request_run(b"input");
+        tool_round(&mut logged, 0);
+        tool_round(&mut logged, 1);
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_2", "tool_a")],
+        ));
+        let batch = logged.until_tools();
+        let mut state = logged.drive.state().clone();
+        let run = state.runs.active.as_mut().expect("active");
+        let latest = *run.turns.keys().next_back().expect("a turn");
+        run.turns.retain(|turn_id, _| *turn_id == latest);
+        let mut pruned = CoreAgentDrive::from_replayed(logged.drive.session_id().clone(), state);
+        let action = pruned
+            .resume_tool_batch(completed_tool_result(&batch), 80)
+            .expect("resume batch");
+        commit_action(&mut pruned, action);
+        loop {
+            match pruned.next_action_unbounded(90).expect("next") {
+                action @ CoreAgentAction::AppendEvents { .. } => {
+                    commit_action(&mut pruned, action);
+                }
+                CoreAgentAction::Idle => break,
+                other => panic!("expected the run to end, got {other:?}"),
+            }
+        }
+        let failure = pruned
+            .state()
+            .runs
+            .completed
+            .last()
+            .unwrap()
+            .failure
+            .as_ref();
+        assert_eq!(failure.unwrap().kind, RunFailureKind::LimitExceeded);
+    }
+
+    #[test]
+    fn a_turn_limit_of_zero_is_refused_on_session_and_run() {
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session"), CoreAgentState::new());
+        let rejection = rejection_of(
+            drive
+                .admit_command(
+                    CoreAgentCommand::OpenSession {
+                        config: limited_config(0),
+                    },
+                    10,
+                )
+                .expect_err("zero refused at open"),
+        );
+        assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
+
+        let mut logged = LoggedDrive::open(config(), &[]);
+        for command in [
+            CoreAgentCommand::ReplaceSessionConfig {
+                expected_revision: None,
+                config: limited_config(0),
+            },
+            request_run_command(
+                None,
+                user_input(BlobRef::from_bytes(b"input")),
+                RunConfig {
+                    max_turns: Some(0),
+                    ..run_config()
+                },
+            ),
+        ] {
+            let rejection = rejection_of(
+                logged
+                    .drive
+                    .admit_command(command, 20)
+                    .expect_err("zero refused"),
+            );
+            assert_eq!(rejection.kind, CommandRejectionKind::Invalid);
+        }
+    }
+
+    /// Accepted steering outlives the limit: it is in context, no turn
+    /// ran past the limit, and the next run's request carries it.
+    fn assert_limit_kept_steering(logged: &mut LoggedDrive, turns: usize) {
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_at_turn_limit(logged);
+        assert_eq!(turns_started(&logged.log), turns, "no farewell turn");
+        assert_eq!(steering_in_context(&logged.drive), 1);
+        logged.assert_replays(|_| {});
+        logged.request_run(b"next");
+        let next = logged.until_generate();
+        assert!(
+            openai_items(&next)
+                .iter()
+                .any(|entry| matches!(entry.source, ContextEntrySource::Steering { .. }))
+        );
+    }
+
+    #[test]
+    fn a_turn_limit_writes_steering_down_first_on_a_tool_turn() {
+        let mut logged = LoggedDrive::open(limited_config(1), &["tool_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![observed_call("call_0", "tool_a")],
+        ));
+        let batch = logged.until_tools();
+        let action = logged
+            .drive
+            .resume_tool_batch(completed_tool_result(&batch), 80)
+            .expect("resume batch");
+        logged.commit(action);
+        assert_limit_kept_steering(&mut logged, 1);
+    }
+
+    /// Steering normally earns a final answer one more turn. With none left the run
+    /// says so instead of completing as if the steering had been heard.
+    #[test]
+    fn steering_on_a_final_answer_with_no_turn_left_fails_at_the_limit() {
+        let mut logged = LoggedDrive::open(limited_config(1), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        logged.resume(final_turn(&request));
+        assert_limit_kept_steering(&mut logged, 1);
+    }
+
+    #[test]
+    fn an_overflow_with_no_turn_left_fails_at_the_limit_without_compacting() {
+        let mut config = compaction_config();
+        config.limits.max_turns = Some(1);
+        let mut logged = LoggedDrive::open(config, &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.steer(request.run_id, b"a correction");
+        logged.resume(overflow_result(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert!(
+            !logged.log.iter().any(|entry| matches!(
+                entry.event,
+                CoreAgentEvent::Context(ContextEvent::CompactionRequested { .. })
+            )),
+            "{:?}",
+            event_kinds(&logged.log)
+        );
+        assert_stopped_at_turn_limit(&logged);
+        assert_eq!(steering_in_context(&logged.drive), 1);
+        logged.assert_replays(|_| {});
+    }
+
+    /// A pending approval still gets its decision, then the run ends where the next
+    /// turn would have started.
+    #[test]
+    fn a_turn_limit_waits_for_an_approval_decision() {
+        let mut logged = LoggedDrive::open(limited_config(1), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        let mut result = generation_result(
+            &request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::ToolCalls,
+            Vec::new(),
+            Vec::new(),
+        );
+        result.facts.approval_requests = vec![hosted_approval_request()];
+        logged.resume(result);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let run = logged.drive.state().runs.active.as_ref().expect("active");
+        assert_eq!(run.status, RunStatus::Parked);
+
+        logged.admit(hosted_approval_decision(request.run_id));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_stopped_at_turn_limit(&logged);
+        assert_eq!(turns_started(&logged.log), 1);
+        logged.assert_replays(|_| {});
+    }
+
     #[test]
     fn cancelling_a_run_still_drops_its_unseen_steering() {
         let mut logged = LoggedDrive::open(config(), &[]);

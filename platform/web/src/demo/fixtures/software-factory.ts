@@ -395,7 +395,7 @@ const link = (workspaceId: string, access: "read" | "edit") => ({
 const INTAKE_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium", maxOutputTokens: 12_000 },
-  limits: { maxTurns: 12, maxToolRounds: 20 },
+  limits: { maxTurns: 12 },
   features: {
     mcp: { servers: [{ serverId: "linear" }] },
     vfs: { workspaces: [link(WORKSPACE.specs, "edit"), link(WORKSPACE.web, "read")] },
@@ -405,7 +405,7 @@ const INTAKE_CONFIG: Record<string, unknown> = {
 const PLANNER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
-  limits: { maxTurns: 12, maxToolRounds: 24 },
+  limits: { maxTurns: 12 },
   features: {
     vfs: { workspaces: [link(WORKSPACE.specs, "edit"), link(WORKSPACE.web, "read")] },
   },
@@ -414,7 +414,7 @@ const PLANNER_CONFIG: Record<string, unknown> = {
 const IMPLEMENTER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "high", maxOutputTokens: 32_000 },
-  limits: { maxTurns: 40, maxToolRounds: 120 },
+  limits: { maxTurns: 40 },
   features: {
     environments: { environments: [{ environmentId: ENV.taskC, default: true, access: "jobs" }] },
     mcp: { servers: [{ serverId: "github" }] },
@@ -426,7 +426,6 @@ const IMPLEMENTER_CONFIG: Record<string, unknown> = {
 const EXPLORER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "medium" },
-  limits: { maxToolRounds: 60 },
   features: {
     environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     web: { fetch: {}, search: { allowedDomains: ["docs.github.com", "nodejs.org", "developer.mozilla.org", "hono.dev", "vitest.dev"] } },
@@ -436,7 +435,6 @@ const EXPLORER_CONFIG: Record<string, unknown> = {
 const TEST_WRITER_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium", maxOutputTokens: 16_000 },
-  limits: { maxToolRounds: 40 },
   features: {
     environments: { environments: [{ inherit: true, default: true, access: "exec" }] },
     subagents: { agents: [{ profileId: PROFILE.explorer }], ...SUBAGENT_LIMITS },
@@ -446,7 +444,7 @@ const TEST_WRITER_CONFIG: Record<string, unknown> = {
 const REVIEWER_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "high", maxOutputTokens: 16_000 },
-  limits: { maxTurns: 24, maxToolRounds: 40 },
+  limits: { maxTurns: 24 },
   features: {
     environments: { environments: [{ environmentId: ENV.ci, default: true, access: "exec" }] },
     mcp: { servers: [{ serverId: "github" }] },
@@ -469,7 +467,7 @@ const SCRIBE_CONFIG: Record<string, unknown> = {
 const CI_CONFIG: Record<string, unknown> = {
   model: GPT_MINI,
   generation: { reasoningEffort: "low", maxOutputTokens: 6_000 },
-  limits: { maxTurns: 6, maxToolRounds: 12 },
+  limits: { maxTurns: 6 },
   features: {
     mcp: { servers: [{ serverId: "github" }] },
   },

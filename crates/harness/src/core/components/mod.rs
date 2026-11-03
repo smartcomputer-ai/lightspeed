@@ -67,8 +67,8 @@ pub use run::{
     JoinedWorkflowCall, ParkedToolBatch, PromiseContextEntries, RUN_INTERNAL_FAILURE_CONTENT,
     ResumeToolBatchCommand, RunEvent, RunFailure, RunFailureKind, RunQueueState, RunRecord,
     RunRequestCommand, RunRequestSource, RunSource, RunStatus, RunTerminalNotifyIntent,
-    SteeringBatch, ToolBatchResumeOutput, ToolBatchSuspension, WakeReason,
-    request_run_submission_digest, run_internal_failure_ref,
+    SteeringBatch, TURN_LIMIT_FAILURE_CONTENT, ToolBatchResumeOutput, ToolBatchSuspension,
+    WakeReason, request_run_submission_digest, run_internal_failure_ref, turn_limit_failure_ref,
 };
 pub use state::*;
 pub use tooling::{

@@ -98,7 +98,6 @@ pub(super) fn harness_session_config_from_api(
             .limits
             .map(|limits| harness::LimitsConfig {
                 max_turns: limits.max_turns,
-                max_tool_rounds: limits.max_tool_rounds,
             })
             .unwrap_or_default(),
         context: harness::ContextConfig {
@@ -388,9 +387,6 @@ pub(super) fn apply_run_start_config(
 pub(super) fn apply_run_limits_config(run_config: &mut RunConfig, limits: RunLimitsConfig) {
     if let Some(max_turns) = limits.max_turns {
         run_config.max_turns = Some(max_turns);
-    }
-    if let Some(max_tool_rounds) = limits.max_tool_rounds {
-        run_config.max_tool_rounds = Some(max_tool_rounds);
     }
 }
 

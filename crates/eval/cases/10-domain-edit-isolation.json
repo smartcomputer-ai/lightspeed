@@ -39,8 +39,6 @@
   },
   "run": {
     "max_tokens": 1024,
-    "max_turns": 8,
-    "max_tool_rounds": 4,
     "allowed_tools": ["vfs.edit_file", "env.edit_file"]
   }
 }

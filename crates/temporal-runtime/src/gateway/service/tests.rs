@@ -1117,7 +1117,6 @@ fn run_start_without_overrides_keeps_session_defaults_out_of_run_config() {
     session_config.generation.max_output_tokens = Some(4096);
     session_config.generation.reasoning_effort = Some("high".to_owned());
     session_config.limits.max_turns = Some(12);
-    session_config.limits.max_tool_rounds = Some(3);
 
     let run_config = run_config_for_start(&session_config, None).expect("run config");
 
@@ -1213,23 +1212,18 @@ fn run_start_records_only_explicit_limit_overrides() {
         harness_session_config_from_api(api::SessionConfig::default(), openai_model())
             .expect("session config");
     session_config.limits.max_turns = Some(12);
-    session_config.limits.max_tool_rounds = Some(3);
 
     let run_config = run_config_for_start(
         &session_config,
         Some(RunStartConfig {
             model: None,
             generation: None,
-            limits: Some(api::RunLimitsConfig {
-                max_turns: Some(4),
-                max_tool_rounds: None,
-            }),
+            limits: Some(api::RunLimitsConfig { max_turns: Some(4) }),
         }),
     )
     .expect("run config");
 
     assert_eq!(run_config.max_turns, Some(4));
-    assert_eq!(run_config.max_tool_rounds, None);
 }
 
 #[test]

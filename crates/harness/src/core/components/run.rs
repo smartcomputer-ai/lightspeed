@@ -107,6 +107,10 @@ pub struct ActiveRun {
     pub usage: Option<LlmUsage>,
     pub steering: Vec<SteeringBatch>,
     pub turns: BTreeMap<TurnId, TurnState>,
+    /// Turns this run has started. Counted apart from `turns`, which may lose
+    /// settled records, because a turn limit has to see every one of them.
+    #[serde(default)]
+    pub turn_count: u32,
     pub active_turn_id: Option<TurnId>,
     pub active_tool_batch_id: Option<ToolBatchId>,
     /// Single-use approval records owned by this run. They disappear from
@@ -392,6 +396,15 @@ pub fn run_internal_failure_ref() -> BlobRef {
     BlobRef::from_bytes(RUN_INTERNAL_FAILURE_CONTENT.as_bytes())
 }
 
+/// Failure message of a run stopped by its turn limit. Every runtime must
+/// guarantee the matching blob exists via [`crate::storage::ensure_harness_blobs`].
+pub const TURN_LIMIT_FAILURE_CONTENT: &str =
+    "the run used every turn its maxTurns limit allows before the model finished\n";
+
+pub fn turn_limit_failure_ref() -> BlobRef {
+    BlobRef::from_bytes(TURN_LIMIT_FAILURE_CONTENT.as_bytes())
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunQueueState {
     pub active: Option<ActiveRun>,
@@ -456,6 +469,39 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
     Ok(vec![CoreAgentEventProposal::new(joins, kind)])
 }
 
+/// The run has started every turn it may: its own limit if it set one, otherwise
+/// the session's. With neither set a run is unbounded.
+pub(crate) fn turn_limit_reached(state: &CoreAgentState, active_run: &ActiveRun) -> bool {
+    active_run
+        .run_config
+        .max_turns
+        .or_else(|| {
+            state
+                .lifecycle
+                .config
+                .as_ref()
+                .and_then(|config| config.limits.max_turns)
+        })
+        .is_some_and(|limit| active_run.turn_count >= limit)
+}
+
+/// The failure of a run that needs another turn and has none left. A completed
+/// tool-call turn whose batch has not started is left to the tooling planner, so
+/// every call has its result before the run ends.
+fn turn_limit_failure(state: &CoreAgentState, active_run: &ActiveRun) -> Option<CoreAgentEvent> {
+    (turn_limit_reached(state, active_run) && !has_unstarted_tool_call_turn(active_run)).then(
+        || {
+            CoreAgentEvent::Run(Event::Failed {
+                run_id: active_run.run_id,
+                failure: RunFailure {
+                    kind: RunFailureKind::LimitExceeded,
+                    message_ref: Some(turn_limit_failure_ref()),
+                },
+            })
+        },
+    )
+}
+
 /// Steering the model has not seen yet: a batch no turn has consumed. A
 /// final-output turn does not end a run while such steering exists — the
 /// run gets one more turn that carries it, so "steer" never silently does
@@ -510,7 +556,7 @@ fn terminal_run_proposal(
         (TurnStatus::Completed, Some(TurnOutcome::FinalOutput { .. }))
             if has_unconsumed_steering(active_run) =>
         {
-            None
+            turn_limit_failure(state, active_run)
         }
         (TurnStatus::Completed, Some(TurnOutcome::FinalOutput { output })) => {
             Some(CoreAgentEvent::Run(Event::Completed {
@@ -552,7 +598,7 @@ fn terminal_run_proposal(
                 | TurnOutcome::ContextLimit { .. }
                 | TurnOutcome::ApprovalsRequested,
             ),
-        ) => None,
+        ) => turn_limit_failure(state, active_run),
         (
             TurnStatus::Failed | TurnStatus::Cancelled,
             Some(
@@ -741,6 +787,7 @@ pub(crate) fn apply_event(
                 usage: None,
                 steering: Vec::new(),
                 turns: BTreeMap::new(),
+                turn_count: 0,
                 active_turn_id: None,
                 active_tool_batch_id: None,
                 approvals: BTreeMap::new(),

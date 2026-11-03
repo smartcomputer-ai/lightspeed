@@ -12,9 +12,9 @@ use api::{
     FeaturesConfig, InputItem, McpServerAttachment, McpServerDeleteParams, McpServerInput,
     McpServerListParams, McpServerPutParams, McpServerReadParams, McpServerStatus,
     McpServerToolsDiscoverParams, McpServerToolsDiscoverResponse, RemoteMcpApprovalPolicy,
-    RemoteMcpExecution, RemoteMcpExposure, RunApprovalsDecideParams, RunLimitsConfig,
-    RunStartConfig, RunStartParams, RunStartSource, SessionConfig, SessionConfigPutParams,
-    SessionEventsReadParams, SessionReadParams, SessionStartParams, TimersFeature,
+    RemoteMcpExecution, RemoteMcpExposure, RunApprovalsDecideParams, RunStartParams,
+    RunStartSource, SessionConfig, SessionConfigPutParams, SessionEventsReadParams,
+    SessionReadParams, SessionStartParams, TimersFeature,
 };
 use api_projection::model_to_api;
 use async_trait::async_trait;
@@ -523,13 +523,7 @@ async fn run_matrix_client(
                 }],
             },
             submission_id: None,
-            config: Some(RunStartConfig {
-                limits: Some(RunLimitsConfig {
-                    max_turns: Some(12),
-                    max_tool_rounds: Some(12),
-                }),
-                ..RunStartConfig::default()
-            }),
+            config: None,
             notify_on_terminal: None,
         })
         .await?;

@@ -31,8 +31,6 @@
   },
   "run": {
     "max_tokens": 1024,
-    "max_turns": 12,
-    "max_tool_rounds": 8,
     "allowed_tools": ["vfs.list_dir", "vfs.read_file", "vfs.write_file"]
   }
 }

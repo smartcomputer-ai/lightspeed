@@ -2198,7 +2198,6 @@ pub fn session_config_to_api(config: &SessionConfig) -> Result<api::SessionConfi
             .then(|| generation_config_to_api(&config.generation)),
         limits: (!config.limits.is_default()).then_some(api::LimitsConfig {
             max_turns: config.limits.max_turns,
-            max_tool_rounds: config.limits.max_tool_rounds,
         }),
         context: (!config.context.is_default()).then(|| api::ContextConfig {
             input_limit_tokens: config.context.input_limit_tokens,
@@ -4923,7 +4922,6 @@ mod tests {
             },
             limits: harness::LimitsConfig {
                 max_turns: Some(12),
-                max_tool_rounds: Some(3),
             },
             context: harness::ContextConfig {
                 reported_input_limit_tokens: None,
@@ -5013,7 +5011,6 @@ mod tests {
                 }),
                 limits: Some(api::LimitsConfig {
                     max_turns: Some(12),
-                    max_tool_rounds: Some(3),
                 }),
                 context: Some(api::ContextConfig {
                     input_limit_tokens: None,
@@ -5340,6 +5337,7 @@ mod tests {
             usage: None,
             steering: Vec::new(),
             turns: BTreeMap::new(),
+            turn_count: 0,
             active_turn_id: None,
             active_tool_batch_id: None,
             approvals: BTreeMap::new(),

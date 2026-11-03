@@ -133,6 +133,7 @@ mod tests {
             usage: None,
             steering: Vec::new(),
             turns: Default::default(),
+            turn_count: 0,
             active_turn_id: None,
             active_tool_batch_id: batch.map(harness::ToolBatchId::new),
             approvals: Default::default(),

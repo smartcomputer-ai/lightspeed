@@ -1031,6 +1031,7 @@ fn workflow_with_parked_tool_batch(spec: harness::AwaitSpec) -> AgentSessionWork
         usage: None,
         steering: Vec::new(),
         turns: std::collections::BTreeMap::new(),
+        turn_count: 0,
         active_turn_id: None,
         active_tool_batch_id: Some(batch_id),
         approvals: Default::default(),

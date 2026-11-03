@@ -710,7 +710,6 @@ const SLACK_TOOLS = ["search_messages", "get_channel_history", "get_user"];
 const ASSISTANT_CONFIG: Record<string, unknown> = {
   model: OPUS,
   generation: { reasoningEffort: "medium", maxOutputTokens: 8_000 },
-  limits: { maxToolRounds: 16 },
   features: {
     vfs: { workspaces: [MEMORY_RW, SKILLS_RO, BRIEFS_RW], skills: { roots: ["/skills"] } },
     mcp: {
@@ -728,7 +727,6 @@ const ASSISTANT_CONFIG: Record<string, unknown> = {
 const RESEARCHER_CONFIG: Record<string, unknown> = {
   model: SONNET,
   generation: { reasoningEffort: "medium", maxOutputTokens: 12_000 },
-  limits: { maxToolRounds: 30 },
   features: {
     web: { fetch: {}, search: { blockedDomains: ["pinterest.com", "quora.com"] } },
     vfs: { workspaces: [MEMORY_RW] },
@@ -740,7 +738,7 @@ const RESEARCHER_CONFIG: Record<string, unknown> = {
 const METRICS_CONFIG: Record<string, unknown> = {
   model: GPT,
   generation: { reasoningEffort: "low", maxOutputTokens: 6_000 },
-  limits: { maxToolRounds: 10, maxTurns: 8 },
+  limits: { maxTurns: 8 },
   features: {
     mcp: { servers: [{ serverId: MCP.stripe }, { serverId: MCP.hubspot }] },
     vfs: { workspaces: [MEMORY_RO] },

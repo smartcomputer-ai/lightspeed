@@ -329,14 +329,13 @@ pub enum ToolChoice {
     Specific { tool_id: String },
 }
 
-/// Run budget defaults enforced by the harness drive loop.
+/// Limits applied to every run of the session unless the run sets its own.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LimitsConfig {
+    /// Model turns a run may start, at least 1. A run that needs another turn past this fails with `limit_exceeded` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

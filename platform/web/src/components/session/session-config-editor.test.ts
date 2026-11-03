@@ -289,12 +289,12 @@ describe("environment feature config", () => {
 
   it("keeps Model run controls collapsed when optional settings already exist", () => {
     const html = renderToString(createElement(SessionConfigEditor, {
-      value: { generation: { parallelToolUse: true, reasoningEffort: "high" }, limits: { maxTurns: 4, maxToolRounds: 8 } },
+      value: { generation: { parallelToolUse: true, reasoningEffort: "high" }, limits: { maxTurns: 4 } },
       onChange: () => {},
     }));
 
     expect(html).toContain('aria-label="Customize model run controls"');
-    expect(html).toContain("1 generation setting · 2 run limits");
+    expect(html).toContain("1 generation setting · 1 run limit");
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("Run limits");
   });
