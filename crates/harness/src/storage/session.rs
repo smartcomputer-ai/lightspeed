@@ -426,8 +426,9 @@ pub enum SessionStoreError {
     },
 
     /// The store cannot hold a value it was given: Postgres answered with a data
-    /// exception (SQLSTATE class 22), such as a NUL in a text or jsonb column.
-    /// Nothing was written, and the same value is refused on every attempt.
+    /// exception (SQLSTATE class 22), such as a NUL in a text or jsonb column, or an
+    /// appended event does not decode, so it could never be read back. Nothing was
+    /// written, and the same value is refused on every attempt.
     #[error("session store rejected the data: {message}")]
     DataRejected { message: String },
 
@@ -1678,6 +1679,44 @@ mod tests {
             },
             event_of_kind(kind),
         )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn in_memory_store_refuses_what_a_store_could_not_read_or_retain() {
+        let store = InMemorySessionStore::new();
+        let session_id = SessionId::new("session-a");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: session_id.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create session");
+        let mut undecodable = filler_event(10);
+        undecodable.event = crate::session::StoredEvent::new(
+            "lightspeed.test.event",
+            1,
+            serde_json::Value::Object(Default::default()),
+        );
+        let mut plain_string_ref = filler_event(10);
+        plain_string_ref.event.payload["held"] =
+            serde_json::json!(crate::BlobRef::from_bytes(b"blob").to_string());
+        for event in [undecodable, plain_string_ref] {
+            let error = store
+                .append(AppendSessionEvents {
+                    session_id: session_id.clone(),
+                    expected_head: None,
+                    events: vec![event],
+                })
+                .await
+                .expect_err("refused");
+            assert!(error.is_data_rejection(), "{error}");
+        }
+        assert_eq!(store.head(&session_id).await.expect("head"), None);
     }
 
     #[tokio::test(flavor = "current_thread")]

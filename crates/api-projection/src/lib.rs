@@ -4379,6 +4379,23 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn an_effects_refs_stay_in_the_data_the_api_shows() {
+        let snapshot = harness::BlobRef::from_bytes(b"workspace head");
+        let views = tool_effects_to_api(&[harness::ToolEffect {
+            kind: "vfs.workspace_commit".to_owned(),
+            data: BTreeMap::from([("revision".to_owned(), "2".to_owned())]),
+            refs: BTreeMap::from([("snapshot_ref".to_owned(), snapshot.clone())]),
+        }]);
+        assert_eq!(
+            views[0].data,
+            BTreeMap::from([
+                ("revision".to_owned(), "2".to_owned()),
+                ("snapshot_ref".to_owned(), snapshot.to_string()),
+            ])
+        );
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn code_tool_progress_preserves_identity_and_status_without_internal_payloads() {
         let blobs = InMemoryBlobStore::new();

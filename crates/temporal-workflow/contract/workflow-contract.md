@@ -21,6 +21,12 @@ Delivery is at least once with bounded retries. A receiver must persistently
 deduplicate by `emission_id` and treat a duplicate as a no-op. Tool-invocation
 emissions reuse their invocation id as the emission id.
 
+A signal whose payload does not decode as an `EmissionEnvelope`, including one
+with no payload or a malformed id or blob ref, is logged and dropped. It never
+fails the receiver, and the sender hears nothing back. A session also reports it
+as its `last_warning`. A receiver of a new body variant must deploy before its
+senders.
+
 ## Envelope bodies
 
 - `run_terminal`: a session run reached a terminal status. Core sends this

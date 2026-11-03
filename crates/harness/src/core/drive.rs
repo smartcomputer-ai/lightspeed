@@ -8191,6 +8191,64 @@ mod tests {
     }
 
     #[test]
+    fn a_digest_as_a_submission_id_and_as_a_whole_reply_reaches_the_log_and_roots_nothing() {
+        let digest = BlobRef::from_bytes(b"an image, never stored here").to_string();
+        let mut drive =
+            CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
+        open_session(&mut drive);
+        let mut stored = Vec::new();
+        let mut commit = |drive: &mut CoreAgentDrive, action: CoreAgentAction| {
+            if let CoreAgentAction::AppendEvents { events, .. } = &action {
+                stored.extend(events.iter().map(|event| event.event.clone()));
+            }
+            commit_action(drive, action);
+        };
+        let accepted =
+            request_run_with_submission(&mut drive, &digest, BlobRef::from_bytes(b"x")).unwrap();
+        commit(&mut drive, accepted);
+        let request = loop {
+            match drive.next_action_unbounded(30).unwrap() {
+                CoreAgentAction::GenerateLlm { request } => break request,
+                action => commit(&mut drive, action),
+            }
+        };
+        let reply = BlobRef::from_bytes(b"the stored reply");
+        let mut entry = message_input(ContextMessageRole::Assistant, reply.clone());
+        entry.preview = Some(digest.clone());
+        let action = drive
+            .resume_generation(
+                generation_result(
+                    &request,
+                    LlmGenerationStatus::Succeeded,
+                    LlmFinish::Stop,
+                    vec![entry],
+                    Vec::new(),
+                ),
+                40,
+            )
+            .unwrap();
+        commit(&mut drive, action);
+        loop {
+            match drive.next_action_unbounded(50).unwrap() {
+                action @ CoreAgentAction::AppendEvents { .. } => commit(&mut drive, action),
+                _ => break,
+            }
+        }
+        assert_eq!(drive.state().runs.completed.len(), 1);
+
+        let digest = BlobRef::parse(digest).unwrap();
+        let mut scanned = BTreeSet::new();
+        let mut roots = BTreeSet::new();
+        for event in &stored {
+            scanned.extend(crate::storage::collect_blob_refs(&event.payload));
+            roots.extend(crate::storage::event_blob_roots(event).unwrap());
+        }
+        assert!(scanned.contains(&digest), "the digest is in the log");
+        assert!(!roots.contains(&digest), "and holds no blob");
+        assert!(roots.contains(&reply));
+    }
+
+    #[test]
     fn duplicate_submission_admits_as_no_op_while_queued() {
         let mut drive =
             CoreAgentDrive::from_replayed(SessionId::new("session-a"), CoreAgentState::new());
