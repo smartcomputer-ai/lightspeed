@@ -34,10 +34,11 @@ pub use context::{
     ContextCompactionTrigger, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind,
     ContextEntrySource, ContextEvent, ContextGenerationMetadata, ContextMessageRole,
     ContextRemovalReason, ContextSnapshot, ContextState, ContextUsageObservation,
-    OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
-    STANDALONE_COMPACTION_SOURCE, SUPERSEDED_CATALOG_CAP, TokenEstimate, TokenEstimateQuality,
-    compaction_input_limit_tokens, current_catalog_inputs, current_context_entry,
-    is_supersedable_catalog_kind, is_superseded_context_entry, validate_external_context_key,
+    ENTRY_COUNT_COMPACTION_TRIGGER, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
+    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, STANDALONE_COMPACTION_SOURCE,
+    SUPERSEDED_CATALOG_CAP, TokenEstimate, TokenEstimateQuality, compaction_input_limit_tokens,
+    current_catalog_inputs, current_context_entry, is_supersedable_catalog_kind,
+    is_superseded_context_entry, validate_external_context_key,
 };
 pub use environment::{
     ENVIRONMENT_ACTIVATE_EFFECT_KIND, ENVIRONMENT_DEACTIVATE_EFFECT_KIND, EnvironmentEvent,

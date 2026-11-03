@@ -16168,4 +16168,171 @@ mod tests {
         logged.admit(CoreAgentCommand::CompactContext);
         until_compaction(&mut logged);
     }
+
+    /// Bring active context up to this many entries, with one append. Each entry is
+    /// plain conversation that compaction may rewrite.
+    fn fill_context_to(logged: &mut LoggedDrive, count: usize) {
+        let missing = count - logged.drive.state().context.entries.len();
+        let inputs = (0..missing)
+            .map(|index| {
+                (
+                    None,
+                    ContextEntrySource::ContextEdit,
+                    message_input(
+                        ContextMessageRole::User,
+                        BlobRef::from_bytes(format!("note {index}").as_bytes()),
+                    ),
+                )
+            })
+            .collect();
+        let entries = crate::core::components::context::context_entries_from_inputs(
+            logged.drive.state(),
+            inputs,
+        )
+        .expect("entries");
+        let action = logged
+            .drive
+            .append_action(
+                vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                        base_revision: logged.drive.state().context.revision,
+                        entries,
+                    }),
+                )],
+                55,
+            )
+            .expect("append");
+        logged.commit(action);
+    }
+
+    fn finish_run_with_answer(logged: &mut LoggedDrive) {
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+    }
+
+    #[test]
+    fn the_entry_count_compacts_on_every_enabled_policy_with_no_token_count() {
+        for policy in [
+            CompactionPolicy::ProviderStandalone {
+                compact_threshold_tokens: None,
+                target_tokens: None,
+            },
+            CompactionPolicy::ProviderTriggered {
+                compact_threshold_tokens: None,
+            },
+        ] {
+            let mut config = config();
+            config.context.compaction = Some(policy);
+            let mut logged = LoggedDrive::open(config, &[]);
+            fill_context_to(&mut logged, crate::ENTRY_COUNT_COMPACTION_TRIGGER);
+            assert!(
+                matches!(logged.pump(), CoreAgentAction::Idle),
+                "no run, no compaction"
+            );
+
+            logged.request_run(b"input");
+            let request = until_compaction(&mut logged);
+            assert_eq!(
+                logged
+                    .drive
+                    .state()
+                    .context
+                    .compaction
+                    .pending_plan()
+                    .map(|plan| plan.trigger),
+                Some(ContextCompactionTrigger::HighWatermark)
+            );
+            finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+            assert!(logged.drive.state().context.entries.len() < 10);
+            logged.until_generate();
+            logged.assert_replays(|_| {});
+        }
+    }
+
+    #[test]
+    fn below_the_entry_trigger_or_with_compaction_disabled_nothing_compacts() {
+        let mut below = LoggedDrive::open(compaction_config(), &[]);
+        // Its input is the last entry short of the trigger.
+        fill_context_to(&mut below, crate::ENTRY_COUNT_COMPACTION_TRIGGER - 2);
+        below.request_run(b"input");
+        below.until_generate();
+        assert_eq!(compaction_requests(&below), 0);
+
+        let mut config = config();
+        config.context.compaction = Some(CompactionPolicy::Disabled);
+        let mut disabled = LoggedDrive::open(config, &[]);
+        fill_context_to(&mut disabled, crate::ENTRY_COUNT_COMPACTION_TRIGGER);
+        disabled.request_run(b"input");
+        disabled.until_generate();
+        assert_eq!(compaction_requests(&disabled), 0);
+    }
+
+    #[test]
+    fn the_entry_trigger_waits_for_growth_past_a_failure() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        fill_context_to(&mut logged, crate::ENTRY_COUNT_COMPACTION_TRIGGER);
+        logged.request_run(b"input");
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+        finish_run_with_answer(&mut logged);
+        assert_eq!(compaction_requests(&logged), 1);
+
+        // Its input is the last entry short of the growth, and its answer reaches it.
+        fill_context_to(&mut logged, 1_648);
+        logged.request_run(b"short of the growth");
+        finish_run_with_answer(&mut logged);
+        assert_eq!(compaction_requests(&logged), 1);
+        assert_eq!(logged.drive.state().context.entries.len(), 1_650);
+
+        logged.request_run(b"past it");
+        until_compaction(&mut logged);
+        assert_eq!(compaction_requests(&logged), 2);
+        logged.assert_replays(|_| {});
+    }
+
+    /// With no prefix there is nothing to summarize, and with a tail this large a
+    /// summary would not help: both would otherwise repeat at every boundary.
+    #[test]
+    fn the_entry_trigger_needs_a_prefix_that_gets_it_back_under() {
+        let mut logged = LoggedDrive::open(compaction_config(), &[]);
+        let inputs = (0..crate::ENTRY_COUNT_COMPACTION_TRIGGER)
+            .map(|index| {
+                (
+                    Some(ContextEntryKey::new(format!("instructions.{index}"))),
+                    ContextEntrySource::ContextEdit,
+                    instruction_input(BlobRef::from_bytes(b"always")),
+                )
+            })
+            .collect();
+        let entries = crate::core::components::context::context_entries_from_inputs(
+            logged.drive.state(),
+            inputs,
+        )
+        .expect("entries");
+        let action = logged
+            .drive
+            .append_action(
+                vec![CoreAgentEventProposal::new(
+                    CoreAgentJoins::default(),
+                    CoreAgentEvent::Context(ContextEvent::EntriesApplied {
+                        base_revision: logged.drive.state().context.revision,
+                        entries,
+                    }),
+                )],
+                55,
+            )
+            .expect("append");
+        logged.commit(action);
+
+        logged.request_run(b"no prefix");
+        finish_run_with_answer(&mut logged);
+        assert_eq!(compaction_requests(&logged), 0);
+
+        // Now there is conversation to summarize, and the result would stay at the trigger.
+        logged.request_run(b"a prefix of no use");
+        finish_run_with_answer(&mut logged);
+        assert_eq!(compaction_requests(&logged), 0);
+    }
 }

@@ -221,6 +221,12 @@ pub struct ContextCompactionPlan {
     pub estimated_tokens: Option<u32>,
 }
 
+/// Active entries at which compaction runs whatever the tokens say. Every generation's
+/// activity input and reduced state carry all entry metadata, so entries have a cost of
+/// their own that token compaction does not control: a tool-heavy session on a large
+/// window could otherwise reach the bootstrap budget long before its threshold.
+pub const ENTRY_COUNT_COMPACTION_TRIGGER: usize = 1_500;
+
 pub const STANDALONE_COMPACTION_SOURCE: &str = "standalone_compaction_prefix";
 pub const MAX_CONTEXT_RECOVERY_ATTEMPTS: u32 = 2;
 
@@ -1068,6 +1074,18 @@ fn high_watermark_compaction_proposal(
     // sub-agent's parent or a bot lane behind a summary nobody may read. A queued run
     // starts before this planner looks, so an active run is the only case.
     state.runs.active.as_ref()?;
+    // Nothing has moved since the last attempt, so another would see the same context.
+    if state.context.compaction.last_finished_revision == Some(state.context.revision) {
+        return None;
+    }
+    // Every enabled policy gets this: a provider's own compaction bounds tokens only.
+    if entry_count_calls_for_compaction(state) {
+        return Some(compaction_requested_proposal(
+            state,
+            ContextCompactionTrigger::HighWatermark,
+            high_watermark_token_estimate(state),
+        ));
+    }
     if !matches!(
         config.context.compaction,
         Some(CompactionPolicy::ProviderStandalone { .. })
@@ -1076,10 +1094,6 @@ fn high_watermark_compaction_proposal(
             && matches!(entry.kind, ContextEntryKind::ProviderOpaque)
             && is_standalone_prefix(entry)
     }) {
-        return None;
-    }
-    // Nothing has moved since the last attempt, so another would see the same context.
-    if state.context.compaction.last_finished_revision == Some(state.context.revision) {
         return None;
     }
     let threshold = match config.context.compaction {
@@ -1110,6 +1124,21 @@ fn high_watermark_compaction_proposal(
         ContextCompactionTrigger::HighWatermark,
         Some(tokens),
     ))
+}
+
+/// The count is at the trigger, past the floor of any failed attempt, and a summary in
+/// place of the prefix would get it back under. Without the last check, a retained tail
+/// that large would re-summarize the summary at every boundary.
+fn entry_count_calls_for_compaction(state: &CoreAgentState) -> bool {
+    let entries = state.context.entries.len();
+    entries >= ENTRY_COUNT_COMPACTION_TRIGGER
+        && state
+            .context
+            .compaction
+            .failure_floor
+            .as_ref()
+            .is_none_or(|floor| grown_past_floor(entries as u64, floor.entries as u64))
+        && entries - standalone_prefix_ids(state).len() + 1 < ENTRY_COUNT_COMPACTION_TRIGGER
 }
 
 /// The best token count there is for the context as it stands.
