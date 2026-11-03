@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use harness::session::{SessionPosition, StoredSessionEntry};
 use harness::*;
 
-/// One call per turn settles near 35 KB. The margin is for ids growing a digit.
+/// One call per turn settles near 24 KB with these turns, and near 35 KB when each also
+/// keeps a reasoning entry. What matters is that it stops growing.
 const ONE_CALL_PER_TURN_STATE_BYTES: usize = 45_000;
 
 struct Session {
