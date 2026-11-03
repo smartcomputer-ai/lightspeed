@@ -164,6 +164,12 @@ Later packages add their own entries.
   active run costs that run and leaves the workflow running. A bug that refuses every
   run fails them all one at a time with no failed-workflow signal, and the only alert is
   the `session_step_refused` error log. The kind is `Internal`, so runs can be counted.
+- **Error kinds callers see changed.** The one mapper turns many refusals that used to
+  be `rejected` into `invalid_request`, `conflict` or `internal`. In-repo branches on
+  `rejected` were read: the bot paths and the sub-agent paths still behave, and the
+  live assertions on `rejected` are about lifecycle and duplicate submissions, which
+  stay `rejected`. External clients branching on the old kind would notice. No live
+  suite but the one below has run against this.
 - **Run admission now checks the session's own tool choice.** A session whose choice
   dangles refuses every new run at the door, with a clear error, until the config or
   toolset changes. Before, it failed at the first turn. A queued run admitted against
@@ -262,7 +268,7 @@ Open, not introduced here: `resume_tool_batch_proposals` maps every `DomainError
 rejection, and `process_pending_tool_batch_resumes` records it and carries on. A
 proposal-level rejection that is deterministic, rather than a stale claim, re-runs the
 await materialization on every pass with no backoff. The rejection kinds do not tell
-the two apart today.
+the two apart today. Closed by the `core-failrun` review.
 
 ### `session-liveness-read` (H-61)
 
@@ -471,3 +477,37 @@ Open:
 - `FailRun` does not materialize run input that never entered context. That needs a refusal before
   the first context step, and the run's source still holds the input.
 - A force close during a slow compaction is covered by unit tests only.
+
+Review of this package:
+
+- `0312eec0`: the funnel missed the wedge the earlier review had left open. Admission
+  rejected every error from building a `ResumeToolBatch`, so a resume wrong on every attempt
+  looped: the satisfied await issued it again each pass, running its materialize activity and
+  growing history without bound, forever on an active run. Only an overtaken claim is rejected
+  now, as a `Conflict`, and the host claims again. Everything else fails the run. This closes the
+  open item under `core-commit-safety`. Covered by a harness test of the classification; the
+  workflow's loop itself has no test short of a live one.
+- `9224ccaa`: the steering hold let the context planner check the compaction threshold first. A
+  session over it made a provider call between the failed turn and the failed run, which with
+  the provider down could hold the failure back for a whole retry budget. Reproduced by a test
+  before the fix.
+- `cccb7aa0`: a refused call result returned out of the call group and dropped its in-flight
+  siblings. Dropping an activity future does not cancel it, and the workflow now lives on, so
+  those tools kept running for a failed run. They are cancelled like a preempting cancel. Read
+  from the code; no test, since this path runs only inside a workflow.
+- Traced and found sound: every `Decided` goes through the admission that adds `RunUnparked`;
+  `FailRun` reduces from any run status and over a pending compaction; run termination closes
+  promises and code tool scopes for `Failed` as it does for `ForceCancelled`; config put keeps
+  publishing tools before the config, so moving the identical-document check cannot refuse a
+  valid choice at setup; the contract exporters leave no diff; every adapter pairs `ToolCall`
+  entries with observed calls one to one, so `generated_tool_calls_are_usable` cannot fail a
+  healthy turn.
+
+Open after review:
+
+- A refusal on the code tool completion path (`code_tools::process_pending`) still fails the
+  workflow rather than the run: it goes through `apply_internal`, outside the three funnel sites.
+  It does not loop. Nothing known reaches it, so it was left rather than widening the funnel on
+  speculation.
+- `admission_failures` grows by one for each overtaken resume claim, as it does for any rejected
+  command. The list has no bound.
