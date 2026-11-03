@@ -1,0 +1,5 @@
+# Workflow code must replay deterministically, and `select!` picks among ready
+# branches at random. `tokio::select!` is unaffected and stays allowed outside it.
+disallowed-macros = [
+    { path = "futures_util::select", reason = "branch order is random, which diverges on workflow replay; use select_biased! with a deliberate order", allow-invalid = true },
+]

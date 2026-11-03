@@ -18,22 +18,13 @@ pub(super) async fn wait_for_workflow_work(ctx: &mut WorkflowContext<AgentSessio
     }
 
     let duration = Duration::from_millis(deadline_ms - now);
-    let wake = {
-        let wait = ctx.wait_for_state(workflow_state_has_immediate_work);
-        let timer = ctx.timer_with_manual_cancellation(duration).fuse();
-        pin_mut!(wait, timer);
-        select! {
-            _ = wait => WorkflowWake::State,
-            _ = timer => WorkflowWake::Timer,
-        }
-    };
-    let _ = wake;
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WorkflowWake {
-    State,
-    Timer,
+    let wait = ctx.wait_for_state(workflow_state_has_immediate_work);
+    let timer = ctx.timer_with_manual_cancellation(duration).fuse();
+    pin_mut!(wait, timer);
+    select_biased! {
+        _ = wait => {}
+        _ = timer => {}
+    }
 }
 
 fn workflow_has_immediate_work(ctx: &WorkflowContext<AgentSessionWorkflow>, now: u64) -> bool {

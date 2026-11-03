@@ -26,7 +26,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use futures::{FutureExt, pin_mut, select};
+use futures::{FutureExt, pin_mut, select_biased};
 use harness::{
     BlobRef, CommandError, ContextEntryInput, ContextEntryKey, ContextEntryKind,
     ContextMessageRole, CoreAgentAction, CoreAgentCommand, CoreAgentDrive, CoreAgentDriveError,
@@ -224,7 +224,7 @@ impl AgentSessionWorkflow {
         }
         .fuse();
         pin_mut!(session, preparation, code_tool_dispatch);
-        futures::select_biased! {
+        select_biased! {
             result = session => result,
             result = code_tool_dispatch => {
                 let error = result

@@ -451,11 +451,11 @@ impl TestSlowStartPluginWorkflow {
                 .fuse();
             let cancelled = ctx.cancelled();
             futures_util::pin_mut!(work, cancelled);
-            futures_util::select! {
-                _ = work => {}
+            futures_util::select_biased! {
                 _ = cancelled => {
                     return Err(temporalio_sdk::WorkflowTermination::cancelled());
                 }
+                _ = work => {}
             }
         }
         for (key, promise_id) in args.invocation.completion_promises.iter().flatten() {

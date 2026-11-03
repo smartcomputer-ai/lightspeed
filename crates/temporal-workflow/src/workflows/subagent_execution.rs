@@ -9,7 +9,7 @@
 use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
-use futures::{FutureExt, pin_mut, select};
+use futures::{FutureExt, pin_mut, select_biased};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 
@@ -121,10 +121,12 @@ impl SubagentExecutionWorkflow {
                 .fuse();
             let cancelled = ctx.cancelled().fuse();
             pin_mut!(wait, deadline, cancelled);
-            select! {
+            // A child that finished as the deadline fired keeps its output, and a
+            // cancel beats the deadline it landed with.
+            select_biased! {
                 _ = wait => continue,
-                _ = deadline => break WaitOutcome::Terminal(SubagentTerminal::Deadline),
                 _ = cancelled => break WaitOutcome::Cancelled,
+                _ = deadline => break WaitOutcome::Terminal(SubagentTerminal::Deadline),
             }
         };
 

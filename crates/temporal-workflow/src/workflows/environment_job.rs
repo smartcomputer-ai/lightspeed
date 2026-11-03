@@ -1,7 +1,7 @@
 use crate::workflows::WorkflowContextExt as _;
 use std::time::Duration;
 
-use futures::{FutureExt, pin_mut, select};
+use futures::{FutureExt, pin_mut, select_biased};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ContinueAsNewOptions, LocalActivityOptions, SyncWorkflowContext, WorkflowContext,
@@ -215,10 +215,10 @@ impl EnvironmentJobWorkflow {
                     .fuse();
                 let cancelled = ctx.cancelled().fuse();
                 pin_mut!(wait, timer, cancelled);
-                select! {
+                select_biased! {
+                    _ = cancelled => true,
                     _ = wait => false,
                     _ = timer => false,
-                    _ = cancelled => true,
                 }
             };
             if was_cancelled {

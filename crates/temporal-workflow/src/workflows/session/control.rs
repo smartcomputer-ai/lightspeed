@@ -42,7 +42,9 @@ where
         let admissions_pending = {
             let wait = ctx.wait_for_state(admissions::has_admissible_admissions);
             pin_mut!(wait);
-            select! {
+            // The result first: the drive commits it before it admits whatever
+            // landed in the same workflow task, so finished work is never lost.
+            select_biased! {
                 result = activity => return Ok(Raced::Completed(result)),
                 _ = wait => true,
             }

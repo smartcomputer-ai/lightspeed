@@ -197,7 +197,7 @@ async fn execute_call_group(
             let wait = ctx.wait_for_state(admissions::has_admissible_admissions);
             let next = first_ready_call(&mut inflight).fuse();
             pin_mut!(wait, next);
-            select! {
+            select_biased! {
                 ready = next => Some(ready),
                 _ = wait => None,
             }

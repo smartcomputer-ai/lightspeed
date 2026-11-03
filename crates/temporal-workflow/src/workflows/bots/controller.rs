@@ -29,7 +29,7 @@ use bots::{
     BotControllerConfig, BotEvent, BotSessionRotate,
 };
 use futures::future::poll_fn;
-use futures::{FutureExt, pin_mut, select};
+use futures::{FutureExt, pin_mut, select_biased};
 use harness::{EmissionEnvelope, WorkflowEndpointRef};
 use serde::{Deserialize, Serialize};
 use temporalio_macros::{workflow, workflow_methods};
@@ -286,7 +286,7 @@ async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) {
                 .fuse();
             with_lanes(lanes, async move {
                 pin_mut!(wait, timer);
-                select! {
+                select_biased! {
                     _ = wait => {}
                     _ = timer => {}
                 }

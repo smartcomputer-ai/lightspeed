@@ -6,7 +6,7 @@
 use crate::workflows::WorkflowContextExt as _;
 use api::{BotEventOutcome, BotRecentDeliverySnapshot, LlmUsageView};
 use bots::{BotDeliveryPhase, RoutedSession, ids};
-use futures::{FutureExt, pin_mut, select};
+use futures::{FutureExt, pin_mut, select_biased};
 use harness::{BlobRef, EmissionEnvelope, PromiseResolution, REPLY_COMPLETION_KEY};
 
 use super::super::{
@@ -211,7 +211,7 @@ async fn run_delivery_inner(
             .timer_with_manual_cancellation(BOT_EVENT_TERMINAL_TIMEOUT)
             .fuse();
         pin_mut!(wait, timeout);
-        select! {
+        select_biased! {
             _ = wait => {}
             _ = timeout => {}
         }

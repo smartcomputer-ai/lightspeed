@@ -43,7 +43,7 @@ use channels::state::{
     ReceiptEffect, ReceivedMessage,
 };
 use futures::future::{join_all, poll_fn};
-use futures::{pin_mut, select};
+use futures::{pin_mut, select_biased};
 use harness::{
     BlobRef, EmissionBody, EmissionEnvelope, EmissionProducer, PromiseId, PromiseResolution,
     REPLY_COMPLETION_KEY, WorkflowEndpointRef, WorkflowToolInvocation,
@@ -273,7 +273,7 @@ async fn park(ctx: &Ctx, lanes: &mut Vec<LaneFuture>) -> Result<(), WorkflowTerm
     let cancelled = ctx.cancelled();
     with_lanes(lanes, async move {
         pin_mut!(wait, cancelled);
-        select! {
+        select_biased! {
             _ = wait => Ok(()),
             _ = cancelled => Err(WorkflowTermination::cancelled()),
         }
@@ -381,7 +381,9 @@ where
     let activity = start();
     let cancelled = ctx.wait_for_state(|wf| wf.state.is_cancelled(invocation_id));
     pin_mut!(activity, cancelled);
-    select! {
+    // A finished activity comes first, so a send the workflow saw acknowledged is
+    // always archived even when a cancel landed with it.
+    select_biased! {
         result = activity => result.map_err(|error| StepError::Failed(error.to_string())),
         _ = cancelled => {
             activity.cancel();
@@ -636,7 +638,7 @@ async fn prepare_message_media(
                             ctx.timer_with_manual_cancellation(std::time::Duration::from_secs(2));
                         let cancelled = ctx.cancelled();
                         pin_mut!(timer, cancelled);
-                        select! { _ = timer => false, _ = cancelled => true }
+                        select_biased! { _ = cancelled => true, _ = timer => false }
                     };
                     if cancelled {
                         let _ = ctx
@@ -1030,8 +1032,9 @@ async fn run_invocation(ctx: Ctx, pushed: PushedInvocation, reply_promise_id: Pr
 }
 
 /// The steps up to and including the provider delivery are cancellable;
-/// once the provider acknowledged a send, archiving it (so it has a
-/// number) is not.
+/// once the workflow has seen the provider acknowledge a send, archiving it
+/// (so it has a number) is not. A send cancelled while in flight is abandoned
+/// and can still reach the provider unarchived.
 async fn deliver_invocation(
     ctx: &Ctx,
     invocation: &WorkflowToolInvocation,
@@ -1207,7 +1210,7 @@ async fn run_typing(ctx: Ctx, delivery_id: String) {
     );
     let finished = ctx.wait_for_state(|wf| !typing_wanted(&wf.state, &delivery_id));
     pin_mut!(typing, finished);
-    select! {
+    select_biased! {
         result = typing => match result {
             Ok(()) | Err(ActivityExecutionError::Cancelled(_)) => {}
             Err(error) => ctx.state_mut(|wf| {
