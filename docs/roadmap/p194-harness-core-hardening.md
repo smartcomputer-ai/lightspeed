@@ -403,6 +403,14 @@ Later packages add their own entries.
 - **The guard's failure message does not carry compaction's own error.** It says to enable or run compaction, as
   specified. The real reason is on the `ContextCompactionFinished` event and in the transcript, one event earlier.
   Someone reading only the failed run sees advice that does not fit a provider outage.
+- **A run stopped at the guard before its first turn loses its input from context.** It is failed before the input is
+  written, so the session stops growing, which is the point of the guard. The input stays in the log on `runAccepted`,
+  but the next run's model does not see it and the web transcript shows no user message for it after a reload. A bot
+  event in such a run ends as `run_failed`, and the bot does not see it when the session heals. Writing the input first
+  would add entries per failed run on a session that is already at the limit.
+- **Compaction at the guard costs the last two turns.** At 2,000 entries or more a compaction covers the whole settled
+  window, not just the older part, because otherwise a large tail fails every run for good. Reverting the guard means
+  reverting `e05445d5` first.
 - **These compaction changes have not run against Temporal or a real provider.** They are unit and replay tested only.
   `sessions_live` and both provider `*_compaction_live` suites relied on idle compaction and were rewritten to start a
   run, and only compile. Run them at the next checkpoint.
@@ -1753,3 +1761,19 @@ Handoff:
   simulated compaction in `platform/web/src/demo/engine.ts` was not reviewed against the new timing.
 - `format-guards`: `failure_floor`, `estimated_tokens` and `entry_guard_attempted` change the stored state and the
   requested event, for the checkpoint bump and the shape tests.
+
+Independent review of this package, with every call path traced for wedges. The planner gaps it checked held: the run
+and context planners agree on which guard states are terminal, and a guard state where no compaction is proposed always
+has a terminal or a turn next. A parked run, a cancelling run and an unstarted tool-call turn are not boundaries. The
+projection refresh at a run's start does not move the revision when nothing changed, so the observation survives to the
+next run. Standalone compaction is not restricted by policy in any adapter. Regenerating every public consumer and the
+workflow contract leaves no diff. Fixed:
+
+- `e05445d5`: a session whose retained tail held the count at 2,000, such as one with context appended after its last
+  turn, had a successful attempt that stayed over the limit, then a failed run with no turn to roll the tail out. Every
+  later run did the same, and manual compaction covered the same prefix. At the limit a compaction now covers the whole
+  settled window, as the second overflow attempt does. A regression test covers it. Risky calls now also records this
+  and the stopped run's input.
+
+Still open, not fixed: an entry removal by a context edit does not clear `entry_guard_attempted`, so a run that made its
+attempt, had entries removed and then crossed the limit again fails without a second attempt. The next run heals it.
