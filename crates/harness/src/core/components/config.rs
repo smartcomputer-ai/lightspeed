@@ -46,8 +46,7 @@ pub(crate) fn validate_config_update_for_state(
 ) -> Result<(), DomainError> {
     validate_recorded_config_update(state, config)?;
     config.validate()?;
-    validate_tool_choice_for_tools(&state.tooling.tools, config.generation.tool_choice.as_ref())?;
-    validate_retained_native_model(state, &config.model)
+    validate_tool_choice_for_tools(&state.tooling.tools, config.generation.tool_choice.as_ref())
 }
 
 /// The reducer's half of a config update. A recorded document already passed
@@ -802,8 +801,7 @@ pub(crate) fn validate_run_config_for_state(
             .as_ref()
             .or(config.generation.tool_choice.as_ref()),
     )?;
-    crate::validate_tools_for_api_kind(state.tooling.tools.values(), &model.api_kind)?;
-    validate_retained_native_model(state, model)
+    crate::validate_tools_for_api_kind(state.tooling.tools.values(), &model.api_kind)
 }
 
 /// The reducer's half of a run request. A committed run has already passed
@@ -1342,28 +1340,6 @@ fn validate_session_provider_is_pinned(
     Ok(())
 }
 
-fn validate_retained_native_model(
-    state: &CoreAgentState,
-    model: &ModelSelection,
-) -> Result<(), DomainError> {
-    let current = state
-        .context
-        .last_generation_model()
-        .or_else(|| state.lifecycle.config.as_ref().map(|config| &config.model));
-    if current.is_some_and(|current| current != model)
-        && state.context.entries.iter().any(|entry| {
-            matches!(entry.kind, crate::ContextEntryKind::ReasoningState)
-                || entry.content.provider_kind.as_deref().is_some_and(|kind| {
-                    kind == crate::OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND
-                        || kind == crate::ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND
-                })
-        })
-    {
-        return Err(DomainError::ProviderCompatibility("model cannot change while native compaction or reasoning state is retained; use a new session".into()));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1387,13 +1363,13 @@ mod tests {
     }
 
     #[test]
-    fn recorded_native_model_changes_replay_but_new_changes_are_rejected() {
+    fn native_state_does_not_pin_the_model_within_a_route() {
         use crate::{
-            AcceptedRunEvent, BlobRef, CommandError, CommandRejectionKind, ContentRef,
-            ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource,
-            ContextEvent, ContextMessageRole, CoreAgentCommand, CoreAgentEntry, CoreAgentEvent,
-            CoreAgentLifecycleEvent, EventSeq, RunEvent, RunId, RunRequestCommand,
-            RunRequestSource, RunSource, SessionPosition, admit_command, apply_event,
+            AcceptedRunEvent, BlobRef, ContentRef, ContextEntry, ContextEntryId, ContextEntryInput,
+            ContextEntryKind, ContextEntrySource, ContextEvent, ContextMessageRole,
+            CoreAgentCommand, CoreAgentEntry, CoreAgentEvent, CoreAgentLifecycleEvent, EventSeq,
+            RunEvent, RunId, RunRequestCommand, RunRequestSource, RunSource, SessionPosition,
+            admit_command, apply_event,
         };
         for (api_kind, kind, provider_kind) in [
             (
@@ -1489,8 +1465,9 @@ mod tests {
                     requested_by: None,
                 }),
             ] {
-                assert!(matches!(admit_command(&state, command, 3),
-                    Err(CommandError::Rejected(rejection)) if rejection.kind == CommandRejectionKind::ProviderCompatibility));
+                let proposals = admit_command(&state, command, 3)
+                    .expect("native state goes to the new model, which keeps or drops it");
+                assert_eq!(proposals.len(), 1);
             }
             for recorded in [
                 CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::ConfigChanged {

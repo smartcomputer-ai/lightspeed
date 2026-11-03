@@ -84,6 +84,7 @@ pub enum RunStartSource {
 pub struct RunStartConfig {
     /// Optional model override within the session's provider identity and API
     /// kind. Changing either requires a new session, even before the first run.
+    /// Any model on that route is allowed, whatever context the session retains.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

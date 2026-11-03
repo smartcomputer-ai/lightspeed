@@ -13263,6 +13263,92 @@ mod tests {
         logged.assert_replays(|_| {});
     }
 
+    /// Which model reads retained reasoning is the provider's call. A session can go
+    /// back to its own model after an override, edit its document, and queue a run
+    /// behind one that is still producing that state.
+    #[test]
+    fn retained_native_state_goes_to_any_model_on_the_route() {
+        let reasoning = || ContextEntryInput {
+            kind: ContextEntryKind::ReasoningState,
+            ..message_input(ContextMessageRole::Assistant, BlobRef::from_bytes(b"why"))
+        };
+        let carries_reasoning = |request: &LlmGenerationRequest| {
+            request
+                .request
+                .context
+                .entries
+                .iter()
+                .any(|entry| entry.kind == ContextEntryKind::ReasoningState)
+        };
+        let mut logged = LoggedDrive::open(config(), &[]);
+        let session_model = logged
+            .drive
+            .state()
+            .lifecycle
+            .config
+            .as_ref()
+            .unwrap()
+            .model
+            .clone();
+        let other_model = ModelSelection {
+            model: "another-model".into(),
+            ..session_model.clone()
+        };
+        logged.admit(request_run_command(
+            None,
+            user_input(BlobRef::from_bytes(b"first")),
+            RunConfig {
+                model_override: Some(other_model.clone()),
+                ..RunConfig::default()
+            },
+        ));
+        let first = logged.until_generate();
+        assert_eq!(first.request.model, other_model);
+        // Queued while the first run has no retained state yet.
+        logged.request_run(b"queued on the session's model");
+        logged.resume(generation_result(
+            &first,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::Stop,
+            vec![
+                reasoning(),
+                message_input(ContextMessageRole::Assistant, BlobRef::from_bytes(b"one")),
+            ],
+            Vec::new(),
+        ));
+        let queued = logged.until_generate();
+        assert_eq!(queued.request.model, session_model);
+        assert!(carries_reasoning(&queued));
+        logged.resume(generation_result(
+            &queued,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::Stop,
+            vec![
+                reasoning(),
+                message_input(ContextMessageRole::Assistant, BlobRef::from_bytes(b"two")),
+            ],
+            Vec::new(),
+        ));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        let mut edited = logged.drive.state().lifecycle.config.clone().unwrap();
+        edited.limits.max_turns = Some(5);
+        logged.admit(CoreAgentCommand::ReplaceSessionConfig {
+            expected_revision: None,
+            config: edited.clone(),
+        });
+        edited.model = other_model.clone();
+        logged.admit(CoreAgentCommand::ReplaceSessionConfig {
+            expected_revision: None,
+            config: edited,
+        });
+        logged.request_run(b"on the edited document");
+        let edited_run = logged.until_generate();
+        assert_eq!(edited_run.request.model, other_model);
+        assert!(carries_reasoning(&edited_run));
+        logged.assert_replays(|_| {});
+    }
+
     #[test]
     fn only_a_queued_turn_puts_tool_calls_in_context() {
         let call = observed_call("call_a", "tool_a");

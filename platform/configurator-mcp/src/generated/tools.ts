@@ -882,7 +882,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `request_rejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -1975,7 +1975,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `request_rejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -3294,7 +3294,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "Optional model override within the session's provider identity and API\nkind. Changing either requires a new session, even before the first run."
+              "description": "Optional model override within the session's provider identity and API\nkind. Changing either requires a new session, even before the first run.\nAny model on that route is allowed, whatever context the session retains."
             }
           },
           "type": "object"
@@ -4524,7 +4524,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `request_rejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -6506,7 +6506,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `request_rejected`, and the session stays open."
             }
           },
           "type": "object"
@@ -7633,7 +7633,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
                   "type": "null"
                 }
               ],
-              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime; the model name may change."
+              "description": "At creation, omission uses the profile model or universe agentRun\ndefault. On configuration replacement or profile application to an\nexisting session, omission preserves its current model. Documents read\nback from a session always carry the model. Provider identity and API\nkind are fixed for the session lifetime. The model name may change at\nany time: retained reasoning and compaction state goes to the new model\nunchanged, and the provider keeps or drops it. A combination the provider\nrefuses fails that run as `request_rejected`, and the session stays open."
             }
           },
           "type": "object"

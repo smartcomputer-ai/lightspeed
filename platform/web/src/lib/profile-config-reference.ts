@@ -160,7 +160,7 @@ export const PROFILE_CONFIG_REFERENCE = `// Every field is optional — omit any
     // Model turns a run may start, at least 1. A run that needs another turn past this fails with \`limit_exceeded\` once its tool calls have results; a final answer on the last allowed turn completes normally. Each run counts from zero, and omission means no limit.
     "maxTurns": 0,
   },
-  // At creation, omission uses the profile model or universe agentRun default. On configuration replacement or profile application to an existing session, omission preserves its current model. Documents read back from a session always carry the model. Provider identity and API kind are fixed for the session lifetime; the model name may change.
+  // At creation, omission uses the profile model or universe agentRun default. On configuration replacement or profile application to an existing session, omission preserves its current model. Documents read back from a session always carry the model. Provider identity and API kind are fixed for the session lifetime. The model name may change at any time: retained reasoning and compaction state goes to the new model unchanged, and the provider keeps or drops it. A combination the provider refuses fails that run as \`request_rejected\`, and the session stays open.
   "model": {
     // (required when this object is present)
     "apiKind": "string",

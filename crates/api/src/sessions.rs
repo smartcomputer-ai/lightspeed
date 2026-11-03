@@ -270,7 +270,10 @@ pub struct SessionConfig {
     /// default. On configuration replacement or profile application to an
     /// existing session, omission preserves its current model. Documents read
     /// back from a session always carry the model. Provider identity and API
-    /// kind are fixed for the session lifetime; the model name may change.
+    /// kind are fixed for the session lifetime. The model name may change at
+    /// any time: retained reasoning and compaction state goes to the new model
+    /// unchanged, and the provider keeps or drops it. A combination the provider
+    /// refuses fails that run as `request_rejected`, and the session stays open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

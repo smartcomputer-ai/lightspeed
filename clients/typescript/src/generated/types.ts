@@ -2316,7 +2316,10 @@ export interface SessionConfig {
    * default. On configuration replacement or profile application to an
    * existing session, omission preserves its current model. Documents read
    * back from a session always carry the model. Provider identity and API
-   * kind are fixed for the session lifetime; the model name may change.
+   * kind are fixed for the session lifetime. The model name may change at
+   * any time: retained reasoning and compaction state goes to the new model
+   * unchanged, and the provider keeps or drops it. A combination the provider
+   * refuses fails that run as `request_rejected`, and the session stays open.
    */
   model?: ModelConfig | null;
 }
@@ -8366,6 +8369,7 @@ export interface RunStartConfig {
   /**
    * Optional model override within the session's provider identity and API
    * kind. Changing either requires a new session, even before the first run.
+   * Any model on that route is allowed, whatever context the session retains.
    */
   model?: ModelConfig | null;
 }
