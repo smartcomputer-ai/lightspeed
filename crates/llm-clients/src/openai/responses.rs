@@ -3,9 +3,7 @@
 //! API reference:
 //! - <https://developers.openai.com/api/reference/resources/responses>
 
-use crate::error::{
-    ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError, TransportError,
-};
+use crate::error::{ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError};
 use crate::transport::http::{join_url, normalize_base_url};
 use crate::transport::{
     ApiResponse, ApiStreamEvent, EndpointOverride, HeaderSnapshot, HttpClient, HttpClientConfig,
@@ -207,13 +205,13 @@ impl Client {
         let response = request_builder
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI model list")
     }
 
@@ -246,14 +244,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI response")
     }
 
@@ -270,14 +268,14 @@ impl Client {
             .query(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI retrieved response")
     }
 
@@ -294,7 +292,7 @@ impl Client {
             .query(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
@@ -302,7 +300,7 @@ impl Client {
             let body = response
                 .text()
                 .await
-                .map_err(|err| self.map_reqwest_error(err))?;
+                .map_err(|err| self.http.transport_error(err))?;
             return Err(parse_provider_http_error(status, headers, body).into());
         }
 
@@ -319,14 +317,14 @@ impl Client {
             .header(AUTHORIZATION, self.auth_header(None)?)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI deleted response")
     }
 
@@ -340,14 +338,14 @@ impl Client {
             .header(AUTHORIZATION, self.auth_header(None)?)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI cancelled response")
     }
 
@@ -386,14 +384,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI compact response")
     }
 
@@ -412,14 +410,14 @@ impl Client {
             .query(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI response input items")
     }
 
@@ -434,14 +432,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         let body = response
             .text()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "OpenAI response input tokens")
     }
 
@@ -457,7 +455,7 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(|err| self.map_reqwest_error(err))?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
@@ -465,7 +463,7 @@ impl Client {
             let body = response
                 .text()
                 .await
-                .map_err(|err| self.map_reqwest_error(err))?;
+                .map_err(|err| self.http.transport_error(err))?;
             return Err(parse_provider_http_error(status, headers, body).into());
         }
 
@@ -497,10 +495,6 @@ impl Client {
             }
         }
         Ok(url)
-    }
-
-    fn map_reqwest_error(&self, err: reqwest::Error) -> LlmApiError {
-        map_reqwest_error(err, self.http.config().request_timeout)
     }
 }
 
@@ -1225,27 +1219,6 @@ pub fn parse_sse_event(sse: SseEvent) -> Result<Option<ApiStreamEvent<StreamEven
     Ok(Some(ApiStreamEvent::new(parsed, sse, Some(raw_json))))
 }
 
-fn map_reqwest_error(err: reqwest::Error, request_timeout: Duration) -> LlmApiError {
-    let retryable = err.is_timeout() || err.is_connect() || err.is_request();
-    let message = if err.is_timeout() {
-        format!(
-            "request timed out after {}: {err}",
-            format_duration(request_timeout)
-        )
-    } else {
-        err.to_string()
-    };
-    TransportError::new(message, retryable).into()
-}
-
-fn format_duration(duration: Duration) -> String {
-    if duration.subsec_nanos() == 0 {
-        format!("{}s", duration.as_secs())
-    } else {
-        format!("{duration:?}")
-    }
-}
-
 fn parse_json_response<T: DeserializeOwned>(
     status: reqwest::StatusCode,
     headers: HeaderSnapshot,
@@ -1314,11 +1287,6 @@ mod tests {
             config.http.connect_timeout,
             HttpClientConfig::default().connect_timeout
         );
-    }
-
-    #[test]
-    fn timeout_duration_formats_as_seconds() {
-        assert_eq!(format_duration(Duration::from_secs(300)), "300s");
     }
 
     #[test]

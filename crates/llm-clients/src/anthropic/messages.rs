@@ -5,9 +5,7 @@
 //! - <https://platform.claude.com/docs/en/api/messages/count_tokens>
 //! - <https://platform.claude.com/docs/en/build-with-claude/streaming>
 
-use crate::error::{
-    ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError, TransportError,
-};
+use crate::error::{ConfigurationError, DecodeError, LlmApiError, ProviderHttpError, StreamError};
 use crate::transport::http::{join_url, normalize_base_url};
 use crate::transport::{ApiResponse, ApiStreamEvent, HeaderSnapshot, HttpClient, HttpClientConfig};
 use crate::{SseEvent, SseParser};
@@ -290,10 +288,13 @@ impl Client {
             .apply_auth(builder, auth, &[])?
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.http.transport_error(err))?;
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.http.transport_error(err))?;
         Ok(parse_json_response(status, headers, body, "Anthropic model list")?.parsed)
     }
 
@@ -309,11 +310,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "Anthropic message")
     }
 
@@ -328,12 +332,15 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
         if !status.is_success() {
-            let body = response.text().await.map_err(map_reqwest_error)?;
+            let body = response
+                .text()
+                .await
+                .map_err(|err| self.http.transport_error(err))?;
             return Err(parse_provider_http_error(status, headers, body).into());
         }
 
@@ -351,11 +358,14 @@ impl Client {
             .json(&request)
             .send()
             .await
-            .map_err(map_reqwest_error)?;
+            .map_err(|err| self.http.transport_error(err))?;
 
         let status = response.status();
         let headers = HeaderSnapshot::from_headermap(response.headers());
-        let body = response.text().await.map_err(map_reqwest_error)?;
+        let body = response
+            .text()
+            .await
+            .map_err(|err| self.http.transport_error(err))?;
         parse_json_response(status, headers, body, "Anthropic count tokens response")
     }
 }
@@ -1212,10 +1222,6 @@ pub fn parse_sse_event(sse: SseEvent) -> Result<ApiStreamEvent<StreamEvent>, Llm
         parsed.r#type = event_name.clone();
     }
     Ok(ApiStreamEvent::new(parsed, sse, Some(raw_json)))
-}
-
-fn map_reqwest_error(err: reqwest::Error) -> LlmApiError {
-    TransportError::new(err.to_string(), err.is_connect() || err.is_request()).into()
 }
 
 fn parse_json_response<T: DeserializeOwned>(
