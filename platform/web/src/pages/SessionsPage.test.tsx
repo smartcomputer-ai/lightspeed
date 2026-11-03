@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   scrollToEnd: vi.fn(),
   compactions: [] as { status: string; error: Error | null }[],
   session: undefined as SessionView | undefined,
+  sessionRefetchInterval: undefined as unknown,
 }));
 
 vi.mock("@/api", async (original) => ({
@@ -36,7 +37,10 @@ vi.mock("@/lib/permissions", () => ({
 // Keep queries and unrelated settings out of these composer/transcript tests.
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({}),
-  useQuery: ({ queryKey }: { queryKey: string[] }) => ({ data: queryKey[0] === "session" ? mocks.session : undefined, refetch: vi.fn() }),
+  useQuery: ({ queryKey, refetchInterval }: { queryKey: string[]; refetchInterval?: unknown }) => {
+    if (queryKey[0] === "session" && refetchInterval) mocks.sessionRefetchInterval = refetchInterval;
+    return { data: queryKey[0] === "session" ? mocks.session : undefined, refetch: vi.fn() };
+  },
   useInfiniteQuery: () => ({ data: undefined, refetch: vi.fn() }),
   useMutation: () => ({ isPending: false }),
   useMutationState: () => mocks.compactions,
@@ -693,6 +697,14 @@ describe("dead session execution", () => {
     await show("session");
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).not.toContain("Stopped");
+  });
+
+  it("keeps re-reading a working session, because a dead workflow emits nothing", async () => {
+    await show("session");
+    const interval = mocks.sessionRefetchInterval as (query: { state: { data?: Partial<SessionView> } }) => number | false;
+    expect(interval({ state: { data: { status: "active" } } })).toBeGreaterThan(0);
+    expect(interval({ state: { data: { status: "idle" } } })).toBe(false);
+    expect(interval({ state: { data: { status: "error" } } })).toBe(false);
   });
 });
 

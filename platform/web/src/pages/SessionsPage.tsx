@@ -145,6 +145,8 @@ import { ListPane } from "@/components/list-pane";
 /// New session (sub-agent tree expansion arrives with engine D1 parent
 /// linkage); detail = live transcript (long-poll tail) with a composer.
 const SESSION_LIST_REFRESH_MS = 5_000;
+/// A dead workflow emits nothing, so a working session is re-read to notice it.
+const SESSION_LIVENESS_REFRESH_MS = 15_000;
 const INLINE_SUBAGENT_LIMIT = 5;
 const EXECUTION_FAILURE_TEXT: Record<NonNullable<SessionView["executionFailure"]>, string> = {
   failed: "This session's workflow failed.",
@@ -1341,6 +1343,7 @@ export function SessionDetail({
         "GET",
         `/api/v1/universes/${universeId}/sessions/${sessionId}`,
       ),
+    refetchInterval: (query) => query.state.data?.status === "active" ? SESSION_LIVENESS_REFRESH_MS : false,
   });
   const compaction = useSessionCompaction(universeId, sessionId, session.data);
   const owner = useSessionOwner(universeId, session.data?.access);
