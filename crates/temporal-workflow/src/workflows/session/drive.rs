@@ -334,13 +334,17 @@ pub(super) async fn commit_resume(
 /// What the drive does after each arm's commit, before it plans again: roll over if
 /// that is due, or hand over to the outer loop so transport work goes out now. A
 /// spawned job or sub-agent starts before the next generation instead of when the
-/// run next parks. Only a commit gets here, so a yield always follows real progress.
+/// run next parks. Only a commit or a pre-empting admission gets here, so a yield
+/// always follows real progress.
 fn drive_boundary_after_commit(
     ctx: &WorkflowContext<AgentSessionWorkflow>,
     args: &AgentSessionArgs,
 ) -> Option<DriveOutcome> {
-    ctx.state_mut(|state| state.execution_has_rollover_checkpoint = true);
     let now_ms = workflow_time_ms(ctx);
+    ctx.state_mut(|state| {
+        state.execution_has_rollover_checkpoint = true;
+        wait_loop::forget_ended_rollover_blockers(state, now_ms);
+    });
     history_boundary_outcome(ctx, args).or_else(|| {
         ctx.state(|state| wait_loop::transport_work_due(state, now_ms))
             .then_some(DriveOutcome::YieldForWorkflowWork)

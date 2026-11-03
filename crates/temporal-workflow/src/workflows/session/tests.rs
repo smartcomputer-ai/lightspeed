@@ -651,6 +651,41 @@ fn a_start_backoff_whose_candidate_is_gone_does_not_block_rollover_for_good() {
 }
 
 #[test]
+fn blockers_that_already_ended_do_not_hold_a_rollover_through_a_long_drive() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        ..
+    } = workflow_with_start_intent();
+    workflow.ready = true;
+    workflow
+        .core_state
+        .promises
+        .promises
+        .get_mut(&promise_id)
+        .expect("promise")
+        .status = PromiseStatus::Cancelled;
+    workflow
+        .workflow_start_backoffs
+        .insert(invocation_id.as_str().to_owned(), (1, 2_000));
+    workflow.cancelling_watchdog = Some(CancellingWatchdog {
+        run_id: 7,
+        since_ms: 1_000,
+    });
+    assert!(!wait_loop::workflow_state_allows_continue_as_new(&workflow));
+    assert!(
+        !wait_loop::transport_work_due(&workflow, 1_000)
+            && !wait_loop::outer_loop_can_clear_now(&workflow, 1_000),
+        "nothing would send this drive back to the outer loop"
+    );
+
+    wait_loop::forget_ended_rollover_blockers(&mut workflow, 1_000);
+
+    assert!(wait_loop::workflow_state_allows_continue_as_new(&workflow));
+}
+
+#[test]
 fn a_loop_that_stops_awaiting_is_caught_and_a_moving_clock_is_not() {
     let mut guard = wait_loop::StallGuard::default();
     for now in 0..1_000 {

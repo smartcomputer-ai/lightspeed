@@ -9,13 +9,18 @@ pub(super) const CANCELLING_WATCHDOG_MS: u64 = 60_000;
 /// run enters cancellation and drop it when that run leaves cancellation (or a different run becomes active).
 pub(super) fn reconcile_cancelling_watchdog(ctx: &WorkflowContext<AgentSessionWorkflow>) {
     let now = workflow_time_ms(ctx);
-    ctx.state_mut(|state| {
-        state.cancelling_watchdog = next_cancelling_watchdog(
-            cancelling_run_id(&state.core_state),
-            state.cancelling_watchdog,
-            now,
-        );
-    });
+    ctx.state_mut(|state| reconcile_cancelling_watchdog_for_state(state, now));
+}
+
+pub(super) fn reconcile_cancelling_watchdog_for_state(
+    state: &mut AgentSessionWorkflow,
+    now_ms: u64,
+) {
+    state.cancelling_watchdog = next_cancelling_watchdog(
+        cancelling_run_id(&state.core_state),
+        state.cancelling_watchdog,
+        now_ms,
+    );
 }
 
 pub(super) fn cancelling_run_id(core_state: &CoreAgentState) -> Option<u64> {

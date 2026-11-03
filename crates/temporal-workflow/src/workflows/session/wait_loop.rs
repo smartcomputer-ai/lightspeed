@@ -67,6 +67,15 @@ pub(super) fn outer_loop_can_clear_now(state: &AgentSessionWorkflow, now_ms: u64
         || workflow_starts::has_due_start(state, now_ms)
 }
 
+/// Drop rollover blockers that have already ended. The outer loop does this on its
+/// passes, but a drive can go thousands of turns without returning there, and a
+/// watchdog left by a finished cancel or a backoff whose promise has ended would hold
+/// a due rollover shut the whole time, with nothing to yield for.
+pub(super) fn forget_ended_rollover_blockers(state: &mut AgentSessionWorkflow, now_ms: u64) {
+    watchdog::reconcile_cancelling_watchdog_for_state(state, now_ms);
+    workflow_starts::forget_stale_backoffs(state);
+}
+
 /// Outbound work only the outer loop services, ready now. One service pass leaves
 /// this false: a delivered or started item is gone, a failed one waits out a backoff
 /// that lies ahead of the clock, and a due deadline has become a resolution.

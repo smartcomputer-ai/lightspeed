@@ -91,6 +91,9 @@ pub(super) fn has_due_start(state: &AgentSessionWorkflow, now_ms: u64) -> bool {
 /// A backoff outlives its candidate when the promise goes terminal before the retry.
 /// It would never be due again, and it would hold continue-as-new shut for good.
 pub(super) fn forget_stale_backoffs(state: &mut AgentSessionWorkflow) {
+    if state.workflow_start_backoffs.is_empty() {
+        return;
+    }
     let candidates = start_candidates(state)
         .into_iter()
         .map(|candidate| candidate.invocation.invocation_id.as_str().to_owned())
