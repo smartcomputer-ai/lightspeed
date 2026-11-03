@@ -65,17 +65,6 @@ impl Attachment {
         }
     }
 
-    pub fn blob_refs(&self) -> Vec<BlobRef> {
-        let mut refs = vec![self.content_ref().clone()];
-        if let Self::File(file) = self
-            && let Some(source) = &file.source
-            && let Ok(reference) = BlobRef::parse(source.id.clone())
-        {
-            refs.push(reference);
-        }
-        refs
-    }
-
     /// File links are metadata; only admitted media adds native model input.
     pub fn context_entry(&self) -> Option<ContextEntryInput> {
         match self {

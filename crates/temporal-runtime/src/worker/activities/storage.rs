@@ -340,8 +340,8 @@ async fn prepare_payload_context(
                 if *file_budget == 0 || !file.is_valid() {
                     continue;
                 }
-                match deps.blobs.stat_blob(&file.content_ref).await {
-                    Ok(_) => (),
+                match deps.blobs.retain_blob(&file.content_ref).await {
+                    Ok(()) => (),
                     Err(harness::storage::BlobStoreError::NotFound { .. }) => {
                         prepared
                             .entries
@@ -350,26 +350,8 @@ async fn prepare_payload_context(
                     }
                     Err(error) => return Err(activity_error(error)),
                 }
-                let attachment = Attachment::File(file);
-                let mut retained = true;
-                for reference in attachment.blob_refs() {
-                    match deps.blobs.retain_blob(&reference).await {
-                        Ok(()) => (),
-                        Err(harness::storage::BlobStoreError::NotFound { .. }) => {
-                            prepared.entries.push(
-                                unavailable_attachment_note(deps, attachment.handle()).await?,
-                            );
-                            retained = false;
-                            break;
-                        }
-                        Err(error) => return Err(activity_error(error)),
-                    }
-                }
-                if !retained {
-                    continue;
-                }
                 *file_budget -= 1;
-                prepared.attachments.push(attachment);
+                prepared.attachments.push(Attachment::File(file));
             }
         }
     }
@@ -768,9 +750,9 @@ mod tests {
     use harness::{
         CoreAgentIoError, CoreAgentLlm, CoreAgentTools, LlmFinish, LlmGenerationFacts,
         LlmGenerationRequest, LlmGenerationResult, LlmGenerationStatus, ObservedToolCall,
-        StoredEvent, ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest,
-        ToolInvocationBatchResult, ToolInvocationResult, ToolName, WorkflowToolBinding,
-        WorkflowToolInvocation, WorkflowToolInvocationId,
+        ToolBatchOutcome, ToolCallStatus, ToolInvocationBatchRequest, ToolInvocationBatchResult,
+        ToolInvocationResult, ToolName, WorkflowToolBinding, WorkflowToolInvocation,
+        WorkflowToolInvocationId,
         storage::{BlobStore, InMemoryBlobStore, InMemorySessionStore, SessionPage, SessionRecord},
     };
     use serde_json::json;
@@ -780,7 +762,7 @@ mod tests {
     fn test_event(
         observed_at_ms: u64,
         joins: impl IntoIterator<Item = (&'static str, &'static str)>,
-        payload: serde_json::Value,
+        value: &str,
     ) -> UncommittedStoredEvent {
         UncommittedStoredEvent {
             observed_at_ms,
@@ -788,7 +770,13 @@ mod tests {
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value.to_owned()))
                 .collect::<BTreeMap<_, _>>(),
-            event: StoredEvent::new("lightspeed.test.event", 1, payload),
+            event: harness::CoreAgentCodec
+                .encode_event(&harness::CoreAgentEvent::Environment(
+                    harness::EnvironmentEvent::ActiveEnvironmentSet {
+                        environment_id: harness::EnvironmentId::new(value),
+                    },
+                ))
+                .expect("encode event"),
         }
     }
 
@@ -1830,8 +1818,8 @@ mod tests {
             session_id: session_id.clone(),
             expected_head: None,
             events: vec![
-                test_event(10, [("turn", "1")], json!({"value": "first"})),
-                test_event(11, [("turn", "1")], json!({"value": "second"})),
+                test_event(10, [("turn", "1")], "first"),
+                test_event(11, [("turn", "1")], "second"),
             ],
         };
 
@@ -2206,7 +2194,7 @@ mod tests {
         let first = AppendEventsRequest {
             session_id: session_id.clone(),
             expected_head: None,
-            events: vec![test_event(10, [("turn", "1")], json!({"value": "first"}))],
+            events: vec![test_event(10, [("turn", "1")], "first")],
         };
         append_events(&deps, first)
             .await
@@ -2217,11 +2205,7 @@ mod tests {
             AppendEventsRequest {
                 session_id,
                 expected_head: None,
-                events: vec![test_event(
-                    10,
-                    [("turn", "1")],
-                    json!({"value": "different"}),
-                )],
+                events: vec![test_event(10, [("turn", "1")], "different")],
             },
         )
         .await
@@ -2238,7 +2222,7 @@ mod tests {
         let first = AppendEventsRequest {
             session_id: session_id.clone(),
             expected_head: None,
-            events: vec![test_event(10, [("turn", "1")], json!({"value": "same"}))],
+            events: vec![test_event(10, [("turn", "1")], "same")],
         };
         append_events(&deps, first)
             .await
@@ -2249,7 +2233,7 @@ mod tests {
             AppendEventsRequest {
                 session_id,
                 expected_head: None,
-                events: vec![test_event(11, [("turn", "2")], json!({"value": "same"}))],
+                events: vec![test_event(11, [("turn", "2")], "same")],
             },
         )
         .await

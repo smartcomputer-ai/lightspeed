@@ -119,9 +119,8 @@ impl GatewayAgentApi {
         &self,
         input: &impl serde::Serialize,
     ) -> Result<(), AgentApiError> {
-        let value = serde_json::to_value(input)
+        let refs = harness::storage::typed_blob_refs(input)
             .map_err(|error| AgentApiError::internal(format!("encode admission: {error}")))?;
-        let refs = harness::storage::collect_blob_refs(&value);
         self.store
             .touch_blob_refs(&refs.into_iter().collect::<Vec<_>>())
             .await

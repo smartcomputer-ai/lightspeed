@@ -43,6 +43,7 @@ pub fn environment_activate_effect(environment_id: &EnvironmentId) -> ToolEffect
         )]
         .into_iter()
         .collect(),
+        refs: Default::default(),
     }
 }
 
@@ -50,6 +51,7 @@ pub fn environment_deactivate_effect() -> ToolEffect {
     ToolEffect {
         kind: ENVIRONMENT_DEACTIVATE_EFFECT_KIND.to_owned(),
         data: Default::default(),
+        refs: Default::default(),
     }
 }
 

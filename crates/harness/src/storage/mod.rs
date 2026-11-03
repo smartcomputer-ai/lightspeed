@@ -5,12 +5,14 @@
 //! while Postgres/Temporal runners adapt these contracts to their own
 //! durability model.
 
+pub mod blob_roots;
 pub mod blobs;
 pub mod session;
 
 pub use crate::session::{
     SessionEntry, StoredSessionEntry, UncommittedSessionEvent, UncommittedStoredEvent,
 };
+pub use blob_roots::{event_blob_roots, typed_blob_refs};
 pub use blobs::{
     BlobEdge, BlobGraphStore, BlobInfo, BlobSource, BlobStore, BlobStoreError,
     ENGINE_BLOB_CONTENTS, InMemoryBlobStore, MAX_BLOB_RANGE_BYTES, collect_blob_refs,

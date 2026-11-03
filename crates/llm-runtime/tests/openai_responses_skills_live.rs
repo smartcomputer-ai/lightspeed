@@ -181,7 +181,7 @@ async fn openai_responses_live_selects_and_reads_the_matching_skill() {
     let workspace_attachments = vec![WorkspaceAttachment {
         path: "/skills/system".to_owned(),
         target: WorkspaceAttachmentTarget::Snapshot {
-            snapshot_ref: snapshot.snapshot_ref.to_string(),
+            snapshot_ref: snapshot.snapshot_ref.clone(),
         },
         access: WorkspaceAccess::Read,
     }];

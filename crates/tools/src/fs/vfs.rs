@@ -883,12 +883,9 @@ fn vfs_workspace_commit_effect(record: &::vfs::VfsWorkspaceRecord) -> ToolEffect
                 "workspace_id".to_owned(),
                 record.workspace_id.as_str().to_owned(),
             ),
-            (
-                "snapshot_ref".to_owned(),
-                record.head_snapshot_ref.as_str().to_owned(),
-            ),
             ("revision".to_owned(), record.revision.to_string()),
         ]),
+        refs: BTreeMap::from([("snapshot_ref".to_owned(), record.head_snapshot_ref.clone())]),
     }
 }
 
@@ -1930,8 +1927,8 @@ mod tests {
             Some(workspace_id.as_str())
         );
         assert_eq!(
-            effects[0].data.get("snapshot_ref").map(String::as_str),
-            Some(record.head_snapshot_ref.as_str())
+            effects[0].refs.get("snapshot_ref"),
+            Some(&record.head_snapshot_ref)
         );
         assert_eq!(
             effects[0].data.get("revision").map(String::as_str),
@@ -2013,16 +2010,71 @@ mod tests {
             Some(workspace_id.as_str())
         );
         assert_eq!(
-            result.effects[0]
-                .data
-                .get("snapshot_ref")
-                .map(String::as_str),
-            Some(record.head_snapshot_ref.as_str())
+            result.effects[0].refs.get("snapshot_ref"),
+            Some(&record.head_snapshot_ref)
         );
         assert_eq!(
             result.effects[0].data.get("revision").map(String::as_str),
             Some("1")
         );
+
+        // A tool edit moves the head with no snapshot row, so the log holds the older
+        // heads through this effect. The in-memory store's append runs the cross-check
+        // that fails when a ref sits in a plain string.
+        let completed = harness::CoreAgentEvent::Tool(harness::ToolEvent::CallCompleted {
+            run_id: harness::RunId::new(1),
+            turn_id: harness::TurnId::new(1),
+            batch_id: harness::ToolBatchId::new(1),
+            result: harness::ToolCallResult {
+                call_id: result.call_id.clone(),
+                status: result.status,
+                output_ref: None,
+                model_visible_context_entries: Vec::new(),
+                error_ref: None,
+                effects: result.effects.clone(),
+                attachments: Vec::new(),
+                duration_ms: None,
+                output_bytes: None,
+                truncated: false,
+            },
+        });
+        let event = harness::CoreAgentCodec
+            .encode_event(&completed)
+            .expect("encode completion");
+        assert!(
+            harness::storage::event_blob_roots(&event)
+                .expect("roots")
+                .contains(&record.head_snapshot_ref)
+        );
+        let sessions = harness::storage::InMemorySessionStore::new();
+        let session_id = harness::SessionId::new("vfs-commit");
+        harness::storage::SessionStore::create_session(
+            &sessions,
+            harness::storage::CreateSession {
+                metadata: Default::default(),
+                session_id: session_id.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            },
+        )
+        .await
+        .expect("create session");
+        harness::storage::SessionStore::append(
+            &sessions,
+            harness::storage::AppendSessionEvents {
+                session_id,
+                expected_head: None,
+                events: vec![harness::storage::UncommittedStoredEvent {
+                    observed_at_ms: 2,
+                    joins: Default::default(),
+                    event,
+                }],
+            },
+        )
+        .await
+        .expect("the commit effect's ref is typed");
     }
 
     #[tokio::test(flavor = "current_thread")]

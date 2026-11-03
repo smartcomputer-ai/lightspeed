@@ -70,13 +70,21 @@ pub struct SessionToolsetPreparation {
     pub tools: BTreeMap<ToolName, ToolSpec>,
 }
 
+/// A profile's instructions as a workflow carries them. Unlike the public document,
+/// a borrowed blob is a typed ref, so the gateway's refresh of input blobs sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionProfileInstructions {
+    Text { text: String },
+    TextRef { blob_ref: harness::BlobRef },
+}
+
 /// The resolved profile is captured at submission so workflow retries do not
 /// reread a mutable named profile. Configuration has already been translated
 /// into the harness's provider-neutral document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionProfileIntent {
     pub config: Option<SessionConfig>,
-    pub instructions: Option<api::ProfileInstructions>,
+    pub instructions: Option<SessionProfileInstructions>,
     /// The environment to activate when the session has none after the
     /// configuration is applied: the config's default attachment, or a
     /// creation-time override. Never overrides a live selection.
@@ -214,7 +222,7 @@ impl SessionOperationReceipts {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionProfilePreparationRequest {
     pub session_id: SessionId,
-    pub instructions: Option<api::ProfileInstructions>,
+    pub instructions: Option<SessionProfileInstructions>,
     /// Candidate to fill an empty active pointer; must be attached in the
     /// source configuration and selectable in the registry.
     pub environment: Option<harness::EnvironmentId>,
@@ -260,6 +268,65 @@ mod tests {
     use harness::BlobRef;
 
     #[test]
+    fn the_typed_walk_sees_borrowed_instructions_and_snapshot_attachments() {
+        let instructions = BlobRef::from_bytes(b"instructions");
+        let snapshot = BlobRef::from_bytes(b"snapshot");
+        let mut config = crate::default_session_config(harness::ModelSelection {
+            api_kind: harness::ProviderApiKind::OpenAiResponses,
+            provider_id: "openai".into(),
+            model: "test".into(),
+        });
+        config.features.vfs = Some(harness::VfsFeature {
+            workspaces: vec![harness::WorkspaceAttachment {
+                path: "/pinned".into(),
+                target: harness::WorkspaceAttachmentTarget::Snapshot {
+                    snapshot_ref: snapshot.clone(),
+                },
+                access: harness::WorkspaceAccess::Read,
+            }],
+            ..Default::default()
+        });
+        let request = SessionOperationRequest {
+            operation_id: "prepare_1".into(),
+            submitted_at_ms: 1,
+            operation: SessionOperation::ApplyProfile {
+                profile: SessionProfileIntent {
+                    config: Some(config),
+                    instructions: Some(SessionProfileInstructions::TextRef {
+                        blob_ref: instructions.clone(),
+                    }),
+                    environment: None,
+                },
+                expected_config_revision: None,
+                expected_tools_revision: None,
+            },
+        };
+        assert_eq!(
+            harness::storage::typed_blob_refs(&request).unwrap(),
+            BTreeSet::from([instructions, snapshot])
+        );
+    }
+
+    #[test]
+    fn digests_a_caller_chose_as_text_are_not_blobs_to_refresh() {
+        let digest = BlobRef::from_bytes(b"an OCI image digest").to_string();
+        let admission = crate::AgentAdmission {
+            command: harness::CoreAgentCommand::RequestRun(harness::RunRequestCommand {
+                requested_by: None,
+                notify_on_terminal: Vec::new(),
+                submission_id: Some(harness::SubmissionId::new(digest.clone())),
+                source: harness::RunRequestSource::Input { input: Vec::new() },
+                run_config: Default::default(),
+            }),
+            correlation_token: Some(digest),
+        };
+        assert_eq!(
+            harness::storage::typed_blob_refs(&vec![admission]).unwrap(),
+            BTreeSet::new()
+        );
+    }
+
+    #[test]
     fn profile_preparation_omits_unused_defaults_and_prepares_replacements() {
         let mut config = crate::default_session_config(harness::ModelSelection {
             api_kind: harness::ProviderApiKind::OpenAiResponses,
@@ -283,7 +350,7 @@ mod tests {
         state.environment.active_environment_id = Some(harness::EnvironmentId::new("active"));
         let mut profile = SessionProfileIntent {
             config: Some(config),
-            instructions: Some(api::ProfileInstructions::Text {
+            instructions: Some(SessionProfileInstructions::Text {
                 text: "updated instructions".into(),
             }),
             environment: Some(harness::EnvironmentId::new("default")),
@@ -327,7 +394,7 @@ mod tests {
                     harness::WorkspaceAttachment {
                         path: "/pinned".into(),
                         target: harness::WorkspaceAttachmentTarget::Snapshot {
-                            snapshot_ref: format!("sha256:{}", "a".repeat(64)),
+                            snapshot_ref: harness::BlobRef::from_bytes(b"pinned"),
                         },
                         access: harness::WorkspaceAccess::Read,
                     },
@@ -484,7 +551,7 @@ mod tests {
         request.operation = SessionOperation::ApplyProfile {
             profile: SessionProfileIntent {
                 config: None,
-                instructions: Some(api::ProfileInstructions::Text {
+                instructions: Some(SessionProfileInstructions::Text {
                     text: "large profile content".repeat(10_000),
                 }),
                 environment: None,

@@ -225,7 +225,7 @@ pub struct WorkspaceAttachment {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum WorkspaceAttachmentTarget {
     Workspace { workspace_id: String },
-    Snapshot { snapshot_ref: String },
+    Snapshot { snapshot_ref: crate::BlobRef },
 }
 
 /// Per-attachment VFS access. Ordered: `edit` implies `read`.
@@ -1017,12 +1017,7 @@ fn validate_workspace_attachments(
                     ));
                 }
             }
-            WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
-                if snapshot_ref.trim().is_empty() {
-                    return Err(DomainError::InvariantViolation(
-                        "workspace attachment snapshot_ref must not be empty".to_owned(),
-                    ));
-                }
+            WorkspaceAttachmentTarget::Snapshot { .. } => {
                 if attachment.access != WorkspaceAccess::Read {
                     return Err(DomainError::InvariantViolation(format!(
                         "snapshot workspace attachment at {path:?} must be read"
@@ -2089,7 +2084,7 @@ mod tests {
         config.features.vfs.as_mut().unwrap().workspaces = vec![WorkspaceAttachment {
             path: "/skills".to_owned(),
             target: WorkspaceAttachmentTarget::Snapshot {
-                snapshot_ref: format!("sha256:{}", "a".repeat(64)),
+                snapshot_ref: crate::BlobRef::from_bytes(b"snapshot"),
             },
             access: WorkspaceAccess::Edit,
         }];

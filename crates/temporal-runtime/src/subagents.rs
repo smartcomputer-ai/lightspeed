@@ -571,7 +571,10 @@ impl SubagentService {
         harness::storage::record_contains_edges(
             self.blob_graph.as_deref(),
             &payload_ref,
-            envelope.attachments.iter().flat_map(Attachment::blob_refs),
+            envelope
+                .attachments
+                .iter()
+                .map(|attachment| attachment.content_ref().clone()),
         )
         .await
         .map_err(|error| AgentApiError::internal(error.to_string()))?;

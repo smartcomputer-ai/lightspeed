@@ -17,10 +17,10 @@ use environments::{
     PutEnvironmentProviderBinding,
 };
 use harness::{
-    BlobRef, event_kind,
-    session::{
-        EventSeq, SessionId, SessionPosition, StoredEvent, StoredJoins, UncommittedStoredEvent,
-    },
+    BlobRef, ContentRef, ContextEntryInput, ContextEntryKind, ContextMessageRole, CoreAgentCodec,
+    CoreAgentEvent, CoreAgentJoins, CoreAgentLifecycleEvent, EnvironmentEvent, RunEvent, RunId,
+    SteeringId, UncommittedCoreAgentEvent, event_kind,
+    session::{EventSeq, SessionId, SessionPosition, UncommittedStoredEvent},
     storage::{
         AdvanceSessionCheckpoint, AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore,
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
@@ -1050,20 +1050,14 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
             session_id: session_id.clone(),
             expected_head: None,
             events: vec![
-                ref_event(10, serde_json::json!({ "content_ref": first.as_str() })),
-                ref_event(
-                    11,
-                    serde_json::json!({
-                        "nested": { "content_ref": first.as_str() },
-                        "items": [{ "ref": second.as_str() }]
-                    }),
-                ),
-                ref_event(
+                ref_event(10, &[&first]),
+                ref_event(11, &[&first, &second]),
+                entries_event(
                     12,
-                    serde_json::json!({
-                        "content_ref": second.as_str(),
-                        "preview": format!("mentions {first} in prose")
-                    }),
+                    vec![input_entry(
+                        &second,
+                        Some(format!("mentions {first} in prose")),
+                    )],
                 ),
             ],
         })
@@ -1088,10 +1082,7 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(3),
             }),
-            events: vec![ref_event(
-                13,
-                serde_json::json!({ "content_ref": first.as_str() }),
-            )],
+            events: vec![ref_event(13, &[&first])],
         })
         .await
         .expect("append widening event");
@@ -1115,10 +1106,7 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(4),
             }),
-            events: vec![
-                ref_event(14, serde_json::json!({ "content_ref": second.as_str() })),
-                ref_event(15, serde_json::json!({ "content_ref": missing.as_str() })),
-            ],
+            events: vec![ref_event(14, &[&second]), ref_event(15, &[&missing])],
         })
         .await
         .expect_err("dangling ref must fail the append");
@@ -1144,6 +1132,30 @@ async fn pg_live_event_appends_record_roots_and_reject_missing_blobs() {
     assert_eq!(
         events_embedding(&store, &session_id, &second).await,
         vec![2, 3]
+    );
+
+    // A digest that is someone's text is not a ref: it commits and retains nothing.
+    let spoken = BlobRef::from_bytes(b"a digest a model replied with, never stored");
+    store
+        .append(AppendSessionEvents {
+            session_id: session_id.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(4),
+            }),
+            events: vec![entries_event(
+                14,
+                vec![input_entry(&second, Some(spoken.to_string()))],
+            )],
+        })
+        .await
+        .expect("a digest in a preview commits");
+    assert_eq!(
+        store
+            .head(&session_id)
+            .await
+            .expect("head")
+            .map(|head| head.seq.as_u64()),
+        Some(5)
     );
 
     // Edges are still the writer's job.
@@ -1200,7 +1212,13 @@ async fn pg_live_a_value_postgres_cannot_hold_is_a_data_rejection_and_writes_not
         .append(AppendSessionEvents {
             session_id: session_id.clone(),
             expected_head: None,
-            events: vec![ref_event(2, serde_json::json!({ "preview": "a\0b" }))],
+            events: vec![{
+                // The codec replaces NUL, so only a writer bypassing it can send one.
+                let mut event = ref_event(2, &[]);
+                let nul = serde_json::Value::String("a\0b".to_owned());
+                event.event.payload["run"]["steering_accepted"]["run_label"] = nul;
+                event
+            }],
         })
         .await
         .expect_err("jsonb cannot hold NUL");
@@ -1394,14 +1412,9 @@ async fn pg_live_sweep_frees_only_unreachable_blobs_after_grace() {
         let mut events = refs
             .into_iter()
             .enumerate()
-            .map(|(index, blob_ref)| {
-                ref_event(
-                    10 + index as u64,
-                    serde_json::json!({ "content_ref": blob_ref.as_str() }),
-                )
-            })
+            .map(|(index, blob_ref)| ref_event(10 + index as u64, &[&blob_ref]))
             .collect::<Vec<_>>();
-        events.push(lifecycle_event(20, event_kind::LIFECYCLE_CLOSED));
+        events.push(closed_event(20));
         store
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
@@ -1696,13 +1709,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
         .append(AppendSessionEvents {
             session_id: root.clone(),
             expected_head: None,
-            events: vec![
-                ref_event(
-                    10,
-                    serde_json::json!({ "content_ref": config_blob.as_str() }),
-                ),
-                lifecycle_event(11, event_kind::LIFECYCLE_CLOSED),
-            ],
+            events: vec![ref_event(10, &[&config_blob]), closed_event(11)],
         })
         .await
         .expect("append root events");
@@ -1724,10 +1731,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
             expected_head: Some(SessionPosition {
                 seq: EventSeq::new(1),
             }),
-            events: vec![
-                ref_event(21, serde_json::json!({ "content_ref": fork_only.as_str() })),
-                lifecycle_event(22, event_kind::LIFECYCLE_CLOSED),
-            ],
+            events: vec![ref_event(21, &[&fork_only]), closed_event(22)],
         })
         .await
         .expect("append fork events");
@@ -1745,13 +1749,7 @@ async fn pg_live_sweep_follows_fork_trees_and_clone_roots() {
             source_session_id: root.clone(),
             session_id: clone.clone(),
             created_at_ms: 30,
-            opening_events: vec![
-                ref_event(
-                    31,
-                    serde_json::json!({ "content_ref": config_blob.as_str() }),
-                ),
-                lifecycle_event(32, event_kind::LIFECYCLE_CLOSED),
-            ],
+            opening_events: vec![ref_event(31, &[&config_blob]), closed_event(32)],
         })
         .await
         .expect("clone root");
@@ -1869,20 +1867,56 @@ async fn blob_object_etag(store: &PgStore, blob_ref: &BlobRef) -> Option<String>
     .expect("load object etag")
 }
 
-fn ref_event(at_ms: u64, payload: serde_json::Value) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new("lightspeed.test.references", 1, payload),
+fn encoded_event(at_ms: u64, event: CoreAgentEvent) -> UncommittedStoredEvent {
+    CoreAgentCodec
+        .encode_uncommitted(&UncommittedCoreAgentEvent {
+            observed_at_ms: at_ms,
+            joins: CoreAgentJoins::default(),
+            event,
+        })
+        .expect("encode event")
+}
+
+fn input_entry(content: &BlobRef, preview: Option<String>) -> ContextEntryInput {
+    ContextEntryInput {
+        kind: ContextEntryKind::Message {
+            role: ContextMessageRole::User,
+        },
+        content: ContentRef::text(content.clone()),
+        preview,
+        origin: None,
+        provenance_ref: None,
+        token_estimate: None,
     }
 }
 
-fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
-    }
+fn entries_event(at_ms: u64, input: Vec<ContextEntryInput>) -> UncommittedStoredEvent {
+    encoded_event(
+        at_ms,
+        CoreAgentEvent::Run(RunEvent::SteeringAccepted {
+            run_id: RunId::new(1),
+            steering_id: SteeringId::new(1),
+            input,
+            requested_by: None,
+        }),
+    )
+}
+
+/// A real event holding each ref as typed content, which is what makes it a root.
+fn ref_event(at_ms: u64, refs: &[&BlobRef]) -> UncommittedStoredEvent {
+    entries_event(
+        at_ms,
+        refs.iter()
+            .map(|blob_ref| input_entry(blob_ref, None))
+            .collect(),
+    )
+}
+
+fn closed_event(at_ms: u64) -> UncommittedStoredEvent {
+    encoded_event(
+        at_ms,
+        CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed),
+    )
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3210,16 +3244,12 @@ fn live_object_store() -> Arc<dyn ObjectStore> {
     Arc::new(store)
 }
 
+/// A real event with no effect on any projection.
 fn open_event(at_ms: u64) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new(
-            "lightspeed.test.lifecycle.closed",
-            1,
-            serde_json::Value::Object(Default::default()),
-        ),
-    }
+    encoded_event(
+        at_ms,
+        CoreAgentEvent::Environment(EnvironmentEvent::ActiveEnvironmentCleared),
+    )
 }
 
 fn put_mcp_server(server_id: &str, status: McpServerStatus) -> PutMcpServerRecord {
@@ -3465,7 +3495,7 @@ async fn pg_live_concurrent_deletion_rolls_back_session_attachment() {
             .append(AppendSessionEvents {
                 session_id: append_id,
                 expected_head: None,
-                events: vec![ref_event(2, serde_json::json!({"content_ref": append_ref}))],
+                events: vec![ref_event(2, &[&append_ref])],
             })
             .await
     });

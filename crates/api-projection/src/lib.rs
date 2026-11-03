@@ -2316,7 +2316,7 @@ fn vfs_feature_to_api(vfs: &harness::VfsFeature) -> api::VfsFeature {
                         (Some(workspace_id.clone()), None)
                     }
                     harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
-                        (None, Some(snapshot_ref.clone()))
+                        (None, Some(snapshot_ref.to_string()))
                     }
                 };
                 api::WorkspaceAttachment {
@@ -2777,7 +2777,17 @@ fn tool_effects_to_api(effects: &[harness::ToolEffect]) -> Vec<ToolEffectView> {
         .filter(|effect| effect.kind != harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND)
         .map(|effect| ToolEffectView {
             kind: effect.kind.clone(),
-            data: effect.data.clone(),
+            data: effect
+                .data
+                .clone()
+                .into_iter()
+                .chain(
+                    effect
+                        .refs
+                        .iter()
+                        .map(|(key, blob_ref)| (key.clone(), blob_ref.to_string())),
+                )
+                .collect(),
         })
         .collect()
 }
@@ -4357,6 +4367,7 @@ mod tests {
                     effects: vec![harness::ToolEffect {
                         kind: harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND.to_owned(),
                         data: Default::default(),
+                        refs: Default::default(),
                     }],
                 },
             }))
@@ -4386,6 +4397,7 @@ mod tests {
                 effects: vec![harness::ToolEffect {
                     kind: "private-effect".to_owned(),
                     data: Default::default(),
+                    refs: Default::default(),
                 }],
                 attachments: vec![],
                 duration_ms: None,

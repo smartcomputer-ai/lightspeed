@@ -1,7 +1,9 @@
 //! Shared materialization service used by workflow activities and API preflight.
 use super::*;
 use ::profiles::ProfileStore;
-use temporal_workflow::{SessionToolsetPreparation, SessionToolsetSource};
+use temporal_workflow::{
+    SessionProfileInstructions, SessionToolsetPreparation, SessionToolsetSource,
+};
 
 #[derive(Clone)]
 pub(crate) struct SessionPreparationService {
@@ -470,24 +472,23 @@ impl SessionPreparationService {
         let mut instructions = BTreeMap::new();
         if let Some(input) = request.instructions {
             let reference = match input {
-                ProfileInstructions::Text { text } => self
+                SessionProfileInstructions::Text { text } => self
                     .store
                     .put_bytes(text.into_bytes())
                     .await
                     .map_err(map_blob_store_error)?,
-                ProfileInstructions::TextRef { blob_ref } => {
-                    let reference = parse_blob_ref(&blob_ref)?;
+                SessionProfileInstructions::TextRef { blob_ref } => {
                     if !self
                         .store
-                        .has_blob(&reference)
+                        .has_blob(&blob_ref)
                         .await
                         .map_err(map_blob_store_error)?
                     {
                         return Err(AgentApiError::not_found(format!(
-                            "profile instructions blob not found: {reference}"
+                            "profile instructions blob not found: {blob_ref}"
                         )));
                     }
-                    reference
+                    blob_ref
                 }
             };
             instructions.insert(

@@ -80,13 +80,13 @@ pub async fn ensure_harness_blobs(blobs: &dyn BlobStore) -> Result<(), BlobStore
     Ok(())
 }
 
-/// Every blob ref embedded in a JSON document: each string value that is
-/// exactly a canonical `sha256:<64 lowercase hex>` ref, at any depth.
+/// Every string in an opaque JSON document shaped exactly like a canonical
+/// `sha256:<64 lowercase hex>` ref, at any depth.
 ///
-/// This is the one definition of "a stored document references a blob" that
-/// the session store uses to derive collection roots from appended entries,
-/// and that format tests use to check a writer recorded every nested edge.
-/// Refs inside longer strings (previews, prose) are deliberately not refs.
+/// Only for JSON with no type to walk, such as tool output, where a hash may be
+/// unrelated to content and an absent one stays plain data. Session logs use the
+/// typed walk in [`super::blob_roots`] instead. Refs inside longer strings
+/// (previews, prose) are deliberately not refs.
 pub fn collect_blob_refs(value: &serde_json::Value) -> BTreeSet<BlobRef> {
     let mut refs = BTreeSet::new();
     collect_blob_refs_into(value, &mut refs);
@@ -672,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn context_content_and_provenance_are_both_cas_roots() {
+    fn context_content_and_provenance_are_both_typed_refs() {
         let payload = BlobRef::from_bytes(b"transcript");
         let origin = BlobRef::from_bytes(b"source audio");
         let input = crate::ContextEntryInput {
@@ -686,7 +686,10 @@ mod tests {
             token_estimate: None,
         };
         let value = serde_json::to_value(&input).expect("serialize input");
-        assert_eq!(collect_blob_refs(&value), BTreeSet::from([payload, origin]));
+        assert_eq!(
+            super::super::typed_blob_refs(&input).unwrap(),
+            BTreeSet::from([payload, origin])
+        );
         assert_eq!(
             serde_json::from_value::<crate::ContextEntryInput>(value).unwrap(),
             input

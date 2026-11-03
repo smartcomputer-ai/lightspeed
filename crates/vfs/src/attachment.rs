@@ -71,13 +71,10 @@ pub async fn resolve_workspace_attachments(
             })?;
         let target = match &attachment.target {
             WorkspaceAttachmentTarget::Snapshot { snapshot_ref } => {
-                let snapshot_ref = BlobRef::parse(snapshot_ref.clone()).map_err(|error| {
-                    VfsCatalogError::InvalidInput {
-                        message: format!("invalid workspace attachment snapshot ref: {error}"),
-                    }
-                })?;
-                match read_snapshot_manifest(blobs.as_ref(), &snapshot_ref).await {
-                    Ok(_) => ResolvedWorkspaceAttachmentTarget::AvailableSnapshot { snapshot_ref },
+                match read_snapshot_manifest(blobs.as_ref(), snapshot_ref).await {
+                    Ok(_) => ResolvedWorkspaceAttachmentTarget::AvailableSnapshot {
+                        snapshot_ref: snapshot_ref.clone(),
+                    },
                     Err(error) => ResolvedWorkspaceAttachmentTarget::Unavailable {
                         declared_target: attachment.target.clone(),
                         reason: error.to_string(),

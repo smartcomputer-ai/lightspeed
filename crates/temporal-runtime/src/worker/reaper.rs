@@ -1246,7 +1246,6 @@ mod tests {
     async fn unreadable_sessions_are_identified_without_blocking_healthy_repairs() {
         use harness::{
             CoreAgentEvent, CoreAgentLifecycleEvent, PromiseEvent, PromiseOwnership, PromiseStatus,
-            StoredEvent,
         };
         let store = Arc::new(harness::storage::InMemorySessionStore::new());
         let opened = CoreAgentCodec
@@ -1256,19 +1255,28 @@ mod tests {
                 },
             ))
             .unwrap();
-        let malformed = stored_session(
-            &store,
-            "malformed",
-            vec![
-                opened.clone(),
-                StoredEvent::new(
-                    "lightspeed.core.context.unknown",
-                    1,
-                    serde_json::json!({"context":{"unknown":{}}}),
-                ),
-            ],
-        )
-        .await;
+        // Stores refuse an event that does not decode, so a log a reader cannot
+        // decode is one whose joins went bad.
+        let malformed = stored_session(&store, "malformed", vec![opened.clone()]).await;
+        store
+            .append(AppendSessionEvents {
+                session_id: malformed.clone(),
+                expected_head: store.head(&malformed).await.unwrap(),
+                events: vec![harness::session::UncommittedStoredEvent {
+                    observed_at_ms: 2,
+                    joins: harness::session::StoredJoins::from([(
+                        "run_id".to_owned(),
+                        "not a number".to_owned(),
+                    )]),
+                    event: CoreAgentCodec
+                        .encode_event(&CoreAgentEvent::Environment(
+                            harness::EnvironmentEvent::ActiveEnvironmentCleared,
+                        ))
+                        .unwrap(),
+                }],
+            })
+            .await
+            .unwrap();
         let invalid = stored_session(&store, "invalid", vec![opened.clone(), opened.clone()]).await;
         let promise_id = PromiseId::from_number(1);
         let healthy = stored_session(

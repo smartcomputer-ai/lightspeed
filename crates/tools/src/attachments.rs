@@ -158,9 +158,7 @@ pub(crate) async fn invoke_reference(
     ctx.content_resolver
         .validate_attachment(&Attachment::File(descriptor.clone()))?;
     // Admission protects the result-to-event gap against collection of an old version.
-    for blob in Attachment::File(descriptor.clone()).blob_refs() {
-        ctx.blobs.retain_blob(&blob).await?;
-    }
+    ctx.blobs.retain_blob(&descriptor.content_ref).await?;
     let visible = format!(
         "File attachment: {}\nReference: {}\nUse [label]({}) to link this file version, or ![description]({}) to display it inline if it is an image.",
         descriptor.name, descriptor.handle, descriptor.handle, descriptor.handle

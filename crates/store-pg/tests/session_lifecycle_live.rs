@@ -1,7 +1,7 @@
 use harness::{
-    CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, StoredEvent, UncommittedCoreAgentEvent,
-    WorkflowEndpointRef, WorkflowToolConfigEvent, event_kind,
-    session::{EventSeq, SessionId, SessionPosition, StoredJoins, UncommittedStoredEvent},
+    CoreAgentCodec, CoreAgentEvent, CoreAgentJoins, UncommittedCoreAgentEvent, WorkflowEndpointRef,
+    WorkflowToolConfigEvent, event_kind,
+    session::{EventSeq, SessionId, SessionPosition, UncommittedStoredEvent},
     storage::{
         AppendSessionEvents, AppendSessionEventsResult, CreateClonedSession, CreateForkedSession,
         CreateSession, ListSessions, SessionLifecycleStatus, SessionStore, SessionStoreError,
@@ -417,11 +417,38 @@ async fn pg_live_retention_deadline_follows_close_time_and_policy() {
 }
 
 fn lifecycle_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
-    UncommittedStoredEvent {
-        observed_at_ms: at_ms,
-        joins: StoredJoins::default(),
-        event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
-    }
+    let event = match kind {
+        event_kind::LIFECYCLE_OPENED => {
+            CoreAgentEvent::Lifecycle(harness::CoreAgentLifecycleEvent::Opened {
+                config: harness::SessionConfig {
+                    model: harness::ModelSelection {
+                        api_kind: harness::ProviderApiKind::OpenAiResponses,
+                        provider_id: "openai".to_owned(),
+                        model: "gpt-test".to_owned(),
+                    },
+                    generation: Default::default(),
+                    limits: Default::default(),
+                    context: harness::ContextConfig {
+                        reported_input_limit_tokens: None,
+                        input_limit_tokens: None,
+                        compaction: None,
+                    },
+                    features: Default::default(),
+                },
+            })
+        }
+        event_kind::LIFECYCLE_CLOSED => {
+            CoreAgentEvent::Lifecycle(harness::CoreAgentLifecycleEvent::Closed)
+        }
+        _ => CoreAgentEvent::Environment(harness::EnvironmentEvent::ActiveEnvironmentCleared),
+    };
+    CoreAgentCodec
+        .encode_uncommitted(&UncommittedCoreAgentEvent {
+            observed_at_ms: at_ms,
+            joins: CoreAgentJoins::default(),
+            event,
+        })
+        .expect("encode lifecycle event")
 }
 
 async fn live_store() -> PgStore {

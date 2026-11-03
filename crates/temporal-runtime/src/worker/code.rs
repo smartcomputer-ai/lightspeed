@@ -392,7 +392,7 @@ fn report_children(report: &DetailedCodeReport) -> Vec<BlobRef> {
             children.extend(
                 call.attachments
                     .iter()
-                    .flat_map(harness::Attachment::blob_refs),
+                    .map(|attachment| attachment.content_ref().clone()),
             );
         }
     }
@@ -554,7 +554,7 @@ async fn finalize(
             selected
                 .attachments
                 .iter()
-                .flat_map(harness::Attachment::blob_refs),
+                .map(|attachment| attachment.content_ref().clone()),
         )
         .collect();
     let model = model_report_with_output(&report, &report_ref, selected);
@@ -749,9 +749,7 @@ async fn validate_selected_attachment(
     }
     // Renew admission immediately before publishing. The generic joined-result
     // adapter performs the same native media checks when adding companions.
-    for reference in attachment.blob_refs() {
-        blobs.retain_blob(&reference).await?;
-    }
+    blobs.retain_blob(attachment.content_ref()).await?;
     Ok(())
 }
 

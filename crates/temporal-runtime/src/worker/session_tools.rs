@@ -3125,17 +3125,14 @@ mod tests {
         assert_eq!(first.results[0].status, ToolCallStatus::Succeeded);
         let effect = &first.results[0].effects[0];
         assert_eq!(
-            effect.data.get("arguments_ref").map(String::as_str),
+            effect.refs.get("arguments_ref").map(BlobRef::as_str),
             Some(arguments_ref.as_str())
         );
-        let context_ref = BlobRef::parse(
-            effect
-                .data
-                .get("execution_context_ref")
-                .expect("execution context ref")
-                .clone(),
-        )
-        .expect("valid execution context ref");
+        let context_ref = effect
+            .refs
+            .get("execution_context_ref")
+            .expect("execution context ref")
+            .clone();
         let context: JobSubmitExecutionContextV1 = serde_json::from_slice(
             &blobs
                 .read_bytes(&context_ref)
@@ -3157,8 +3154,8 @@ mod tests {
         };
         assert_eq!(code_call.status, ToolCallStatus::Succeeded);
         assert_eq!(
-            code_call.effects[0].data["execution_context_ref"],
-            context_ref.as_str()
+            code_call.effects[0].refs["execution_context_ref"],
+            context_ref
         );
         let promises: BTreeMap<String, String> =
             serde_json::from_str(&code_call.effects[0].data["completion_promises"]).unwrap();
@@ -3377,9 +3374,9 @@ mod tests {
             let promises: BTreeMap<String, String> =
                 serde_json::from_str(&invocation["completion_promises"]).unwrap();
             assert_eq!(promises[harness::REPLY_COMPLETION_KEY], "promise_65");
-            let context_ref = BlobRef::parse(invocation["execution_context_ref"].clone()).unwrap();
+            let context_ref = &first.effects[0].refs["execution_context_ref"];
             let context: SubagentExecutionContextV1 =
-                serde_json::from_slice(&blobs.read_bytes(&context_ref).await.unwrap()).unwrap();
+                serde_json::from_slice(&blobs.read_bytes(context_ref).await.unwrap()).unwrap();
             assert_eq!(
                 context,
                 SubagentExecutionContextV1::new(
@@ -3477,8 +3474,7 @@ mod tests {
             panic!("code tool job_run preparation")
         };
         assert_eq!(result.status, ToolCallStatus::Succeeded);
-        let context_ref =
-            BlobRef::parse(result.effects[0].data["execution_context_ref"].clone()).unwrap();
+        let context_ref = result.effects[0].refs["execution_context_ref"].clone();
         let context: JobSubmitExecutionContextV1 =
             serde_json::from_slice(&blobs.read_bytes(&context_ref).await.unwrap()).unwrap();
         assert_eq!(context.environment_id, "environment-original");
@@ -3622,18 +3618,15 @@ mod tests {
         assert_eq!(first.results[0].status, ToolCallStatus::Succeeded);
         let effect = &first.results[0].effects[0];
         assert_eq!(
-            effect.data.get("arguments_ref").map(String::as_str),
+            effect.refs.get("arguments_ref").map(BlobRef::as_str),
             Some(request.calls[0].arguments_ref.as_str()),
             "the model arguments stay in CAS untouched"
         );
-        let context_ref = BlobRef::parse(
-            effect
-                .data
-                .get("execution_context_ref")
-                .expect("execution context ref")
-                .clone(),
-        )
-        .expect("valid execution context ref");
+        let context_ref = effect
+            .refs
+            .get("execution_context_ref")
+            .expect("execution context ref")
+            .clone();
         let context: SubagentExecutionContextV1 = serde_json::from_slice(
             &blobs
                 .read_bytes(&context_ref)
@@ -3742,8 +3735,7 @@ mod tests {
             .completed_result()
             .unwrap();
         assert_eq!(first.results[0].status, ToolCallStatus::Succeeded);
-        let reference =
-            BlobRef::parse(&first.results[0].effects[0].data["execution_context_ref"]).unwrap();
+        let reference = first.results[0].effects[0].refs["execution_context_ref"].clone();
         let context: tools::code::CodeExecutionContextV1 =
             serde_json::from_slice(&blobs.read_bytes(&reference).await.unwrap()).unwrap();
         assert_eq!(context.parent_session_id, "session-parent");
@@ -3766,8 +3758,8 @@ mod tests {
             .completed_result()
             .unwrap();
         assert_eq!(
-            retried.results[0].effects[0].data["execution_context_ref"],
-            reference.as_str()
+            retried.results[0].effects[0].refs["execution_context_ref"],
+            reference
         );
     }
 

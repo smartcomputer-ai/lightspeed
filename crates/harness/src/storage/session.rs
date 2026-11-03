@@ -417,7 +417,7 @@ pub enum SessionStoreError {
     ManagedSessionCannotBranch { session_id: SessionId },
 
     /// An appended entry references blobs the store does not hold. The
-    /// store derives collection roots from every ref an entry embeds, so a
+    /// store derives collection roots from every typed ref in an entry, so a
     /// dangling ref fails the append instead of failing a later read.
     #[error("session {session_id} event references missing blobs: {}", blob_refs.iter().map(|blob_ref| blob_ref.as_str()).collect::<Vec<_>>().join(", "))]
     MissingBlobs {
@@ -965,6 +965,9 @@ impl SessionStore for InMemorySessionStore {
             created_at_ms: request.created_at_ms,
             updated_at_ms: request.created_at_ms,
         };
+        for event in &request.opening_events {
+            super::blob_roots::check_typed_walk_sees_every_ref(&event.event)?;
+        }
         let committed = commit_uncommitted_events(&mut record, request.opening_events);
         inner.entries.insert(record.session_id.clone(), committed);
         inner
@@ -1062,6 +1065,9 @@ impl SessionStore for InMemorySessionStore {
                 expected: request.expected_head,
                 actual: actual_head,
             });
+        }
+        for event in &request.events {
+            super::blob_roots::check_typed_walk_sees_every_ref(&event.event)?;
         }
 
         let record = inner
@@ -1532,18 +1538,106 @@ fn position_from_nonzero_seq(seq: EventSeq) -> Option<SessionPosition> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::{StoredEvent, StoredJoins};
+    use crate::session::StoredJoins;
 
-    fn test_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
-        UncommittedStoredEvent {
-            observed_at_ms: at_ms,
-            joins: StoredJoins::default(),
-            event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
+    fn encoded_event(
+        at_ms: u64,
+        joins: crate::CoreAgentJoins,
+        event: CoreAgentEvent,
+    ) -> UncommittedStoredEvent {
+        CoreAgentCodec
+            .encode_uncommitted(&crate::UncommittedCoreAgentEvent {
+                observed_at_ms: at_ms,
+                joins,
+                event,
+            })
+            .expect("encode event")
+    }
+
+    /// A real event of the kind a projection branches on. Stores decode what they
+    /// append, so a fixture cannot stand in with an empty payload.
+    fn event_of_kind(kind: &str) -> CoreAgentEvent {
+        use crate::{ApprovalEvent, CoreAgentLifecycleEvent, RunEvent, RunId};
+        let run_id = RunId::new(1);
+        match kind {
+            event_kind::LIFECYCLE_OPENED => {
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Opened {
+                    config: crate::SessionConfig {
+                        model: crate::ModelSelection {
+                            api_kind: crate::ProviderApiKind::OpenAiResponses,
+                            provider_id: "openai".to_owned(),
+                            model: "gpt-test".to_owned(),
+                        },
+                        generation: Default::default(),
+                        limits: Default::default(),
+                        context: crate::ContextConfig {
+                            reported_input_limit_tokens: None,
+                            input_limit_tokens: None,
+                            compaction: None,
+                        },
+                        features: Default::default(),
+                    },
+                })
+            }
+            event_kind::LIFECYCLE_CLOSED => {
+                CoreAgentEvent::Lifecycle(CoreAgentLifecycleEvent::Closed)
+            }
+            event_kind::RUN_ACCEPTED => {
+                CoreAgentEvent::Run(RunEvent::Accepted(crate::AcceptedRunEvent {
+                    run_id,
+                    submission_id: None,
+                    source: crate::RunSource::Input { input: Vec::new() },
+                    run_config: Default::default(),
+                    config_revision: 0,
+                    notify_on_terminal: Vec::new(),
+                    requested_by: None,
+                }))
+            }
+            event_kind::RUN_STARTED => CoreAgentEvent::Run(RunEvent::Started { run_id }),
+            event_kind::RUN_CANCELLED => CoreAgentEvent::Run(RunEvent::Cancelled { run_id }),
+            event_kind::APPROVAL_REQUESTED => CoreAgentEvent::Approval(ApprovalEvent::Requested {
+                approval: crate::ApprovalRequested {
+                    approval_id: crate::ApprovalId::new("approval_1"),
+                    run_id,
+                    subject: crate::ApprovalSubject::McpToolCall {
+                        server_id: "server".to_owned(),
+                        server_label: "server".to_owned(),
+                        tool_name: "tool".to_owned(),
+                        arguments_ref: crate::BlobRef::from_bytes(b"{}"),
+                    },
+                    continuation: crate::ApprovalContinuation::OpenAiMcp {
+                        provider_request_id: "request".to_owned(),
+                    },
+                },
+            }),
+            event_kind::APPROVAL_RUN_PARKED => {
+                CoreAgentEvent::Approval(ApprovalEvent::RunParked { run_id })
+            }
+            event_kind::APPROVAL_RUN_UNPARKED => {
+                CoreAgentEvent::Approval(ApprovalEvent::RunUnparked { run_id })
+            }
+            event_kind::APPROVAL_DECIDED => CoreAgentEvent::Approval(ApprovalEvent::Decided {
+                approval_id: crate::ApprovalId::new("approval_1"),
+                run_id,
+                decision: crate::ApprovalDecision::Approved,
+                note: None,
+                decided_by: None,
+            }),
+            other => panic!("no fixture for event kind {other}"),
         }
     }
 
-    fn open_event(at_ms: u64) -> UncommittedStoredEvent {
-        test_event(at_ms, "lightspeed.test.lifecycle.closed")
+    fn test_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
+        encoded_event(at_ms, Default::default(), event_of_kind(kind))
+    }
+
+    /// A real event with no effect on any projection.
+    fn filler_event(at_ms: u64) -> UncommittedStoredEvent {
+        encoded_event(
+            at_ms,
+            Default::default(),
+            CoreAgentEvent::Environment(crate::EnvironmentEvent::ActiveEnvironmentCleared),
+        )
     }
 
     fn lifecycle_opened_event(at_ms: u64) -> UncommittedStoredEvent {
@@ -1575,12 +1669,15 @@ mod tests {
         test_event(at_ms, event_kind::LIFECYCLE_CLOSED)
     }
 
-    fn run_event(at_ms: u64, kind: &'static str, run_id: u64) -> UncommittedStoredEvent {
-        UncommittedStoredEvent {
-            observed_at_ms: at_ms,
-            joins: StoredJoins::from([("run_id".to_owned(), run_id.to_string())]),
-            event: StoredEvent::new(kind, 1, serde_json::Value::Object(Default::default())),
-        }
+    fn run_event(at_ms: u64, kind: &'static str) -> UncommittedStoredEvent {
+        encoded_event(
+            at_ms,
+            crate::CoreAgentJoins {
+                run_id: Some(crate::RunId::new(1)),
+                ..Default::default()
+            },
+            event_of_kind(kind),
+        )
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1603,7 +1700,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
                 expected_head: None,
-                events: vec![open_event(10), open_event(11)],
+                events: vec![filler_event(10), filler_event(11)],
             })
             .await
             .expect("append");
@@ -2292,16 +2389,14 @@ mod tests {
         run_id: crate::RunId,
         event: CoreAgentEvent,
     ) -> UncommittedStoredEvent {
-        CoreAgentCodec
-            .encode_uncommitted(&crate::UncommittedCoreAgentEvent {
-                observed_at_ms: at_ms,
-                joins: crate::CoreAgentJoins {
-                    run_id: Some(run_id),
-                    ..Default::default()
-                },
-                event,
-            })
-            .expect("encode run event")
+        encoded_event(
+            at_ms,
+            crate::CoreAgentJoins {
+                run_id: Some(run_id),
+                ..Default::default()
+            },
+            event,
+        )
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2576,7 +2671,7 @@ mod tests {
                 expected_head: None,
                 events: vec![
                     lifecycle_opened_event(10),
-                    test_event(11, "parent.work"),
+                    filler_event(11),
                     lifecycle_closed_event(12),
                 ],
             })
@@ -2913,7 +3008,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
                 expected_head: None,
-                events: vec![open_event(10)],
+                events: vec![filler_event(10)],
             })
             .await
             .expect("append first");
@@ -2922,7 +3017,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: session_id.clone(),
                 expected_head: None,
-                events: vec![open_event(11)],
+                events: vec![filler_event(11)],
             })
             .await
             .expect_err("stale append fails");
@@ -2973,7 +3068,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: SessionId::new("missing"),
                 expected_head: None,
-                events: vec![open_event(10)],
+                events: vec![filler_event(10)],
             })
             .await
             .expect_err("missing session fails");
@@ -2985,7 +3080,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(1),
                 }),
-                events: vec![open_event(11)],
+                events: vec![filler_event(11)],
             })
             .await
             .expect_err("expected-head conflict fails");
@@ -3014,7 +3109,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: source_id.clone(),
                 expected_head: None,
-                events: vec![open_event(10), open_event(11)],
+                events: vec![filler_event(10), filler_event(11)],
             })
             .await
             .expect("append source");
@@ -3025,7 +3120,7 @@ mod tests {
                 source_session_id: source_id.clone(),
                 session_id: child_id.clone(),
                 created_at_ms: 20,
-                opening_events: vec![test_event(21, "lightspeed.test.clone.opened")],
+                opening_events: vec![filler_event(21)],
             })
             .await
             .expect("clone session");
@@ -3046,7 +3141,7 @@ mod tests {
             .expect("read clone");
         assert_eq!(page.entries.len(), 1);
         assert_eq!(page.entries[0].position.seq, EventSeq::new(1));
-        assert_eq!(page.entries[0].event.kind, "lightspeed.test.clone.opened");
+        assert_eq!(page.entries[0].observed_at_ms, 21);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -3068,11 +3163,7 @@ mod tests {
             .append(AppendSessionEvents {
                 session_id: root.clone(),
                 expected_head: None,
-                events: vec![
-                    test_event(10, "root.1"),
-                    test_event(11, "root.2"),
-                    test_event(12, "root.3"),
-                ],
+                events: vec![filler_event(10), filler_event(11), filler_event(12)],
             })
             .await
             .expect("append root");
@@ -3093,7 +3184,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(2),
                 }),
-                events: vec![test_event(21, "fork.3"), test_event(22, "fork.4")],
+                events: vec![filler_event(21), filler_event(22)],
             })
             .await
             .expect("append fork");
@@ -3112,7 +3203,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(3),
                 }),
-                events: vec![test_event(30, "root.4-hidden")],
+                events: vec![filler_event(30)],
             })
             .await
             .expect("append root tail");
@@ -3133,7 +3224,7 @@ mod tests {
                 expected_head: Some(SessionPosition {
                     seq: EventSeq::new(3),
                 }),
-                events: vec![test_event(41, "grandchild.4")],
+                events: vec![filler_event(41)],
             })
             .await
             .expect("append grandchild");
@@ -3149,9 +3240,9 @@ mod tests {
         assert_eq!(
             page.entries
                 .iter()
-                .map(|entry| (entry.position.seq.as_u64(), entry.event.kind.as_str()))
+                .map(|entry| (entry.position.seq.as_u64(), entry.observed_at_ms))
                 .collect::<Vec<_>>(),
-            vec![(2, "root.2"), (3, "fork.3"), (4, "grandchild.4")]
+            vec![(2, 11), (3, 21), (4, 41)]
         );
     }
 
@@ -3175,9 +3266,9 @@ mod tests {
                 session_id: session_id.clone(),
                 expected_head: None,
                 events: vec![
-                    test_event(10, "standalone.1"),
-                    run_event(11, event_kind::RUN_ACCEPTED, 1),
-                    run_event(12, event_kind::RUN_STARTED, 1),
+                    filler_event(10),
+                    run_event(11, event_kind::RUN_ACCEPTED),
+                    run_event(12, event_kind::RUN_STARTED),
                 ],
             })
             .await

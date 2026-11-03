@@ -3168,6 +3168,7 @@ mod tests {
                 effects: vec![ToolEffect {
                     kind: "test".to_owned(),
                     data: Default::default(),
+                    refs: Default::default(),
                 }],
             }],
         }

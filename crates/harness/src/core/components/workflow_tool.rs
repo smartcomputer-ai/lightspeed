@@ -991,15 +991,12 @@ pub fn workflow_tool_emit_effect(invocation: &WorkflowToolInvocation) -> ToolEff
         EFFECT_TOOL_CALL_ID.to_owned(),
         invocation.tool_call_id.as_str().to_owned(),
     );
-    data.insert(
+    let mut refs = BTreeMap::from([(
         EFFECT_ARGUMENTS_REF.to_owned(),
-        invocation.arguments_ref.as_str().to_owned(),
-    );
+        invocation.arguments_ref.clone(),
+    )]);
     if let Some(context_ref) = &invocation.execution_context_ref {
-        data.insert(
-            EFFECT_EXECUTION_CONTEXT_REF.to_owned(),
-            context_ref.as_str().to_owned(),
-        );
+        refs.insert(EFFECT_EXECUTION_CONTEXT_REF.to_owned(), context_ref.clone());
     }
     if let Some(promises) = &invocation.completion_promises {
         let encoded: BTreeMap<&str, &str> = promises
@@ -1014,6 +1011,7 @@ pub fn workflow_tool_emit_effect(invocation: &WorkflowToolInvocation) -> ToolEff
     ToolEffect {
         kind: WORKFLOW_TOOL_EMIT_EFFECT_KIND.to_owned(),
         data,
+        refs,
     }
 }
 
@@ -1092,22 +1090,16 @@ pub(crate) fn invocation_from_emit_effect(
             "workflow tool emit effect has invalid tool call id: {error}"
         ))
     })?;
-    let arguments_ref = BlobRef::parse(field(EFFECT_ARGUMENTS_REF)?).map_err(|error| {
-        DomainError::InvariantViolation(format!(
-            "workflow tool emit effect has invalid arguments ref: {error}"
-        ))
-    })?;
-    let execution_context_ref = effect
-        .data
-        .get(EFFECT_EXECUTION_CONTEXT_REF)
-        .map(|value| {
-            BlobRef::parse(value.clone()).map_err(|error| {
-                DomainError::InvariantViolation(format!(
-                    "workflow tool emit effect has invalid execution context ref: {error}"
-                ))
-            })
-        })
-        .transpose()?;
+    let arguments_ref = effect
+        .refs
+        .get(EFFECT_ARGUMENTS_REF)
+        .cloned()
+        .ok_or_else(|| {
+            DomainError::InvariantViolation(format!(
+                "workflow tool emit effect is missing `{EFFECT_ARGUMENTS_REF}`"
+            ))
+        })?;
+    let execution_context_ref = effect.refs.get(EFFECT_EXECUTION_CONTEXT_REF).cloned();
     let completion_promises = effect
         .data
         .get(EFFECT_COMPLETION_PROMISES)

@@ -1258,7 +1258,7 @@ mod tests {
         WorkspaceAttachment {
             path: path.to_owned(),
             target: WorkspaceAttachmentTarget::Snapshot {
-                snapshot_ref: snapshot_ref.to_string(),
+                snapshot_ref: snapshot_ref.clone(),
             },
             access: WorkspaceAccess::Read,
         }

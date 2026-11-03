@@ -5,14 +5,17 @@ use async_trait::async_trait;
 use harness::storage::SessionActivity;
 use harness::{
     BlobRef,
-    session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
+    session::{
+        EventSeq, SessionId, SessionPosition, StoredEvent, StoredSessionEntry,
+        UncommittedStoredEvent,
+    },
     storage::{
         AdvanceSessionCheckpoint, AppendSessionEvents, AppendSessionEventsResult,
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
         DeleteClosedSessionsResult, ListSessions, ReadSessionEventRange, ReadSessionEvents,
         SessionCheckpoint, SessionLifecycleStatus, SessionListCursor, SessionListPage,
         SessionOrigin, SessionOriginCounts, SessionPage, SessionRecord, SessionStore,
-        SessionStoreError, apply_lifecycle_projection, check_origin_limits, collect_blob_refs,
+        SessionStoreError, apply_lifecycle_projection, check_origin_limits, event_blob_roots,
         largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
     },
 };
@@ -111,7 +114,7 @@ impl PgStore {
                 serde_json::to_value(&entry).map_err(|error| SessionStoreError::Store {
                     message: format!("serialize session entry: {error}"),
                 })?;
-            embedded.observe(&entry_json);
+            embedded.observe(&entry.event)?;
             sqlx::query(
                 r#"
                 INSERT INTO session_events (universe_id, session_id, entry_json)
@@ -1625,7 +1628,7 @@ async fn append_events_in_tx(
             serde_json::to_value(&entry).map_err(|error| SessionStoreError::Store {
                 message: format!("serialize session entry: {error}"),
             })?;
-        embedded.observe(&entry_json);
+        embedded.observe(&entry.event)?;
         sqlx::query(
             r#"
             INSERT INTO session_events (universe_id, session_id, entry_json)
@@ -1679,16 +1682,17 @@ async fn append_events_in_tx(
     Ok((record, committed))
 }
 
-/// Distinct refs in an append. The store derives FK-backed roots inside the
-/// append transaction; callers never register roots separately.
+/// Distinct typed refs in an append. The store derives FK-backed roots inside
+/// the append transaction; callers never register roots separately.
 #[derive(Default)]
 struct EmbeddedBlobRefs {
     refs: BTreeSet<BlobRef>,
 }
 
 impl EmbeddedBlobRefs {
-    fn observe(&mut self, entry_json: &serde_json::Value) {
-        self.refs.extend(collect_blob_refs(entry_json));
+    fn observe(&mut self, event: &StoredEvent) -> Result<(), SessionStoreError> {
+        self.refs.extend(event_blob_roots(event)?);
+        Ok(())
     }
 
     async fn record_roots(

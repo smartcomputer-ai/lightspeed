@@ -488,6 +488,11 @@ pub struct ToolEffect {
     pub kind: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub data: BTreeMap<String, String>,
+    /// Blobs the effect names. They are typed apart from `data` because the log
+    /// retains a blob only through a typed ref: a tool edit moves a workspace head
+    /// with no snapshot row, and this is what keeps older heads readable.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refs: BTreeMap<String, BlobRef>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

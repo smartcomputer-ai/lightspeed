@@ -140,8 +140,7 @@ mod tests {
     use harness::{
         AcceptedRunEvent, BlobRef, CodeToolOrigin, ContextEntry, ContextEntryId,
         ContextEntrySource, ContextRemovalReason, FileAttachment, RunId, RunSource, SteeringId,
-        StoredEvent, ToolBatchId, ToolCallId, ToolCallResult, ToolCallStatus, ToolInvocationResult,
-        TurnId,
+        ToolBatchId, ToolCallId, ToolCallResult, ToolCallStatus, ToolInvocationResult, TurnId,
         session::UncommittedStoredEvent,
         storage::{
             AppendSessionEvents, BlobStore, CreateSession, InMemoryBlobStore, InMemorySessionStore,
@@ -266,12 +265,11 @@ mod tests {
             stored(ordinary_completion(ordinary.clone())),
             stored(ordinary_completion(ordinary.clone())),
         ];
-        // The second page must still be scanned, and unrelated events are not
-        // decoded as core events or followed into arbitrary blob payloads.
-        events.extend((0..1000).map(|_| UncommittedStoredEvent {
-            observed_at_ms: 1,
-            joins: Default::default(),
-            event: StoredEvent::new("lightspeed.test.unrelated", 99, serde_json::Value::Null),
+        // The second page must still be scanned.
+        events.extend((0..1000).map(|_| {
+            stored(CoreAgentEvent::Environment(
+                harness::EnvironmentEvent::ActiveEnvironmentCleared,
+            ))
         }));
         events.extend([
             stored(code_completion(code.clone())),

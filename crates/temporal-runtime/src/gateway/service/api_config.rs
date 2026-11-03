@@ -280,7 +280,9 @@ fn workspace_attachment_from_api(
         (Some(workspace_id), None) => {
             harness::WorkspaceAttachmentTarget::Workspace { workspace_id }
         }
-        (None, Some(snapshot_ref)) => harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref },
+        (None, Some(snapshot_ref)) => harness::WorkspaceAttachmentTarget::Snapshot {
+            snapshot_ref: parse_blob_ref(&snapshot_ref)?,
+        },
         _ => {
             return Err(AgentApiError::invalid_request(format!(
                 "workspace attachment at {} must set exactly one of workspaceId and snapshotRef",
@@ -542,5 +544,24 @@ mod tests {
             }
             assert!(validate_reasoning_effort(&api_kind, "ultra").is_err());
         }
+    }
+
+    #[test]
+    fn a_snapshot_attachment_that_is_not_a_ref_is_the_callers_mistake() {
+        let attachment = |snapshot_ref: String| api::WorkspaceAttachment {
+            path: "/pinned".into(),
+            workspace_id: None,
+            snapshot_ref: Some(snapshot_ref),
+            access: api::WorkspaceAccess::Read,
+        };
+        let error = workspace_attachment_from_api(attachment("not-a-blob".into())).unwrap_err();
+        assert_eq!(error.kind, api::AgentApiErrorKind::InvalidRequest);
+        let held = BlobRef::from_bytes(b"snapshot");
+        assert_eq!(
+            workspace_attachment_from_api(attachment(held.to_string()))
+                .unwrap()
+                .target,
+            harness::WorkspaceAttachmentTarget::Snapshot { snapshot_ref: held }
+        );
     }
 }

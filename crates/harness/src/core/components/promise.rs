@@ -469,6 +469,7 @@ pub fn promise_create_effect(
     crate::ToolEffect {
         kind: PROMISE_CREATE_EFFECT_KIND.to_owned(),
         data,
+        refs: BTreeMap::new(),
     }
 }
 
@@ -481,6 +482,7 @@ pub fn promise_cancel_effect(promise_id: &PromiseId) -> crate::ToolEffect {
     crate::ToolEffect {
         kind: PROMISE_CANCEL_EFFECT_KIND.to_owned(),
         data,
+        refs: BTreeMap::new(),
     }
 }
 
@@ -493,6 +495,7 @@ pub fn promise_detach_effect(promise_id: &PromiseId) -> crate::ToolEffect {
     crate::ToolEffect {
         kind: PROMISE_DETACH_EFFECT_KIND.to_owned(),
         data,
+        refs: BTreeMap::new(),
     }
 }
 

@@ -3,12 +3,11 @@ use std::{panic::AssertUnwindSafe, str::FromStr};
 
 use api::{Attribution, ResourceRef, Visibility};
 use futures_util::FutureExt as _;
-use harness::StoredEvent;
 use harness::storage::{
     AppendSessionEvents, CreateSession, ListSessions, SessionActivity, SessionOrigin,
     SessionOriginKind, SessionStore as _, UncommittedStoredEvent,
 };
-use harness::{SessionId, SubagentLimits};
+use harness::{CoreAgentCodec, CoreAgentEvent, SessionId, SubagentLimits};
 use sqlx::{
     Executor as _,
     postgres::{PgConnectOptions, PgPoolOptions},
@@ -321,6 +320,9 @@ async fn exercise(pool: &sqlx::PgPool) {
     .unwrap();
 
     // The row keeps what a session is doing now, for lists.
+    harness::storage::BlobStore::put_bytes(&sessions, b"{}".to_vec())
+        .await
+        .expect("store the approval's arguments");
     let append = |kinds: &'static [&'static str]| {
         let sessions = sessions.clone();
         async move {
@@ -335,7 +337,9 @@ async fn exercise(pool: &sqlx::PgPool) {
                         .map(|kind| UncommittedStoredEvent {
                             observed_at_ms: 5,
                             joins: Default::default(),
-                            event: StoredEvent::new(*kind, 1, serde_json::json!({})),
+                            event: CoreAgentCodec
+                                .encode_event(&activity_event(kind))
+                                .expect("encode event"),
                         })
                         .collect(),
                 })
@@ -392,4 +396,42 @@ async fn exercise(pool: &sqlx::PgPool) {
             .unwrap()
             .is_none()
     );
+}
+
+fn activity_event(kind: &str) -> CoreAgentEvent {
+    use harness::{ApprovalEvent, RunEvent, RunId, event_kind};
+    let run_id = RunId::new(1);
+    match kind {
+        event_kind::RUN_STARTED => CoreAgentEvent::Run(RunEvent::Started { run_id }),
+        event_kind::RUN_COMPLETED => CoreAgentEvent::Run(RunEvent::Completed {
+            run_id,
+            output: None,
+        }),
+        event_kind::APPROVAL_REQUESTED => CoreAgentEvent::Approval(ApprovalEvent::Requested {
+            approval: harness::ApprovalRequested {
+                approval_id: harness::ApprovalId::new("approval_1"),
+                run_id,
+                subject: harness::ApprovalSubject::McpToolCall {
+                    server_id: "server".to_owned(),
+                    server_label: "server".to_owned(),
+                    tool_name: "tool".to_owned(),
+                    arguments_ref: harness::BlobRef::from_bytes(b"{}"),
+                },
+                continuation: harness::ApprovalContinuation::OpenAiMcp {
+                    provider_request_id: "request".to_owned(),
+                },
+            },
+        }),
+        event_kind::APPROVAL_RUN_PARKED => {
+            CoreAgentEvent::Approval(ApprovalEvent::RunParked { run_id })
+        }
+        event_kind::APPROVAL_DECIDED => CoreAgentEvent::Approval(ApprovalEvent::Decided {
+            approval_id: harness::ApprovalId::new("approval_1"),
+            run_id,
+            decision: harness::ApprovalDecision::Approved,
+            note: None,
+            decided_by: None,
+        }),
+        other => panic!("no fixture for event kind {other}"),
+    }
 }
