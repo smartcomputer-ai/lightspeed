@@ -162,11 +162,6 @@ pub(crate) async fn compact(
                 end = smaller;
                 continue;
             }
-            // An estimate alone cannot refuse the first chunk: nothing has been
-            // spent yet, and a refused attempt costs nothing.
-            if spent > 0 && spent.saturating_add(size) > MAX_INPUT_TOKENS {
-                return Err(limit_error("compaction exhausted its input token budget"));
-            }
             calls += 1;
             match adapter.compact_context(part).await {
                 Err(error) if is_context_limit(&error) => {
@@ -209,6 +204,8 @@ pub(crate) async fn compact(
                     if calls > MAX_CALLS {
                         return Err(limit_error("compaction exhausted its call budget"));
                     }
+                    // Only what a chunk actually cost counts, so a refused attempt
+                    // is free. The estimate stands in for a backend reporting no usage.
                     let reported = result.usage.as_ref().and_then(|value| value.input_tokens);
                     spent = spent.saturating_add(reported.map_or(size, u64::from));
                     if spent > MAX_INPUT_TOKENS {
@@ -548,38 +545,41 @@ mod tests {
         assert_eq!(adapter.seen.lock().unwrap().len(), MAX_CALLS);
     }
 
+    /// Two 10 MiB scanned PDFs estimate at 2.6M tokens and cost a fraction of
+    /// that, so the estimate may not stop any chunk, first or later.
     #[tokio::test(flavor = "current_thread")]
-    async fn an_estimate_alone_cannot_refuse_the_first_chunk() {
-        let adapter = BoundedAdapter {
-            seen: Mutex::new(vec![]),
-            reject_after_success: false,
-        };
-        let mut request = request();
-        request.request.context.entries[0]
-            .token_estimate
-            .as_mut()
-            .unwrap()
-            .tokens = MAX_INPUT_TOKENS as u32 + 1;
-        compact(&adapter, request).await.unwrap();
-        assert!(!adapter.seen.lock().unwrap().is_empty());
+    async fn an_estimate_alone_never_refuses_a_chunk() {
+        for index in [0, 3] {
+            let adapter = BoundedAdapter {
+                seen: Mutex::new(vec![]),
+                reject_after_success: false,
+            };
+            let mut request = request();
+            request.request.context.entries[index]
+                .token_estimate
+                .as_mut()
+                .unwrap()
+                .tokens = MAX_INPUT_TOKENS as u32 + 1;
+            compact(&adapter, request).await.unwrap();
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn input_token_budget_stops_a_later_chunk_once_tokens_were_spent() {
-        let adapter = BoundedAdapter {
-            seen: Mutex::new(vec![]),
-            reject_after_success: false,
-        };
-        let mut request = request();
-        request.request.context.entries[3]
-            .token_estimate
-            .as_mut()
-            .unwrap()
-            .tokens = MAX_INPUT_TOKENS as u32 + 1;
-        let error = compact(&adapter, request).await.unwrap_err();
+    async fn the_estimate_counts_against_the_budget_when_no_usage_is_reported() {
+        let mut adapter = MediaAdapter::new();
+        adapter.reported_input_tokens = None;
+        let mut entry = adapter.text_entry(1, 400).await;
+        entry.token_estimate = Some(TokenEstimate {
+            tokens: MAX_INPUT_TOKENS as u32 + 1,
+            quality: TokenEstimateQuality::Estimated,
+        });
+        let error = compact(&adapter, request_over(vec![entry], 200_000))
+            .await
+            .unwrap_err();
         assert!(
             matches!(error, LlmAdapterError::InvalidProviderRequest { message } if message.contains("input token budget"))
         );
+        assert_eq!(*adapter.sent.lock().unwrap(), vec![1], "it did go out");
     }
 
     /// Accepts everything it is sent until it overflows on `overflow_above`
