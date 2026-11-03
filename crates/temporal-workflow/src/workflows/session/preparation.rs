@@ -866,6 +866,7 @@ mod tests {
                 run_id: None,
                 covered_entry_ids: vec![harness::ContextItemId::new(1)],
                 trigger: harness::ContextCompactionTrigger::Manual,
+                estimated_tokens: None,
             });
         assert!(!wait_loop::workflow_state_needs_core_drive_for_state(
             &state

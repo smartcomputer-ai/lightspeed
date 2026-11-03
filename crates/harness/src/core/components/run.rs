@@ -605,10 +605,7 @@ fn terminal_run_proposal(
             if !state.context.compaction.is_pending()
                 && active_run.context_recovery.recovered_turn_id != Some(turn.turn_id)
                 && (state.lifecycle.config.as_ref().is_none_or(|config| {
-                    matches!(
-                        config.context.compaction,
-                        None | Some(crate::CompactionPolicy::Disabled)
-                    )
+                    !crate::core::components::context::compaction_enabled(config)
                 }) || active_run.context_recovery.attempts
                     >= crate::core::components::context::MAX_CONTEXT_RECOVERY_ATTEMPTS
                     || crate::core::components::context::standalone_prefix_ids(state)

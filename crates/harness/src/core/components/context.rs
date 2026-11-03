@@ -121,6 +121,25 @@ pub struct ContextCompactionState {
     pub last_finished_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_manual_finished_revision: Option<u64>,
+    /// Where the last failed proactive attempt left off, until one succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_floor: Option<CompactionFailureFloor>,
+}
+
+/// Proactive compaction that failed is not tried again until the context has grown
+/// past this by about a tenth. Without it, a compaction that keeps failing is paid
+/// for at every boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionFailureFloor {
+    /// The token estimate the failed attempt fired on, when there was one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u32>,
+    /// Active entries when the attempt failed.
+    pub entries: usize,
+}
+
+fn grown_past_floor(value: u64, floor: u64) -> bool {
+    value >= floor.saturating_add(floor / 10)
 }
 
 impl ContextCompactionState {
@@ -196,6 +215,10 @@ pub struct ContextCompactionPlan {
     pub run_id: Option<RunId>,
     pub covered_entry_ids: Vec<ContextEntryId>,
     pub trigger: ContextCompactionTrigger,
+    /// The token estimate a proactive request fired on. A failure keeps it as its
+    /// floor, because the request itself moves the revision the estimate depends on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_tokens: Option<u32>,
 }
 
 pub const STANDALONE_COMPACTION_SOURCE: &str = "standalone_compaction_prefix";
@@ -629,7 +652,9 @@ fn mark_context_entries_consumed_by_turn(
     Ok(())
 }
 
-pub(crate) fn combined_token_estimate(entries: &[ContextEntry]) -> Option<TokenEstimate> {
+pub(crate) fn combined_token_estimate<'a>(
+    entries: impl IntoIterator<Item = &'a ContextEntry>,
+) -> Option<TokenEstimate> {
     let mut tokens = 0u32;
     let mut quality = TokenEstimateQuality::Exact;
     for entry in entries {
@@ -901,7 +926,7 @@ pub fn plan_next(state: &CoreAgentState) -> Result<Vec<CoreAgentEventProposal>, 
         return Ok(vec![proposal]);
     }
 
-    if let Some(proposal) = high_watermark_compaction_proposal(state)? {
+    if let Some(proposal) = next_compaction_proposal(state) {
         return Ok(vec![proposal]);
     }
 
@@ -950,29 +975,36 @@ pub(crate) fn manual_compaction_requested_proposal(
             }),
         );
     }
-    compaction_requested_proposal(state, ContextCompactionTrigger::Manual)
+    compaction_requested_proposal(state, ContextCompactionTrigger::Manual, None)
 }
 
-fn high_watermark_compaction_proposal(
-    state: &CoreAgentState,
-) -> Result<Option<CoreAgentEventProposal>, DomainError> {
+/// Whether the planner may compact on its own. A manual request needs no policy.
+pub(crate) fn compaction_enabled(config: &crate::SessionConfig) -> bool {
+    !matches!(
+        config.context.compaction,
+        None | Some(CompactionPolicy::Disabled)
+    )
+}
+
+/// The compaction this boundary calls for: a queued manual request, overflow
+/// recovery, or the high watermark. Only the last is subject to the failure floor.
+fn next_compaction_proposal(state: &CoreAgentState) -> Option<CoreAgentEventProposal> {
     if !compaction_safe_boundary(state) {
-        return Ok(None);
+        return None;
     }
     if state.context.compaction.is_queued() {
         // Edits landing after the request was queued can leave nothing to cover.
         // The caller is still waiting, so it gets an answer.
         if standalone_prefix_ids(state).is_empty() {
-            return Ok(Some(compaction_abandoned_proposal(state)));
+            return Some(compaction_abandoned_proposal(state));
         }
-        return Ok(Some(compaction_requested_proposal(
+        return Some(compaction_requested_proposal(
             state,
             ContextCompactionTrigger::Manual,
-        )));
+            None,
+        ));
     }
-    let Some(config) = state.lifecycle.config.as_ref() else {
-        return Ok(None);
-    };
+    let config = state.lifecycle.config.as_ref()?;
     let recovery = state.runs.active.as_ref().map(|run| &run.context_recovery);
     let latest = state
         .runs
@@ -994,30 +1026,36 @@ fn high_watermark_compaction_proposal(
         .as_ref()
         .is_some_and(|run| crate::core::components::run::turn_limit_reached(state, run))
     {
-        return Ok(None);
+        return None;
     }
     let overflow = latest.is_some_and(|turn| {
         matches!(turn.outcome, Some(crate::TurnOutcome::ContextLimit { .. }))
             && recovery.and_then(|recovery| recovery.recovered_turn_id) != Some(turn.turn_id)
     });
-    let enabled = !matches!(
-        config.context.compaction,
-        None | Some(CompactionPolicy::Disabled)
-    );
     if overflow {
-        if enabled
+        if compaction_enabled(config)
             && recovery.is_none_or(|recovery| recovery.attempts < MAX_CONTEXT_RECOVERY_ATTEMPTS)
             && !standalone_prefix_ids(state).is_empty()
         {
-            return Ok(Some(compaction_requested_proposal(
+            return Some(compaction_requested_proposal(
                 state,
                 ContextCompactionTrigger::ContextLimit,
-            )));
+                None,
+            ));
         }
-        return Ok(None);
+        return None;
     }
-    if !enabled {
-        return Ok(None);
+    high_watermark_compaction_proposal(state, config)
+}
+
+/// Proactive compaction: enough context that it is worth making room before the
+/// provider has to refuse a request.
+fn high_watermark_compaction_proposal(
+    state: &CoreAgentState,
+    config: &crate::SessionConfig,
+) -> Option<CoreAgentEventProposal> {
+    if !compaction_enabled(config) {
+        return None;
     }
     if !matches!(
         config.context.compaction,
@@ -1027,11 +1065,11 @@ fn high_watermark_compaction_proposal(
             && matches!(entry.kind, ContextEntryKind::ProviderOpaque)
             && is_standalone_prefix(entry)
     }) {
-        return Ok(None);
+        return None;
     }
-    // Avoid re-compacting unchanged context after a failed proactive operation.
+    // Nothing has moved since the last attempt, so another would see the same context.
     if state.context.compaction.last_finished_revision == Some(state.context.revision) {
-        return Ok(None);
+        return None;
     }
     let threshold = match config.context.compaction {
         Some(
@@ -1045,46 +1083,60 @@ fn high_watermark_compaction_proposal(
         ) => compact_threshold_tokens,
         _ => None,
     }
-    .or_else(|| compaction_input_limit_tokens(state).map(|limit| limit.saturating_mul(4) / 5));
-    let Some(threshold) = threshold else {
-        return Ok(None);
-    };
-    let estimate = combined_token_estimate(&state.context.entries)
+    .or_else(|| compaction_input_limit_tokens(state).map(|limit| limit.saturating_mul(4) / 5))?;
+    let tokens = high_watermark_token_estimate(state)?;
+    let floor = state.context.compaction.failure_floor.as_ref();
+    if tokens < threshold
+        || floor
+            .and_then(|floor| floor.tokens)
+            .is_some_and(|floor| !grown_past_floor(tokens.into(), floor.into()))
+        || standalone_prefix_ids(state).is_empty()
+    {
+        return None;
+    }
+    Some(compaction_requested_proposal(
+        state,
+        ContextCompactionTrigger::HighWatermark,
+        Some(tokens),
+    ))
+}
+
+/// The best token count there is for the context as it stands.
+fn high_watermark_token_estimate(state: &CoreAgentState) -> Option<u32> {
+    combined_token_estimate(&state.context.entries)
         .or_else(|| {
             combined_token_estimate(
-                &state
+                state
                     .context
                     .entries
                     .iter()
-                    .filter(|e| is_compactable_entry(state, e))
-                    .cloned()
-                    .collect::<Vec<_>>(),
+                    .filter(|entry| is_compactable_entry(state, entry)),
             )
         })
-        .map(|e| e.tokens)
+        .map(|estimate| estimate.tokens)
         .or_else(|| state.context.observed_tokens())
         .or_else(|| {
-            latest
-                .and_then(|turn| turn.facts.as_ref())
-                .and_then(|facts| {
-                    facts.context_token_estimate.as_ref().map(|e| {
-                        e.tokens.saturating_add(
-                            facts
-                                .usage
-                                .as_ref()
-                                .and_then(|u| u.output_tokens)
-                                .unwrap_or(0),
-                        )
-                    })
-                })
-        });
-    if estimate.is_none_or(|tokens| tokens < threshold) || standalone_prefix_ids(state).is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(compaction_requested_proposal(
-        state,
-        ContextCompactionTrigger::HighWatermark,
-    )))
+            // Tool results move the revision, so between turns the last generation's
+            // count is the only one there is. A compaction that finished after that
+            // turn was planned has made it out of date.
+            let turn = state.runs.active.as_ref()?.turns.values().next_back()?;
+            let finished = state.context.compaction.last_finished_revision;
+            if turn.planned_request.as_ref().is_some_and(|planned| {
+                finished.is_some_and(|finished| finished > planned.context_revision)
+            }) {
+                return None;
+            }
+            let facts = turn.facts.as_ref()?;
+            facts.context_token_estimate.as_ref().map(|estimate| {
+                estimate.tokens.saturating_add(
+                    facts
+                        .usage
+                        .as_ref()
+                        .and_then(|usage| usage.output_tokens)
+                        .unwrap_or(0),
+                )
+            })
+        })
 }
 
 /// Ends a pending or queued compaction that no longer has anything to do.
@@ -1104,6 +1156,7 @@ pub(crate) fn compaction_abandoned_proposal(state: &CoreAgentState) -> CoreAgent
 fn compaction_requested_proposal(
     state: &CoreAgentState,
     trigger: ContextCompactionTrigger,
+    estimated_tokens: Option<u32>,
 ) -> CoreAgentEventProposal {
     CoreAgentEventProposal::new(
         CoreAgentJoins::default(),
@@ -1114,6 +1167,7 @@ fn compaction_requested_proposal(
                 run_id: state.runs.active.as_ref().map(|run| run.run_id),
                 covered_entry_ids: standalone_prefix_ids(state),
                 trigger,
+                estimated_tokens,
             },
         }),
     )
@@ -1513,6 +1567,36 @@ pub(crate) fn apply_event(state: &mut CoreAgentState, event: &Event) -> Result<(
                     .compaction
                     .pending_plan()
                     .is_some_and(|plan| plan.trigger == ContextCompactionTrigger::Manual);
+            match status {
+                ContextCompactionStatus::Succeeded => {
+                    state.context.compaction.failure_floor = None;
+                }
+                // A plan whose run has ended was abandoned, which says nothing about
+                // whether compaction works.
+                ContextCompactionStatus::Failed => {
+                    let attempting_run = state
+                        .runs
+                        .active
+                        .as_ref()
+                        .filter(|run| run.status == RunStatus::Active)
+                        .map(|run| run.run_id);
+                    if let Some(floor) = state
+                        .context
+                        .compaction
+                        .pending_plan()
+                        .filter(|plan| {
+                            plan.trigger == ContextCompactionTrigger::HighWatermark
+                                && plan.run_id == attempting_run
+                        })
+                        .map(|plan| CompactionFailureFloor {
+                            tokens: plan.estimated_tokens,
+                            entries: state.context.entries.len(),
+                        })
+                    {
+                        state.context.compaction.failure_floor = Some(floor);
+                    }
+                }
+            }
             state.context.compaction.phase = ContextCompactionPhase::Idle;
             bump_context_revision(state)?;
             state.context.compaction.last_finished_revision = Some(state.context.revision);
@@ -2042,6 +2126,7 @@ mod tests {
             run_id: None,
             covered_entry_ids: vec![ContextItemId::new(1)],
             trigger: ContextCompactionTrigger::Manual,
+            estimated_tokens: None,
         };
         let event = Event::CompactionRequested {
             base_revision: 0,

@@ -10148,6 +10148,7 @@ mod tests {
                 run_id: None,
                 covered_entry_ids: covered,
                 trigger: ContextCompactionTrigger::Manual,
+                estimated_tokens: None,
             },
         })
     }
@@ -15836,5 +15837,247 @@ mod tests {
             )
             .expect_err("the session's choice dangles");
         assert_eq!(rejection_of(refused).kind, CommandRejectionKind::Invalid);
+    }
+
+    /// A generation that calls one tool and counted this many tokens of context,
+    /// through to the committed results of its batch.
+    fn counted_tool_turn(logged: &mut LoggedDrive, tokens: u32) {
+        let request = logged.until_generate();
+        let call = observed_call(&format!("call-{}", request.turn_id), "search");
+        let mut result = tool_call_turn(&request, LlmFinish::ToolCalls, vec![call]);
+        result.facts.context_token_estimate = Some(TokenEstimate {
+            tokens,
+            quality: crate::TokenEstimateQuality::ProviderCounted,
+        });
+        logged.resume(result);
+        let batch = logged.until_tools();
+        let action = logged
+            .drive
+            .resume_tool_batch(completed_tool_result(&batch), 80)
+            .expect("batch");
+        logged.commit(action);
+    }
+
+    fn until_compaction(logged: &mut LoggedDrive) -> ContextCompactionRequest {
+        match logged.pump() {
+            CoreAgentAction::CompactContext { request } => request,
+            other => panic!("expected a compaction, got {other:?}"),
+        }
+    }
+
+    fn finish_compaction(
+        logged: &mut LoggedDrive,
+        request: &ContextCompactionRequest,
+        status: ContextCompactionStatus,
+    ) {
+        let succeeded = status == ContextCompactionStatus::Succeeded;
+        let action = logged
+            .drive
+            .resume_context_compaction(
+                ContextCompactionResult {
+                    usage: None,
+                    calls: 1,
+                    session_id: request.session_id.clone(),
+                    context_revision: request.request.context.context_revision,
+                    status,
+                    failure_ref: (!succeeded).then(|| BlobRef::from_bytes(b"compaction failed")),
+                    context_entries: if succeeded {
+                        user_input(BlobRef::from_bytes(b"summary"))
+                    } else {
+                        Vec::new()
+                    },
+                },
+                90,
+            )
+            .expect("compaction result");
+        logged.commit(action);
+    }
+
+    fn watermark_session() -> LoggedDrive {
+        let mut logged =
+            LoggedDrive::open(standalone_compaction_config(Some(50), None), &["search"]);
+        logged.request_run(b"input");
+        logged
+    }
+
+    fn compaction_requests(logged: &LoggedDrive) -> usize {
+        logged
+            .log
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.event,
+                    CoreAgentEvent::Context(ContextEvent::CompactionRequested { .. })
+                )
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_failed_watermark_compaction_waits_for_growth_past_its_floor() {
+        let mut logged = watermark_session();
+        counted_tool_turn(&mut logged, 100);
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+        let floor = logged
+            .drive
+            .state()
+            .context
+            .compaction
+            .failure_floor
+            .clone()
+            .expect("a failure leaves a floor");
+        assert_eq!(floor.tokens, Some(100));
+        assert_eq!(floor.entries, logged.drive.state().context.entries.len());
+
+        // Over the threshold and short of the growth: no second paid failure.
+        counted_tool_turn(&mut logged, 109);
+        assert_eq!(compaction_requests(&logged), 1);
+        counted_tool_turn(&mut logged, 110);
+        let request = until_compaction(&mut logged);
+        assert_eq!(compaction_requests(&logged), 2);
+
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        assert_eq!(logged.drive.state().context.compaction.failure_floor, None);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn manual_compaction_and_overflow_recovery_ignore_the_failure_floor() {
+        let mut logged = watermark_session();
+        counted_tool_turn(&mut logged, 100);
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+
+        let request = logged.until_generate();
+        let overflow = generation_result(
+            &request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::ContextLimit,
+            Vec::new(),
+            Vec::new(),
+        );
+        logged.resume(overflow);
+        let request = until_compaction(&mut logged);
+        assert_eq!(
+            logged
+                .drive
+                .state()
+                .context
+                .compaction
+                .pending_plan()
+                .map(|plan| plan.trigger),
+            Some(ContextCompactionTrigger::ContextLimit)
+        );
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+
+        let request = logged.until_generate();
+        logged.resume(final_turn(&request));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+
+        // A failed overflow or manual attempt says nothing about the floor either.
+        logged.drive.state.context.compaction.failure_floor = Some(crate::CompactionFailureFloor {
+            tokens: Some(u32::MAX),
+            entries: usize::MAX,
+        });
+        logged.admit(CoreAgentCommand::CompactContext);
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+        assert_eq!(
+            logged
+                .drive
+                .state()
+                .context
+                .compaction
+                .failure_floor
+                .as_ref()
+                .map(|floor| floor.entries),
+            Some(usize::MAX)
+        );
+    }
+
+    #[test]
+    fn a_compaction_abandoned_with_its_run_leaves_no_floor() {
+        let mut logged = watermark_session();
+        counted_tool_turn(&mut logged, 100);
+        until_compaction(&mut logged);
+        logged.admit(CoreAgentCommand::CancelRun {
+            requested_by: None,
+            run_id: request_run_id(&logged),
+        });
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let compaction = &logged.drive.state().context.compaction;
+        assert!(!compaction.is_pending());
+        assert_eq!(compaction.failure_floor, None);
+        logged.assert_replays(|_| {});
+    }
+
+    fn request_run_id(logged: &LoggedDrive) -> RunId {
+        logged
+            .drive
+            .state()
+            .runs
+            .active
+            .as_ref()
+            .expect("an active run")
+            .run_id
+    }
+
+    /// Tool results move the revision, so between turns the last generation's count
+    /// is the only one a real adapter leaves.
+    #[test]
+    fn the_last_generations_count_triggers_compaction_between_turns() {
+        let mut logged = watermark_session();
+        counted_tool_turn(&mut logged, 100);
+        loop {
+            let action = logged.drive.next_action_unbounded(60).expect("next action");
+            let observed = logged.drive.state().context.observed_tokens();
+            if compaction_requests(&logged) > 0 {
+                break;
+            }
+            logged.commit(action);
+            if compaction_requests(&logged) > 0 {
+                assert_eq!(observed, None, "the tool results moved the revision");
+            }
+        }
+    }
+
+    /// Anything sent during a compaction is held and lands right after it, which
+    /// moves the revision past the observation. The count from before the compaction
+    /// must not start a second one with no generation in between.
+    #[test]
+    fn steering_held_through_a_compaction_does_not_compact_again() {
+        let mut logged = watermark_session();
+        counted_tool_turn(&mut logged, 10);
+        counted_tool_turn(&mut logged, 10);
+        counted_tool_turn(&mut logged, 100);
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Succeeded);
+        logged.steer(request_run_id(&logged), b"held through the compaction");
+
+        let request = logged.until_generate();
+        assert_eq!(compaction_requests(&logged), 1);
+        assert_eq!(steering_in_context(&logged.drive), 1);
+
+        // The next count is fresh and fires as usual.
+        assert_eq!(logged.until_generate().turn_id, request.turn_id);
+        counted_tool_turn(&mut logged, 100);
+        until_compaction(&mut logged);
+        assert_eq!(compaction_requests(&logged), 2);
+        logged.assert_replays(|_| {});
+    }
+
+    /// A failed attempt's count is out of date in the same way: the retry has to wait
+    /// for a generation to say how big the context is now.
+    #[test]
+    fn a_failed_compaction_is_followed_by_a_generation() {
+        let mut logged = watermark_session();
+        counted_tool_turn(&mut logged, 100);
+        let request = until_compaction(&mut logged);
+        finish_compaction(&mut logged, &request, ContextCompactionStatus::Failed);
+        logged.drive.state.context.compaction.failure_floor = None;
+        logged.steer(request_run_id(&logged), b"moves the revision");
+        logged.until_generate();
+        assert_eq!(compaction_requests(&logged), 1);
     }
 }

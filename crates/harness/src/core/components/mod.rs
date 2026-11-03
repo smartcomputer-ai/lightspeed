@@ -29,15 +29,15 @@ pub use code_tool::*;
 pub use command::*;
 pub use config::*;
 pub use context::{
-    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, ContextCompactionPhase, ContextCompactionPlan,
-    ContextCompactionState, ContextCompactionStatus, ContextCompactionTrigger, ContextEntry,
-    ContextEntryId, ContextEntryInput, ContextEntryKind, ContextEntrySource, ContextEvent,
-    ContextGenerationMetadata, ContextMessageRole, ContextRemovalReason, ContextSnapshot,
-    ContextState, ContextUsageObservation, OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND,
-    OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND, STANDALONE_COMPACTION_SOURCE,
-    SUPERSEDED_CATALOG_CAP, TokenEstimate, TokenEstimateQuality, compaction_input_limit_tokens,
-    current_catalog_inputs, current_context_entry, is_supersedable_catalog_kind,
-    is_superseded_context_entry, validate_external_context_key,
+    ANTHROPIC_MESSAGES_COMPACTION_PROVIDER_KIND, CompactionFailureFloor, ContextCompactionPhase,
+    ContextCompactionPlan, ContextCompactionState, ContextCompactionStatus,
+    ContextCompactionTrigger, ContextEntry, ContextEntryId, ContextEntryInput, ContextEntryKind,
+    ContextEntrySource, ContextEvent, ContextGenerationMetadata, ContextMessageRole,
+    ContextRemovalReason, ContextSnapshot, ContextState, ContextUsageObservation,
+    OPENAI_COMPLETIONS_COMPACTION_PROVIDER_KIND, OPENAI_RESPONSES_COMPACTION_PROVIDER_KIND,
+    STANDALONE_COMPACTION_SOURCE, SUPERSEDED_CATALOG_CAP, TokenEstimate, TokenEstimateQuality,
+    compaction_input_limit_tokens, current_catalog_inputs, current_context_entry,
+    is_supersedable_catalog_kind, is_superseded_context_entry, validate_external_context_key,
 };
 pub use environment::{
     ENVIRONMENT_ACTIVATE_EFFECT_KIND, ENVIRONMENT_DEACTIVATE_EFFECT_KIND, EnvironmentEvent,

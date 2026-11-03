@@ -3055,6 +3055,7 @@ fn only_a_forced_close_passes_a_pending_compaction() {
             run_id: None,
             covered_entry_ids: Vec::new(),
             trigger: harness::ContextCompactionTrigger::Manual,
+            estimated_tokens: None,
         });
     let close = |force| {
         SessionAdmission::Core(AgentAdmission {
