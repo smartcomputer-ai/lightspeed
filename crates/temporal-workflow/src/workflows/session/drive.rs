@@ -556,10 +556,14 @@ pub(super) async fn append_events(
 #[derive(Clone, Debug)]
 struct DetachedPromiseFollowup {
     promise_id: harness::PromiseId,
-    status: &'static str,
-    content_ref: Option<BlobRef>,
+    result: AwaitPromiseResult,
 }
 
+/// A detached promise settling on an idle session wakes it with an ordinary run. The
+/// payload is prepared as an `await` of that promise would prepare it, so one promise
+/// has one projection: images become media entries and bytes that are not text stay
+/// out of the context. File attachments stay out too, as a run input has no field for
+/// them and the result still names them.
 async fn queue_detached_promise_followups(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     entries: &[CoreAgentEntry],
@@ -575,31 +579,26 @@ async fn queue_detached_promise_followups(
     });
 
     for followup in followups {
+        let materialized = ctx
+            .execute_activity(
+                WorkflowActivities::materialize_await_result,
+                AwaitMaterializationRequest {
+                    outcome: AwaitOutcome::Terminal,
+                    results: vec![followup.result.clone()],
+                },
+                activity_options(),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
         let summary_ref = put_detached_followup_blob(
             ctx,
             detached_promise_followup_summary(&followup).into_bytes(),
         )
         .await?;
-        let mut input = vec![workflow_user_message_input(
-            summary_ref,
-            Some(format!(
-                "Detached promise {} {}",
-                followup.promise_id, followup.status
-            )),
-        )];
-        if let Some(content_ref) = followup.content_ref {
-            input.push(workflow_user_message_input(
-                content_ref,
-                Some(format!(
-                    "Detached promise {} {} content",
-                    followup.promise_id, followup.status
-                )),
-            ));
-        }
+        let input = detached_promise_followup_input(&followup, summary_ref, materialized);
+        // The submission id is derived from the promise, so a replayed follow-up
+        // is a no-op.
         let submission_id = detached_promise_submission_id(&followup.promise_id);
-        // A detached promise settling on an idle session wakes it with an
-        // ordinary run; the submission id is derived from the promise so a
-        // replayed follow-up is a no-op.
         ctx.state_mut(|state| {
             state.queue_admission(AgentAdmission {
                 command: CoreAgentCommand::RequestRun(harness::RunRequestCommand {
@@ -620,16 +619,12 @@ fn detached_promise_followup_for_entry(
     state: &AgentSessionWorkflow,
     entry: &CoreAgentEntry,
 ) -> Option<DetachedPromiseFollowup> {
-    let (promise_id, status, content_ref) = match &entry.event {
-        CoreAgentEvent::Promise(harness::PromiseEvent::Resolved {
-            promise_id,
-            payload_ref,
-        }) => (promise_id, "resolved", payload_ref.clone()),
-        CoreAgentEvent::Promise(harness::PromiseEvent::Failed {
-            promise_id,
-            error_ref,
-        }) => (promise_id, "failed", error_ref.clone()),
-        _ => return None,
+    let CoreAgentEvent::Promise(
+        harness::PromiseEvent::Resolved { promise_id, .. }
+        | harness::PromiseEvent::Failed { promise_id, .. },
+    ) = &entry.event
+    else {
+        return None;
     };
     let promise = state.core_state.promises.promises.get(promise_id)?;
     if promise.scope != harness::PromiseScope::Session || !promise.status.is_terminal() {
@@ -647,22 +642,32 @@ fn detached_promise_followup_for_entry(
     }
     Some(DetachedPromiseFollowup {
         promise_id: promise_id.clone(),
-        status,
-        content_ref,
+        result: awaits::promise_result(promise_id, &state.core_state),
     })
 }
 
 fn detached_promise_followup_summary(followup: &DetachedPromiseFollowup) -> String {
-    match followup.content_ref.as_ref() {
-        Some(_) => format!(
-            "Detached promise {} {}. The promise content is attached as the next user message.",
-            followup.promise_id, followup.status
-        ),
-        None => format!(
-            "Detached promise {} {} without attached content.",
-            followup.promise_id, followup.status
-        ),
-    }
+    format!(
+        "Detached promise {} {}. Its result is attached as the next user message.",
+        followup.promise_id, followup.result.status
+    )
+}
+
+fn detached_promise_followup_input(
+    followup: &DetachedPromiseFollowup,
+    summary_ref: BlobRef,
+    materialized: AwaitMaterializationResult,
+) -> Vec<ContextEntryInput> {
+    let label = format!(
+        "Detached promise {} {}",
+        followup.promise_id, followup.result.status
+    );
+    let mut input = vec![
+        workflow_user_message_input(summary_ref, Some(label.clone())),
+        workflow_user_message_input(materialized.result_ref, Some(format!("{label} content"))),
+    ];
+    input.extend(materialized.additional_context);
+    input
 }
 
 async fn put_detached_followup_blob(
@@ -992,7 +997,39 @@ mod tests {
             detached_promise_followup_for_entry(&workflow, &entry).expect("followup candidate");
 
         assert_eq!(followup.promise_id, promise_id);
-        assert_eq!(followup.status, "resolved");
-        assert_eq!(followup.content_ref, Some(payload_ref));
+        assert_eq!(followup.result.status, "resolved");
+        assert_eq!(followup.result.payload_ref, Some(payload_ref));
+
+        // The run reads the summary, then the prepared result, then what the payload
+        // supplied beside it. The raw payload itself never becomes a message.
+        let summary_ref = BlobRef::from_bytes(b"summary");
+        let result_ref = BlobRef::from_bytes(b"result");
+        let media =
+            harness::media::MediaDescriptor::new(BlobRef::from_bytes(b"image"), "image/png", None)
+                .expect("media")
+                .context_entry();
+        let input = detached_promise_followup_input(
+            &followup,
+            summary_ref.clone(),
+            AwaitMaterializationResult {
+                result_ref: result_ref.clone(),
+                additional_context: vec![media.clone()],
+                attachments: Vec::new(),
+            },
+        );
+        let refs = input
+            .iter()
+            .map(|entry| &entry.content.content_ref)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refs,
+            [&summary_ref, &result_ref, &media.content.content_ref]
+        );
+        assert!(input[..2].iter().all(|entry| matches!(
+            entry.kind,
+            ContextEntryKind::Message {
+                role: ContextMessageRole::User
+            }
+        )));
     }
 }

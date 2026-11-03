@@ -150,23 +150,28 @@ pub(super) fn promise_snapshot(
 ) -> Vec<AwaitPromiseResult> {
     spec.promise_ids
         .iter()
-        .map(
-            |promise_id| match core_state.promises.promises.get(promise_id) {
-                Some(promise) => AwaitPromiseResult {
-                    promise_id: promise_id.as_str().to_owned(),
-                    status: promise_status_name(promise.status).to_owned(),
-                    payload_ref: promise.payload_ref.clone(),
-                    error_ref: promise.error_ref.clone(),
-                },
-                None => AwaitPromiseResult {
-                    promise_id: promise_id.as_str().to_owned(),
-                    status: "unknown".to_owned(),
-                    payload_ref: None,
-                    error_ref: None,
-                },
-            },
-        )
+        .map(|promise_id| promise_result(promise_id, core_state))
         .collect()
+}
+
+pub(super) fn promise_result(
+    promise_id: &harness::PromiseId,
+    core_state: &CoreAgentState,
+) -> AwaitPromiseResult {
+    match core_state.promises.promises.get(promise_id) {
+        Some(promise) => AwaitPromiseResult {
+            promise_id: promise_id.as_str().to_owned(),
+            status: promise_status_name(promise.status).to_owned(),
+            payload_ref: promise.payload_ref.clone(),
+            error_ref: promise.error_ref.clone(),
+        },
+        None => AwaitPromiseResult {
+            promise_id: promise_id.as_str().to_owned(),
+            status: "unknown".to_owned(),
+            payload_ref: None,
+            error_ref: None,
+        },
+    }
 }
 
 pub(super) fn promise_status_name(status: harness::PromiseStatus) -> &'static str {

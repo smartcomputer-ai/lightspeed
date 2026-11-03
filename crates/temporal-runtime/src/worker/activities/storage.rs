@@ -1395,6 +1395,68 @@ mod tests {
         assert_eq!(note.content.media_type.as_deref(), Some("text/plain"));
     }
 
+    /// A detached promise's run input is built from this result, so what it shows and
+    /// what it keeps out decide whether the session can generate afterwards.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_single_promise_result_carries_its_image_and_keeps_binary_bytes_out() {
+        let deps = storage_deps(Arc::new(InMemorySessionStore::new()));
+        let image = deps
+            .blobs
+            .put_bytes(vec![0x89, b'P', b'N', b'G'])
+            .await
+            .unwrap();
+        let envelope = deps
+            .blobs
+            .put_bytes(
+                serde_json::to_vec(&json!({
+                    "status": "completed",
+                    "attachments": [{"kind": "media", "data": {
+                        "handle": harness::media::media_handle(&image),
+                        "content_ref": image,
+                        "media_type": "image/png",
+                        "kind": "image",
+                        "name": "chart.png",
+                    }}],
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let binary = deps.blobs.put_bytes(vec![0xff, 0x00, 0xfe]).await.unwrap();
+        let materialize = |payload_ref: BlobRef| {
+            materialize_await_result(
+                &deps,
+                temporal_workflow::AwaitMaterializationRequest {
+                    outcome: temporal_workflow::AwaitOutcome::Terminal,
+                    results: vec![temporal_workflow::AwaitPromiseResult {
+                        promise_id: "promise_1".to_owned(),
+                        status: "resolved".to_owned(),
+                        payload_ref: Some(payload_ref),
+                        error_ref: None,
+                    }],
+                },
+            )
+        };
+
+        let with_image = materialize(envelope).await.unwrap();
+        assert_eq!(with_image.additional_context.len(), 1);
+        let media = &with_image.additional_context[0];
+        assert_eq!(media.content.content_ref, image);
+        assert_eq!(media.content.media_type.as_deref(), Some("image/png"));
+
+        let with_binary = materialize(binary.clone()).await.unwrap();
+        assert!(with_binary.additional_context.is_empty());
+        let text = String::from_utf8(
+            deps.blobs
+                .read_bytes(&with_binary.result_ref)
+                .await
+                .unwrap(),
+        )
+        .expect("the result a later request lowers is text");
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["results"][0]["output"]["blob_ref"], binary.as_str());
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn a_reply_naming_a_missing_blob_is_that_replys_failure() {
         let blobs = Arc::new(InMemoryBlobStore::new());
