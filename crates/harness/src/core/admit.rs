@@ -8,7 +8,8 @@ use crate::{
     RunSource, RunStatus, ToolConfigEvent, WorkflowToolConfigEvent,
     core::components::{
         config::{validate_config_update_for_state, validate_run_config_for_state},
-        tooling::validate_tool_map,
+        context::entries_applied_proposal,
+        tooling::{open_tool_group_closing_entries, validate_tool_map},
     },
 };
 
@@ -873,13 +874,19 @@ pub fn admit_command(
             if active_run.run_id != run_id {
                 return Ok(Vec::new());
             }
-            Ok(vec![CoreAgentEventProposal::new(
+            let mut proposals = Vec::new();
+            let closing = open_tool_group_closing_entries(state, active_run)?;
+            if !closing.is_empty() {
+                proposals.push(entries_applied_proposal(state, run_id, closing));
+            }
+            proposals.push(CoreAgentEventProposal::new(
                 CoreAgentJoins {
                     run_id: Some(run_id),
                     ..CoreAgentJoins::default()
                 },
                 CoreAgentEvent::Run(RunEvent::ForceCancelled { run_id }),
-            )])
+            ));
+            Ok(proposals)
         }
         CoreAgentCommand::ResumeToolBatch(command) => {
             require_open(state)?;

@@ -491,6 +491,17 @@ pub fn llm_runtime_boundary_failure_ref() -> crate::BlobRef {
     crate::BlobRef::from_bytes(LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT.as_bytes())
 }
 
+/// Failure content for a turn whose response claimed tool calls it did not
+/// deliver in usable form: none at all, or the same id twice. Like
+/// [`LLM_RUNTIME_BOUNDARY_FAILURE_CONTENT`], every runtime must guarantee the
+/// matching blob exists via [`crate::storage::ensure_harness_blobs`].
+pub const UNUSABLE_TOOL_CALLS_FAILURE_CONTENT: &str =
+    "the model response claimed tool calls but did not contain a usable set of them\n";
+
+pub fn unusable_tool_calls_failure_ref() -> crate::BlobRef {
+    crate::BlobRef::from_bytes(UNUSABLE_TOOL_CALLS_FAILURE_CONTENT.as_bytes())
+}
+
 fn compaction_request_fingerprint(
     model: &ModelSelection,
     context: &ContextSnapshot,

@@ -198,19 +198,6 @@ impl AgentSessionWorkflow {
                     ))
                     .into());
                 }
-                match process_cancelling_watchdog(ctx, &args).await {
-                    Ok(DriveOutcome::ContinueAsNew) => {
-                        return observability::request_continue_as_new(ctx, &args);
-                    }
-                    Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
-                    Err(error) => {
-                        record_error(ctx, &error, "cancellation_watchdog");
-                        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
-                            "{error}"
-                        ))
-                        .into());
-                    }
-                }
                 if let Err(error) = awaits::process_satisfied_await(ctx).await {
                     record_error(ctx, &error, "await_resolution");
                     return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
@@ -233,6 +220,21 @@ impl AgentSessionWorkflow {
                     Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
                     Err(error) => {
                         record_error(ctx, &error, "tool_batch_resume");
+                        return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
+                            "{error}"
+                        ))
+                        .into());
+                    }
+                }
+                // After the resumes, so a resume about to land is not pre-empted by
+                // the force that exists for the case where none ever does.
+                match process_cancelling_watchdog(ctx, &args).await {
+                    Ok(DriveOutcome::ContinueAsNew) => {
+                        return observability::request_continue_as_new(ctx, &args);
+                    }
+                    Ok(DriveOutcome::Idle | DriveOutcome::YieldForWorkflowWork) => {}
+                    Err(error) => {
+                        record_error(ctx, &error, "cancellation_watchdog");
                         return Err(temporalio_sdk::ApplicationFailure::new(anyhow::anyhow!(
                             "{error}"
                         ))

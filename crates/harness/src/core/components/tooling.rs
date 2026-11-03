@@ -1556,6 +1556,74 @@ pub fn cancelled_tool_result_ref() -> BlobRef {
     BlobRef::from_bytes(CANCELLED_TOOL_RESULT_CONTENT.as_bytes())
 }
 
+/// Context entries that answer every call of the run's open tool group: the
+/// recorded result where a call has a usable one, a cancelled result otherwise.
+/// Results normally reach context when the batch completes, so a run ending
+/// before that would otherwise leave its calls unanswered and drop finished
+/// siblings, and providers refuse every later request carrying such a call.
+/// Plain entries, because the run ends in the same append and a parked batch
+/// could not take call completions anyway.
+pub(crate) fn open_tool_group_closing_entries(
+    state: &CoreAgentState,
+    active_run: &ActiveRun,
+) -> Result<Vec<ContextEntry>, DomainError> {
+    let (turn_id, batch_id, calls) = if let Some(batch_id) = active_run.active_tool_batch_id {
+        let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
+            DomainError::InvariantViolation(format!("active tool batch {batch_id} is missing"))
+        })?;
+        let calls = batch
+            .calls
+            .iter()
+            .map(|call| (&call.call, call.result.as_ref()))
+            .collect::<Vec<_>>();
+        (batch.turn_id, Some(batch_id), calls)
+    } else if crate::core::components::run::has_unstarted_tool_call_turn(active_run) {
+        let (turn_id, turn) = active_run
+            .turns
+            .iter()
+            .next_back()
+            .expect("an unstarted tool-call turn exists");
+        let calls = turn
+            .facts
+            .iter()
+            .flat_map(|facts| &facts.tool_calls)
+            .map(|call| (call, None))
+            .collect::<Vec<_>>();
+        (*turn_id, None, calls)
+    } else {
+        return Ok(Vec::new());
+    };
+    let mut inputs = Vec::new();
+    for (call, recorded) in calls {
+        let result = recorded.filter(|result| {
+            tool_result_context_inputs(result, call.provider_kind.as_deref()).is_ok()
+        });
+        let cancelled;
+        let result = match result {
+            Some(result) => result,
+            None => {
+                cancelled = cancelled_tool_result(call);
+                &cancelled
+            }
+        };
+        for input in tool_result_context_inputs(result, call.provider_kind.as_deref())? {
+            if tool_result_context_input_exists(state, active_run.run_id, turn_id, result, &input) {
+                continue;
+            }
+            inputs.push((
+                None,
+                ContextEntrySource::Tool {
+                    run_id: active_run.run_id,
+                    turn_id,
+                    batch_id,
+                },
+                input,
+            ));
+        }
+    }
+    context_entries_from_inputs(state, inputs)
+}
+
 fn cancelled_tool_result(call: &ObservedToolCall) -> ToolCallResult {
     let error_ref = cancelled_tool_result_ref();
     let status = ToolCallStatus::Cancelled;

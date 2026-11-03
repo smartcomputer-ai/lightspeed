@@ -1327,7 +1327,7 @@ pub fn current_catalog_inputs(
         .collect()
 }
 
-fn entries_applied_proposal(
+pub(crate) fn entries_applied_proposal(
     state: &CoreAgentState,
     run_id: RunId,
     entries: Vec<ContextEntry>,

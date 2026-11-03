@@ -628,12 +628,12 @@ pub fn generation_result_proposals(
         ));
     }
     let overflow = result.facts.finish == LlmFinish::ContextLimit;
+    let outcome = turn_outcome_for_generation_result(&result);
     let context_entries = if overflow {
         Vec::new()
     } else {
-        context_entries_from_llm_result(state, &result)?
+        context_entries_from_llm_result(state, &result, &outcome)?
     };
-    let outcome = turn_outcome_for_generation_result(&result);
     let approval_requests = if overflow {
         Vec::new()
     } else {
@@ -706,7 +706,30 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
             failure_ref: result.failure_ref.clone(),
         },
         LlmGenerationStatus::Succeeded => match result.facts.finish {
-            LlmFinish::ToolCalls => TurnOutcome::ToolCallsQueued,
+            // The calls decide, not the provider's label: a chat-completions
+            // backend answering a forced tool choice reports `stop`, and those
+            // calls still have to run and be answered.
+            LlmFinish::ToolCalls | LlmFinish::Stop | LlmFinish::Unknown
+                if !result.facts.tool_calls.is_empty() =>
+            {
+                if generated_tool_calls_are_usable(result) {
+                    TurnOutcome::ToolCallsQueued
+                } else {
+                    TurnOutcome::Failed {
+                        failure_ref: Some(crate::unusable_tool_calls_failure_ref()),
+                    }
+                }
+            }
+            LlmFinish::ToolCalls | LlmFinish::Stop | LlmFinish::Unknown
+                if !result.facts.approval_requests.is_empty() =>
+            {
+                TurnOutcome::ApprovalsRequested
+            }
+            // Nothing to run and nothing to decide. Another turn would send the
+            // same request again.
+            LlmFinish::ToolCalls => TurnOutcome::Failed {
+                failure_ref: Some(crate::unusable_tool_calls_failure_ref()),
+            },
             LlmFinish::ContextLimit => TurnOutcome::ContextLimit {
                 failure_ref: result.failure_ref.clone(),
             },
@@ -722,9 +745,6 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
                     failure_ref: result.failure_ref.clone(),
                 }
             }
-            LlmFinish::Stop | LlmFinish::Unknown if !result.facts.approval_requests.is_empty() => {
-                TurnOutcome::ApprovalsRequested
-            }
             LlmFinish::Stop | LlmFinish::Unknown => TurnOutcome::FinalOutput {
                 output: final_output(&result.context_entries),
             },
@@ -732,15 +752,44 @@ fn turn_outcome_for_generation_result(result: &LlmGenerationResult) -> TurnOutco
     }
 }
 
+/// Every call runs under its own id and every generated call entry has a call to
+/// run. A batch keyed on anything less could never be answered, and an unanswered
+/// call in context is refused by providers on every later request.
+fn generated_tool_calls_are_usable(result: &LlmGenerationResult) -> bool {
+    let mut calls = BTreeSet::new();
+    let mut entries = BTreeSet::new();
+    result
+        .facts
+        .tool_calls
+        .iter()
+        .all(|call| calls.insert(&call.call_id))
+        && result
+            .context_entries
+            .iter()
+            .all(|entry| match &entry.kind {
+                ContextEntryKind::ToolCall { call_id, .. } => {
+                    calls.contains(call_id) && entries.insert(call_id)
+                }
+                _ => true,
+            })
+}
+
 fn context_entries_from_llm_result(
     state: &CoreAgentState,
     result: &LlmGenerationResult,
+    outcome: &TurnOutcome,
 ) -> Result<Vec<crate::ContextEntry>, DomainError> {
+    // Only a turn that queues its calls will answer them, so only that turn may
+    // put them in context. Reasoning and provider entries stay either way.
+    let keep_tool_calls = *outcome == TurnOutcome::ToolCallsQueued;
     context_entries_from_inputs(
         state,
         result
             .context_entries
             .iter()
+            .filter(|entry| {
+                keep_tool_calls || !matches!(entry.kind, ContextEntryKind::ToolCall { .. })
+            })
             .cloned()
             .map(|entry| {
                 (
@@ -8291,10 +8340,10 @@ mod tests {
             .admit_command(CoreAgentCommand::ForceCancelRun { run_id }, 95)
             .expect("force cancel");
         let entries = commit_action(&mut drive, forced);
-        assert!(matches!(
-            entries[0].event,
+        assert!(entries.iter().any(|entry| matches!(
+            entry.event,
             CoreAgentEvent::Run(crate::RunEvent::ForceCancelled { .. })
-        ));
+        )));
         assert!(drive.state().runs.active.is_none());
         assert_eq!(
             drive.state().runs.completed.last().expect("record").status,
@@ -12548,5 +12597,436 @@ mod tests {
                 .expect_err("nothing to compact"),
         );
         assert_eq!(rejection.kind, CommandRejectionKind::Refused);
+    }
+
+    /// A drive that keeps its log, for tests that end by replaying it.
+    struct LoggedDrive {
+        drive: CoreAgentDrive,
+        log: Vec<CoreAgentEntry>,
+    }
+
+    impl LoggedDrive {
+        fn open(config: SessionConfig, tools: &[&str]) -> Self {
+            let mut logged = Self {
+                drive: CoreAgentDrive::from_replayed(
+                    SessionId::new("session-logged"),
+                    CoreAgentState::new(),
+                    None,
+                ),
+                log: Vec::new(),
+            };
+            logged.admit(CoreAgentCommand::OpenSession { config });
+            if !tools.is_empty() {
+                let tools = tools
+                    .iter()
+                    .map(|name| {
+                        let spec = test_tool_spec(name);
+                        (spec.name.clone(), spec)
+                    })
+                    .collect();
+                logged.admit(CoreAgentCommand::ReplaceTools {
+                    expected_revision: None,
+                    tools,
+                });
+            }
+            logged
+        }
+
+        fn commit(&mut self, action: CoreAgentAction) -> Vec<CoreAgentEntry> {
+            let entries = commit_action(&mut self.drive, action);
+            self.log.extend(entries.clone());
+            entries
+        }
+
+        fn admit(&mut self, command: CoreAgentCommand) -> Vec<CoreAgentEntry> {
+            let action = self.drive.admit_command(command, 50).expect("admit");
+            self.commit(action)
+        }
+
+        fn request_run(&mut self, text: &[u8]) {
+            self.admit(request_run_command(
+                None,
+                user_input(BlobRef::from_bytes(text)),
+                run_config(),
+            ));
+        }
+
+        /// Commit planned appends until the drive asks for something else.
+        fn pump(&mut self) -> CoreAgentAction {
+            loop {
+                match self.drive.next_action_unbounded(60).expect("next action") {
+                    action @ CoreAgentAction::AppendEvents { .. } => {
+                        self.commit(action);
+                    }
+                    action => return action,
+                }
+            }
+        }
+
+        fn until_generate(&mut self) -> LlmGenerationRequest {
+            match self.pump() {
+                CoreAgentAction::GenerateLlm { request } => request,
+                other => panic!("expected a generation, got {other:?}"),
+            }
+        }
+
+        fn until_tools(&mut self) -> ToolInvocationBatchRequest {
+            match self.pump() {
+                CoreAgentAction::InvokeTools { request } => request,
+                other => panic!("expected a tool batch, got {other:?}"),
+            }
+        }
+
+        fn resume(&mut self, result: LlmGenerationResult) {
+            let action = self.drive.resume_generation(result, 70).expect("resume");
+            self.commit(action);
+        }
+
+        fn steer(&mut self, run_id: RunId, text: &[u8]) {
+            self.admit(CoreAgentCommand::RequestRunSteering {
+                run_id,
+                input: user_input(BlobRef::from_bytes(text)),
+                requested_by: None,
+            });
+        }
+
+        fn last_run(&self) -> &crate::RunRecord {
+            self.drive
+                .state()
+                .runs
+                .completed
+                .last()
+                .expect("a finished run")
+        }
+
+        /// A fresh reduction of the log reaches the same state, and that state
+        /// plans the same next step.
+        fn assert_replays(&self, seed: impl FnOnce(&mut CoreAgentDrive)) {
+            let mut replayed = CoreAgentDrive::from_replayed(
+                self.drive.session_id().clone(),
+                CoreAgentState::new(),
+                None,
+            );
+            seed(&mut replayed);
+            replayed
+                .resume_appended(
+                    self.log
+                        .iter()
+                        .map(|entry| CoreAgentCodec.encode_entry(entry).unwrap())
+                        .collect(),
+                )
+                .expect("the log replays");
+            assert_eq!(replayed.state(), self.drive.state());
+        }
+    }
+
+    fn tool_call_input(call: &ObservedToolCall) -> ContextEntryInput {
+        ContextEntryInput {
+            kind: ContextEntryKind::ToolCall {
+                call_id: call.call_id.clone(),
+                name: call.tool_name.clone(),
+            },
+            content: crate::ContentRef {
+                content_ref: BlobRef::from_bytes(call.call_id.as_str().as_bytes()),
+                media_type: None,
+                provider_kind: None,
+            },
+            preview: None,
+            origin: None,
+            provenance_ref: None,
+            token_estimate: None,
+        }
+    }
+
+    fn generation_result(
+        request: &LlmGenerationRequest,
+        status: LlmGenerationStatus,
+        finish: LlmFinish,
+        context_entries: Vec<ContextEntryInput>,
+        tool_calls: Vec<ObservedToolCall>,
+    ) -> LlmGenerationResult {
+        LlmGenerationResult {
+            run_id: request.run_id,
+            turn_id: request.turn_id,
+            status,
+            failure_ref: None,
+            context_entries,
+            facts: LlmGenerationFacts {
+                duration_ms: None,
+                provider_response_id: None,
+                finish,
+                usage: None,
+                tool_calls,
+                approval_requests: Vec::new(),
+                context_token_estimate: None,
+            },
+        }
+    }
+
+    /// A successful turn that calls these tools, with their call entries.
+    fn tool_call_turn(
+        request: &LlmGenerationRequest,
+        finish: LlmFinish,
+        calls: Vec<ObservedToolCall>,
+    ) -> LlmGenerationResult {
+        let entries = calls.iter().map(tool_call_input).collect();
+        generation_result(
+            request,
+            LlmGenerationStatus::Succeeded,
+            finish,
+            entries,
+            calls,
+        )
+    }
+
+    fn final_turn(request: &LlmGenerationRequest) -> LlmGenerationResult {
+        generation_result(
+            request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::Stop,
+            vec![message_input(
+                ContextMessageRole::Assistant,
+                BlobRef::from_bytes(b"answer"),
+            )],
+            Vec::new(),
+        )
+    }
+
+    /// What a provider requires of a request: each call answered by the entries
+    /// right after it, and each result answering a call.
+    fn assert_tool_calls_answered(entries: &[ContextEntry]) {
+        let mut open = BTreeSet::new();
+        for entry in entries {
+            match &entry.kind {
+                ContextEntryKind::ToolCall { call_id, .. } => {
+                    open.insert(call_id.clone());
+                }
+                ContextEntryKind::ToolResult { call_id, .. } => {
+                    assert!(
+                        open.remove(call_id),
+                        "result {call_id} answers no open call"
+                    );
+                }
+                ContextEntryKind::Message { .. }
+                    if !matches!(entry.source, ContextEntrySource::Tool { .. }) =>
+                {
+                    assert!(open.is_empty(), "calls {open:?} unanswered at {entry:?}");
+                }
+                _ => {}
+            }
+        }
+        assert!(open.is_empty(), "calls {open:?} unanswered at the end");
+    }
+
+    fn context_kinds(drive: &CoreAgentDrive) -> Vec<String> {
+        drive
+            .state()
+            .context
+            .entries
+            .iter()
+            .map(|entry| match &entry.kind {
+                ContextEntryKind::ToolCall { call_id, .. } => format!("call:{call_id}"),
+                ContextEntryKind::ToolResult { call_id, .. } => format!("result:{call_id}"),
+                ContextEntryKind::Message { role } => format!("{role:?}"),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stop_and_unknown_finishes_with_calls_run_them() {
+        for finish in [LlmFinish::Stop, LlmFinish::Unknown, LlmFinish::ToolCalls] {
+            let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+            logged.request_run(b"input");
+            let request = logged.until_generate();
+            logged.resume(tool_call_turn(
+                &request,
+                finish,
+                vec![observed_call("call_a", "tool_a")],
+            ));
+            let batch = logged.until_tools();
+            assert_eq!(batch.calls[0].call_id.as_str(), "call_a");
+            let results = completed_tool_result(&batch);
+            let action = logged
+                .drive
+                .resume_tool_batch(results, 80)
+                .expect("resume batch");
+            logged.commit(action);
+            let next = logged.until_generate();
+            assert_tool_calls_answered(openai_items(&next));
+            logged.assert_replays(|_| {});
+        }
+    }
+
+    #[test]
+    fn a_tool_call_finish_with_nothing_to_run_fails_instead_of_resending() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(generation_result(
+            &request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::ToolCalls,
+            Vec::new(),
+            Vec::new(),
+        ));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        let run = logged.last_run();
+        assert_eq!(run.status, RunStatus::Failed);
+        let failure = run.failure.as_ref().expect("failure");
+        assert_eq!(failure.kind, RunFailureKind::ModelFailure);
+        assert_eq!(
+            failure.message_ref,
+            Some(crate::unusable_tool_calls_failure_ref())
+        );
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn a_tool_call_finish_carrying_only_approvals_parks_for_them() {
+        let mut logged = LoggedDrive::open(config(), &[]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        let mut result = generation_result(
+            &request,
+            LlmGenerationStatus::Succeeded,
+            LlmFinish::ToolCalls,
+            Vec::new(),
+            Vec::new(),
+        );
+        result.facts.approval_requests = vec![crate::ObservedApprovalRequest {
+            subject: crate::ApprovalSubject::McpToolCall {
+                server_id: "crm".to_owned(),
+                server_label: "crm".to_owned(),
+                tool_name: "send".to_owned(),
+                arguments_ref: BlobRef::from_bytes(b"{}"),
+            },
+            continuation: crate::ApprovalContinuation::OpenAiMcp {
+                provider_request_id: "mcpr_1".to_owned(),
+            },
+        }];
+        logged.resume(result);
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_eq!(
+            logged.drive.state().runs.active.as_ref().unwrap().status,
+            RunStatus::Parked
+        );
+    }
+
+    #[test]
+    fn a_call_id_used_twice_fails_the_turn_with_nothing_to_answer() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![
+                observed_call("call_a", "tool_a"),
+                observed_call("call_a", "tool_a"),
+            ],
+        ));
+        assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+        assert_eq!(logged.last_run().status, RunStatus::Failed);
+        assert_eq!(context_kinds(&logged.drive), ["User"]);
+        logged.assert_replays(|_| {});
+    }
+
+    #[test]
+    fn only_a_queued_turn_puts_tool_calls_in_context() {
+        let call = observed_call("call_a", "tool_a");
+        let reasoning = ContextEntryInput {
+            kind: ContextEntryKind::ReasoningState,
+            ..message_input(ContextMessageRole::Assistant, BlobRef::from_bytes(b"why"))
+        };
+        for (status, finish) in [
+            (LlmGenerationStatus::Failed, LlmFinish::Failed),
+            (LlmGenerationStatus::Succeeded, LlmFinish::Length),
+            (LlmGenerationStatus::Succeeded, LlmFinish::ContentFilter),
+            (LlmGenerationStatus::Rejected, LlmFinish::Failed),
+        ] {
+            let mut logged = LoggedDrive::open(config(), &["tool_a"]);
+            logged.request_run(b"input");
+            let request = logged.until_generate();
+            logged.resume(generation_result(
+                &request,
+                status,
+                finish,
+                vec![reasoning.clone(), tool_call_input(&call)],
+                vec![call.clone()],
+            ));
+            assert!(matches!(logged.pump(), CoreAgentAction::Idle));
+            assert_eq!(logged.last_run().status, RunStatus::Failed);
+            assert_eq!(context_kinds(&logged.drive), ["User", "ReasoningState"]);
+            logged.request_run(b"next");
+            let next = logged.until_generate();
+            assert_tool_calls_answered(openai_items(&next));
+        }
+    }
+
+    #[test]
+    fn force_cancelling_a_parked_batch_answers_its_calls_and_keeps_finished_siblings() {
+        let mut logged = LoggedDrive::open(config(), &["tool_a", "await"]);
+        logged.request_run(b"input");
+        let request = logged.until_generate();
+        logged.resume(tool_call_turn(
+            &request,
+            LlmFinish::ToolCalls,
+            vec![
+                observed_call("call_sibling", "tool_a"),
+                observed_call("call_wait", "await"),
+            ],
+        ));
+        let batch = logged.until_tools();
+        insert_wait_promise(&mut logged.drive, batch.run_id);
+        let sibling = per_call_result(
+            &batch.calls[0].call_id,
+            ToolCallStatus::Succeeded,
+            Vec::new(),
+        );
+        let sibling_content = sibling.model_visible_context_entries[0].content.clone();
+        let deferred = logged
+            .drive
+            .resume_tool_batch_outcome(
+                ToolBatchOutcome::Deferred {
+                    batch_id: batch.batch_id,
+                    call_id: batch.calls[1].call_id.clone(),
+                    completed_results: vec![sibling],
+                    spec: wait_await_spec(),
+                },
+                80,
+            )
+            .expect("defer");
+        logged.commit(deferred);
+        let run_id = batch.run_id;
+        logged.admit(CoreAgentCommand::CancelRun {
+            run_id,
+            requested_by: None,
+        });
+
+        let entries = logged.admit(CoreAgentCommand::ForceCancelRun { run_id });
+        assert!(matches!(
+            entries[0].event,
+            CoreAgentEvent::Context(ContextEvent::EntriesApplied { .. })
+        ));
+        assert_eq!(logged.last_run().status, RunStatus::Cancelled);
+        let state = logged.drive.state();
+        let results = state
+            .context
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, ContextEntryKind::ToolResult { .. }))
+            .collect::<Vec<_>>();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].content, sibling_content);
+        assert_eq!(
+            results[1].content.content_ref,
+            crate::cancelled_tool_result_ref()
+        );
+
+        logged.assert_replays(|replayed| insert_wait_promise(replayed, run_id));
+        logged.request_run(b"next");
+        let next = logged.until_generate();
+        assert_tool_calls_answered(openai_items(&next));
     }
 }
