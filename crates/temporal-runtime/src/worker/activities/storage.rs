@@ -2149,7 +2149,9 @@ mod tests {
             })
             .await
             .expect("complete run with workflow-tool emission");
-        assert_eq!(completed.state.workflow_tools.emissions.len(), 2);
+        // Neither takes a reply, so both left reduced state with their batch. The log
+        // below holds them.
+        assert!(completed.state.workflow_tools.emissions.is_empty());
 
         // Re-submit the exact committed tool-result append as an activity
         // retry. The activity must return the existing entries rather than

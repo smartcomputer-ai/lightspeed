@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use harness::storage::SessionActivity;
 use harness::{
-    BlobRef,
+    BlobRef, event_kind,
     session::{
         EventSeq, SessionId, SessionPosition, StoredEvent, StoredSessionEntry,
         UncommittedStoredEvent,
@@ -12,11 +12,11 @@ use harness::{
     storage::{
         AdvanceSessionCheckpoint, AppendSessionEvents, AppendSessionEventsResult,
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
-        DeleteClosedSessionsResult, ListSessions, ReadSessionEventRange, ReadSessionEvents,
-        SessionCheckpoint, SessionLifecycleStatus, SessionListCursor, SessionListPage,
-        SessionOrigin, SessionOriginCounts, SessionPage, SessionRecord, SessionStore,
-        SessionStoreError, apply_lifecycle_projection, check_origin_limits, event_blob_roots,
-        largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
+        DeleteClosedSessionsResult, ListSessions, ReadRunRecordEntries, ReadSessionEventRange,
+        ReadSessionEvents, SessionCheckpoint, SessionLifecycleStatus, SessionListCursor,
+        SessionListPage, SessionOrigin, SessionOriginCounts, SessionPage, SessionRecord,
+        SessionStore, SessionStoreError, apply_lifecycle_projection, check_origin_limits,
+        event_blob_roots, largest_safe_fork_seq, lifecycle_at_fork, validate_fork_point,
     },
 };
 use sqlx::{Postgres, Row, Transaction};
@@ -1073,6 +1073,50 @@ impl SessionStore for PgStore {
             next_after,
             complete,
         })
+    }
+
+    async fn read_run_record_entries(
+        &self,
+        request: ReadRunRecordEntries,
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let record = self.load_session_required(&request.session_id).await?;
+        let through = record.head.as_ref().map_or(0, |head| head.seq.as_u64());
+        let run_ids = request.run_ids();
+        let kinds = event_kind::RUN_RECORD_KINDS.map(str::to_owned);
+        let mut entries = Vec::new();
+        for segment in self.resolve_segments(&request.session_id, through).await? {
+            let rows = sqlx::query(
+                r#"
+                SELECT entry_json
+                FROM session_events
+                WHERE universe_id = $1
+                  AND session_id = $2
+                  AND seq > $3
+                  AND seq <= $4
+                  AND event_kind = ANY($5)
+                  AND (entry_json #>> '{joins,run_id}')::bigint >= $6
+                  AND (entry_json #>> '{joins,run_id}')::bigint < $7
+                ORDER BY seq
+                "#,
+            )
+            .bind(self.config.universe_id)
+            .bind(segment.session_id.as_str())
+            .bind(u64_to_i64(segment.after, "run record read seq")?)
+            .bind(u64_to_i64(segment.through, "run record read seq")?)
+            .bind(kinds.as_slice())
+            .bind(u64_to_i64(run_ids.start, "run record read run id")?)
+            .bind(u64_to_i64(run_ids.end, "run record read run id")?)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| session_sql_error("read run record entries", error))?;
+            for row in &rows {
+                entries.push(session_entry_from_row(row)?);
+            }
+        }
+        Ok(entries)
     }
 
     async fn read_range(

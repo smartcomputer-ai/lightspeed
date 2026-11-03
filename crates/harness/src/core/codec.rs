@@ -26,6 +26,16 @@ pub mod event_kind {
     pub const RUN_CANCELLED: &str = "lightspeed.core.run.cancelled";
     pub const RUN_FORCE_CANCELLED: &str = "lightspeed.core.run.force_cancelled";
     pub const RUN_QUEUED_CANCELLED: &str = "lightspeed.core.run.queued_cancelled";
+    /// The events a pruned run's record can be rebuilt from.
+    pub const RUN_RECORD_KINDS: [&str; 7] = [
+        RUN_ACCEPTED,
+        RUN_STARTED,
+        RUN_COMPLETED,
+        RUN_FAILED,
+        RUN_CANCELLED,
+        RUN_FORCE_CANCELLED,
+        RUN_QUEUED_CANCELLED,
+    ];
 
     pub const APPROVAL_REQUESTED: &str = "lightspeed.core.approval.requested";
     pub const APPROVAL_RUN_PARKED: &str = "lightspeed.core.approval.run_parked";

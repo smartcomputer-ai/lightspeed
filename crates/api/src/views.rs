@@ -72,6 +72,8 @@ pub struct RunSummaryView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at_ms: Option<u64>,
     pub source: RunSummarySourceView,
+    /// Provider usage so far. A summary of a run old enough to be read back from the
+    /// session's log has none; `session/runs/read` still totals it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<LlmUsageView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

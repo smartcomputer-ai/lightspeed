@@ -102,7 +102,7 @@ impl<'a> CoreAgentProjector<'a> {
         params: ProjectSession<'_>,
     ) -> Result<(SessionView, Option<api::RunId>, bool), AgentApiError> {
         let (runs, next_run_cursor, has_older_runs) = self
-            .project_run_summaries(params.state, params.run_cursor, params.run_limit)
+            .project_run_summaries(params.state, &[], params.run_cursor, params.run_limit)
             .await?;
         let active_run = self.project_active_run_summary(params.state).await?;
 
@@ -160,10 +160,13 @@ impl<'a> CoreAgentProjector<'a> {
         Ok((session, next_run_cursor, has_older_runs))
     }
 
-    /// Project one newest-first keyset page directly from reducer state.
+    /// Project one newest-first keyset page from reducer state and any `pruned` records
+    /// read back from the log. Those need to reach one run past the page, so that
+    /// `has_older_runs` stays true across the boundary between the two sources.
     pub async fn project_run_summaries(
         &self,
         state: &CoreAgentState,
+        pruned: &[harness::RunRecord],
         cursor: Option<RunId>,
         limit: usize,
     ) -> Result<(Vec<RunSummaryView>, Option<api::RunId>, bool), AgentApiError> {
@@ -174,6 +177,12 @@ impl<'a> CoreAgentProjector<'a> {
             .map(RunStateRef::Completed)
             .chain(state.runs.active.iter().map(RunStateRef::Active))
             .chain(state.runs.queued.iter().map(RunStateRef::Queued))
+            .chain(
+                pruned
+                    .iter()
+                    .filter(|run| state.runs.is_pruned(run.run_id))
+                    .map(RunStateRef::Completed),
+            )
             .filter(|run| cursor.is_none_or(|cursor| run.id() < cursor))
             .collect::<Vec<_>>();
         candidates.sort_by_key(|run| std::cmp::Reverse(run.id()));
@@ -4071,7 +4080,7 @@ mod tests {
         }
 
         let (first, next, has_older) = projector
-            .project_run_summaries(&state, None, 2)
+            .project_run_summaries(&state, &[], None, 2)
             .await
             .expect("first page");
         assert_eq!(
@@ -4082,7 +4091,7 @@ mod tests {
         assert_eq!(next.as_deref(), Some("run_2"));
 
         let (last, next, has_older) = projector
-            .project_run_summaries(&state, Some(RunId::new(2)), 2)
+            .project_run_summaries(&state, &[], Some(RunId::new(2)), 2)
             .await
             .expect("last page");
         assert_eq!(last[0].id, "run_1");

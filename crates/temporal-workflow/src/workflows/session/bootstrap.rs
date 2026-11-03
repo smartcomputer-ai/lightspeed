@@ -23,8 +23,8 @@ pub(super) async fn initialize(
     let observed_at_ms = workflow_time_ms(ctx);
     // the activity reduces the durable log internally and returns compact
     // state. The full event log no longer crosses the activity boundary, so this
-    // bootstrap path is bounded by active context plus retained run metadata,
-    // rather than transcript-sized event history.
+    // bootstrap path carries active context plus retained run metadata rather than
+    // transcript-sized event history.
     let loaded = ctx
         .execute_activity(
             WorkflowActivities::create_or_load_session,

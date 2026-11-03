@@ -24,9 +24,9 @@ use harness::{
     storage::{
         AdvanceSessionCheckpoint, AppendSessionEvents, BlobEdge, BlobGraphStore, BlobStore,
         CreateClonedSession, CreateForkedSession, CreateSession, DeleteClosedSessions,
-        ListSessions, ReadSessionEventRange, ReadSessionEvents, SessionCheckpoint, SessionOrigin,
-        SessionOriginKind, SessionStore, SessionStoreError, ensure_harness_blobs,
-        harness_blob_refs,
+        ListSessions, ReadRunRecordEntries, ReadSessionEventRange, ReadSessionEvents,
+        SessionCheckpoint, SessionOrigin, SessionOriginKind, SessionStore, SessionStoreError,
+        ensure_harness_blobs, harness_blob_refs,
     },
 };
 use mcp::{
@@ -734,6 +734,113 @@ async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
             .collect::<Vec<_>>(),
         vec![11, 21, 41]
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_run_record_entries_are_read_by_run_id_across_a_fork() {
+    let run = |at_ms, run_id: u64, event| {
+        CoreAgentCodec
+            .encode_uncommitted(&UncommittedCoreAgentEvent {
+                observed_at_ms: at_ms,
+                joins: CoreAgentJoins {
+                    run_id: Some(RunId::new(run_id)),
+                    ..CoreAgentJoins::default()
+                },
+                event,
+            })
+            .expect("encode event")
+    };
+    let started = |run_id| {
+        CoreAgentEvent::Run(RunEvent::Started {
+            run_id: RunId::new(run_id),
+        })
+    };
+    let cancelled = |run_id| {
+        CoreAgentEvent::Run(RunEvent::Cancelled {
+            run_id: RunId::new(run_id),
+        })
+    };
+    let store = live_store("session-run-records", 1024).await;
+    let root = SessionId::new("root-session");
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: root.clone(),
+            display_name: None,
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create root");
+    store
+        .append(AppendSessionEvents {
+            session_id: root.clone(),
+            expected_head: None,
+            events: vec![
+                run(1, 1, started(1)),
+                run(2, 1, cancelled(1)),
+                // Same run, not one of the kinds a record is built from.
+                run(
+                    3,
+                    2,
+                    CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                        run_id: RunId::new(2),
+                        requested_by: None,
+                    }),
+                ),
+                run(4, 2, started(2)),
+                open_event(5),
+                run(6, 2, cancelled(2)),
+                // Past the fork point, so the child never sees this.
+                run(7, 3, started(3)),
+            ],
+        })
+        .await
+        .expect("append root");
+    let fork = SessionId::new("fork-session");
+    store
+        .create_forked_session(CreateForkedSession {
+            source_session_id: root,
+            session_id: fork.clone(),
+            source_seq: EventSeq::new(6),
+            created_at_ms: 8,
+        })
+        .await
+        .expect("fork");
+    store
+        .append(AppendSessionEvents {
+            session_id: fork.clone(),
+            expected_head: Some(SessionPosition {
+                seq: EventSeq::new(6),
+            }),
+            events: vec![run(9, 3, started(3)), run(10, 3, cancelled(3))],
+        })
+        .await
+        .expect("append fork");
+
+    let read = |before, limit| {
+        let store = &store;
+        let session_id = fork.clone();
+        async move {
+            store
+                .read_run_record_entries(ReadRunRecordEntries {
+                    session_id,
+                    before: RunId::new(before),
+                    limit,
+                })
+                .await
+                .expect("read run records")
+                .iter()
+                .map(|entry| entry.observed_at_ms)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(read(4, 2).await, vec![4, 6, 9, 10]);
+    assert_eq!(read(2, 1).await, vec![1, 2]);
+    assert_eq!(read(4, 100).await, vec![1, 2, 4, 6, 9, 10]);
+    assert_eq!(read(1, 5).await, Vec::<u64>::new());
 }
 
 #[tokio::test(flavor = "current_thread")]

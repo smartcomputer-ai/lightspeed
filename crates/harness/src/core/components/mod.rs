@@ -73,7 +73,8 @@ pub use run::{
     RunSource, RunStatus, RunTerminalNotifyIntent, SteeringBatch, TURN_LIMIT_FAILURE_CONTENT,
     ToolBatchResumeOutput, ToolBatchSuspension, WakeReason, content_filtered_failure_ref,
     context_limit_failure_ref, output_truncated_failure_ref, provider_cancelled_failure_ref,
-    request_run_submission_digest, run_internal_failure_ref, turn_limit_failure_ref,
+    request_run_submission_digest, run_internal_failure_ref, run_record_from_entries,
+    run_usage_from_entries, turn_limit_failure_ref,
 };
 pub use state::*;
 pub use tooling::{

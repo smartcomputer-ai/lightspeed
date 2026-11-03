@@ -1247,3 +1247,64 @@ fn a_force_cancelled_script_still_reports_its_interrupted_call() {
     assert!(code_tool_call(state, &origin).is_none());
     session.assert_replays();
 }
+
+/// Pruning only moves where a record is read from, so what the log rebuilds has to be
+/// the record state kept, for every way a run can end.
+#[test]
+fn a_record_rebuilt_from_the_log_is_the_one_state_kept() {
+    let mut session = open_with_workflow_tools();
+    // Completes after some tool turns.
+    session.admit(request_run(1));
+    let request = session.tool_turns(20, |_, _| {});
+    session.generate(final_turn(&request));
+    assert!(matches!(session.pump(), CoreAgentAction::Idle));
+    // Fails on the provider.
+    session.admit(request_run(2));
+    let request = session.next_generation();
+    let mut failed = generation(&request, facts(LlmFinish::Stop));
+    failed.status = LlmGenerationStatus::Failed;
+    failed.failure_ref = Some(blob("provider down"));
+    session.generate(failed);
+    assert!(matches!(session.pump(), CoreAgentAction::Idle));
+    // Is cancelled while it runs, then in the queue behind it, then forced.
+    session.admit(request_run(3));
+    session.next_generation();
+    session.admit(request_run(4));
+    session.admit(CoreAgentCommand::CancelRun {
+        run_id: RunId::new(4),
+        requested_by: None,
+    });
+    session.admit(CoreAgentCommand::ForceCancelRun {
+        run_id: RunId::new(3),
+    });
+    assert!(matches!(session.pump(), CoreAgentAction::Idle));
+
+    let state = session.state();
+    assert_eq!(state.runs.completed.len(), 4);
+    let decoded = session
+        .log
+        .iter()
+        .map(|entry| CoreAgentCodec.decode_entry(entry).expect("decode"))
+        .collect::<Vec<_>>();
+    for kept in &state.runs.completed {
+        let entries = decoded
+            .iter()
+            .filter(|entry| entry.joins.run_id == Some(kept.run_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let rebuilt = run_record_from_entries(&entries).expect("terminal");
+        assert_eq!(
+            rebuilt,
+            RunRecord {
+                usage: None,
+                ..kept.clone()
+            }
+        );
+        assert_eq!(
+            run_usage_from_entries(&entries),
+            kept.usage,
+            "{}",
+            kept.run_id
+        );
+    }
+}

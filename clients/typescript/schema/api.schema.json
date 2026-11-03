@@ -13965,7 +13965,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Provider usage so far. A summary of a run old enough to be read back from the\nsession's log has none; `session/runs/read` still totals it."
         }
       },
       "required": [

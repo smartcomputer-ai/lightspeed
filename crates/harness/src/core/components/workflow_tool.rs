@@ -723,6 +723,8 @@ pub enum WorkflowToolConfigEvent {
     SystemBindingAdmitted { binding: Box<WorkflowToolBinding> },
 }
 
+/// Bindings, plus the invocations still unfinished or not yet swept. See
+/// [`prune_finished_invocations`]; the log keeps them all.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowToolState {
     #[serde(default, skip_serializing_if = "Option::is_none")]

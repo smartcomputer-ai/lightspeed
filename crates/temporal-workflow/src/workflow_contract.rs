@@ -538,6 +538,8 @@ Update client wait does not cancel the operation.
 Read `{scope_report}` with `CodeToolScopeReportRequest` for a fresh authoritative
 snapshot, including results that finish after scope closure. Reports contain
 result references and attachments, never raw session effects or model context.
+A scope leaves the session's state after its parent invocation finishes, and from
+then on it reports as closed with no calls. Closing it again is accepted.
 
 Scope operations return `Result<CodeToolScopeReport, CodeToolRejection>`;
 invocation returns `Result<CodeToolCallOutcome, CodeToolRejection>`. Serde

@@ -2256,6 +2256,10 @@ export interface RunSummaryView {
   source: RunSummarySourceView;
   startedAtMs?: number | null;
   status: RunStatus;
+  /**
+   * Provider usage so far. A summary of a run old enough to be read back from the
+   * session's log has none; `session/runs/read` still totals it.
+   */
   usage?: LlmUsageView | null;
 }
 /**

@@ -23,6 +23,7 @@ mod models_api;
 mod oauth_api;
 mod parse;
 mod profiles;
+mod pruned_runs;
 mod transcriptions;
 pub(crate) use crate::environments::provider_controllers;
 mod session_jobs;
@@ -1102,7 +1103,21 @@ impl GatewayAgentApi {
         loaded: &LoadedSession,
         run_id: RunId,
     ) -> Result<RunView, AgentApiError> {
+        let pruned = if loaded.state.runs.is_pruned(run_id) {
+            pruned_runs::read_pruned_runs(
+                self.store.as_ref(),
+                &loaded.record.session_id,
+                RunId::new(run_id.as_u64() + 1),
+                1,
+            )
+            .await?
+            .into_iter()
+            .find(|run| run.run_id == run_id)
+        } else {
+            None
+        };
         let metadata = run_projection_metadata(&loaded.state, run_id)
+            .or_else(|| pruned.as_ref().map(terminal_run_projection_metadata))
             .ok_or_else(|| AgentApiError::not_found(format!("run not found: {run_id}")))?;
         let entries = self
             .read_run_interval(
@@ -1112,6 +1127,9 @@ impl GatewayAgentApi {
                 metadata.terminal_seq,
             )
             .await?;
+        let pruned_usage = pruned
+            .as_ref()
+            .and_then(|_| harness::run_usage_from_entries(&entries));
         self.projector()
             .project_run_with_metadata(ProjectRun {
                 entries: &entries,
@@ -1121,7 +1139,7 @@ impl GatewayAgentApi {
                 source: metadata.source,
                 started_at_ms: metadata.started_at_ms,
                 completed_at_ms: metadata.completed_at_ms,
-                usage: metadata.usage,
+                usage: metadata.usage.or(pruned_usage.as_ref()),
             })
             .await
     }
@@ -1194,6 +1212,19 @@ struct RunProjectionMetadata<'a> {
     usage: Option<&'a harness::LlmUsage>,
 }
 
+fn terminal_run_projection_metadata(run: &harness::RunRecord) -> RunProjectionMetadata<'_> {
+    RunProjectionMetadata {
+        status: core_run_status_to_api_status(run.status),
+        first_seq: run.first_seq,
+        terminal_seq: Some(run.terminal_seq),
+        output: run.output.as_ref(),
+        source: &run.source,
+        started_at_ms: run.started_at_ms,
+        completed_at_ms: Some(run.completed_at_ms),
+        usage: run.usage.as_ref(),
+    }
+}
+
 fn run_projection_metadata(
     state: &harness::CoreAgentState,
     run_id: RunId,
@@ -1203,16 +1234,7 @@ fn run_projection_metadata(
         .completed
         .iter()
         .find(|run| run.run_id == run_id)
-        .map(|run| RunProjectionMetadata {
-            status: core_run_status_to_api_status(run.status),
-            first_seq: run.first_seq,
-            terminal_seq: Some(run.terminal_seq),
-            output: run.output.as_ref(),
-            source: &run.source,
-            started_at_ms: run.started_at_ms,
-            completed_at_ms: Some(run.completed_at_ms),
-            usage: run.usage.as_ref(),
-        })
+        .map(terminal_run_projection_metadata)
         .or_else(|| {
             state
                 .runs
@@ -3129,9 +3151,17 @@ impl AgentApiService for GatewayAgentApi {
         };
         let cursor = params.cursor.as_deref().map(parse_api_run_id).transpose()?;
         let loaded = self.load_session_state(&session_id).await?;
+        let pruned = pruned_runs::pruned_runs_for_page(
+            self.store.as_ref(),
+            &session_id,
+            &loaded.state.runs,
+            cursor,
+            limit,
+        )
+        .await?;
         let (runs, next_cursor, has_older_runs) = self
             .projector()
-            .project_run_summaries(&loaded.state, cursor, limit)
+            .project_run_summaries(&loaded.state, &pruned, cursor, limit)
             .await?;
         tracing::debug!(
             session_id = %session_id,
@@ -3209,7 +3239,8 @@ impl AgentApiService for GatewayAgentApi {
                 .runs
                 .completed
                 .iter()
-                .any(|run| run.run_id == requested_run_id) =>
+                .any(|run| run.run_id == requested_run_id)
+                || loaded.state.runs.is_pruned(requested_run_id) =>
             {
                 return Err(AgentApiError::rejected(format!(
                     "run is already terminal: {}",
@@ -3479,7 +3510,8 @@ impl AgentApiService for GatewayAgentApi {
                 .runs
                 .completed
                 .iter()
-                .any(|run| run.run_id == requested_run_id) =>
+                .any(|run| run.run_id == requested_run_id)
+                || loaded.state.runs.is_pruned(requested_run_id) =>
             {
                 return Err(AgentApiError::rejected(format!(
                     "run is already terminal: {}",

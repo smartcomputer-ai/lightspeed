@@ -113,9 +113,9 @@ pub struct ActiveRun {
     pub turn_count: u32,
     pub active_turn_id: Option<TurnId>,
     pub active_tool_batch_id: Option<ToolBatchId>,
-    /// Single-use approval records owned by this run. They disappear from
-    /// materialized state with the active run; their immutable audit trail
-    /// remains in the session event log.
+    /// Single-use approval records owned by this run. A decided one leaves
+    /// materialized state at the next turn or batch boundary, and the rest with the
+    /// active run; their immutable audit trail remains in the session event log.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub approvals: BTreeMap<ApprovalId, ApprovalRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1080,6 +1080,76 @@ fn prune_terminal_run_records(runs: &mut RunQueueState) {
         .map(|run| run.run_id)
         .chain(runs.pruned_through)
         .max();
+}
+
+/// Rebuild a pruned run's terminal record from its entries in the log, as its
+/// accepted, started and terminal events recorded it. `None` for a run that has no
+/// terminal event. Usage was never on those events, so it stays absent here and
+/// [`run_usage_from_entries`] totals it from a whole run.
+pub fn run_record_from_entries(entries: &[crate::CoreAgentEntry]) -> Option<RunRecord> {
+    let mut accepted = None;
+    let mut started_at_ms = None;
+    let mut terminal = None;
+    for entry in entries {
+        let CoreAgentEvent::Run(event) = &entry.event else {
+            continue;
+        };
+        let outcome = match event {
+            Event::Accepted(event) => {
+                accepted = Some((event, entry.position.seq, entry.observed_at_ms));
+                continue;
+            }
+            Event::Started { .. } => {
+                started_at_ms = Some(entry.observed_at_ms);
+                continue;
+            }
+            Event::SteeringAccepted { .. } | Event::CancellationRequested { .. } => continue,
+            Event::Completed { output, .. } => (RunStatus::Completed, output.clone(), None),
+            Event::Failed { failure, .. } => (RunStatus::Failed, None, Some(failure.clone())),
+            Event::Cancelled { .. }
+            | Event::ForceCancelled { .. }
+            | Event::QueuedCancelled { .. } => (RunStatus::Cancelled, None, None),
+        };
+        terminal = Some((outcome, entry.position.seq, entry.observed_at_ms));
+    }
+    let (accepted, first_seq, accepted_at_ms) = accepted?;
+    let ((status, output, failure), terminal_seq, completed_at_ms) = terminal?;
+    Some(RunRecord {
+        run_id: accepted.run_id,
+        status,
+        submission_id: accepted.submission_id.clone(),
+        submission_digest: request_run_submission_digest(
+            &source_request_equivalent(&accepted.source),
+            &accepted.run_config,
+            &accepted.notify_on_terminal,
+        ),
+        source: compact_terminal_source(accepted.source.clone()),
+        first_seq,
+        terminal_seq,
+        accepted_at_ms,
+        started_at_ms,
+        completed_at_ms,
+        usage: None,
+        output,
+        failure,
+        notify_on_terminal: accepted.notify_on_terminal.clone(),
+    })
+}
+
+/// What a run's generations used, from its entries in the log. A compaction during the
+/// run counted towards the run's usage in state, but its events carry no run join, so
+/// this total leaves it out.
+pub fn run_usage_from_entries(entries: &[crate::CoreAgentEntry]) -> Option<LlmUsage> {
+    let mut total = None;
+    for entry in entries {
+        if let CoreAgentEvent::Turn(crate::TurnEvent::GenerationCompleted { facts, .. }) =
+            &entry.event
+            && let Some(usage) = &facts.usage
+        {
+            crate::core::components::turn::accumulate_usage(&mut total, usage);
+        }
+    }
+    total
 }
 
 /// Outcome of matching a submission id against runs or consumed messages

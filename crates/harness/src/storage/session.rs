@@ -1,7 +1,8 @@
 //! Session event-log storage contract.
 
 use crate::{
-    BlobRef, CoreAgentCodec, CoreAgentEvent, SubagentLimits, WorkflowToolConfigEvent, event_kind,
+    BlobRef, CoreAgentCodec, CoreAgentEvent, RunId, SubagentLimits, WorkflowToolConfigEvent,
+    event_kind,
     session::{EventSeq, SessionId, SessionPosition, StoredSessionEntry, UncommittedStoredEvent},
 };
 use async_trait::async_trait;
@@ -283,6 +284,24 @@ pub struct ReadSessionEventRange {
     pub limit: usize,
 }
 
+/// Which pruned runs to read back: the `limit` highest run ids below `before`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadRunRecordEntries {
+    pub session_id: SessionId,
+    pub before: RunId,
+    pub limit: usize,
+}
+
+impl ReadRunRecordEntries {
+    /// The run ids asked for, as a half-open range. A session numbers its runs from
+    /// one with no gaps, so a page of runs is a page of ids.
+    pub fn run_ids(&self) -> std::ops::Range<u64> {
+        let before = self.before.as_u64();
+        let limit = u64::try_from(self.limit).unwrap_or(u64::MAX);
+        before.saturating_sub(limit).max(1)..before.max(1)
+    }
+}
+
 /// Keyset cursor for [`SessionStore::list_sessions`]: the sort key of the
 /// last row of the previous page (most-recently-updated-first ordering).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -561,6 +580,16 @@ pub trait SessionStore: Send + Sync {
                 .is_none_or(|entry| entry.position.seq >= request.through);
         Ok(page)
     }
+
+    /// The entries a pruned run's record is rebuilt from, in log order: the
+    /// [`event_kind::RUN_RECORD_KINDS`] events of the runs asked for. Reduced state
+    /// keeps a recent window of run records and this serves the rest. It scans the
+    /// session's log, with no index or table of its own, which suits paging back
+    /// through old runs and nothing on a hot path.
+    async fn read_run_record_entries(
+        &self,
+        request: ReadRunRecordEntries,
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError>;
 
     async fn load_checkpoint(
         &self,
@@ -1113,6 +1142,29 @@ impl SessionStore for InMemorySessionStore {
             next_after,
             complete,
         })
+    }
+
+    async fn read_run_record_entries(
+        &self,
+        request: ReadRunRecordEntries,
+    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
+        if request.limit == 0 {
+            return Err(SessionStoreError::InvalidLimit { limit: 0 });
+        }
+        let inner = self.inner.read().map_err(|_| SessionStoreError::Store {
+            message: "session store read lock poisoned".into(),
+        })?;
+        let run_ids = request.run_ids();
+        let mut entries = effective_entries(&inner, &request.session_id)?;
+        entries.retain(|entry| {
+            event_kind::RUN_RECORD_KINDS.contains(&entry.event.kind.as_str())
+                && entry
+                    .joins
+                    .get("run_id")
+                    .and_then(|run_id| run_id.parse::<u64>().ok())
+                    .is_some_and(|run_id| run_ids.contains(&run_id))
+        });
+        Ok(entries)
     }
 
     async fn load_checkpoint(
@@ -2438,6 +2490,109 @@ mod tests {
             },
             event,
         )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn run_record_entries_are_read_by_run_id_across_a_fork() {
+        use crate::{RunEvent, RunId};
+
+        let run = |at_ms, run_id, event| encoded_run_event(at_ms, RunId::new(run_id), event);
+        let started = |run_id| {
+            CoreAgentEvent::Run(RunEvent::Started {
+                run_id: RunId::new(run_id),
+            })
+        };
+        let cancelled = |run_id| {
+            CoreAgentEvent::Run(RunEvent::Cancelled {
+                run_id: RunId::new(run_id),
+            })
+        };
+        let store = InMemorySessionStore::new();
+        let root = SessionId::new("root");
+        store
+            .create_session(CreateSession {
+                metadata: Default::default(),
+                session_id: root.clone(),
+                display_name: None,
+                origin: None,
+                delete_after_close_ms: None,
+                created_at_ms: 1,
+            })
+            .await
+            .expect("create root");
+        store
+            .append(AppendSessionEvents {
+                session_id: root.clone(),
+                expected_head: None,
+                events: vec![
+                    run(1, 1, started(1)),
+                    run(2, 1, cancelled(1)),
+                    // Same run, not one of the kinds a record is built from.
+                    run(
+                        3,
+                        2,
+                        CoreAgentEvent::Run(RunEvent::CancellationRequested {
+                            run_id: RunId::new(2),
+                            requested_by: None,
+                        }),
+                    ),
+                    run(4, 2, started(2)),
+                    filler_event(5),
+                    run(6, 2, cancelled(2)),
+                    // Past the fork point, so the child never sees this.
+                    run(7, 3, started(3)),
+                ],
+            })
+            .await
+            .expect("append root");
+        let fork = SessionId::new("fork");
+        store
+            .create_forked_session(CreateForkedSession {
+                source_session_id: root,
+                session_id: fork.clone(),
+                source_seq: EventSeq::new(6),
+                created_at_ms: 8,
+            })
+            .await
+            .expect("fork");
+        store
+            .append(AppendSessionEvents {
+                session_id: fork.clone(),
+                expected_head: Some(SessionPosition {
+                    seq: EventSeq::new(6),
+                }),
+                events: vec![run(9, 3, started(3)), run(10, 3, cancelled(3))],
+            })
+            .await
+            .expect("append fork");
+
+        let read = |before, limit| {
+            let store = store.clone();
+            let session_id = fork.clone();
+            async move {
+                store
+                    .read_run_record_entries(ReadRunRecordEntries {
+                        session_id,
+                        before: RunId::new(before),
+                        limit,
+                    })
+                    .await
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .map(|entry| entry.observed_at_ms)
+                            .collect::<Vec<_>>()
+                    })
+            }
+        };
+        assert_eq!(read(4, 2).await.unwrap(), vec![4, 6, 9, 10]);
+        assert_eq!(read(2, 1).await.unwrap(), vec![1, 2]);
+        assert_eq!(read(4, 100).await.unwrap(), vec![1, 2, 4, 6, 9, 10]);
+        assert_eq!(read(1, 5).await.unwrap(), Vec::<u64>::new());
+        assert!(matches!(
+            read(4, 0).await,
+            Err(SessionStoreError::InvalidLimit { limit: 0 })
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -15,9 +15,9 @@ pub const DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT: Duration = Duration::from_sec
 /// `CoreAgentState` plus small indices). Temporal's default activity-result
 /// payload limit is 2 MiB; we guard well below it so a near-limit reduced state
 /// fails with a typed `SessionBootstrapPayloadTooLarge` error before Temporal
-/// rejects the activity completion with an opaque size error. Reduced state is
-/// bounded by active context (entry metadata + content refs), not by total log
-/// length, so this budget should never be hit in normal operation.
+/// rejects the activity completion with an opaque size error. The reducer prunes
+/// what runs leave behind, so what normally fills reduced state is active context.
+/// Context is only as small as compaction keeps it, so this can still be reached.
 pub const DEFAULT_BOOTSTRAP_PAYLOAD_BUDGET_BYTES: u64 = 1_500_000;
 
 pub const FAKE_TOOL_NAME: &str = "agent_echo";
