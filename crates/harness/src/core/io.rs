@@ -138,9 +138,7 @@ pub struct ToolInvocationRequest {
     pub promise_control: Option<PromiseControlCallRuntime>,
     /// Native MCP routing facts for an injected or search-exposure call,
     /// materialized by the deterministic owner for every dispatch of the
-    /// batch. Present on the batch request and on the per-call request
-    /// alike, so batch-unit and per-call execution route the call the same
-    /// way; absent for every other tool.
+    /// batch; absent for every other tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_mcp: Option<RemoteMcpCallRuntime>,
 }
@@ -465,17 +463,6 @@ pub enum ToolBatchOutcome {
         completed_results: Vec<ToolInvocationResult>,
         spec: AwaitSpec,
     },
-    /// One or more native MCP calls are gated on approval. Every ungated
-    /// sibling has already executed and reports its terminal result here;
-    /// the gated calls (and an `await` sibling, which never defers while a
-    /// decision is outstanding) stay pending and are re-dispatched once the
-    /// run is unparked.
-    AwaitingApproval {
-        batch_id: ToolBatchId,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        completed_results: Vec<ToolInvocationResult>,
-        approvals: Vec<NativeMcpApprovalRequest>,
-    },
 }
 
 impl ToolBatchOutcome {
@@ -488,11 +475,6 @@ impl ToolBatchOutcome {
             Self::Completed { result } => Ok(result),
             Self::Deferred { batch_id, .. } => Err(CoreAgentIoError::Failed {
                 message: format!("tool batch {batch_id} deferred instead of completing"),
-            }),
-            Self::AwaitingApproval { batch_id, .. } => Err(CoreAgentIoError::Failed {
-                message: format!(
-                    "tool batch {batch_id} is awaiting approval instead of completing"
-                ),
             }),
         }
     }

@@ -1,11 +1,13 @@
-//! Per-call tool batch execution.
+//! Tool batch execution.
 //!
-//! Ordinary batches schedule one Temporal activity per executable call and
-//! resume the drive progressively: each terminal call result appends durably
-//! on its own, so a slow or failed call never restarts a completed sibling.
-//! Batches that need batch-level orchestration (an `await` call or admitted
-//! workflow-tool calls) still execute as one unit behind the same
-//! progressive-completion harness contract.
+//! A batch is every tool call of one model response. Ordinary calls run first,
+//! one Temporal activity per call, and resume the drive progressively: each
+//! terminal result appends durably on its own, so a slow or failed call never
+//! restarts a completed sibling, and losing a worker fails only the calls it was
+//! running. The drive then re-dispatches what is still pending. Once only `await`
+//! and workflow-tool calls remain they run in one activity, because they suspend
+//! the batch on commit and so must commit together. That activity does no slow
+//! work: workflow-tool calls only build effects, which start after the commit.
 
 use crate::workflows::WorkflowContextExt as _;
 use std::pin::Pin;
@@ -29,17 +31,18 @@ use super::*;
 /// stay bounded even for pathological error chains.
 const MAX_BOUNDARY_ERROR_BYTES: usize = 16 * 1024;
 
-/// Run one batch and commit its results. The drive plans again from the state
-/// that leaves, so nothing here hands a result back to be overwritten.
+/// Run one dispatch of a batch and commit its results. The drive plans again from
+/// the state that leaves, so nothing here hands a result back to be overwritten.
 pub(super) async fn invoke_tool_batch(
     ctx: &mut WorkflowContext<AgentSessionWorkflow>,
     drive: &mut CoreAgentDrive,
     request: ToolInvocationBatchRequest,
 ) -> anyhow::Result<()> {
-    if batch_requires_unit_execution(&request) {
+    let groups = execution_groups(drive.state(), &request);
+    if groups.is_empty() {
         return invoke_tool_batch_as_unit(ctx, drive, request).await;
     }
-    for group in execution_groups(drive.state(), &request) {
+    for group in groups {
         if !control::tool_batch_still_wanted(drive.state(), request.run_id, request.batch_id) {
             // A cancel or a park landed while an earlier group ran. The rest of
             // the batch stays pending for the next plan to cancel or re-dispatch.
@@ -51,15 +54,13 @@ pub(super) async fn invoke_tool_batch(
 }
 
 /// `await` defers the whole batch and admitted workflow-tool calls share
-/// batch-scoped emission ordering; both stay on the batch-unit activity.
-fn batch_requires_unit_execution(request: &ToolInvocationBatchRequest) -> bool {
-    request.calls.iter().any(|call| {
-        call.workflow_tool.is_some()
-            || call
-                .tool_id
-                .as_ref()
-                .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
-    })
+/// batch-scoped emission ordering; both wait for the batch activity.
+fn runs_in_batch_activity(call: &harness::ToolInvocationRequest) -> bool {
+    call.workflow_tool.is_some()
+        || call
+            .tool_id
+            .as_ref()
+            .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
 }
 
 async fn invoke_tool_batch_as_unit(
@@ -78,7 +79,7 @@ async fn invoke_tool_batch_as_unit(
         crate::tool_batch_activity_options(),
     );
     let outcome = match control::race_activity_with_admissions(ctx, drive, activity, |state| {
-        control::tool_batch_still_wanted(state, run_id, batch_id)
+        !control::tool_batch_abandoned(state, run_id, batch_id)
     })
     .await?
     {
@@ -109,8 +110,10 @@ async fn invoke_tool_batch_as_unit(
     drive::commit_resume(ctx, drive, resume).await
 }
 
-/// Execution order over call indices: consecutive parallel-safe calls run
-/// concurrently; an exclusive call runs alone, in original batch order.
+/// Execution order over the indices of the per-call calls: consecutive
+/// parallel-safe calls run concurrently; an exclusive call runs alone, in original
+/// batch order. Each call still sees the whole dispatch as its siblings, so a batch
+/// rule holds across calls that wait for the batch activity.
 fn execution_groups(
     state: &CoreAgentState,
     request: &ToolInvocationBatchRequest,
@@ -118,6 +121,9 @@ fn execution_groups(
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut last_parallel_safe = false;
     for (index, call) in request.calls.iter().enumerate() {
+        if runs_in_batch_activity(call) {
+            continue;
+        }
         let parallel_safe =
             call_parallelism(state, call.tool_id.as_ref()) == ToolParallelism::ParallelSafe;
         match groups.last_mut() {
@@ -567,16 +573,87 @@ mod tests {
         state
     }
 
+    fn workflow_call(name: &str, id: &str) -> ToolInvocationRequest {
+        let tool = ToolSpec {
+            name: ToolName::new(name),
+            kind: harness::ToolKind::Function(harness::FunctionToolSpec {
+                description_ref: None,
+                input_schema_ref: BlobRef::from_bytes(b"{}"),
+                output_schema_ref: None,
+                strict: None,
+                provider_options_ref: None,
+            }),
+            parallelism: ToolParallelism::Exclusive,
+            execution: ToolExecutionSpec::default(),
+        };
+        let definition = harness::WorkflowToolDefinition {
+            tool_id: harness::WorkflowToolId::new(name),
+            revision: 1,
+            semantic_type: format!("test.{name}.v1"),
+            tool,
+        };
+        ToolInvocationRequest {
+            workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(
+                harness::WorkflowToolBinding::admit(
+                    uuid::Uuid::from_u128(7),
+                    definition,
+                    harness::WorkflowToolTarget::Bound {
+                        receiver: harness::WorkflowEndpointRef {
+                            workflow_id: format!("receiver-{name}"),
+                            workflow_kind: "test.worker".to_owned(),
+                        },
+                        dispatch: harness::BoundWorkflowToolDispatch::Push,
+                    },
+                    harness::WorkflowToolCompletion::Accepted,
+                )
+                .expect("test binding"),
+                0,
+            )),
+            ..call(name, id)
+        }
+    }
+
     #[test]
-    fn await_and_workflow_tool_batches_execute_as_unit() {
-        assert!(batch_requires_unit_execution(&request_with(vec![
+    fn ordinary_calls_run_first_and_the_rest_waits_for_the_batch_activity() {
+        let state = state_with_tools(vec![
+            ("read_file", ToolParallelism::ParallelSafe),
+            ("grep", ToolParallelism::ParallelSafe),
+        ]);
+        let request = request_with(vec![
             call("read_file", "call_read"),
+            workflow_call("agent_spawn", "call_spawn"),
+            call("grep", "call_grep"),
             call("await", "call_await"),
-        ])));
-        assert!(!batch_requires_unit_execution(&request_with(vec![call(
-            "read_file",
-            "call_read"
-        )])));
+            call("write_file", "call_write"),
+        ]);
+        assert_eq!(
+            execution_groups(&state, &request),
+            vec![vec![0, 2], vec![4]]
+        );
+        // Calls run by index into the whole dispatch, so sibling rules still see
+        // the calls that wait.
+        assert_eq!(
+            request
+                .call_request(0, ToolExecutionSpec::default())
+                .expect("first call")
+                .sibling_tool_ids,
+            ["agent_spawn", "concurrency.await", "grep", "write_file"].map(ToolName::new)
+        );
+    }
+
+    #[test]
+    fn a_dispatch_of_only_await_and_workflow_tools_has_no_per_call_groups() {
+        let state = state_with_tools(Vec::new());
+        assert!(
+            execution_groups(
+                &state,
+                &request_with(vec![
+                    workflow_call("agent_spawn", "call_spawn"),
+                    call("await", "call_await"),
+                ])
+            )
+            .is_empty()
+        );
     }
 
     #[test]

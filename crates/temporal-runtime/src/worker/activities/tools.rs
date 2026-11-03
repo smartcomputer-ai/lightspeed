@@ -1,13 +1,10 @@
 use std::collections::BTreeMap;
 
-use futures::{StreamExt, stream};
 use harness::{
-    NativeMcpApprovalRequest, PromiseControlArgumentCallFacts, PromiseControlArgumentFacts,
-    PromiseControlArgumentRequest, PromiseControlKind, ToolBatchOutcome, ToolCallStatus,
-    ToolExecutionClass, ToolExecutionSpec, ToolInvocationBatchRequest, ToolInvocationBatchResult,
-    ToolInvocationResult, storage::BlobStore,
+    PromiseControlArgumentCallFacts, PromiseControlArgumentFacts, PromiseControlArgumentRequest,
+    PromiseControlKind, ToolBatchOutcome, ToolCallStatus, ToolExecutionClass, ToolInvocationResult,
+    storage::BlobStore,
 };
-use temporal_workflow::MAX_CONCURRENT_TOOL_CALLS_PER_BATCH;
 use temporalio_sdk::activities::ActivityError;
 use tools::concurrency::{CancelArgs, DetachArgs};
 
@@ -107,144 +104,14 @@ pub(super) async fn prepare_code_tool_scope(
     Ok(temporal_workflow::CodeToolPrepareScopeActivityResult { bindings })
 }
 
-/// Execute an admitted tool batch as one unit.
-///
-/// Native MCP calls never reach the tool runtime behind `deps.tools`: this
-/// wrapper owns their dispatch on both the per-call and the batch-unit path.
-/// A batch that mixes workflow tools or `await` with injected MCP calls
-/// therefore still executes as one logical batch in one activity: the
-/// runtime receives the batch minus its MCP calls, the MCP calls run here
-/// concurrently under the remote operation deadline, and the results merge
-/// back in batch order. Approval gating follows the per-call contract: every
-/// ungated call completes, the gated calls stay pending, and the outcome
-/// carries the full set of approval subjects so the run parks exactly once.
+/// Execute the calls of a batch that must commit together: workflow-tool calls
+/// and `await`. A runtime failure becomes an ordinary failed result for each of
+/// them.
 pub(super) async fn invoke_batch(
     deps: &ToolActivityDeps,
     request: ToolInvokeBatchActivityRequest,
 ) -> Result<ToolBatchOutcome, ActivityError> {
     let request = request.request;
-    let native_indices = request
-        .calls
-        .iter()
-        .enumerate()
-        .filter(|(_, call)| call.remote_mcp.is_some())
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    if native_indices.is_empty() {
-        return invoke_runtime_batch(deps, request).await;
-    }
-
-    let runtime_request = ToolInvocationBatchRequest {
-        calls: request
-            .calls
-            .iter()
-            .filter(|call| call.remote_mcp.is_none())
-            .cloned()
-            .collect(),
-        ..request.clone()
-    };
-    let runtime = async {
-        if runtime_request.calls.is_empty() {
-            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                run_id: request.run_id,
-                turn_id: request.turn_id,
-                batch_id: request.batch_id,
-                results: Vec::new(),
-            }));
-        }
-        invoke_runtime_batch(deps, runtime_request).await
-    };
-    let native = stream::iter(native_indices)
-        .map(|index| {
-            let request = &request;
-            async move {
-                (
-                    index,
-                    invoke_native_mcp_batch_call(deps, request, index).await,
-                )
-            }
-        })
-        .buffer_unordered(MAX_CONCURRENT_TOOL_CALLS_PER_BATCH)
-        .collect::<Vec<_>>();
-    let (runtime_outcome, native_outcomes) = futures::future::join(runtime, native).await;
-    let runtime_outcome = runtime_outcome?;
-
-    let mut approvals = Vec::new();
-    let mut native_results = BTreeMap::new();
-    let mut native_outcomes = native_outcomes;
-    native_outcomes.sort_by_key(|(index, _)| *index);
-    for (index, outcome) in native_outcomes {
-        match outcome? {
-            NativeMcpCallOutcome::Completed(result) => {
-                native_results.insert(index, result);
-            }
-            NativeMcpCallOutcome::NeedsApproval { subject } => {
-                approvals.push(NativeMcpApprovalRequest {
-                    call_id: request.calls[index].call_id.clone(),
-                    subject,
-                });
-            }
-        }
-    }
-    let merge = |runtime_results: Vec<ToolInvocationResult>| {
-        merge_in_batch_order(&request, runtime_results, native_results)
-    };
-
-    if !approvals.is_empty() {
-        let runtime_results = match runtime_outcome {
-            ToolBatchOutcome::Completed { result } => result.results,
-            // An `await` never defers while a sibling waits on a decision:
-            // the deferral is dropped, the await stays pending, and it runs
-            // again with the gated calls once the run unparks.
-            ToolBatchOutcome::Deferred {
-                completed_results, ..
-            } => completed_results,
-            ToolBatchOutcome::AwaitingApproval { .. } => {
-                return Err(runtime_approval_invariant_error());
-            }
-        };
-        return Ok(ToolBatchOutcome::AwaitingApproval {
-            batch_id: request.batch_id,
-            completed_results: merge(runtime_results),
-            approvals,
-        });
-    }
-    Ok(match runtime_outcome {
-        ToolBatchOutcome::Completed { result } => ToolBatchOutcome::Completed {
-            result: ToolInvocationBatchResult {
-                results: merge(result.results),
-                ..result
-            },
-        },
-        ToolBatchOutcome::Deferred {
-            batch_id,
-            call_id,
-            completed_results,
-            spec,
-        } => ToolBatchOutcome::Deferred {
-            batch_id,
-            call_id,
-            completed_results: merge(completed_results),
-            spec,
-        },
-        ToolBatchOutcome::AwaitingApproval { .. } => {
-            return Err(runtime_approval_invariant_error());
-        }
-    })
-}
-
-fn runtime_approval_invariant_error() -> ActivityError {
-    activity_error(anyhow::anyhow!(
-        "tool runtime reported an approval outcome for a batch without native MCP calls"
-    ))
-}
-
-/// Hand a batch without native MCP calls to the tool runtime; a runtime
-/// failure becomes an ordinary failed result for every call it covered.
-async fn invoke_runtime_batch(
-    deps: &ToolActivityDeps,
-    request: ToolInvocationBatchRequest,
-) -> Result<ToolBatchOutcome, ActivityError> {
     match deps.tools.invoke_batch(request.clone()).await {
         Ok(outcome) => Ok(outcome),
         Err(error) => failed_tool_batch_result(deps.blobs.as_ref(), &request, error.to_string())
@@ -252,47 +119,6 @@ async fn invoke_runtime_batch(
             .map(ToolBatchOutcome::completed)
             .map_err(activity_error),
     }
-}
-
-/// Order merged results by their call's position in the original batch.
-/// Results the runtime returned for calls this batch never scheduled keep
-/// their relative order at the end; the harness rejects them on resume.
-fn merge_in_batch_order(
-    request: &ToolInvocationBatchRequest,
-    runtime_results: Vec<ToolInvocationResult>,
-    native_results: BTreeMap<usize, ToolInvocationResult>,
-) -> Vec<ToolInvocationResult> {
-    let position = |call_id: &harness::ToolCallId| {
-        request
-            .calls
-            .iter()
-            .position(|call| call.call_id == *call_id)
-            .unwrap_or(usize::MAX)
-    };
-    let mut results = native_results.into_iter().collect::<Vec<_>>();
-    results.extend(
-        runtime_results
-            .into_iter()
-            .map(|result| (position(&result.call_id), result)),
-    );
-    results.sort_by_key(|(index, _)| *index);
-    results.into_iter().map(|(_, result)| result).collect()
-}
-
-/// One native MCP call of a batch-unit dispatch, executed exactly as the
-/// per-call activity would execute it.
-async fn invoke_native_mcp_batch_call(
-    deps: &ToolActivityDeps,
-    request: &ToolInvocationBatchRequest,
-    index: usize,
-) -> Result<NativeMcpCallOutcome, ActivityError> {
-    let call_request = request
-        .call_request(
-            index,
-            ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
-        )
-        .expect("native MCP indices come from this batch request");
-    invoke_native_mcp_call(deps, &call_request).await
 }
 
 /// Outcome of one native MCP call executed by this activity wrapper.
@@ -305,12 +131,9 @@ enum NativeMcpCallOutcome {
     },
 }
 
-/// Execute one native MCP call under the remote operation deadline. Shared by
-/// per-call and batch-unit execution so both paths apply the same target
-/// validation, approval gate, asset storage, result projection, deadline, and
-/// failure conversion. Tool-level failures and an elapsed deadline become an
-/// ordinary terminal failed result; only blob-store failures fail the
-/// activity.
+/// Execute one native MCP call under the remote operation deadline. Tool-level
+/// failures and an elapsed deadline become an ordinary terminal failed result;
+/// only blob-store failures fail the activity.
 async fn invoke_native_mcp_call(
     deps: &ToolActivityDeps,
     request: &harness::ToolInvocationCallRequest,
@@ -703,10 +526,11 @@ mod tests {
 
     use async_trait::async_trait;
     use harness::{
-        AwaitMode, AwaitSpec, BlobRef, CoreAgentIoError, CoreAgentTools,
-        PromiseControlArgumentCall, RemoteMcpApprovalPolicy, RemoteMcpCallRuntime,
-        RemoteMcpCallTarget, RunId, SessionId, ToolBatchId, ToolCallId, ToolInvocationRequest,
-        ToolName, TurnId, storage::InMemoryBlobStore,
+        BlobRef, CoreAgentIoError, CoreAgentTools, PromiseControlArgumentCall,
+        RemoteMcpApprovalPolicy, RemoteMcpCallRuntime, RemoteMcpCallTarget, RunId, SessionId,
+        ToolBatchId, ToolCallId, ToolExecutionSpec, ToolInvocationBatchRequest,
+        ToolInvocationBatchResult, ToolInvocationRequest, ToolName, TurnId,
+        storage::InMemoryBlobStore,
     };
     use llm_runtime::secrets::{AbsentSecretResolver, SecretResolver};
 
@@ -776,15 +600,12 @@ mod tests {
     #[derive(Clone, Copy)]
     enum RuntimeScript {
         Complete,
-        /// The runtime defers on the batch's last call, as the hosted runtime
-        /// does for an `await` sibling.
-        DeferOnLastCall,
         Fail,
     }
 
-    /// Tool runtime double: records every batch it receives and completes,
-    /// defers, or fails it by script. It never understands native MCP calls,
-    /// exactly like the hosted runtime.
+    /// Tool runtime double: records every batch it receives and completes or
+    /// fails it by script. It never understands native MCP calls, exactly like
+    /// the hosted runtime.
     struct RecordingTools {
         script: RuntimeScript,
         received: Mutex<Vec<ToolInvocationBatchRequest>>,
@@ -811,22 +632,6 @@ mod tests {
                         batch_id: request.batch_id,
                         results: request.calls.iter().map(succeeded).collect(),
                     }))
-                }
-                RuntimeScript::DeferOnLastCall => {
-                    let (deferred, completed) = request
-                        .calls
-                        .split_last()
-                        .expect("deferring batch has calls");
-                    Ok(ToolBatchOutcome::Deferred {
-                        batch_id: request.batch_id,
-                        call_id: deferred.call_id.clone(),
-                        completed_results: completed.iter().map(succeeded).collect(),
-                        spec: AwaitSpec {
-                            promise_ids: Vec::new(),
-                            mode: AwaitMode::All,
-                            deadline_at_ms: None,
-                        },
-                    })
                 }
             }
         }
@@ -1148,7 +953,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn batches_without_native_calls_reach_the_runtime_unchanged() {
+    async fn batches_reach_the_runtime_unchanged() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, tools) = deps(RuntimeScript::Complete, blobs, Some(native_runtime()));
         let request = batch(vec![
@@ -1167,203 +972,121 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn mixed_batches_run_ungated_calls_and_park_once_for_every_gated_call() {
+    async fn a_runtime_failure_becomes_a_failed_result_for_each_call() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, tools) = deps(
-            RuntimeScript::Complete,
-            blobs.clone(),
-            Some(native_runtime()),
-        );
+        let (deps, _tools) = deps(RuntimeScript::Fail, blobs.clone(), None);
         let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", None).await,
-            native_call(blobs.as_ref(), "call_m2", None).await,
+            runtime_call("call_a", "tool_a"),
+            runtime_call("call_b", "tool_b"),
         ]);
 
-        let outcome = invoke_batch(&deps, request.clone()).await.expect("batch");
+        let outcome = invoke_batch(&deps, request).await.expect("batch");
 
-        // The runtime saw one batch: the same dispatch minus its MCP calls.
-        let received = tools.received.lock().expect("recording lock");
-        assert_eq!(received.len(), 1);
-        assert_eq!(received[0].batch_id, request.request.batch_id);
-        assert_eq!(received[0].promise_id_base, request.request.promise_id_base);
-        assert_eq!(received[0].calls, vec![request.request.calls[0].clone()]);
-        drop(received);
-        let ToolBatchOutcome::AwaitingApproval {
-            batch_id,
-            completed_results,
-            approvals,
-        } = outcome
-        else {
-            panic!("expected an approval-gated batch, got {outcome:?}");
+        let ToolBatchOutcome::Completed { result } = outcome else {
+            panic!("expected a completed batch, got {outcome:?}");
         };
-        assert_eq!(batch_id, request.request.batch_id);
-        assert_eq!(call_ids(&completed_results), vec!["call_a"]);
-        assert_eq!(
-            approvals
-                .iter()
-                .map(|approval| approval.call_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["call_m1", "call_m2"]
-        );
-        for approval in &approvals {
-            let harness::ApprovalSubject::McpToolCall {
-                server_id,
-                tool_name,
-                ..
-            } = &approval.subject;
-            assert_eq!(server_id, "echo");
-            assert_eq!(tool_name, "hello");
+        assert_eq!(call_ids(&result.results), vec!["call_a", "call_b"]);
+        for failed in &result.results {
+            assert_eq!(failed.status, ToolCallStatus::Failed);
+            assert!(
+                error_text(blobs.as_ref(), failed)
+                    .await
+                    .contains("scripted runtime failure")
+            );
         }
     }
 
+    async fn invoke_native_call(
+        deps: &ToolActivityDeps,
+        blobs: &dyn BlobStore,
+        approval_decision: Option<bool>,
+    ) -> ToolInvokeCallActivityResult {
+        let call = native_call(blobs, "call_m", approval_decision).await;
+        let request = batch(vec![call])
+            .request
+            .call_request(
+                0,
+                ToolExecutionSpec::new(ToolExecutionClass::RemoteInteractive, false),
+            )
+            .expect("single call");
+        invoke_call(
+            deps,
+            crate::worker::ToolInvokeCallActivityRequest { request },
+        )
+        .await
+        .expect("call activity")
+    }
+
     #[tokio::test(flavor = "current_thread")]
-    async fn decided_native_calls_complete_inside_the_batch_in_batch_order() {
+    async fn an_undecided_gated_call_reports_its_subject_before_any_mcp_io() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, _tools) = deps(
+        let (deps, tools) = deps(
             RuntimeScript::Complete,
             blobs.clone(),
             Some(native_runtime()),
         );
-        let request = batch(vec![
-            native_call(blobs.as_ref(), "call_m1", Some(false)).await,
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m2", Some(true)).await,
-        ]);
 
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
+        let outcome = invoke_native_call(&deps, blobs.as_ref(), None).await;
 
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("expected a completed batch, got {outcome:?}");
+        let ToolInvokeCallActivityResult::NeedsApproval { subject } = outcome else {
+            panic!("expected an approval outcome, got {outcome:?}");
         };
-        assert_eq!(
-            call_ids(&result.results),
-            vec!["call_m1", "call_a", "call_m2"]
-        );
-        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
-        assert!(
-            error_text(blobs.as_ref(), &result.results[0])
-                .await
-                .contains("rejected")
-        );
-        assert_eq!(result.results[1].status, ToolCallStatus::Succeeded);
-        // The approved call reached the executor and failed there (no such
-        // server record); it never fell through to the inline runtime.
-        assert_eq!(result.results[2].status, ToolCallStatus::Failed);
-        let approved_error = error_text(blobs.as_ref(), &result.results[2]).await;
-        assert!(!approved_error.contains("unknown tool"), "{approved_error}");
-        assert!(result.results[2].duration_ms.is_some());
+        let harness::ApprovalSubject::McpToolCall {
+            server_id,
+            tool_name,
+            ..
+        } = subject;
+        assert_eq!(server_id, "echo");
+        assert_eq!(tool_name, "hello");
+        assert!(received_call_ids(&tools).is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn await_stays_pending_while_a_sibling_waits_on_approval() {
+    async fn a_decided_gated_call_completes_without_reaching_the_runtime() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, tools) = deps(
-            RuntimeScript::DeferOnLastCall,
+            RuntimeScript::Complete,
             blobs.clone(),
             Some(native_runtime()),
         );
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", None).await,
-            runtime_call("call_await", "concurrency.await"),
-        ]);
 
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        assert_eq!(
-            received_call_ids(&tools),
-            vec![vec!["call_a".to_owned(), "call_await".to_owned()]]
-        );
-        let ToolBatchOutcome::AwaitingApproval {
-            completed_results,
-            approvals,
-            ..
-        } = outcome
-        else {
-            panic!("expected an approval-gated batch, got {outcome:?}");
+        let rejected = invoke_native_call(&deps, blobs.as_ref(), Some(false)).await;
+        let ToolInvokeCallActivityResult::Completed { result } = rejected else {
+            panic!("expected a completed call, got {rejected:?}");
         };
-        assert_eq!(call_ids(&completed_results), vec!["call_a"]);
-        assert_eq!(approvals.len(), 1);
-        assert_eq!(approvals[0].call_id.as_str(), "call_m1");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn deferred_batches_carry_native_results_in_batch_order() {
-        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, _tools) = deps(
-            RuntimeScript::DeferOnLastCall,
-            blobs.clone(),
-            Some(native_runtime()),
-        );
-        let request = batch(vec![
-            native_call(blobs.as_ref(), "call_m1", Some(false)).await,
-            runtime_call("call_a", "work_report"),
-            runtime_call("call_await", "concurrency.await"),
-        ]);
-
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        let ToolBatchOutcome::Deferred {
-            call_id,
-            completed_results,
-            ..
-        } = outcome
-        else {
-            panic!("expected a deferred batch, got {outcome:?}");
-        };
-        assert_eq!(call_id.as_str(), "call_await");
-        assert_eq!(call_ids(&completed_results), vec!["call_m1", "call_a"]);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn runtime_failures_fail_only_the_runtime_calls() {
-        let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
-        let (deps, _tools) = deps(RuntimeScript::Fail, blobs.clone(), Some(native_runtime()));
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", Some(false)).await,
-        ]);
-
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
-
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("expected a completed batch, got {outcome:?}");
-        };
-        assert_eq!(call_ids(&result.results), vec!["call_a", "call_m1"]);
-        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        assert_eq!(result.status, ToolCallStatus::Failed);
         assert!(
-            error_text(blobs.as_ref(), &result.results[0])
-                .await
-                .contains("scripted runtime failure")
-        );
-        assert_eq!(result.results[1].status, ToolCallStatus::Failed);
-        assert!(
-            error_text(blobs.as_ref(), &result.results[1])
+            error_text(blobs.as_ref(), &result)
                 .await
                 .contains("rejected")
         );
+
+        // The approved call reached the executor and failed there (no such
+        // server record); it never fell through to the inline runtime.
+        let approved = invoke_native_call(&deps, blobs.as_ref(), Some(true)).await;
+        let ToolInvokeCallActivityResult::Completed { result } = approved else {
+            panic!("expected a completed call, got {approved:?}");
+        };
+        assert_eq!(result.status, ToolCallStatus::Failed);
+        assert!(result.duration_ms.is_some());
+        let approved_error = error_text(blobs.as_ref(), &result).await;
+        assert!(!approved_error.contains("unknown tool"), "{approved_error}");
+        assert!(received_call_ids(&tools).is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn native_calls_fail_as_tool_failures_when_the_worker_has_no_native_runtime() {
+    async fn a_native_call_fails_as_a_tool_failure_when_the_worker_has_no_native_runtime() {
         let blobs: Arc<dyn BlobStore> = Arc::new(InMemoryBlobStore::new());
         let (deps, _tools) = deps(RuntimeScript::Complete, blobs.clone(), None);
-        let request = batch(vec![
-            runtime_call("call_a", "work_report"),
-            native_call(blobs.as_ref(), "call_m1", None).await,
-        ]);
 
-        let outcome = invoke_batch(&deps, request).await.expect("batch");
+        let outcome = invoke_native_call(&deps, blobs.as_ref(), None).await;
 
-        let ToolBatchOutcome::Completed { result } = outcome else {
-            panic!("expected a completed batch, got {outcome:?}");
+        let ToolInvokeCallActivityResult::Completed { result } = outcome else {
+            panic!("expected a completed call, got {outcome:?}");
         };
-        assert_eq!(call_ids(&result.results), vec!["call_a", "call_m1"]);
-        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
-        assert_eq!(result.results[1].status, ToolCallStatus::Failed);
+        assert_eq!(result.status, ToolCallStatus::Failed);
         assert!(
-            error_text(blobs.as_ref(), &result.results[1])
+            error_text(blobs.as_ref(), &result)
                 .await
                 .contains("native MCP execution is unavailable on this worker")
         );

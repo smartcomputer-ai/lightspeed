@@ -255,9 +255,9 @@ pub fn environment_ready_activity_options() -> ActivityOptions {
     .build()
 }
 
-/// Temporal options for a batch-unit tool activity (await batches and
-/// workflow-tool batches execute as one unit). Bounded: one attempt and an
-/// explicit total deadline, never Temporal's default unlimited retries.
+/// Temporal options for the batch tool activity, which runs a batch's `await` and
+/// workflow-tool calls once its other calls have finished. Bounded: one attempt and
+/// an explicit total deadline, never Temporal's default unlimited retries.
 pub fn tool_batch_activity_options() -> ActivityOptions {
     ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::ScheduleAndStartToClose {
         start_to_close: DEFAULT_ACTIVITY_START_TO_CLOSE_TIMEOUT,

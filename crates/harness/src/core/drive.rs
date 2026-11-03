@@ -323,38 +323,6 @@ impl CoreAgentDrive {
                 completed_results,
                 spec,
             } => self.defer_tool_batch(batch_id, call_id, completed_results, spec, observed_at_ms),
-            ToolBatchOutcome::AwaitingApproval {
-                batch_id,
-                completed_results,
-                approvals,
-            } => {
-                // Ungated siblings complete durably in the same append that
-                // parks the run, so a re-dispatch after the decisions only
-                // ever carries the calls that are still pending.
-                let mut proposals = Vec::new();
-                if !completed_results.is_empty() {
-                    let active_run = self.state.runs.active.as_ref().ok_or_else(|| {
-                        DomainError::InvariantViolation(
-                            "tool batch result requires an active run".into(),
-                        )
-                    })?;
-                    let batch = active_run.tool_batches.get(&batch_id).ok_or_else(|| {
-                        DomainError::InvariantViolation(format!("tool batch {batch_id} is missing"))
-                    })?;
-                    proposals.extend(tool_batch_result_proposals_for_session(
-                        &self.session_id,
-                        &self.state,
-                        ToolInvocationBatchResult {
-                            run_id: batch.run_id,
-                            turn_id: batch.turn_id,
-                            batch_id: batch.batch_id,
-                            results: completed_results,
-                        },
-                    )?);
-                }
-                proposals.extend(self.native_mcp_approval_proposals(batch_id, approvals)?);
-                self.append_action(proposals, observed_at_ms)
-            }
         }
     }
 
@@ -996,9 +964,8 @@ pub(crate) fn tool_invocation_request(
                             .emission_count(run_id, &binding.definition.tool_id),
                     )
                 });
-            // Native MCP routing is decided here, once per dispatch, so the
-            // batch-unit and per-call execution paths see identical facts
-            // (including the run-owned approval decision, if any).
+            // Native MCP routing is decided here, once per dispatch, including
+            // the run-owned approval decision, if any.
             let remote_mcp = crate::remote_mcp_call_runtime(state, call);
             ToolInvocationRequest {
                 builtin: call
@@ -11083,28 +11050,33 @@ mod tests {
     }
 
     #[test]
-    fn awaiting_approval_outcome_completes_ungated_calls_and_parks_once_for_the_gated_set() {
+    fn ungated_calls_commit_and_the_gated_set_parks_once_and_redispatches_alone() {
         let session_id = SessionId::new("session-mixed-native-mcp-approvals");
         let mut drive = CoreAgentDrive::from_replayed(session_id, CoreAgentState::new());
         let request = mixed_native_mcp_batch(&mut drive);
         let run_id = request.run_id;
 
-        // The batch activity ran the ungated sibling and reports both gated
-        // calls; everything appends as one action.
+        // The ungated sibling commits first, and the group's gated calls park
+        // together when its window drains.
+        let sibling = drive
+            .resume_tool_call(
+                request.batch_id,
+                per_call_result(
+                    &request.calls[0].call_id,
+                    ToolCallStatus::Succeeded,
+                    Vec::new(),
+                ),
+                89,
+            )
+            .expect("sibling result");
+        commit_action(&mut drive, sibling);
         let parked = drive
-            .resume_tool_batch_outcome(
-                ToolBatchOutcome::AwaitingApproval {
-                    batch_id: request.batch_id,
-                    completed_results: vec![per_call_result(
-                        &request.calls[0].call_id,
-                        ToolCallStatus::Succeeded,
-                        Vec::new(),
-                    )],
-                    approvals: vec![
-                        native_mcp_approval(&request.calls[1].call_id),
-                        native_mcp_approval(&request.calls[2].call_id),
-                    ],
-                },
+            .request_native_mcp_approvals(
+                request.batch_id,
+                vec![
+                    native_mcp_approval(&request.calls[1].call_id),
+                    native_mcp_approval(&request.calls[2].call_id),
+                ],
                 90,
             )
             .expect("park on approvals");

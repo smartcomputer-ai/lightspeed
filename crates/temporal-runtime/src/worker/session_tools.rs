@@ -156,14 +156,6 @@ impl SessionTools {
             Some(harness::CANCEL_TOOL_ID) => self.invoke_cancel_call(call).await,
             Some(harness::DETACH_TOOL_ID) => self.invoke_detach_call(request.run_id, call).await,
             Some(harness::SLEEP_TOOL_ID) => self.invoke_sleep_call(call, promise_ids).await,
-            Some(harness::AWAIT_TOOL_ID) => {
-                failed_result(
-                    self.blobs.as_ref(),
-                    call.call_id.clone(),
-                    "await must be the only deferred call in its tool batch",
-                )
-                .await
-            }
             other => {
                 failed_result(
                     self.blobs.as_ref(),
@@ -245,155 +237,20 @@ impl SessionTools {
         Ok(result)
     }
 
-    async fn invoke_lone_await_batch(
+    /// The wait an `await` call asks for, or that call's failed result when its
+    /// request makes no sense.
+    async fn prepare_await(
         &self,
-        request: ToolInvocationBatchRequest,
-    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
-        let call = request
-            .calls
-            .first()
-            .cloned()
-            .ok_or_else(|| io_error("await batch had no calls after planner invocation"))?;
-        self.invoke_store_backed_await_batch(request, &call).await
-    }
-
-    async fn invoke_store_backed_await_batch(
-        &self,
-        request: ToolInvocationBatchRequest,
         call: &harness::ToolInvocationRequest,
-    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
+    ) -> Result<Result<harness::AwaitSpec, ToolInvocationResult>, CoreAgentIoError> {
         let args: AwaitArgs = self.read_tool_args(call).await?;
         match await_spec_from_args(args, now_unix_ms()?).map_err(io_error) {
-            Ok(spec) => Ok(ToolBatchOutcome::Deferred {
-                batch_id: request.batch_id,
-                call_id: call.call_id.clone(),
-                completed_results: Vec::new(),
-                spec,
-            }),
+            Ok(spec) => Ok(Ok(spec)),
             Err(error) => {
-                let result =
-                    failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
-                        .await?;
-                Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                    batch_id: request.batch_id,
-                    results: vec![result],
-                }))
+                failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
+                    .await
+                    .map(Err)
             }
-        }
-    }
-
-    async fn invoke_mixed_await_batch(
-        &self,
-        request: ToolInvocationBatchRequest,
-    ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
-        let await_calls = request
-            .calls
-            .iter()
-            .filter(|call| {
-                call.tool_id
-                    .as_ref()
-                    .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if await_calls.len() != 1 {
-            let results = request
-                .calls
-                .iter()
-                .map(|call| {
-                    failed_result(
-                        self.blobs.as_ref(),
-                        call.call_id.clone(),
-                        "a tool batch may contain at most one await call",
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut completed = Vec::with_capacity(results.len());
-            for result in results {
-                completed.push(result.await?);
-            }
-            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                run_id: request.run_id,
-                turn_id: request.turn_id,
-                batch_id: request.batch_id,
-                results: completed,
-            }));
-        }
-
-        let non_await_request = ToolInvocationBatchRequest {
-            calls: request
-                .calls
-                .iter()
-                .filter(|call| {
-                    !call
-                        .tool_id
-                        .as_ref()
-                        .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
-                })
-                .cloned()
-                .collect(),
-            ..request.clone()
-        };
-        let completed_results = match Box::pin(self.invoke_batch(non_await_request)).await? {
-            ToolBatchOutcome::Completed { result } => result.results,
-            ToolBatchOutcome::Deferred { .. } => {
-                let result = failed_result(
-                    self.blobs.as_ref(),
-                    await_calls[0].call_id.clone(),
-                    "await cannot park while another call in the same batch deferred",
-                )
-                .await?;
-                return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                    batch_id: request.batch_id,
-                    results: vec![result],
-                }));
-            }
-            // Native MCP calls never reach this runtime; the activity
-            // wrapper dispatches them and owns approval gating.
-            ToolBatchOutcome::AwaitingApproval { .. } => {
-                return Err(io_error(
-                    "tool runtime reported an approval outcome for a batch without native MCP calls",
-                ));
-            }
-        };
-
-        let await_request = ToolInvocationBatchRequest {
-            calls: await_calls,
-            ..request.clone()
-        };
-        match self.invoke_lone_await_batch(await_request).await? {
-            ToolBatchOutcome::Completed { result } => {
-                let mut results = completed_results;
-                results.extend(result.results);
-                Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                    run_id: request.run_id,
-                    turn_id: request.turn_id,
-                    batch_id: request.batch_id,
-                    results,
-                }))
-            }
-            ToolBatchOutcome::Deferred {
-                batch_id,
-                call_id,
-                completed_results: await_completed,
-                spec,
-            } => {
-                let mut results = completed_results;
-                results.extend(await_completed);
-                Ok(ToolBatchOutcome::Deferred {
-                    batch_id,
-                    call_id,
-                    completed_results: results,
-                    spec,
-                })
-            }
-            ToolBatchOutcome::AwaitingApproval { .. } => Err(io_error(
-                "tool runtime reported an approval outcome for a batch without native MCP calls",
-            )),
         }
     }
 
@@ -1607,226 +1464,80 @@ async fn environment_working_directory(
     Ok(cwd)
 }
 
-#[derive(Clone, Copy)]
-enum BatchCallRoute {
-    Workflow,
-    Concurrency,
-    EnvironmentControl,
-    EnvironmentJobRead,
-    Inline,
-}
-
-impl BatchCallRoute {
-    fn requires_runtime(self) -> bool {
-        matches!(self, Self::EnvironmentJobRead | Self::Inline)
-    }
-}
-
-struct BatchCall<'a> {
-    call: &'a harness::ToolInvocationRequest,
-    route: BatchCallRoute,
-    denial: Option<String>,
-    needs_vfs: bool,
-    needs_environment: bool,
-}
-
-impl<'a> BatchCall<'a> {
-    fn new(request: &ToolInvocationBatchRequest, call: &'a harness::ToolInvocationRequest) -> Self {
-        let id = call.tool_id.as_ref();
-        let requirements = id.map(BuiltinToolRequirements::for_id).unwrap_or_default();
-        let is_job_read = id.is_some_and(|id| id.as_str() == "env.job_read");
-        let route = if call.workflow_tool.is_some() {
-            BatchCallRoute::Workflow
-        } else if id.is_some_and(is_concurrency_tool) {
-            BatchCallRoute::Concurrency
-        } else if id.is_some_and(is_environment_control_tool) {
-            BatchCallRoute::EnvironmentControl
-        } else if is_job_read {
-            BatchCallRoute::EnvironmentJobRead
-        } else {
-            BatchCallRoute::Inline
-        };
-        Self {
-            call,
-            route,
-            denial: environment_tool_denial(
-                request.environment_policy.as_ref(),
-                request.active_environment_id.as_ref(),
-                call,
-            ),
-            needs_vfs: requirements.vfs,
-            needs_environment: requirements.active_environment || is_job_read,
-        }
-    }
-}
-
 #[async_trait]
 impl CoreAgentTools for SessionTools {
+    /// Run the calls that must commit together: workflow-tool calls, which only
+    /// build effects here, and `await`. The workflow runs every other call on the
+    /// per-call path first, so nothing this does has an external effect until the
+    /// results commit.
     async fn invoke_batch(
         &self,
         request: ToolInvocationBatchRequest,
     ) -> Result<ToolBatchOutcome, CoreAgentIoError> {
-        // One allocator per dispatch: every promise this batch's calls mint
-        // is numbered from the harness's base, whichever call draws first.
-        let promise_ids = PromiseIdAllocator::new(request.promise_id_base);
-        let selection_calls = request
-            .calls
-            .iter()
-            .filter(|call| {
-                call.tool_id
-                    .as_ref()
-                    .is_some_and(is_environment_selection_tool)
+        let completed = |results| {
+            ToolBatchOutcome::completed(ToolInvocationBatchResult {
+                run_id: request.run_id,
+                turn_id: request.turn_id,
+                batch_id: request.batch_id,
+                results,
             })
-            .count();
-        let mixes_environment_dependency = selection_calls > 0
-            && request.calls.iter().any(|call| {
-                !call
-                    .tool_id
-                    .as_ref()
-                    .is_some_and(is_environment_selection_tool)
-                    && call
-                        .tool_id
-                        .as_ref()
-                        .is_some_and(|id| BuiltinToolRequirements::for_id(id).active_environment)
-            });
-        if selection_calls > 1 || mixes_environment_dependency {
-            let mut results = Vec::with_capacity(request.calls.len());
+        };
+        let (await_calls, calls): (Vec<_>, Vec<_>) = request.calls.iter().partition(|call| {
+            call.tool_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
+        });
+        let mut results = Vec::with_capacity(request.calls.len());
+        if await_calls.len() > 1 {
             for call in &request.calls {
                 results.push(
                     failed_result(
                         self.blobs.as_ref(),
                         call.call_id.clone(),
-                        "environment activation/deactivation cannot share a batch with another selection or an environment-dependent tool",
+                        "a tool batch may contain at most one await call",
                     )
                     .await?,
                 );
             }
-            return Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                run_id: request.run_id,
-                turn_id: request.turn_id,
-                batch_id: request.batch_id,
-                results,
-            }));
+            return Ok(completed(results));
         }
-        let has_await_call = request.calls.iter().any(|call| {
-            call.tool_id
-                .as_ref()
-                .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
-        });
-        if has_await_call && request.calls.len() == 1 {
-            return self.invoke_lone_await_batch(request).await;
-        }
-        if has_await_call {
-            return self.invoke_mixed_await_batch(request).await;
-        }
-        let calls: Vec<_> = request
-            .calls
-            .iter()
-            .map(|call| BatchCall::new(&request, call))
-            .collect();
-        let has_generic_runtime_call = calls.iter().any(|call| call.route.requires_runtime());
-        // Preserve the fast path: workflow/concurrency/control-only batches do
-        // not resolve generic domains, even if a supplied call has a builtin ID.
-        let has_vfs_call = has_generic_runtime_call
-            && calls
-                .iter()
-                .any(|call| call.denial.is_none() && call.needs_vfs);
-        let has_environment_call = has_generic_runtime_call
-            && calls
-                .iter()
-                .any(|call| call.denial.is_none() && call.needs_environment);
+        // One allocator per dispatch: every promise this batch's calls mint
+        // is numbered from the harness's base, whichever call draws first.
+        let promise_ids = PromiseIdAllocator::new(request.promise_id_base);
         let mut successful_workflow_siblings = BTreeMap::new();
-        let attachments = if has_vfs_call {
-            vfs::resolve_workspace_attachments(
-                self.blobs.clone(),
-                self.workspace_store.clone(),
-                &request.workspace_attachments,
-            )
-            .await
-            .map_err(map_catalog_error)?
-        } else {
-            Vec::new()
-        };
-        let environments = if has_environment_call {
-            self.environment_manager_for_session(&request).await?
-        } else {
-            SessionEnvironmentManager::new(self.blobs.clone())
-        };
-        let outcome = async {
-            let runtime = if has_generic_runtime_call {
-                let runtime = self
-                    .runtime_for_domains(
-                        attachments,
-                        &environments,
-                        request.active_environment_id.as_ref(),
-                        request.vfs_working_directory.as_deref(),
-                    )
-                    .await?;
-                Some(self.with_recorded_content(runtime, &request).await?)
+        for call in calls {
+            results.push(if call.workflow_tool.is_some() {
+                self.invoke_supplied_workflow_tool_call(
+                    &request,
+                    call,
+                    &mut successful_workflow_siblings,
+                    &promise_ids,
+                )
+                .await?
             } else {
-                None
-            };
-
-            let mut results = Vec::with_capacity(calls.len());
-            for planned in calls {
-                let call = planned.call;
-                let result = if let Some(message) = planned.denial {
-                    failed_result(self.blobs.as_ref(), call.call_id.clone(), message).await?
-                } else if planned.route.requires_runtime()
-                    && planned.needs_environment
-                    && let Some(blocker) = environments.active_blocker()
-                {
-                    // Batch-unit execution has no workflow-level readiness wait;
-                    // report the blocker as an ordinary failed call.
-                    failed_result(
-                        self.blobs.as_ref(),
-                        call.call_id.clone(),
-                        active_environment_blocker_message(blocker),
-                    )
-                    .await?
-                } else {
-                    match planned.route {
-                        BatchCallRoute::Workflow => {
-                            self.invoke_supplied_workflow_tool_call(
-                                &request,
-                                call,
-                                &mut successful_workflow_siblings,
-                                &promise_ids,
-                            )
-                            .await?
-                        }
-                        BatchCallRoute::Concurrency => {
-                            self.invoke_concurrency_call(&request, call, &promise_ids)
-                                .await?
-                        }
-                        BatchCallRoute::EnvironmentControl => {
-                            self.invoke_environment_control_call(&request, call).await?
-                        }
-                        BatchCallRoute::EnvironmentJobRead => {
-                            self.invoke_environment_job_call(&request, call, &environments)
-                                .await?
-                        }
-                        BatchCallRoute::Inline => {
-                            runtime
-                                .as_ref()
-                                .expect("inline calls require runtime setup")
-                                .invoke_call(call)
-                                .await?
-                        }
-                    }
-                };
-                results.push(result);
-            }
-            Ok(ToolBatchOutcome::completed(ToolInvocationBatchResult {
-                run_id: request.run_id,
-                turn_id: request.turn_id,
-                batch_id: request.batch_id,
-                results,
-            }))
+                failed_result(
+                    self.blobs.as_ref(),
+                    call.call_id.clone(),
+                    "this tool call runs on the per-call path, not in a batch",
+                )
+                .await?
+            });
         }
-        .await;
-        environments.close().await;
-        outcome
+        let Some(call) = await_calls.first() else {
+            return Ok(completed(results));
+        };
+        Ok(match self.prepare_await(call).await? {
+            Ok(spec) => ToolBatchOutcome::Deferred {
+                batch_id: request.batch_id,
+                call_id: call.call_id.clone(),
+                completed_results: results,
+                spec,
+            },
+            Err(failed) => {
+                results.push(failed);
+                completed(results)
+            }
+        })
     }
 
     async fn invoke_call(
@@ -1913,19 +1624,10 @@ impl SessionTools {
             .as_ref()
             .is_some_and(|id| id.as_str() == harness::AWAIT_TOOL_ID)
         {
-            let prepared = async {
-                let args: AwaitArgs = self.read_tool_args(call).await?;
-                await_spec_from_args(args, now_unix_ms()?).map_err(io_error)
-            }
-            .await;
-            return match prepared {
-                Ok(spec) => Ok(CodeToolCallExecution::Deferred(spec)),
-                Err(error) => {
-                    failed_result(self.blobs.as_ref(), call.call_id.clone(), error.to_string())
-                        .await
-                        .map(CodeToolCallExecution::Completed)
-                }
-            };
+            return Ok(match self.prepare_await(call).await? {
+                Ok(spec) => CodeToolCallExecution::Deferred(spec),
+                Err(failed) => CodeToolCallExecution::Completed(failed),
+            });
         }
         Ok(match self.invoke_call_execution(request).await? {
             ToolCallExecution::Completed(result) => CodeToolCallExecution::Completed(result),
@@ -1952,8 +1654,8 @@ impl SessionTools {
                 .await
                 .map(ToolCallExecution::Completed);
         }
-        // Batch-unit tools never arrive here: the workflow routes batches
-        // containing them through the batch activity.
+        // These never arrive here: the workflow sends them to the batch activity
+        // once every other call of their batch has finished.
         if call.workflow_tool.is_some()
             || call
                 .tool_id
@@ -2530,23 +2232,15 @@ mod tests {
                 }
                 // No resolver, workspace attachments, or argument blob: refusal
                 // must happen before resolving any of these effectful resources.
-                let call = tools.invoke_call(request.clone()).await.unwrap();
-                let batch = tools
-                    .invoke_batch(request.into_batch_request())
-                    .await
-                    .unwrap()
-                    .completed_result()
-                    .unwrap();
-                for result in [call, batch.results[0].clone()] {
-                    assert_eq!(result.status, ToolCallStatus::Failed);
-                    assert!(
-                        blobs
-                            .read_text(result.error_ref.as_ref().unwrap())
-                            .await
-                            .unwrap()
-                            .contains("grants")
-                    );
-                }
+                let result = tools.invoke_call(request).await.unwrap();
+                assert_eq!(result.status, ToolCallStatus::Failed);
+                assert!(
+                    blobs
+                        .read_text(result.error_ref.as_ref().unwrap())
+                        .await
+                        .unwrap()
+                        .contains("grants")
+                );
             }
         }
     }
@@ -2572,13 +2266,7 @@ mod tests {
             harness::EnvironmentAccess::Read,
         ));
         batch.calls.push(denied);
-        let results = tools
-            .invoke_batch(batch)
-            .await
-            .unwrap()
-            .completed_result()
-            .unwrap()
-            .results;
+        let results = invoke_each(&tools, batch).await;
         assert_eq!(results[0].status, ToolCallStatus::Succeeded);
         assert_eq!(results[1].status, ToolCallStatus::Failed);
         assert!(
@@ -2588,6 +2276,72 @@ mod tests {
                 .unwrap()
                 .contains("requires edit access")
         );
+    }
+
+    fn residue_batch(
+        session_id: SessionId,
+        calls: Vec<harness::ToolInvocationRequest>,
+    ) -> ToolInvocationBatchRequest {
+        ToolInvocationBatchRequest {
+            vfs_working_directory: None,
+            session_id,
+            run_id: RunId::new(9),
+            turn_id: TurnId::new(1),
+            batch_id: ToolBatchId::new(1),
+            promise_id_base: 1,
+            active_environment_id: None,
+            environment_policy: None,
+            subagents_policy: None,
+            code_mode_policy: None,
+            workspace_attachments: Vec::new(),
+            calls,
+        }
+    }
+
+    fn await_call(call_id: &str, arguments_ref: BlobRef) -> harness::ToolInvocationRequest {
+        harness::ToolInvocationRequest {
+            builtin: Some(test_builtin_runtime()),
+            call_id: ToolCallId::new(call_id),
+            tool_id: Some(test_tool_id(::tools::concurrency::AWAIT_TOOL_NAME)),
+            tool_name: ToolName::new(::tools::concurrency::AWAIT_TOOL_NAME),
+            arguments_ref,
+            workflow_tool: None,
+            promise_control: None,
+            remote_mcp: None,
+        }
+    }
+
+    fn workflow_call(
+        call_id: &str,
+        binding: &harness::WorkflowToolBinding,
+        arguments_ref: BlobRef,
+    ) -> harness::ToolInvocationRequest {
+        harness::ToolInvocationRequest {
+            builtin: None,
+            call_id: ToolCallId::new(call_id),
+            tool_id: Some(binding.definition.tool.name.clone()),
+            tool_name: binding.definition.tool.name.clone(),
+            arguments_ref,
+            workflow_tool: Some(harness::WorkflowToolCallRuntime::v1(binding.clone(), 0)),
+            promise_control: None,
+            remote_mcp: None,
+        }
+    }
+
+    /// Run every call of a dispatch on the per-call path, as the workflow runs
+    /// ordinary calls.
+    async fn invoke_each(
+        tools: &SessionTools,
+        request: ToolInvocationBatchRequest,
+    ) -> Vec<ToolInvocationResult> {
+        let mut results = Vec::with_capacity(request.calls.len());
+        for index in 0..request.calls.len() {
+            let call = request
+                .call_request(index, Default::default())
+                .expect("index into this dispatch");
+            results.push(tools.invoke_call(call).await.expect("invoke call"));
+        }
+        results
     }
 
     fn per_call_request(
@@ -2972,134 +2726,83 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn special_dispatch_preserves_order_and_accounting_with_or_without_inline_calls() {
-        for with_inline in [false, true] {
-            let (blobs, tools, _, workspace_attachments) =
-                session_tools_with_readme_attachment().await;
-            let sessions = InMemorySessionStore::new();
-            let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
-            let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
-            let tools = tools.with_environment_resolver(test_resolver(registry.clone()));
-            let sleep_args = blobs.put_bytes(br#"{"ms":50}"#.to_vec()).await.unwrap();
-            let workflow_args = blobs
-                .put_bytes(br#"{"status":"complete"}"#.to_vec())
-                .await
-                .unwrap();
-            let list_args = blobs.put_bytes(b"{}".to_vec()).await.unwrap();
-            let read_args = blobs
-                .put_bytes(br#"{"path":"README.md"}"#.to_vec())
-                .await
-                .unwrap();
-            let call = |name: &str, id: &str, arguments_ref: BlobRef| {
-                let mut call = per_call_request(name, b"{}", &[]).call;
-                call.call_id = ToolCallId::new(id);
-                call.arguments_ref = arguments_ref;
-                call
+    async fn batch_calls_keep_order_and_accounting_and_refuse_ordinary_calls() {
+        let (blobs, tools, _, workspace_attachments) = session_tools_with_readme_attachment().await;
+        let sessions = InMemorySessionStore::new();
+        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let workflow_args = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
+            .await
+            .unwrap();
+        let call = |name: &str, id: &str, arguments_ref: BlobRef| {
+            let mut call = per_call_request(name, b"{}", &[]).call;
+            call.call_id = ToolCallId::new(id);
+            call.arguments_ref = arguments_ref;
+            call
+        };
+        let mut workflow = call("work_report", "workflow", workflow_args.clone());
+        workflow.builtin = None;
+        workflow.workflow_tool = Some(harness::WorkflowToolCallRuntime::v1(
+            binding,
+            harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN - 1,
+        ));
+        let mut bad_route = workflow.clone();
+        bad_route.call_id = ToolCallId::new("bad-route");
+        // Supplied workflow routing wins over a builtin-looking ID. The mismatch
+        // must fail validation without demanding VFS setup, and must not consume
+        // the sibling cap.
+        bad_route.tool_id = Some(test_tool_id("vfs_read_file"));
+        let mut over_cap = workflow.clone();
+        over_cap.call_id = ToolCallId::new("over-cap");
+        let calls = vec![
+            bad_route,
+            workflow,
+            call("vfs_read_file", "ordinary", workflow_args),
+            over_cap,
+        ];
+        let expected_ids: Vec<_> = calls.iter().map(|call| call.call_id.clone()).collect();
+        let results = tools
+            .invoke_batch(ToolInvocationBatchRequest {
+                session_id,
+                run_id: RunId::new(9),
+                turn_id: TurnId::new(1),
+                batch_id: ToolBatchId::new(1),
+                promise_id_base: 5,
+                // Nothing here may inspect this nonexistent cwd.
+                vfs_working_directory: Some("/missing".into()),
+                workspace_attachments,
+                active_environment_id: None,
+                environment_policy: Some(test_environment_policy(&[])),
+                subagents_policy: None,
+                code_mode_policy: None,
+                calls,
+            })
+            .await
+            .expect("dispatch")
+            .completed_result()
+            .expect("completed")
+            .results;
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.call_id.clone())
+                .collect::<Vec<_>>(),
+            expected_ids
+        );
+        for (index, result) in results.iter().enumerate() {
+            let expected = if index == 1 {
+                ToolCallStatus::Succeeded
+            } else {
+                ToolCallStatus::Failed
             };
-            let mut workflow = call("work_report", "workflow", workflow_args);
-            workflow.builtin = None;
-            workflow.workflow_tool = Some(harness::WorkflowToolCallRuntime::v1(
-                binding,
-                harness::MAX_WORKFLOW_TOOL_EMISSIONS_PER_RUN - 1,
-            ));
-            let mut bad_route = workflow.clone();
-            bad_route.call_id = ToolCallId::new("bad-route");
-            // Supplied workflow routing wins over a builtin-looking ID. The
-            // mismatch must fail validation without demanding VFS setup on
-            // the special-only path, and must not consume the sibling cap.
-            bad_route.tool_id = Some(test_tool_id("vfs_read_file"));
-            let mut over_cap = workflow.clone();
-            over_cap.call_id = ToolCallId::new("over-cap");
-            let mut calls = vec![
-                call(
-                    ::tools::concurrency::SLEEP_TOOL_NAME,
-                    "sleep-a",
-                    sleep_args.clone(),
-                ),
-                bad_route,
-                workflow,
-                call(ENVIRONMENT_LIST_TOOL_NAME, "list", list_args),
-                call(::tools::concurrency::SLEEP_TOOL_NAME, "sleep-b", sleep_args),
-                over_cap,
-            ];
-            if with_inline {
-                calls.push(call("vfs_read_file", "read", read_args));
-            }
-            let expected_ids: Vec<_> = calls.iter().map(|call| call.call_id.clone()).collect();
-            let results = tools
-                .invoke_batch(ToolInvocationBatchRequest {
-                    session_id,
-                    run_id: RunId::new(9),
-                    turn_id: TurnId::new(1),
-                    batch_id: ToolBatchId::new(1),
-                    promise_id_base: 5,
-                    // A special-only batch must not inspect this nonexistent cwd.
-                    vfs_working_directory: Some(
-                        if with_inline {
-                            "/workspace"
-                        } else {
-                            "/missing"
-                        }
-                        .into(),
-                    ),
-                    workspace_attachments,
-                    active_environment_id: None,
-                    environment_policy: Some(test_environment_policy(&[])),
-                    subagents_policy: None,
-                    code_mode_policy: None,
-                    calls,
-                })
-                .await
-                .expect("dispatch")
-                .completed_result()
-                .expect("completed")
-                .results;
-            assert_eq!(
-                results
-                    .iter()
-                    .map(|result| result.call_id.clone())
-                    .collect::<Vec<_>>(),
-                expected_ids
-            );
-            for (index, result) in results.iter().enumerate() {
-                let expected = if matches!(index, 1 | 5) {
-                    ToolCallStatus::Failed
-                } else {
-                    ToolCallStatus::Succeeded
-                };
-                assert_eq!(
-                    result.status, expected,
-                    "inline={with_inline}, call={}",
-                    result.call_id
-                );
-            }
-            assert_eq!(
-                results[0].effects[0]
-                    .data
-                    .get("promise_id")
-                    .map(String::as_str),
-                Some("promise_5")
-            );
-            assert_eq!(
-                results[4].effects[0]
-                    .data
-                    .get("promise_id")
-                    .map(String::as_str),
-                Some("promise_6")
-            );
-            assert_eq!(
-                results[2].effects[0].kind,
-                harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
-            );
-            assert!(results[1].effects.is_empty());
-            assert!(results[5].effects.is_empty());
-            if with_inline {
-                let output = blobs
-                    .read_text(results[6].output_ref.as_ref().unwrap())
-                    .await
-                    .unwrap();
-                assert!(output.contains("hello"));
-            }
+            assert_eq!(result.status, expected, "call={}", result.call_id);
+        }
+        assert_eq!(
+            results[1].effects[0].kind,
+            harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+        );
+        for index in [0, 2, 3] {
+            assert!(results[index].effects.is_empty());
         }
     }
 
@@ -4330,25 +4033,6 @@ mod tests {
                 .0
         }
 
-        async fn dispatch(
-            tools: &SessionTools,
-            request: harness::ToolInvocationCallRequest,
-            batch: bool,
-        ) -> ToolInvocationResult {
-            if batch {
-                tools
-                    .invoke_batch(request.into_batch_request())
-                    .await
-                    .unwrap()
-                    .completed_result()
-                    .unwrap()
-                    .results
-                    .remove(0)
-            } else {
-                tools.invoke_call(request).await.unwrap()
-            }
-        }
-
         async fn succeeded(
             blobs: &InMemoryBlobStore,
             result: &ToolInvocationResult,
@@ -4373,142 +4057,137 @@ mod tests {
 
         #[tokio::test(flavor = "current_thread")]
         async fn hosted_transfer_dispatch_loads_both_domains_and_publishes_capture() {
-            for batch in [false, true] {
-                for api_kind in [
-                    ProviderApiKind::OpenAiResponses,
-                    ProviderApiKind::AnthropicMessages,
-                    ProviderApiKind::OpenAiCompletions,
-                ] {
-                    let (blobs, tools, session_id, workspace_attachments) =
-                        session_tools_with_readme_attachment().await;
-                    let temp = tempfile::tempdir().unwrap();
-                    let root = temp.path().canonicalize().unwrap().join("root");
-                    std::fs::create_dir_all(&root).unwrap();
-                    let client =
-                        in_process_envd(&root, &temp.path().canonicalize().unwrap().join("state"))
-                            .await;
-                    let environment = test_environment(
-                        blobs.clone(),
-                        Arc::new(RecordingProcessExecutor::default()),
-                    );
-                    let mut context = environment.tool_context().clone();
-                    context.process_cwd = Some(FsPath::new(root.to_string_lossy()).unwrap());
-                    context.transfer = Some(Arc::new(client));
-                    let environment =
-                        RuntimeEnvironment::from_resource(environment.resource().clone(), context);
-                    let tools = tools
-                        .with_blob_graph(blobs.clone())
-                        .with_environment(environment);
-                    let args = serde_json::to_vec(&serde_json::json!({
-                        "source_vfs_path": "/workspace/README.md",
-                        "destination_environment_path": "./created/nested/README.md",
-                    }))
+            for api_kind in [
+                ProviderApiKind::OpenAiResponses,
+                ProviderApiKind::AnthropicMessages,
+                ProviderApiKind::OpenAiCompletions,
+            ] {
+                let (blobs, tools, session_id, workspace_attachments) =
+                    session_tools_with_readme_attachment().await;
+                let temp = tempfile::tempdir().unwrap();
+                let root = temp.path().canonicalize().unwrap().join("root");
+                std::fs::create_dir_all(&root).unwrap();
+                let client =
+                    in_process_envd(&root, &temp.path().canonicalize().unwrap().join("state"))
+                        .await;
+                let environment =
+                    test_environment(blobs.clone(), Arc::new(RecordingProcessExecutor::default()));
+                let mut context = environment.tool_context().clone();
+                context.process_cwd = Some(FsPath::new(root.to_string_lossy()).unwrap());
+                context.transfer = Some(Arc::new(client));
+                let environment =
+                    RuntimeEnvironment::from_resource(environment.resource().clone(), context);
+                let tools = tools
+                    .with_blob_graph(blobs.clone())
+                    .with_environment(environment);
+                let args = serde_json::to_vec(&serde_json::json!({
+                    "source_vfs_path": "/workspace/README.md",
+                    "destination_environment_path": "./created/nested/README.md",
+                }))
+                .unwrap();
+                let mut request = per_call_request("vfs_materialize", &args, &[]);
+                request.session_id = session_id;
+                request.workspace_attachments = workspace_attachments.clone();
+                request.active_environment_id = Some(EnvironmentId::new("test"));
+                request.environment_policy = Some(test_environment_policy(&["test"]));
+                request.call.arguments_ref = blobs.put_bytes(args).await.unwrap();
+                let builtin = request.call.builtin.as_mut().unwrap();
+                builtin.model.api_kind = api_kind;
+                builtin.spec.settings = serde_json::json!({"presentation":"provider_default"});
+                let result = tools.invoke_call(request.clone()).await.unwrap();
+                succeeded(&blobs, &result).await;
+                assert_eq!(
+                    std::fs::read(root.join("created/nested/README.md")).unwrap(),
+                    b"hello\n"
+                );
+
+                // A completed retry through the hosted path must keep its operation
+                // identity and preserve edits made after publication.
+                std::fs::write(root.join("created/nested/README.md"), b"environment edit").unwrap();
+                succeeded(&blobs, &tools.invoke_call(request.clone()).await.unwrap()).await;
+                assert_eq!(
+                    std::fs::read(root.join("created/nested/README.md")).unwrap(),
+                    b"environment edit"
+                );
+
+                let mut capture = request.clone();
+                capture.call.call_id = ToolCallId::new("capture");
+                capture.call.tool_id = Some(test_tool_id("vfs_capture"));
+                capture.call.tool_name = ToolName::new("vfs_capture");
+                capture.call.arguments_ref = blobs
+                    .put_bytes(
+                        serde_json::to_vec(&serde_json::json!({
+                            "source_environment_path":"./created/nested/README.md",
+                            "destination_vfs_path":"/workspace/results/nested/captured.txt",
+                        }))
+                        .unwrap(),
+                    )
+                    .await
                     .unwrap();
-                    let mut request = per_call_request("vfs_materialize", &args, &[]);
-                    request.session_id = session_id;
-                    request.workspace_attachments = workspace_attachments.clone();
-                    request.active_environment_id = Some(EnvironmentId::new("test"));
-                    request.environment_policy = Some(test_environment_policy(&["test"]));
-                    request.call.arguments_ref = blobs.put_bytes(args).await.unwrap();
-                    let builtin = request.call.builtin.as_mut().unwrap();
-                    builtin.model.api_kind = api_kind;
-                    builtin.spec.settings = serde_json::json!({"presentation":"provider_default"});
-                    let result = dispatch(&tools, request.clone(), batch).await;
-                    succeeded(&blobs, &result).await;
-                    assert_eq!(
-                        std::fs::read(root.join("created/nested/README.md")).unwrap(),
-                        b"hello\n"
-                    );
-
-                    // A completed retry through the hosted path must keep its operation
-                    // identity and preserve edits made after publication.
-                    std::fs::write(root.join("created/nested/README.md"), b"environment edit")
-                        .unwrap();
-                    succeeded(&blobs, &dispatch(&tools, request.clone(), batch).await).await;
-                    assert_eq!(
-                        std::fs::read(root.join("created/nested/README.md")).unwrap(),
-                        b"environment edit"
-                    );
-
-                    let mut capture = request.clone();
-                    capture.call.call_id = ToolCallId::new("capture");
-                    capture.call.tool_id = Some(test_tool_id("vfs_capture"));
-                    capture.call.tool_name = ToolName::new("vfs_capture");
-                    capture.call.arguments_ref = blobs
-                        .put_bytes(
-                            serde_json::to_vec(&serde_json::json!({
-                                "source_environment_path":"./created/nested/README.md",
-                                "destination_vfs_path":"/workspace/results/nested/captured.txt",
-                            }))
-                            .unwrap(),
-                        )
+                let result = tools.invoke_call(capture.clone()).await.unwrap();
+                let output = succeeded(&blobs, &result).await;
+                assert_eq!(output["published"], true);
+                let workspace = tools
+                    .workspace_store
+                    .read_workspace(&VfsWorkspaceId::new("workspace_1"))
+                    .await
+                    .unwrap();
+                let manifest =
+                    vfs::read_snapshot_manifest(blobs.as_ref(), &workspace.head_snapshot_ref)
                         .await
                         .unwrap();
-                    let result = dispatch(&tools, capture.clone(), batch).await;
-                    let output = succeeded(&blobs, &result).await;
-                    assert_eq!(output["published"], true);
-                    let workspace = tools
-                        .workspace_store
-                        .read_workspace(&VfsWorkspaceId::new("workspace_1"))
-                        .await
-                        .unwrap();
-                    let manifest =
-                        vfs::read_snapshot_manifest(blobs.as_ref(), &workspace.head_snapshot_ref)
-                            .await
-                            .unwrap();
-                    assert_eq!(
-                        vfs::read_snapshot_file(
-                            blobs.as_ref(),
-                            &manifest,
-                            &vfs::VfsPath::parse("/results/nested/captured.txt").unwrap()
-                        )
-                        .await
-                        .unwrap(),
-                        b"environment edit"
-                    );
-                    assert_eq!(
-                        vfs::read_snapshot_file(
-                            blobs.as_ref(),
-                            &manifest,
-                            &vfs::VfsPath::parse("/README.md").unwrap()
-                        )
-                        .await
-                        .unwrap(),
-                        b"hello\n"
-                    );
-                    let output_ref = result.output_ref.unwrap();
-                    let snapshot_ref =
-                        BlobRef::parse(output["snapshot_ref"].as_str().unwrap()).unwrap();
-                    assert!(
-                        blobs
-                            .edges()
-                            .contains(&BlobEdge::contains(output_ref, snapshot_ref))
-                    );
-                    assert!(
-                        !result.effects.is_empty(),
-                        "workspace effects must be drained from the VFS context"
-                    );
+                assert_eq!(
+                    vfs::read_snapshot_file(
+                        blobs.as_ref(),
+                        &manifest,
+                        &vfs::VfsPath::parse("/results/nested/captured.txt").unwrap()
+                    )
+                    .await
+                    .unwrap(),
+                    b"environment edit"
+                );
+                assert_eq!(
+                    vfs::read_snapshot_file(
+                        blobs.as_ref(),
+                        &manifest,
+                        &vfs::VfsPath::parse("/README.md").unwrap()
+                    )
+                    .await
+                    .unwrap(),
+                    b"hello\n"
+                );
+                let output_ref = result.output_ref.unwrap();
+                let snapshot_ref =
+                    BlobRef::parse(output["snapshot_ref"].as_str().unwrap()).unwrap();
+                assert!(
+                    blobs
+                        .edges()
+                        .contains(&BlobEdge::contains(output_ref, snapshot_ref))
+                );
+                assert!(
+                    !result.effects.is_empty(),
+                    "workspace effects must be drained from the VFS context"
+                );
 
-                    // Attachment permissions are enforced even if a call has an admitted
-                    // editing-tool identity.
-                    capture.call.call_id = ToolCallId::new("capture-readonly");
-                    capture.workspace_attachments[0].access = WorkspaceAccess::Read;
-                    assert_eq!(
-                        dispatch(&tools, capture, batch).await.status,
-                        ToolCallStatus::Failed
-                    );
-                    request.workspace_attachments.clear();
-                    assert_eq!(
-                        dispatch(&tools, request.clone(), batch).await.status,
-                        ToolCallStatus::Failed
-                    );
-                    request.workspace_attachments = workspace_attachments;
-                    request.active_environment_id = None;
-                    assert_eq!(
-                        dispatch(&tools, request, batch).await.status,
-                        ToolCallStatus::Failed
-                    );
-                }
+                // Attachment permissions are enforced even if a call has an admitted
+                // editing-tool identity.
+                capture.call.call_id = ToolCallId::new("capture-readonly");
+                capture.workspace_attachments[0].access = WorkspaceAccess::Read;
+                assert_eq!(
+                    tools.invoke_call(capture).await.unwrap().status,
+                    ToolCallStatus::Failed
+                );
+                request.workspace_attachments.clear();
+                assert_eq!(
+                    tools.invoke_call(request.clone()).await.unwrap().status,
+                    ToolCallStatus::Failed
+                );
+                request.workspace_attachments = workspace_attachments;
+                request.active_environment_id = None;
+                assert_eq!(
+                    tools.invoke_call(request).await.unwrap().status,
+                    ToolCallStatus::Failed
+                );
             }
         }
     }
@@ -5132,15 +4811,10 @@ mod tests {
             }],
         };
 
-        let first = tools
-            .invoke_batch(request.clone())
-            .await
-            .expect("first list")
-            .completed_result()
-            .expect("completed list");
+        let first = invoke_each(&tools, request.clone()).await;
         let first_output: serde_json::Value = serde_json::from_slice(
             &blobs
-                .read_bytes(first.results[0].output_ref.as_ref().expect("first output"))
+                .read_bytes(first[0].output_ref.as_ref().expect("first output"))
                 .await
                 .expect("read first output"),
         )
@@ -5170,20 +4844,10 @@ mod tests {
         );
 
         open_test_environment(registry.as_ref(), "environment-allowed-2", "allowed", 20).await;
-        let second = tools
-            .invoke_batch(request)
-            .await
-            .expect("second list")
-            .completed_result()
-            .expect("completed second list");
+        let second = invoke_each(&tools, request).await;
         let second_output: serde_json::Value = serde_json::from_slice(
             &blobs
-                .read_bytes(
-                    second.results[0]
-                        .output_ref
-                        .as_ref()
-                        .expect("second output"),
-                )
+                .read_bytes(second[0].output_ref.as_ref().expect("second output"))
                 .await
                 .expect("read second output"),
         )
@@ -5231,8 +4895,9 @@ mod tests {
             .await
             .expect("arguments");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: Some("/workspace".into()),
                 session_id,
                 run_id: RunId::new(1),
@@ -5254,15 +4919,13 @@ mod tests {
                     promise_control: None,
                     remote_mcp: None,
                 }],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed batch");
+            },
+        )
+        .await;
 
-        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(result[0].status, ToolCallStatus::Succeeded);
         let output = blobs
-            .read_text(result.results[0].output_ref.as_ref().expect("output ref"))
+            .read_text(result[0].output_ref.as_ref().expect("output ref"))
             .await
             .expect("output");
         assert!(output.contains("hello"));
@@ -5277,8 +4940,9 @@ mod tests {
             .await
             .expect("arguments");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: Some("/workspace".into()),
                 session_id,
                 run_id: RunId::new(1),
@@ -5307,15 +4971,13 @@ mod tests {
                     promise_control: None,
                     remote_mcp: None,
                 }],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed batch");
+            },
+        )
+        .await;
 
-        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(result[0].status, ToolCallStatus::Succeeded);
         let output = blobs
-            .read_text(result.results[0].output_ref.as_ref().expect("output ref"))
+            .read_text(result[0].output_ref.as_ref().expect("output ref"))
             .await
             .expect("output");
         assert!(output.contains("hello"));
@@ -5336,8 +4998,9 @@ mod tests {
             .await
             .expect("process arguments");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: Some("/workspace".into()),
                 session_id,
                 run_id: RunId::new(1),
@@ -5373,27 +5036,25 @@ mod tests {
                         remote_mcp: None,
                     },
                 ],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed batch");
+            },
+        )
+        .await;
 
-        assert_eq!(result.results.len(), 2);
-        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
-        if result.results[1].status != ToolCallStatus::Succeeded {
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].status, ToolCallStatus::Succeeded);
+        if result[1].status != ToolCallStatus::Succeeded {
             let error = blobs
-                .read_text(result.results[1].error_ref.as_ref().expect("process error"))
+                .read_text(result[1].error_ref.as_ref().expect("process error"))
                 .await
                 .expect("process error text");
             panic!("process tool failed: {error}");
         }
         let read_output = blobs
-            .read_text(result.results[0].output_ref.as_ref().expect("read output"))
+            .read_text(result[0].output_ref.as_ref().expect("read output"))
             .await
             .expect("read output text");
         assert!(read_output.contains("hello"));
-        let process_visible_ref = visible_tool_result_ref(&result.results[1]);
+        let process_visible_ref = visible_tool_result_ref(&result[1]);
         let process_visible = blobs
             .read_text(&process_visible_ref)
             .await
@@ -5409,106 +5070,28 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn await_in_mixed_batch_defers_with_completed_non_await_results() {
+    async fn await_defers_with_its_workflow_tool_siblings_completed() {
         let blobs = Arc::new(InMemoryBlobStore::new());
-        let catalog = Arc::new(TestCatalog::default());
-        let sessions = Arc::new(InMemorySessionStore::new());
-        let parent = SessionId::new("parent");
-        sessions
-            .create_session(CreateSession {
-                metadata: Default::default(),
-                session_id: parent.clone(),
-                display_name: None,
-                origin: None,
-                delete_after_close_ms: None,
-                created_at_ms: 1,
-            })
-            .await
-            .expect("create parent");
-        let mut state = harness::CoreAgentState::new();
-        state.lifecycle.config = Some(crate::worker::default_session_config(
-            harness::ModelSelection {
-                api_kind: harness::ProviderApiKind::OpenAiResponses,
-                provider_id: "test".to_owned(),
-                model: "test-model".to_owned(),
-            },
-        ));
-        let mut opening_events =
-            harness::core_agent_clone_opening_events(&state, 2).expect("opening events");
-        opening_events.push(
-            harness::CoreAgentCodec
-                .encode_uncommitted(&harness::UncommittedCoreAgentEvent {
-                    observed_at_ms: 3,
-                    joins: Default::default(),
-                    event: harness::CoreAgentEvent::Promise(harness::PromiseEvent::Created {
-                        promise: harness::Promise {
-                            promise_id: harness::PromiseId::new("promise_1"),
-                            source: harness::PromiseSource::Timer { fire_at_ms: 60_000 },
-                            scope: harness::PromiseScope::Session,
-                            ownership: harness::PromiseOwnership::Model,
-                            status: harness::PromiseStatus::Pending,
-                            payload_ref: None,
-                            error_ref: None,
-                            deadline_ms: None,
-                        },
-                    }),
-                })
-                .expect("encode promise"),
-        );
-        sessions
-            .append(harness::storage::AppendSessionEvents {
-                session_id: parent.clone(),
-                expected_head: None,
-                events: opening_events,
-            })
-            .await
-            .expect("open parent with promise");
-        let tools = SessionTools::new(blobs.clone(), catalog.clone());
+        let sessions = InMemorySessionStore::new();
+        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()));
         let wait_args = blobs
             .put_bytes(br#"{"promises":["promise_1"]}"#.to_vec())
             .await
             .expect("await args");
-        let read_args = blobs
-            .put_bytes(br#"{"path":"README.md"}"#.to_vec())
+        let workflow_args = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
             .await
-            .expect("read args");
+            .expect("workflow args");
 
         let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
-                vfs_working_directory: None,
-                session_id: parent,
-                run_id: RunId::new(9),
-                turn_id: TurnId::new(1),
-                batch_id: ToolBatchId::new(1),
-                promise_id_base: 1,
-                active_environment_id: None,
-                environment_policy: None,
-                subagents_policy: None,
-                code_mode_policy: None,
-                workspace_attachments: Vec::new(),
-                calls: vec![
-                    harness::ToolInvocationRequest {
-                        builtin: Some(test_builtin_runtime()),
-                        call_id: ToolCallId::new("call_wait"),
-                        tool_id: Some(test_tool_id(::tools::concurrency::AWAIT_TOOL_NAME)),
-                        tool_name: ToolName::new(::tools::concurrency::AWAIT_TOOL_NAME),
-                        arguments_ref: wait_args,
-                        workflow_tool: None,
-                        promise_control: None,
-                        remote_mcp: None,
-                    },
-                    harness::ToolInvocationRequest {
-                        builtin: Some(test_builtin_runtime()),
-                        call_id: ToolCallId::new("call_read"),
-                        tool_id: Some(test_tool_id("read_file")),
-                        tool_name: ToolName::new("read_file"),
-                        arguments_ref: read_args,
-                        workflow_tool: None,
-                        promise_control: None,
-                        remote_mcp: None,
-                    },
+            .invoke_batch(residue_batch(
+                session_id,
+                vec![
+                    await_call("call_wait", wait_args),
+                    workflow_call("call_report", &binding, workflow_args),
                 ],
-            })
+            ))
             .await
             .expect("invoke");
 
@@ -5525,8 +5108,70 @@ mod tests {
         assert_eq!(call_id, ToolCallId::new("call_wait"));
         assert_eq!(spec.promise_ids, vec![harness::PromiseId::new("promise_1")]);
         assert_eq!(completed_results.len(), 1);
-        assert_eq!(completed_results[0].call_id, ToolCallId::new("call_read"));
-        assert_eq!(completed_results[0].status, ToolCallStatus::Failed);
+        assert_eq!(completed_results[0].call_id, ToolCallId::new("call_report"));
+        assert_eq!(completed_results[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(
+            completed_results[0].effects[0].kind,
+            harness::WORKFLOW_TOOL_EMIT_EFFECT_KIND
+        );
+    }
+
+    /// The per-call summary of a call's siblings covers every pending call,
+    /// including the ones that wait for the batch activity, so the selection rule
+    /// cannot be escaped by adding a workflow tool to the batch.
+    #[tokio::test(flavor = "current_thread")]
+    async fn two_selections_beside_a_workflow_tool_both_fail_with_no_effect() {
+        let blobs = Arc::new(InMemoryBlobStore::new());
+        let sessions = InMemorySessionStore::new();
+        let (session_id, binding) = workflow_tool_session(blobs.as_ref(), &sessions).await;
+        let registry = Arc::new(InMemoryEnvironmentRegistryStore::new());
+        let tools = SessionTools::new(blobs.clone(), Arc::new(TestCatalog::default()))
+            .with_environment_resolver(test_resolver(registry));
+        let args = |id: &str| {
+            let blobs = blobs.clone();
+            let bytes = serde_json::to_vec(&serde_json::json!({ "environment_id": id })).unwrap();
+            async move { blobs.put_bytes(bytes).await.unwrap() }
+        };
+        let selection = |call_id: &str, arguments_ref: BlobRef| harness::ToolInvocationRequest {
+            builtin: None,
+            call_id: ToolCallId::new(call_id),
+            tool_id: Some(ToolName::new("environment.activate")),
+            tool_name: ToolName::new("environment_activate"),
+            arguments_ref,
+            workflow_tool: None,
+            promise_control: None,
+            remote_mcp: None,
+        };
+        let workflow_args = blobs
+            .put_bytes(br#"{"status":"complete"}"#.to_vec())
+            .await
+            .unwrap();
+        let mut batch = residue_batch(
+            session_id,
+            vec![
+                selection("call_a", args("environment-a").await),
+                selection("call_b", args("environment-b").await),
+                workflow_call("call_report", &binding, workflow_args),
+            ],
+        );
+        batch.environment_policy =
+            Some(test_environment_policy(&["environment-a", "environment-b"]));
+
+        for index in [0, 1] {
+            let result = tools
+                .invoke_call(batch.call_request(index, Default::default()).unwrap())
+                .await
+                .expect("selection result");
+            assert_eq!(result.status, ToolCallStatus::Failed);
+            assert!(result.effects.is_empty());
+            assert!(
+                blobs
+                    .read_text(result.error_ref.as_ref().unwrap())
+                    .await
+                    .unwrap()
+                    .contains("cannot share a batch")
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -5635,8 +5280,9 @@ mod tests {
             .await
             .expect("cancel args");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: None,
                 session_id: parent,
                 run_id: RunId::new(9),
@@ -5667,16 +5313,14 @@ mod tests {
                     ])),
                     remote_mcp: None,
                 }],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed");
+            },
+        )
+        .await;
 
-        assert_eq!(result.results[0].status, ToolCallStatus::Succeeded);
-        assert_eq!(result.results[0].effects.len(), 1);
+        assert_eq!(result[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(result[0].effects.len(), 1);
         assert_eq!(
-            result.results[0].effects[0].kind,
+            result[0].effects[0].kind,
             harness::PROMISE_CANCEL_EFFECT_KIND
         );
     }
@@ -5692,8 +5336,9 @@ mod tests {
             .await
             .expect("detach args");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: None,
                 session_id: parent,
                 run_id: RunId::new(1),
@@ -5726,23 +5371,21 @@ mod tests {
                     ])),
                     remote_mcp: None,
                 }],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed");
+            },
+        )
+        .await;
 
-        if result.results[0].status != ToolCallStatus::Succeeded {
-            let error = if let Some(error_ref) = result.results[0].error_ref.as_ref() {
+        if result[0].status != ToolCallStatus::Succeeded {
+            let error = if let Some(error_ref) = result[0].error_ref.as_ref() {
                 blobs.read_text(error_ref).await.expect("read error")
             } else {
                 String::new()
             };
             panic!("detach failed: {error}");
         }
-        assert_eq!(result.results[0].effects.len(), 1);
+        assert_eq!(result[0].effects.len(), 1);
         assert_eq!(
-            result.results[0].effects[0].kind,
+            result[0].effects[0].kind,
             harness::PROMISE_DETACH_EFFECT_KIND
         );
     }
@@ -5767,8 +5410,9 @@ mod tests {
             remote_mcp: None,
         };
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: None,
                 session_id: SessionId::new("session_sleep"),
                 run_id: RunId::new(9),
@@ -5781,16 +5425,14 @@ mod tests {
                 code_mode_policy: None,
                 workspace_attachments: Vec::new(),
                 calls: vec![sleep_call("call_sleep_a"), sleep_call("call_sleep_b")],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed");
+            },
+        )
+        .await;
 
         // Two promise-creating calls in one batch draw disjoint ids from the
         // harness's base, and the model-visible text names the same handle.
         let mut minted = Vec::new();
-        for (index, call_result) in result.results.iter().enumerate() {
+        for (index, call_result) in result.iter().enumerate() {
             assert_eq!(call_result.status, ToolCallStatus::Succeeded);
             assert_eq!(call_result.effects.len(), 1);
             let effect = &call_result.effects[0];
@@ -5862,8 +5504,9 @@ mod tests {
         let tools = SessionTools::new(blobs.clone(), catalog);
         let arguments_ref = BlobRef::from_bytes(b"{}");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: None,
                 session_id: SessionId::new("session_1"),
                 run_id: RunId::new(1),
@@ -5885,15 +5528,13 @@ mod tests {
                     promise_control: None,
                     remote_mcp: None,
                 }],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed batch");
+            },
+        )
+        .await;
 
-        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        assert_eq!(result[0].status, ToolCallStatus::Failed);
         let error = blobs
-            .read_text(result.results[0].error_ref.as_ref().expect("error ref"))
+            .read_text(result[0].error_ref.as_ref().expect("error ref"))
             .await
             .expect("error");
         assert!(error.contains("no_vfs_workspace_attachments"));
@@ -5909,8 +5550,9 @@ mod tests {
             .await
             .expect("arguments");
 
-        let result = tools
-            .invoke_batch(ToolInvocationBatchRequest {
+        let result = invoke_each(
+            &tools,
+            ToolInvocationBatchRequest {
                 vfs_working_directory: None,
                 session_id: SessionId::new("session_1"),
                 run_id: RunId::new(1),
@@ -5932,15 +5574,13 @@ mod tests {
                     promise_control: None,
                     remote_mcp: None,
                 }],
-            })
-            .await
-            .expect("invoke")
-            .completed_result()
-            .expect("completed batch");
+            },
+        )
+        .await;
 
-        assert_eq!(result.results[0].status, ToolCallStatus::Failed);
+        assert_eq!(result[0].status, ToolCallStatus::Failed);
         let error = blobs
-            .read_text(result.results[0].error_ref.as_ref().expect("error ref"))
+            .read_text(result[0].error_ref.as_ref().expect("error ref"))
             .await
             .expect("error");
         assert!(error.contains("non-public"));
