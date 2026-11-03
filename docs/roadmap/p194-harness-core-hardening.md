@@ -1300,3 +1300,22 @@ Independent review of this package:
   outside what the reducer reads, and the drive test replays them.
 - The string refs in bot and channel workflow types (`document_ref`, `tools_ref` and others) are not in session
   events, so this package does not touch them. Bot event roots are their own path.
+
+### Live checkpoint after `typed-blob-refs`: not run
+
+The live suites have still not exercised this branch. The Docker daemon is down, so the dev stack's Postgres
+(`localhost:15432`) and Temporal (`127.0.0.1:7233`) are absent. Docker Desktop's logs show an orderly shutdown at
+02:12 local on 2026-11-03, with a CLI client connecting just before it stopped, so it does not look like a crash.
+Starting it stays out of bounds for this run.
+
+- `live-reset.sh` could not reach Docker, and its `migrate` step ended in `pool timed out`, so the hardening
+  database and namespace were not recreated.
+- `runs_live` failed 10 of 10 and `mcp_live` 5 of 5 with `pool timed out while waiting for an open connection`.
+  `subagents_live` failed 9 of 9 with `tcp connect error` on `127.0.0.1:7233`. None got as far as a workflow, so
+  this says nothing about the code, and no test or code changed.
+- The three suites compile, with `cargo test -p temporal-runtime --test runs_live --test mcp_live --test
+  subagents_live --locked --no-run`.
+
+Every "never run" and "written but never run" note above is still open. This checkpoint was meant to be the first
+real proof of the workflow changes, so do not treat them as proven. With the stack up, run `live-reset.sh`, the
+three suites, then the tests the earlier notes name.
