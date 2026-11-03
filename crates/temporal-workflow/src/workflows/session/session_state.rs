@@ -170,12 +170,20 @@ impl AgentSessionWorkflow {
         Ok(())
     }
 
+    /// A receiver hears when the session stops waiting for it: on a cancel, and when
+    /// the hard deadline fails its promise. The deadline's own error ref tells that
+    /// failure from a producer's report, which is not echoed back.
     pub(super) fn queue_promise_cancellations_for_entries(&mut self, entries: &[CoreAgentEntry]) {
         for entry in entries {
-            let CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled { promise_id }) =
-                &entry.event
-            else {
-                continue;
+            let promise_id = match &entry.event {
+                CoreAgentEvent::Promise(harness::PromiseEvent::Cancelled { promise_id }) => {
+                    promise_id
+                }
+                CoreAgentEvent::Promise(harness::PromiseEvent::Failed {
+                    promise_id,
+                    error_ref: Some(error_ref),
+                }) if *error_ref == harness::promise_deadline_exceeded_ref() => promise_id,
+                _ => continue,
             };
             let Some(promise) = self.core_state.promises.promises.get(promise_id) else {
                 continue;

@@ -32,9 +32,10 @@ emissions reuse their invocation id as the emission id.
 - `tool_invocation`: a pushed invocation for a bound receiver. Its
   `holder_workflow_id` is the session endpoint to signal with replies; do not
   reconstruct that id. Model arguments remain in CAS at `arguments_ref`.
-- `invocation_cancellation`: a best-effort notice that one completion Promise
-  is already cancelled. Stop the corresponding domain work when practical;
-  a later reply is ignored because the Promise is terminal.
+- `invocation_cancellation`: a best-effort notice that the session stopped
+  waiting for one completion Promise, which is already cancelled or failed at
+  its hard deadline. Stop the corresponding domain work when practical; a later
+  reply is ignored because the Promise is terminal.
 
 ## Producer authorization
 

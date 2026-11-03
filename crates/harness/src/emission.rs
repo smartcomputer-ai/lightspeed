@@ -204,10 +204,10 @@ pub enum EmissionBody {
         /// substrate adapter; the harness treats it as opaque.
         holder_workflow_id: String,
     },
-    /// Best-effort notice to a bound receiver that the session already
-    /// resolved one keyed completion promise as cancelled. The receiver may
-    /// stop the domain work behind that key; a later reply is ignored
-    /// because the promise is terminal.
+    /// Best-effort notice to a bound receiver that the session stopped waiting
+    /// for one keyed completion promise: it is already cancelled, or failed at
+    /// its hard deadline. The receiver may stop the domain work behind that
+    /// key; a later reply is ignored because the promise is terminal.
     InvocationCancellation {
         invocation_id: WorkflowToolInvocationId,
         completion_key: String,

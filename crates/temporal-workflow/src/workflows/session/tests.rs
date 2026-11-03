@@ -1704,6 +1704,39 @@ fn terminal_run_with_notify_intent_queues_emission() {
     assert!(workflow.pending_emissions.is_empty());
 }
 
+#[test]
+fn a_receiver_hears_of_a_hard_deadline_but_not_its_own_failure_report() {
+    let mut workflow = workflow_holding(vec![
+        promise("promise_1", PromiseStatus::Failed),
+        promise("promise_2", PromiseStatus::Failed),
+        promise("promise_3", PromiseStatus::Failed),
+        promise("promise_4", PromiseStatus::Cancelled),
+    ]);
+    let failed = |id: &str, error_ref| {
+        promise_entry(harness::PromiseEvent::Failed {
+            promise_id: harness::PromiseId::new(id),
+            error_ref,
+        })
+    };
+    workflow.queue_promise_cancellations_for_entries(&[
+        failed("promise_1", Some(harness::promise_deadline_exceeded_ref())),
+        failed(
+            "promise_2",
+            Some(harness::BlobRef::from_bytes(b"its error")),
+        ),
+        failed("promise_3", None),
+        promise_entry(harness::PromiseEvent::Cancelled {
+            promise_id: harness::PromiseId::new("promise_4"),
+        }),
+    ]);
+    let notified = workflow
+        .pending_promise_cancellations
+        .iter()
+        .map(|pending| pending.promise_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(notified, ["promise_1", "promise_4"]);
+}
+
 fn delivery_from(producer: &str, promise_id: &str) -> PendingSourceResolution {
     PendingSourceResolution {
         promise_id: harness::PromiseId::new(promise_id),

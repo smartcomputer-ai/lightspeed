@@ -1012,7 +1012,7 @@
           "type": "object"
         },
         {
-          "description": "Best-effort notice to a bound receiver that the session already\nresolved one keyed completion promise as cancelled. The receiver may\nstop the domain work behind that key; a later reply is ignored\nbecause the promise is terminal.",
+          "description": "Best-effort notice to a bound receiver that the session stopped waiting\nfor one keyed completion promise: it is already cancelled, or failed at\nits hard deadline. The receiver may stop the domain work behind that\nkey; a later reply is ignored because the promise is terminal.",
           "properties": {
             "completion_key": {
               "type": "string"
