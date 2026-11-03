@@ -224,7 +224,7 @@ impl AgentSessionWorkflow {
             .completion_promises
             .iter()
             .flat_map(|keyed| keyed.values())
-            .all(|id| promises.get(id).is_some_and(|p| p.status.is_terminal()));
+            .all(|id| promises.get(id).is_none_or(|p| p.status.is_terminal()));
         let start = match tools.bindings.get(&invocation.tool_id).map(|b| &b.target) {
             Some(harness::WorkflowToolTarget::Start { start }) if all_terminal => start,
             _ => return,
@@ -377,30 +377,26 @@ async fn terminal_tool_invocation_delivery_failure(
     let harness::EmissionBody::ToolInvocation { invocation, .. } = &pending.envelope.body else {
         return Ok(());
     };
-    // A notify-only invocation is finished once committed, so its record can be gone
-    // by the time delivery gives up. Nobody is waiting on it.
-    if ctx.state(|state| {
-        !state
-            .core_state
-            .workflow_tools
-            .emissions
-            .contains_key(&invocation.invocation_id)
-    }) {
-        if !ctx.is_replaying() {
-            tracing::info!(
-                target: "temporal_workflow",
-                event = "workflow_tool_delivery_abandoned",
-                invocation_id = invocation.invocation_id.as_str(),
-                receiver = pending.receiver_workflow_id.as_str(),
-                "gave up delivering a finished workflow tool invocation"
-            );
-        }
-        return Ok(());
-    }
     let message = format!(
         "workflow tool invocation {} could not be delivered to receiver {} after {} attempts",
         invocation.invocation_id, pending.receiver_workflow_id, pending.attempts
     );
+    // A notify-only invocation is finished once committed, so its record can be gone
+    // by the time delivery gives up. No run waits on it, but the receiver never heard.
+    let replaying = ctx.is_replaying();
+    if ctx.state_mut(|state| {
+        let gone = !state
+            .core_state
+            .workflow_tools
+            .emissions
+            .contains_key(&invocation.invocation_id);
+        if gone {
+            state.record_warning(replaying, message.clone());
+        }
+        gone
+    }) {
+        return Ok(());
+    }
     let error_ref = ctx
         .execute_activity(
             WorkflowActivities::put_blob,

@@ -3131,6 +3131,40 @@ fn a_terminal_event_and_a_pruning_boundary_in_one_append_still_reach_the_host() 
     );
 }
 
+/// The sibling settled long ago and left state, which says nothing against the
+/// invocation's promises all being terminal.
+#[test]
+fn the_last_promise_of_an_invocation_cancels_its_execution_with_a_sibling_already_pruned() {
+    let StartIntent {
+        mut workflow,
+        invocation_id,
+        promise_id,
+        execution_id,
+    } = workflow_with_start_intent();
+    workflow
+        .core_state
+        .workflow_tools
+        .start_requests
+        .get_mut(&invocation_id)
+        .expect("start intent")
+        .completion_promises
+        .as_mut()
+        .expect("keyed promises")
+        .insert("pruned".to_owned(), harness::PromiseId::from_number(9_999));
+    workflow.core_state.reduced_to = None;
+    drive::apply_appended_entry(
+        &mut workflow,
+        &promise_entry(harness::PromiseEvent::Cancelled {
+            promise_id: promise_id.clone(),
+        }),
+    )
+    .expect("apply");
+    assert_eq!(
+        workflow.pending_execution_cancels,
+        BTreeSet::from([execution_id])
+    );
+}
+
 #[test]
 fn a_runner_cleaning_up_after_its_scope_left_state_reads_it_as_closed() {
     let workflow = AgentSessionWorkflow::default();
