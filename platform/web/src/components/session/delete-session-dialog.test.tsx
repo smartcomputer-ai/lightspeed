@@ -59,7 +59,7 @@ it("defaults to soft deletion even for platform admins", async () => {
 });
 it("soft-deletes first and permanently deletes through the audited admin endpoint", async () => {
   await show(true);
-  await check("Also delete forks");
+  await check("Also delete delegated children");
   await check("Also permanently delete");
   expect(document.body.textContent).toContain("This cannot be undone");
   expect(mocks.api).not.toHaveBeenCalled();

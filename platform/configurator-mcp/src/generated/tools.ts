@@ -2386,7 +2386,7 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/retention/put",
     "group": "session/delete",
     "summary": "Replace session retention",
-    "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+    "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
     "paramsType": "SessionRetentionPutParams",
     "resultType": "AgentApiOutcome<SessionRetentionPutResponse>",
     "inputSchema": {
@@ -2446,14 +2446,14 @@ export const GENERATED_TOOLS: readonly GeneratedToolDescriptor[] = [
     "method": "session/delete",
     "group": "session/delete",
     "summary": "Delete closed sessions",
-    "description": "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+    "description": "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
     "paramsType": "SessionDeleteParams",
     "resultType": "AgentApiOutcome<SessionDeleteResponse>",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
         "cascade": {
-          "description": "Delete history forks and delegated descendants too. False requires the\ntarget to be a closed retention-tree leaf.",
+          "description": "Delete delegated descendants too. False requires the target to be a\nclosed retention-tree leaf.",
           "type": "boolean"
         },
         "sessionId": {

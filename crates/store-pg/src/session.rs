@@ -182,22 +182,20 @@ impl PgStore {
         Ok(AppendSessionEventsResult { entries: committed })
     }
 
-    async fn read_all_effective_events(
+    /// The effective log through `through`, a head the caller already read. The
+    /// log only grows, so this is a consistent snapshot at that head whatever
+    /// lands after it.
+    async fn read_effective_events_through(
         &self,
         session_id: &SessionId,
+        through: u64,
     ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
-        let head = self
-            .load_session(session_id)
-            .await?
-            .ok_or_else(|| SessionStoreError::SessionNotFound {
-                session_id: session_id.clone(),
-            })?
-            .head
-            .map_or(0, |head| head.seq.as_u64());
         let mut entries = Vec::new();
         let mut after = 0;
-        while after < head {
-            let page = self.read_effective_window(session_id, after, 512).await?;
+        while after < through {
+            let page = self
+                .read_effective_window_through(session_id, after, through, 512)
+                .await?;
             if page.is_empty() {
                 return Err(SessionStoreError::Store {
                     message: format!(
@@ -253,9 +251,15 @@ impl PgStore {
                 continue;
             }
             let remaining = limit.saturating_sub(selected.len());
-            let mut entries = self
-                .read_local_segment(&segment.session_id, lower, segment.through, remaining)
-                .await?;
+            let mut entries = read_local_segment(
+                &self.pool,
+                self.config.universe_id,
+                &segment.session_id,
+                lower,
+                segment.through,
+                remaining,
+            )
+            .await?;
             selected.append(&mut entries);
         }
         Ok(selected)
@@ -345,37 +349,6 @@ impl PgStore {
         }
 
         Ok(segments)
-    }
-
-    async fn read_local_segment(
-        &self,
-        session_id: &SessionId,
-        after: u64,
-        through: u64,
-        limit: usize,
-    ) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT entry_json
-            FROM session_events
-            WHERE universe_id = $1
-              AND session_id = $2
-              AND seq > $3
-              AND seq <= $4
-            ORDER BY seq
-            LIMIT $5
-            "#,
-        )
-        .bind(self.config.universe_id)
-        .bind(session_id.as_str())
-        .bind(u64_to_i64(after, "read_after seq")?)
-        .bind(u64_to_i64(through, "read through seq")?)
-        .bind(usize_to_session_i64(limit, "read_after limit")?)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|error| session_sql_error("read session event segment", error))?;
-
-        rows.iter().map(session_entry_from_row).collect()
     }
 
     async fn load_session_required(
@@ -939,19 +912,16 @@ impl SessionStore for PgStore {
                 session_id: request.source_session_id,
             });
         }
-        let source_entries = self
-            .read_all_effective_events(&request.source_session_id)
-            .await?;
-        let source_head = self
-            .head(&request.source_session_id)
-            .await?
+        // Most of the log is read before taking any lock, so a long session's
+        // appends do not wait on it. The fork point is judged further down,
+        // under the locks.
+        let read_head = source_record
+            .head
+            .as_ref()
             .map_or(0, |head| head.seq.as_u64());
-        validate_fork_point(
-            &request.source_session_id,
-            request.source_seq,
-            &source_entries,
-            source_head,
-        )?;
+        let mut source_entries = self
+            .read_effective_events_through(&request.source_session_id, read_head)
+            .await?;
 
         let created_at_ms = u64_to_i64(request.created_at_ms, "created_at_ms")?;
         let source_seq_u64 = request.source_seq.as_u64();
@@ -988,6 +958,27 @@ impl SessionStore for PgStore {
                 session_id: request.source_session_id,
             });
         }
+        // Appends hold this row's lock, so the head is final until the fork
+        // commits. A run appended since the read above sits in the session's
+        // own log, past any inherited prefix, and is seen by this validation.
+        let source_head = source.head.as_ref().map_or(0, |head| head.seq.as_u64());
+        source_entries.extend(
+            read_local_segment(
+                &mut *tx,
+                self.config.universe_id,
+                &request.source_session_id,
+                read_head,
+                source_head,
+                source_head.saturating_sub(read_head) as usize,
+            )
+            .await?,
+        );
+        validate_fork_point(
+            &request.source_session_id,
+            request.source_seq,
+            &source_entries,
+            source_head,
+        )?;
         let (lifecycle_status, closed_at_seq) = lifecycle_at_fork(&source, request.source_seq);
         let closed_at_ms = closed_at_seq.and(source.closed_at_ms);
         let query = format!(
@@ -1040,11 +1031,12 @@ impl SessionStore for PgStore {
     }
 
     async fn safe_fork_seq(&self, session_id: &SessionId) -> Result<EventSeq, SessionStoreError> {
-        let entries = self.read_all_effective_events(session_id).await?;
         let head = self
-            .head(session_id)
+            .load_session_required(session_id)
             .await?
+            .head
             .map_or(0, |head| head.seq.as_u64());
+        let entries = self.read_effective_events_through(session_id, head).await?;
         Ok(largest_safe_fork_seq(&entries, head))
     }
 
@@ -1279,6 +1271,38 @@ impl SessionStore for PgStore {
             .await
             .map(|record| record.and_then(|record| record.head))
     }
+}
+
+async fn read_local_segment<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    universe_id: Uuid,
+    session_id: &SessionId,
+    after: u64,
+    through: u64,
+    limit: usize,
+) -> Result<Vec<StoredSessionEntry>, SessionStoreError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT entry_json
+        FROM session_events
+        WHERE universe_id = $1
+          AND session_id = $2
+          AND seq > $3
+          AND seq <= $4
+        ORDER BY seq
+        LIMIT $5
+        "#,
+    )
+    .bind(universe_id)
+    .bind(session_id.as_str())
+    .bind(u64_to_i64(after, "read_after seq")?)
+    .bind(u64_to_i64(through, "read through seq")?)
+    .bind(usize_to_session_i64(limit, "read_after limit")?)
+    .fetch_all(executor)
+    .await
+    .map_err(|error| session_sql_error("read session event segment", error))?;
+
+    rows.iter().map(session_entry_from_row).collect()
 }
 
 fn session_record_from_row(

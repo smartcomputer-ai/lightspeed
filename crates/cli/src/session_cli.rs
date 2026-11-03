@@ -229,7 +229,7 @@ struct DeleteArgs {
     session_id: Option<String>,
     #[command(flatten)]
     metadata: MetadataPairs,
-    /// Also delete history forks and delegated child sessions.
+    /// Also delete delegated child sessions.
     #[arg(long)]
     cascade: bool,
     /// Hide sessions and retain their history instead of permanently deleting it.

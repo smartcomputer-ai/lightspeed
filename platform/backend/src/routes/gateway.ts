@@ -553,7 +553,7 @@ export function gatewayRoutes(ctx: AppContext) {
 
   /// Soft deletion hides retained history and is accepted by Lightspeed only
   /// after the selected sessions are closed. Non-cascade deletion requires a
-  /// leaf; cascade includes history forks and delegated children.
+  /// leaf; cascade includes delegated children.
   app.delete("/:id/sessions/:sessionId", async (c) => {
     const access = await universeForSession(ctx, c, c.req.param("id"));
     if (!access) {

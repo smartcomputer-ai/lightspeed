@@ -1088,8 +1088,8 @@ pub enum SessionActivity {
     Waiting,
 }
 
-/// Effective tree-owned retention for a session. Forks and delegated children
-/// name their owning root and project that root's policy and deadline.
+/// Effective tree-owned retention for a session. Delegated children name their
+/// owning root and project that root's policy and deadline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRetentionView {
@@ -1230,8 +1230,8 @@ pub struct SessionDeleteParams {
     /// False (the default) permanently deletes them without prior soft deletion.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub soft_delete: bool,
-    /// Delete history forks and delegated descendants too. False requires the
-    /// target to be a closed retention-tree leaf.
+    /// Delete delegated descendants too. False requires the target to be a
+    /// closed retention-tree leaf.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cascade: bool,
     /// Atomically require every selected session's audience to be shared.

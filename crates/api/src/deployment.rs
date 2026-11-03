@@ -76,7 +76,7 @@ pub struct DeploymentSessionPurgeParams {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DeploymentSessionPurgeResponse {
-    /// Includes soft-deleted history forks and delegated descendants.
+    /// Includes soft-deleted delegated descendants.
     /// Empty when the target has already been permanently deleted.
     pub deleted_session_ids: Vec<String>,
 }

@@ -207,7 +207,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"set_session_retention","kind":"universe"},
     summary: "Replace session retention",
-    description: "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+    description: "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
   },
   "session/close": {
     scope: "universe",
@@ -219,7 +219,7 @@ export const METHOD_INFO = {
     scope: "universe",
     access: {"action":"delete_session","kind":"universe"},
     summary: "Delete closed sessions",
-    description: "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+    description: "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
   },
   "session/share": {
     scope: "universe",
@@ -1094,7 +1094,7 @@ export interface MethodMap {
   /**
    * Replace session retention
    *
-   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
    */
   "session/retention/put": {
     params: Api.SessionRetentionPutParams;
@@ -1112,7 +1112,7 @@ export interface MethodMap {
   /**
    * Delete closed sessions
    *
-   * Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
+   * Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
    */
   "session/delete": {
     params: Api.SessionDeleteParams;
@@ -2364,7 +2364,7 @@ export const rpc = {
   /**
    * Replace session retention
    *
-   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
+   * Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.
    */
   sessionRetentionPut(client: RpcCaller, params: Api.SessionRetentionPutParams): Promise<Api.AgentApiOutcomeOfSessionRetentionPutResponse> {
     return client.call("session/retention/put", params);
@@ -2380,7 +2380,7 @@ export const rpc = {
   /**
    * Delete closed sessions
    *
-   * Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.
+   * Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.
    */
   sessionDelete(client: RpcCaller, params: Api.SessionDeleteParams): Promise<Api.AgentApiOutcomeOfSessionDeleteResponse> {
     return client.call("session/delete", params);

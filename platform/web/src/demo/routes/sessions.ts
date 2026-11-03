@@ -240,7 +240,7 @@ export function sessionRoutes(store: DemoStore): Hono {
     const descendants = retentionDescendants(universe, session.view.id);
     const cascade = c.req.query("cascade") === "true";
     if (descendants.length > 0 && !cascade) {
-      return conflict(c, "engine conflict: session has forks or delegated children; enable cascade");
+      return conflict(c, "engine conflict: session has delegated children; enable cascade");
     }
     const selected = cascade ? [session, ...descendants] : [session];
     if (selected.some((candidate) => candidate.view.status !== "closed")) {

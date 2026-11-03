@@ -379,7 +379,7 @@ function LiveSessionSetup({
                     disabled={!canConfigure || save.isPending}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Deletes this session, its history forks, and delegated children after the root closes. Leave blank to keep the tree.
+                    Deletes this session and its delegated children after the root closes. Leave blank to keep the tree.
                   </p>
                   {retentionError && <p className="text-xs text-destructive">{retentionError}</p>}
                 </div>

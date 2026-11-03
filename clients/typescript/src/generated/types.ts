@@ -2830,8 +2830,8 @@ export interface SubagentLimitsView {
   maxDescendants: number;
 }
 /**
- * Effective tree-owned retention for a session. Forks and delegated children
- * name their owning root and project that root's policy and deadline.
+ * Effective tree-owned retention for a session. Delegated children name their
+ * owning root and project that root's policy and deadline.
  *
  * This interface was referenced by `LightspeedAgentAPI`'s JSON-Schema
  * via the `definition` "SessionRetentionView".
@@ -4905,7 +4905,7 @@ export interface AgentApiOutcomeOfDeploymentSessionPurgeResponse {
  */
 export interface DeploymentSessionPurgeResponse {
   /**
-   * Includes soft-deleted history forks and delegated descendants.
+   * Includes soft-deleted delegated descendants.
    * Empty when the target has already been permanently deleted.
    */
   deletedSessionIds: string[];
@@ -8438,8 +8438,8 @@ export interface SessionConfigPutParams {
  */
 export interface SessionDeleteParams {
   /**
-   * Delete history forks and delegated descendants too. False requires the
-   * target to be a closed retention-tree leaf.
+   * Delete delegated descendants too. False requires the target to be a
+   * closed retention-tree leaf.
    */
   cascade?: boolean;
   sessionId: string;

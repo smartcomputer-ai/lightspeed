@@ -504,6 +504,120 @@ async fn pg_live_clone_copies_resources_and_links_sessions() {
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
+async fn pg_live_fork_point_is_judged_under_the_source_lock() {
+    let store = live_store("session-graph-fork-lock", 1024).await;
+    let universe_id = store.config().universe_id;
+    let source = SessionId::new("fork-lock-source");
+    store
+        .create_session(CreateSession {
+            metadata: Default::default(),
+            session_id: source.clone(),
+            display_name: None,
+            origin: None,
+            delete_after_close_ms: None,
+            created_at_ms: 1,
+        })
+        .await
+        .expect("create source");
+    store
+        .append(AppendSessionEvents {
+            session_id: source.clone(),
+            expected_head: None,
+            events: vec![open_event(10)],
+        })
+        .await
+        .expect("seed source");
+
+    // Hold the source row the way an in-flight append does, so the fork finishes
+    // its unlocked read and then waits on the lock.
+    let mut append = store.pool().begin().await.expect("begin append");
+    sqlx::query(
+        "SELECT session_id FROM sessions WHERE universe_id = $1 AND session_id = $2 FOR UPDATE",
+    )
+    .bind(universe_id)
+    .bind(source.as_str())
+    .fetch_one(&mut *append)
+    .await
+    .expect("lock source");
+
+    let fork_store = store.clone();
+    let fork_source = source.clone();
+    let fork = tokio::spawn(async move {
+        fork_store
+            .create_forked_session(CreateForkedSession {
+                source_session_id: fork_source,
+                session_id: SessionId::new("fork-lock-fork"),
+                source_seq: EventSeq::new(2),
+                created_at_ms: 20,
+            })
+            .await
+    });
+    loop {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pg_backend_pid() = ANY(pg_blocking_pids(pid)))",
+        )
+        .fetch_one(&mut *append)
+        .await
+        .expect("look for the waiting fork");
+        if waiting {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // The append lands a run that opens at the fork point and stays open.
+    let opened = [
+        ("lightspeed.core.run.accepted", 2_i64),
+        ("lightspeed.core.run.started", 3_i64),
+    ];
+    for (kind, seq) in opened {
+        sqlx::query(
+            "INSERT INTO session_events (universe_id, session_id, entry_json) VALUES ($1, $2, $3)",
+        )
+        .bind(universe_id)
+        .bind(source.as_str())
+        .bind(serde_json::json!({
+            "position": { "seq": seq },
+            "observed_at_ms": 11,
+            "joins": { "run_id": "1" },
+            "event": { "kind": kind, "version": 1, "payload": {} },
+        }))
+        .execute(&mut *append)
+        .await
+        .expect("insert run event");
+    }
+    sqlx::query("UPDATE sessions SET head_seq = 3 WHERE universe_id = $1 AND session_id = $2")
+        .bind(universe_id)
+        .bind(source.as_str())
+        .execute(&mut *append)
+        .await
+        .expect("advance head");
+    append.commit().await.expect("commit append");
+
+    let error = fork
+        .await
+        .expect("fork task")
+        .expect_err("a fork point inside the appended run is refused");
+    assert!(matches!(
+        error,
+        SessionStoreError::InvalidForkPoint { source_seq, .. }
+            if source_seq == EventSeq::new(2)
+    ));
+    assert_eq!(
+        store.safe_fork_seq(&source).await.expect("safe fork seq"),
+        EventSeq::new(1)
+    );
+    assert!(
+        store
+            .load_session(&SessionId::new("fork-lock-fork"))
+            .await
+            .expect("load refused fork")
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires ./dev.sh infra or compatible Postgres + MinIO env"]
 async fn pg_live_fork_stitches_reads_and_clamps_parent_tail() {
     let store = live_store("session-graph-fork", 1024).await;
     let root = SessionId::new("root-session");

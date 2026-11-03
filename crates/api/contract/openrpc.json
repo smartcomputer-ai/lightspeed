@@ -8958,7 +8958,7 @@
       "DeploymentSessionPurgeResponse": {
         "properties": {
           "deletedSessionIds": {
-            "description": "Includes soft-deleted history forks and delegated descendants.\nEmpty when the target has already been permanently deleted.",
+            "description": "Includes soft-deleted delegated descendants.\nEmpty when the target has already been permanently deleted.",
             "items": {
               "type": "string"
             },
@@ -14291,7 +14291,7 @@
       "SessionDeleteParams": {
         "properties": {
           "cascade": {
-            "description": "Delete history forks and delegated descendants too. False requires the\ntarget to be a closed retention-tree leaf.",
+            "description": "Delete delegated descendants too. False requires the target to be a\nclosed retention-tree leaf.",
             "type": "boolean"
           },
           "sessionId": {
@@ -16810,7 +16810,7 @@
         "type": "object"
       },
       "SessionRetentionView": {
-        "description": "Effective tree-owned retention for a session. Forks and delegated children\nname their owning root and project that root's policy and deadline.",
+        "description": "Effective tree-owned retention for a session. Delegated children name their\nowning root and project that root's policy and deadline.",
         "properties": {
           "deleteAfterCloseMs": {
             "format": "uint64",
@@ -19464,7 +19464,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Forks and delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
+      "description": "Sets the positive close-relative automatic soft-deletion duration on a retention root, or clears it with null. Delegated children inherit the root policy and cannot override it. Retention does not permanently delete stored history.",
       "name": "session/retention/put",
       "paramStructure": "by-name",
       "params": [
@@ -19520,7 +19520,7 @@
       "x-lightspeed-target": "sessionId"
     },
     {
-      "description": "Permanently deletes a closed retention-tree leaf, or its closed history-fork and delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion. Config-only clones are never included.",
+      "description": "Permanently deletes a closed retention-tree leaf, or its closed delegated-child subtree when cascade is true. Set softDelete to true to hide sessions while retaining records and history until a deployment administrator purges them. Prior soft deletion is not required for permanent deletion.",
       "name": "session/delete",
       "paramStructure": "by-name",
       "params": [

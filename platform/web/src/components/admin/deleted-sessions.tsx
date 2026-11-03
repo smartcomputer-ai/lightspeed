@@ -89,7 +89,7 @@ function DeletedSessionsContent({ universe, onClose }: { universe: Universe; onC
       </DialogHeader>
       {notice && <p role="status" className="text-sm">{notice}</p>}
       {confirmation ? <>
-        <p>Permanently delete {confirmation.all ? "all " : ""}<strong>{confirmation.ids.length} {confirmation.ids.length === 1 ? "selected session" : "selected sessions"}</strong> and their deleted history forks and delegated children? This cannot be undone.</p>
+        <p>Permanently delete {confirmation.all ? "all " : ""}<strong>{confirmation.ids.length} {confirmation.ids.length === 1 ? "selected session" : "selected sessions"}</strong> and their deleted delegated children? This cannot be undone.</p>
         <p className="text-sm text-muted-foreground">Attached workspaces, environments and external copies are separate resources. Each permanent deletion is recorded in the audit log.</p>
         {!!purge.data?.failures.length && <div role="alert" className="max-h-32 overflow-auto text-sm text-destructive">
           {purge.data.failures.map(({ id, error }) => <p key={id}>{id}: {error}</p>)}
